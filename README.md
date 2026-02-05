@@ -120,6 +120,17 @@ cao launch --agents codex_developer --provider codex
 echo "$CAO_TERMINAL_ID"
 ```
 
+### Diagnostics
+
+Run an opt-in preflight to validate Codex initialization, status detection, and that Codex is using the provisioned per-terminal `CODEX_HOME`:
+
+```bash
+uv run cao diagnostics --provider codex --agent-profile codex_developer --mode offline
+
+# Online mode may incur provider costs:
+uv run cao diagnostics --provider codex --agent-profile codex_developer --mode online --allow-billing
+```
+
 Optional automation (send input + fetch extracted last message) from another terminal:
 
 ```bash

@@ -159,8 +159,8 @@ EOF
 1. **Authentication Failed**:
    ```bash
    # Re-authenticate
-   codex auth logout
-   codex auth login
+   codex logout
+   codex login
    ```
 
 2. **Timeout / Hanging Tasks**:
@@ -169,6 +169,14 @@ EOF
    - Verify your ChatGPT subscription status and network connectivity
 
 3. **Status Detection Problems**:
+   - Run `cao diagnostics` to validate that CAO can start Codex, detect status transitions, and that
+     Codex is using the provisioned `CODEX_HOME`:
+     ```bash
+     uv run cao diagnostics --provider codex --agent-profile codex_developer --mode offline
+
+     # Online mode may incur provider costs:
+     uv run cao diagnostics --provider codex --agent-profile codex_developer --mode online --allow-billing
+     ```
    - Check terminal history for unexpected prompts
    - Verify Codex CLI version compatibility
    - Review custom prompt patterns
