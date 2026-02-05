@@ -10,6 +10,7 @@ from cli_agent_orchestrator.clients.database import (
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.utils.codex_home import cleanup_codex_home
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,12 @@ def delete_session(session_name: str) -> bool:
         # Cleanup providers
         for terminal in terminals:
             provider_manager.cleanup_provider(terminal["id"])
+            try:
+                cleanup_codex_home(terminal["id"])
+            except Exception as e:
+                logger.warning(
+                    f"Failed to cleanup Codex home for terminal {terminal.get('id')}: {e}"
+                )
 
         # Kill tmux session
         tmux_client.kill_session(session_name)

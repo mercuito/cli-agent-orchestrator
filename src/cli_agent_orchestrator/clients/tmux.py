@@ -51,20 +51,23 @@ class TmuxClient:
         window_name: str,
         terminal_id: str,
         working_directory: Optional[str] = None,
+        environment: Optional[Dict[str, str]] = None,
     ) -> str:
         """Create detached tmux session with initial window and return window name."""
         try:
             working_directory = self._resolve_and_validate_working_directory(working_directory)
 
-            environment = os.environ.copy()
-            environment["CAO_TERMINAL_ID"] = terminal_id
+            base_environment = os.environ.copy()
+            base_environment["CAO_TERMINAL_ID"] = terminal_id
+            if environment:
+                base_environment.update(environment)
 
             session = self.server.new_session(
                 session_name=session_name,
                 window_name=window_name,
                 start_directory=working_directory,
                 detach=True,
-                environment=environment,
+                environment=base_environment,
             )
             logger.info(
                 f"Created tmux session: {session_name} with window: {window_name} in directory: {working_directory}"
@@ -83,6 +86,7 @@ class TmuxClient:
         window_name: str,
         terminal_id: str,
         working_directory: Optional[str] = None,
+        environment: Optional[Dict[str, str]] = None,
     ) -> str:
         """Create window in session and return window name."""
         try:
@@ -95,7 +99,7 @@ class TmuxClient:
             window = session.new_window(
                 window_name=window_name,
                 start_directory=working_directory,
-                environment={"CAO_TERMINAL_ID": terminal_id},
+                environment={**({"CAO_TERMINAL_ID": terminal_id}), **(environment or {})},
             )
 
             logger.info(

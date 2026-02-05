@@ -1,6 +1,7 @@
 """Terminal service with workflow functions."""
 
 import logging
+import os
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
@@ -16,6 +17,7 @@ from cli_agent_orchestrator.constants import SESSION_PREFIX, TERMINAL_LOG_DIR
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.utils.codex_home import cleanup_codex_home, prepare_codex_home
 from cli_agent_orchestrator.utils.terminal import (
     generate_session_name,
     generate_terminal_id,
@@ -40,6 +42,8 @@ def create_terminal(
     working_directory: Optional[str] = None,
 ) -> Terminal:
     """Create terminal, optionally creating new session with it."""
+    created_codex_home = False
+    terminal_id = ""
     try:
         terminal_id = generate_terminal_id()
 
@@ -48,6 +52,14 @@ def create_terminal(
             session_name = generate_session_name()
 
         window_name = generate_window_name(agent_profile)
+
+        env: Optional[Dict[str, str]] = None
+        if provider == ProviderType.CODEX.value:
+            # Prepare per-terminal Codex home directory and inject CODEX_HOME for this window.
+            workdir = os.path.realpath(working_directory or os.getcwd())
+            codex_home = prepare_codex_home(terminal_id, agent_profile, workdir)
+            env = {"CODEX_HOME": str(codex_home)}
+            created_codex_home = True
 
         if new_session:
             # Apply SESSION_PREFIX if not already present
@@ -59,13 +71,19 @@ def create_terminal(
                 raise ValueError(f"Session '{session_name}' already exists")
 
             # Create new tmux session with this terminal as the initial window
-            tmux_client.create_session(session_name, window_name, terminal_id, working_directory)
+            tmux_client.create_session(
+                session_name,
+                window_name,
+                terminal_id,
+                working_directory,
+                environment=env,
+            )
         else:
             # Add window to existing session
             if not tmux_client.session_exists(session_name):
                 raise ValueError(f"Session '{session_name}' not found")
             window_name = tmux_client.create_window(
-                session_name, window_name, terminal_id, working_directory
+                session_name, window_name, terminal_id, working_directory, environment=env
             )
 
         # Save terminal metadata to database
@@ -99,6 +117,11 @@ def create_terminal(
 
     except Exception as e:
         logger.error(f"Failed to create terminal: {e}")
+        if created_codex_home and terminal_id:
+            try:
+                cleanup_codex_home(terminal_id)
+            except Exception:
+                pass
         if new_session and session_name:
             try:
                 tmux_client.kill_session(session_name)
@@ -219,6 +242,10 @@ def delete_terminal(terminal_id: str) -> bool:
         # Existing cleanup
         provider_manager.cleanup_provider(terminal_id)
         deleted = db_delete_terminal(terminal_id)
+        try:
+            cleanup_codex_home(terminal_id)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup Codex home for terminal {terminal_id}: {e}")
         logger.info(f"Deleted terminal: {terminal_id}")
         return deleted
 
