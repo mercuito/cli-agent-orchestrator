@@ -2,6 +2,7 @@
 
 import click
 
+from cli_agent_orchestrator.cli.commands.diagnostics import diagnostics
 from cli_agent_orchestrator.cli.commands.flow import flow
 from cli_agent_orchestrator.cli.commands.init import init
 from cli_agent_orchestrator.cli.commands.install import install
@@ -20,6 +21,7 @@ cli.add_command(init)
 cli.add_command(install)
 cli.add_command(shutdown)
 cli.add_command(flow)
+cli.add_command(diagnostics)
 
 
 if __name__ == "__main__":

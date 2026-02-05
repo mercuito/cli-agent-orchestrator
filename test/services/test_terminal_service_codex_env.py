@@ -14,22 +14,29 @@ def test_create_terminal_codex_sets_codex_home_env(tmp_path: Path):
     provider = MagicMock()
     provider.initialize.return_value = True
 
-    with patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id", return_value="abcd1234"), patch(
-        "cli_agent_orchestrator.services.terminal_service.generate_session_name",
-        return_value="cao-test",
-    ), patch(
-        "cli_agent_orchestrator.services.terminal_service.generate_window_name",
-        return_value="codex_developer-0000",
-    ), patch(
-        "cli_agent_orchestrator.services.terminal_service.db_create_terminal"
-    ), patch(
-        "cli_agent_orchestrator.services.terminal_service.provider_manager.create_provider",
-        return_value=provider,
-    ), patch(
-        "cli_agent_orchestrator.services.terminal_service.tmux_client"
-    ) as mock_tmux, patch(
-        "cli_agent_orchestrator.services.terminal_service.prepare_codex_home",
-        return_value=codex_home,
+    with (
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.generate_terminal_id",
+            return_value="abcd1234",
+        ),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.generate_session_name",
+            return_value="cao-test",
+        ),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.generate_window_name",
+            return_value="codex_developer-0000",
+        ),
+        patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal"),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.provider_manager.create_provider",
+            return_value=provider,
+        ),
+        patch("cli_agent_orchestrator.services.terminal_service.tmux_client") as mock_tmux,
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.prepare_codex_home",
+            return_value=codex_home,
+        ),
     ):
         mock_tmux.session_exists.return_value = False
 

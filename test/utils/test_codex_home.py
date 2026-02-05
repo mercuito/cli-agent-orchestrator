@@ -20,13 +20,23 @@ class TestPrepareCodexHome:
         (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        with patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value=None), patch(
-            "cli_agent_orchestrator.utils.codex_home.load_agent_profile",
-            return_value=type(
-                "Profile",
-                (),
-                {"name": "codex_developer", "description": "x", "system_prompt": "Hello", "mcpServers": None, "model": None, "codexConfig": None},
-            )(),
+        with (
+            patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value=None),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile",
+                return_value=type(
+                    "Profile",
+                    (),
+                    {
+                        "name": "codex_developer",
+                        "description": "x",
+                        "system_prompt": "Hello",
+                        "mcpServers": None,
+                        "model": None,
+                        "codexConfig": None,
+                    },
+                )(),
+            ),
         ):
             with pytest.raises(ValueError, match="codex"):
                 prepare_codex_home(
@@ -45,13 +55,25 @@ class TestPrepareCodexHome:
         (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
         # Intentionally omit auth.json
 
-        with patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"), patch(
-            "cli_agent_orchestrator.utils.codex_home.load_agent_profile",
-            return_value=type(
-                "Profile",
-                (),
-                {"name": "codex_developer", "description": "x", "system_prompt": "Hello", "mcpServers": None, "model": None, "codexConfig": None},
-            )(),
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile",
+                return_value=type(
+                    "Profile",
+                    (),
+                    {
+                        "name": "codex_developer",
+                        "description": "x",
+                        "system_prompt": "Hello",
+                        "mcpServers": None,
+                        "model": None,
+                        "codexConfig": None,
+                    },
+                )(),
+            ),
         ):
             with pytest.raises(ValueError, match="auth\\.json"):
                 prepare_codex_home(
@@ -83,10 +105,18 @@ class TestPrepareCodexHome:
             },
         )()
 
-        with patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"), patch(
-            "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
-            return_value=True,
-        ), patch("cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile):
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=True,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
                 agent_profile="codex_developer",
@@ -129,10 +159,18 @@ class TestPrepareCodexHome:
             },
         )()
 
-        with patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"), patch(
-            "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
-            return_value=True,
-        ), patch("cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile):
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=True,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
                 agent_profile="codex_developer",
@@ -180,10 +218,18 @@ class TestPrepareCodexHome:
             },
         )()
 
-        with patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"), patch(
-            "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
-            return_value=True,
-        ), patch("cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile):
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=True,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
                 agent_profile="codex_developer",
@@ -216,10 +262,18 @@ class TestPrepareCodexHome:
             },
         )()
 
-        with patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"), patch(
-            "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
-            return_value=False,
-        ), patch("cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile):
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=False,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
             with pytest.raises(ValueError, match="login"):
                 prepare_codex_home(
                     terminal_id="abcd1234",

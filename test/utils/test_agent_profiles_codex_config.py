@@ -26,4 +26,3 @@ You are a test agent.
         profile = load_agent_profile("codex_developer")
 
     assert profile.codexConfig == {"model_reasoning_effort": "high"}
-

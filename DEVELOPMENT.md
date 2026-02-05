@@ -305,8 +305,29 @@ cli-agent-orchestrator/
 
 ## Resources
 
+- [Provider Diagnostics](#provider-diagnostics-opt-in-e2e)
 - [Project README](README.md)
 - [Test Documentation](test/providers/README.md)
 - [Contributing Guidelines](CONTRIBUTING.md)
 - [uv Documentation](https://docs.astral.sh/uv/)
 - [pytest Documentation](https://docs.pytest.org/)
+
+## Provider Diagnostics (Opt-in E2E)
+
+CAO includes an opt-in diagnostics runner intended to catch provider CLI format changes (status detection / init)
+before they break real workflows.
+
+Run Codex diagnostics locally:
+
+```bash
+uv run cao diagnostics --provider codex --agent-profile <your_codex_profile> --mode offline
+
+# Online mode may incur provider costs:
+uv run cao diagnostics --provider codex --agent-profile <your_codex_profile> --mode online --allow-billing
+```
+
+Run the opt-in E2E test (skipped by default):
+
+```bash
+CAO_E2E=1 uv run pytest -m e2e -v
+```
