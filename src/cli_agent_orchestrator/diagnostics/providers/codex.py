@@ -64,6 +64,27 @@ def _codex_mcp_list_json(*, codex_home: Path) -> Dict[str, Any]:
         raise RuntimeError(f"Failed to parse codex mcp list JSON: {e}\n{out}")
 
 
+def _extract_mcp_server_names(payload: Any) -> List[str]:
+    if isinstance(payload, list):
+        names: List[str] = []
+        for item in payload:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                names.append(item["name"])
+        return names
+
+    if isinstance(payload, dict):
+        if isinstance(payload.get("mcp_servers"), dict):
+            return list(payload["mcp_servers"].keys())
+        if isinstance(payload.get("servers"), list):
+            names = []
+            for item in payload["servers"]:
+                if isinstance(item, dict) and isinstance(item.get("name"), str):
+                    names.append(item["name"])
+            return names
+
+    return []
+
+
 def _poll_status(
     terminal_id: str,
     *,
@@ -203,15 +224,7 @@ def run_codex_diagnostics(
             assert profile is not None
             payload = _codex_mcp_list_json(codex_home=prepared_home)
 
-            # Be permissive about JSON shape; just find the server names.
-            server_names: List[str] = []
-            if isinstance(payload, dict):
-                if "mcp_servers" in payload and isinstance(payload["mcp_servers"], dict):
-                    server_names = list(payload["mcp_servers"].keys())
-                elif "servers" in payload and isinstance(payload["servers"], list):
-                    server_names = [
-                        s.get("name", "") for s in payload["servers"] if isinstance(s, dict)
-                    ]
+            server_names = _extract_mcp_server_names(payload)
 
             expected = {"cao-mcp-server"}
             if isinstance(profile.mcpServers, dict):
@@ -269,11 +282,11 @@ def run_codex_diagnostics(
             payload = _codex_mcp_list_json(codex_home=terminal_home)
             step.ok = True
             step.data = {"terminal_id": terminal.id, "session": terminal.session_name}
-            if isinstance(payload, dict) and isinstance(payload.get("mcp_servers"), dict):
-                servers = sorted(list(payload["mcp_servers"].keys()))
+            servers = sorted(_extract_mcp_server_names(payload))
+            if servers:
                 step.data["mcp_servers"] = servers  # type: ignore[assignment]
-                if "cao-mcp-server" not in servers:
-                    raise RuntimeError("cao-mcp-server missing from terminal CODEX_HOME mcp list")
+            if "cao-mcp-server" not in servers:
+                raise RuntimeError("cao-mcp-server missing from terminal CODEX_HOME mcp list")
         except Exception as e:
             step.details = str(e)
         finally:
