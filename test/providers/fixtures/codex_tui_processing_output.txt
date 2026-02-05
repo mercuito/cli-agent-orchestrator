@@ -1,0 +1,9 @@
+awwwwjay@macmini repo % codex
+╭──────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.97.0)                    │
+╰──────────────────────────────────────────────╯
+
+› Write 3 bullet points about tmux.
+• Working (1s • esc to interrupt)
+› Summarize recent commits
+  ? for shortcuts                                            100% context left

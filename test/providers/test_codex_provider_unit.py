@@ -121,6 +121,45 @@ class TestCodexProviderStatusDetection:
         mock_tmux.get_history.assert_called_once_with("test-session", "window-0", tail_lines=50)
 
     @patch("cli_agent_orchestrator.providers.codex.tmux_client")
+    def test_get_status_tui_idle(self, mock_tmux):
+        mock_tmux.get_history.return_value = load_fixture("codex_tui_idle_output.txt")
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        status = provider.get_status()
+
+        assert status == TerminalStatus.IDLE
+
+    @patch("cli_agent_orchestrator.providers.codex.tmux_client")
+    def test_get_status_tui_processing(self, mock_tmux):
+        mock_tmux.get_history.return_value = load_fixture("codex_tui_processing_output.txt")
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        status = provider.get_status()
+
+        assert status == TerminalStatus.PROCESSING
+
+    @patch("cli_agent_orchestrator.providers.codex.tmux_client")
+    def test_get_status_tui_processing_without_working_word(self, mock_tmux):
+        # The verb before "esc to interrupt" can vary; the marker itself should still mean PROCESSING.
+        mock_tmux.get_history.return_value = load_fixture(
+            "codex_tui_processing_no_working_output.txt"
+        )
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        status = provider.get_status()
+
+        assert status == TerminalStatus.PROCESSING
+
+    @patch("cli_agent_orchestrator.providers.codex.tmux_client")
+    def test_get_status_tui_completed(self, mock_tmux):
+        mock_tmux.get_history.return_value = load_fixture("codex_tui_completed_output.txt")
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        status = provider.get_status()
+
+        assert status == TerminalStatus.COMPLETED
+
+    @patch("cli_agent_orchestrator.providers.codex.tmux_client")
     def test_get_status_processing_when_old_prompt_present(self, mock_tmux):
         # If the captured history contains an earlier prompt but the *latest* output is processing,
         # we should report PROCESSING.
@@ -264,11 +303,19 @@ class TestCodexProviderMessageExtraction:
         with pytest.raises(ValueError, match="Empty Codex response"):
             provider.extract_last_message_from_script(output)
 
+    def test_extract_last_message_tui_success(self):
+        output = load_fixture("codex_tui_completed_output.txt")
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        message = provider.extract_last_message_from_script(output)
+
+        assert message == "OK"
+
 
 class TestCodexProviderMisc:
     def test_get_idle_pattern_for_log(self):
         provider = CodexProvider("test1234", "test-session", "window-0")
-        assert provider.get_idle_pattern_for_log() == "❯"
+        assert provider.get_idle_pattern_for_log() == "(?:❯|›)"
 
     def test_exit_cli(self):
         provider = CodexProvider("test1234", "test-session", "window-0")

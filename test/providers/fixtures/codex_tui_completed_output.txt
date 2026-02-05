@@ -1,0 +1,9 @@
+awwwwjay@macmini repo % codex
+╭──────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.97.0)                    │
+╰──────────────────────────────────────────────╯
+
+› Return exactly: OK
+• OK
+› Summarize recent commits
+  ? for shortcuts                                            100% context left

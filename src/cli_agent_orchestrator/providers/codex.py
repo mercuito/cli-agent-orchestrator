@@ -16,13 +16,27 @@ ANSI_CODE_PATTERN = r"\x1b\[[0-9;]*m"
 IDLE_PROMPT_PATTERN = r"(?:❯|›|codex>)"
 # Match the prompt only if it appears at the end of the captured output.
 IDLE_PROMPT_AT_END_PATTERN = rf"(?:^\s*{IDLE_PROMPT_PATTERN}\s*$)\s*\Z"
-IDLE_PROMPT_PATTERN_LOG = r"❯"
+IDLE_PROMPT_PATTERN_LOG = r"(?:❯|›)"
 ASSISTANT_PREFIX_PATTERN = r"^(?:assistant|codex|agent)\s*:"
 USER_PREFIX_PATTERN = r"^You\b"
 
 PROCESSING_PATTERN = r"\b(thinking|working|running|executing|processing|analyzing)\b"
 WAITING_PROMPT_PATTERN = r"^(?:Approve|Allow)\b.*\b(?:y/n|yes/no|yes|no)\b"
 ERROR_PATTERN = r"^(?:Error:|ERROR:|Traceback \(most recent call last\):|panic:)"
+
+# Newer Codex CLI (v0.9x+) renders a TUI that uses an input line starting with `› ` and a status
+# line like `? for shortcuts` / `100% context left`. These do not end the output with a bare prompt
+# character, so we need separate detection logic.
+TUI_HEADER_PATTERN = r"OpenAI\s+Codex"
+TUI_STATUS_BAR_PATTERN = r"\?\s*for shortcuts.*context left"
+TUI_PROMPT_LINE_PATTERN = r"^\s*(?:›|❯)\s+\S.*$"
+TUI_INTERRUPT_MARKER_PATTERN = r"esc\s+to\s+interrupt"
+TUI_RESPONSE_BULLET_PATTERN = r"^\s*•\s*(?!.*esc\s+to\s+interrupt).+"
+
+SHELL_COMMAND_NOT_FOUND_PATTERN = (
+    r"(?:command not found: codex|codex: command not found|not found: codex)"
+)
+CODEX_TERM_DUMB_PATTERN = r'TERM is set to "dumb"\. Refusing to start'
 
 
 class CodexProvider(BaseProvider):
@@ -60,7 +74,54 @@ class CodexProvider(BaseProvider):
             return TerminalStatus.ERROR
 
         clean_output = re.sub(ANSI_CODE_PATTERN, "", output)
-        tail_output = "\n".join(clean_output.splitlines()[-25:])
+        tail_output = "\n".join(clean_output.splitlines()[-40:])
+
+        # Fast-path for common startup failures (e.g., missing codex binary) and non-interactive TERM issues.
+        if re.search(SHELL_COMMAND_NOT_FOUND_PATTERN, clean_output, re.IGNORECASE):
+            return TerminalStatus.ERROR
+        if re.search(CODEX_TERM_DUMB_PATTERN, clean_output, re.IGNORECASE):
+            return TerminalStatus.ERROR
+
+        # New Codex TUI mode detection.
+        is_tui = bool(
+            re.search(TUI_HEADER_PATTERN, clean_output, re.IGNORECASE)
+            or re.search(TUI_STATUS_BAR_PATTERN, clean_output, re.IGNORECASE)
+        )
+        if is_tui:
+            # Waiting/error prompts still take precedence if they show up.
+            if re.search(WAITING_PROMPT_PATTERN, tail_output, re.IGNORECASE | re.MULTILINE):
+                return TerminalStatus.WAITING_USER_ANSWER
+            if re.search(ERROR_PATTERN, tail_output, re.IGNORECASE | re.MULTILINE):
+                return TerminalStatus.ERROR
+
+            # While Codex is actively working, the UI shows an "esc to interrupt" marker.
+            # The verb before it (e.g., Working/Thinking/Analyzing) is not stable.
+            if re.search(TUI_INTERRUPT_MARKER_PATTERN, tail_output, re.IGNORECASE):
+                return TerminalStatus.PROCESSING
+
+            prompt_re = re.compile(TUI_PROMPT_LINE_PATTERN, re.IGNORECASE)
+            bullet_re = re.compile(TUI_RESPONSE_BULLET_PATTERN, re.IGNORECASE)
+            lines = clean_output.splitlines()
+            prompt_indices = [idx for idx, line in enumerate(lines) if prompt_re.match(line)]
+
+            # Without a visible prompt, assume we're still processing (screen may be mid-refresh).
+            if not prompt_indices:
+                return TerminalStatus.PROCESSING
+
+            # Heuristic: Codex typically shows a "message prompt" line and then later returns to an
+            # "input prompt" line (placeholder). If there are two prompt lines and we see a response
+            # bullet between them, treat it as COMPLETED.
+            if len(prompt_indices) >= 2:
+                prev_prompt = prompt_indices[-2]
+                last_prompt = prompt_indices[-1]
+                if any(bullet_re.match(line) for line in lines[prev_prompt + 1 : last_prompt]):
+                    return TerminalStatus.COMPLETED
+                return TerminalStatus.IDLE
+
+            # One prompt line: treat as IDLE unless we can see a response bullet in the capture.
+            if any(bullet_re.match(line) for line in lines):
+                return TerminalStatus.COMPLETED
+            return TerminalStatus.IDLE
 
         last_user = None
         for match in re.finditer(USER_PREFIX_PATTERN, clean_output, re.IGNORECASE | re.MULTILINE):
@@ -131,21 +192,71 @@ class CodexProvider(BaseProvider):
             re.finditer(ASSISTANT_PREFIX_PATTERN, clean_output, re.IGNORECASE | re.MULTILINE)
         )
 
-        if not matches:
+        if matches:
+            last_match = matches[-1]
+            start_pos = last_match.end()
+
+            idle_after = re.search(
+                IDLE_PROMPT_AT_END_PATTERN,
+                clean_output[start_pos:],
+                re.IGNORECASE | re.MULTILINE,
+            )
+            end_pos = start_pos + idle_after.start() if idle_after else len(clean_output)
+
+            final_answer = clean_output[start_pos:end_pos].strip()
+
+            if not final_answer:
+                raise ValueError("Empty Codex response - no content found")
+
+            return final_answer
+
+        # Fallback: parse the newer Codex TUI transcript format (bulleted assistant lines).
+        is_tui = bool(
+            re.search(TUI_HEADER_PATTERN, clean_output, re.IGNORECASE)
+            or re.search(TUI_STATUS_BAR_PATTERN, clean_output, re.IGNORECASE)
+        )
+        if not is_tui:
             raise ValueError("No Codex response found - no assistant marker detected")
 
-        last_match = matches[-1]
-        start_pos = last_match.end()
+        lines = clean_output.splitlines()
+        prompt_re = re.compile(TUI_PROMPT_LINE_PATTERN, re.IGNORECASE)
+        bullet_re = re.compile(TUI_RESPONSE_BULLET_PATTERN, re.IGNORECASE)
+        interrupt_re = re.compile(TUI_INTERRUPT_MARKER_PATTERN, re.IGNORECASE)
 
-        idle_after = re.search(
-            IDLE_PROMPT_AT_END_PATTERN,
-            clean_output[start_pos:],
-            re.IGNORECASE | re.MULTILINE,
-        )
-        end_pos = start_pos + idle_after.start() if idle_after else len(clean_output)
+        prompt_indices = [idx for idx, line in enumerate(lines) if prompt_re.match(line)]
+        if not prompt_indices:
+            raise ValueError("No Codex response found - no prompt line detected")
 
-        final_answer = clean_output[start_pos:end_pos].strip()
+        # Find the last prompt that has at least one response bullet before the next prompt.
+        last_prompt_with_bullets: Optional[int] = None
+        next_prompt_for_last: Optional[int] = None
+        for idx, prompt_idx in enumerate(prompt_indices):
+            next_prompt_idx = (
+                prompt_indices[idx + 1] if idx + 1 < len(prompt_indices) else len(lines)
+            )
+            if any(bullet_re.match(line) for line in lines[prompt_idx + 1 : next_prompt_idx]):
+                last_prompt_with_bullets = prompt_idx
+                next_prompt_for_last = next_prompt_idx
 
+        if last_prompt_with_bullets is None or next_prompt_for_last is None:
+            raise ValueError("No Codex response found - no response bullet detected")
+
+        segment = lines[last_prompt_with_bullets + 1 : next_prompt_for_last]
+
+        collected: list[str] = []
+        for line in segment:
+            if prompt_re.match(line):
+                break
+            if interrupt_re.search(line):
+                break
+            if bullet_re.match(line):
+                collected.append(re.sub(r"^\s*•\s*", "", line))
+                continue
+            # Include wrapped/indented continuation lines if we're already collecting.
+            if collected and line.strip():
+                collected.append(line)
+
+        final_answer = "\n".join(collected).strip()
         if not final_answer:
             raise ValueError("Empty Codex response - no content found")
 

@@ -1,0 +1,13 @@
+awwwwjay@macmini repo % codex
+╭──────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.97.0)                    │
+│                                              │
+│ model:     gpt-5.2 high   /model to change   │
+│ directory: ~/Projects/example               │
+╰──────────────────────────────────────────────╯
+
+  Tip: Use /feedback to send logs to the maintainers when something looks off.
+
+› Summarize recent commits
+
+  ? for shortcuts                                            100% context left
