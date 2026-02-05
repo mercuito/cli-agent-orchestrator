@@ -196,10 +196,11 @@ def run_codex_diagnostics(
             return result.finalize()
 
         # Step: MCP servers visible from prepared home
-        step = _step("codex mcp list includes cao-mcp-server (preflight)")
+        step = _step("codex mcp list includes expected servers (preflight)")
         start = time.monotonic()
         try:
             assert prepared_home is not None
+            assert profile is not None
             payload = _codex_mcp_list_json(codex_home=prepared_home)
 
             # Be permissive about JSON shape; just find the server names.
@@ -211,8 +212,16 @@ def run_codex_diagnostics(
                     server_names = [
                         s.get("name", "") for s in payload["servers"] if isinstance(s, dict)
                     ]
-            if "cao-mcp-server" not in server_names:
-                raise RuntimeError(f"cao-mcp-server not found in codex mcp list: {server_names}")
+
+            expected = {"cao-mcp-server"}
+            if isinstance(profile.mcpServers, dict):
+                expected |= set(profile.mcpServers.keys())
+
+            missing = sorted([name for name in expected if name not in server_names])
+            if missing:
+                raise RuntimeError(
+                    f"Missing MCP servers in codex mcp list: {missing}. Found: {sorted(server_names)}"
+                )
 
             step.ok = True
             step.data = {"servers": sorted([n for n in server_names if n])}
@@ -260,8 +269,11 @@ def run_codex_diagnostics(
             payload = _codex_mcp_list_json(codex_home=terminal_home)
             step.ok = True
             step.data = {"terminal_id": terminal.id, "session": terminal.session_name}
-            if isinstance(payload, dict) and "mcp_servers" in payload:
-                step.data["mcp_servers"] = sorted(list(payload["mcp_servers"].keys()))  # type: ignore[assignment]
+            if isinstance(payload, dict) and isinstance(payload.get("mcp_servers"), dict):
+                servers = sorted(list(payload["mcp_servers"].keys()))
+                step.data["mcp_servers"] = servers  # type: ignore[assignment]
+                if "cao-mcp-server" not in servers:
+                    raise RuntimeError("cao-mcp-server missing from terminal CODEX_HOME mcp list")
         except Exception as e:
             step.details = str(e)
         finally:
