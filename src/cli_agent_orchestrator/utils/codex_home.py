@@ -111,28 +111,55 @@ def _codex_login_ok(codex_home_dir: Path) -> bool:
     env = os.environ.copy()
     env["CODEX_HOME"] = str(codex_home_dir)
 
-    try:
-        proc = subprocess.run(
-            [codex_bin, "auth", "status"],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except Exception:
+    def run_status(args: list[str]) -> Optional[tuple[int, str]]:
+        try:
+            proc = subprocess.run(
+                args,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except Exception:
+            return None
+        return proc.returncode, (proc.stdout or "")
+
+    def output_indicates_logged_out(output: str) -> bool:
+        lowered = output.lower()
+        return "not logged" in lowered or "logged out" in lowered or "please log" in lowered
+
+    def output_indicates_command_missing(output: str, command: str) -> bool:
+        lowered = output.lower()
+        # Various CLIs use different phrasing for unknown subcommands.
+        return (
+            "unrecognized subcommand" in lowered
+            or "unknown command" in lowered
+            or "unknown subcommand" in lowered
+        ) and command in lowered
+
+    # Codex CLI has changed subcommand naming across versions:
+    # - Newer: `codex login status`
+    # - Older docs: `codex auth status`
+    status_checks = [
+        (["login", "status"], "login"),
+        (["auth", "status"], "auth"),
+    ]
+
+    for subcommand, command_name in status_checks:
+        result = run_status([codex_bin, *subcommand])
+        if result is None:
+            continue
+        returncode, output = result
+        if returncode == 0 and not output_indicates_logged_out(output):
+            return True
+        # If this specific command isn't supported, try the next candidate.
+        if output_indicates_command_missing(output, command_name):
+            continue
         return False
 
-    output = (proc.stdout or "").lower()
-    if proc.returncode != 0:
-        return False
-
-    # Some versions may exit 0 even when not logged in; treat common negative signals as failure.
-    if "not logged" in output or "logged out" in output or "please log" in output:
-        return False
-
-    return True
+    return False
 
 
 def prepare_codex_home(

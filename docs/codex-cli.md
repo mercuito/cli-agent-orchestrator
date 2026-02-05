@@ -17,7 +17,7 @@ The Codex CLI provider enables CLI Agent Orchestrator (CAO) to work with **ChatG
 pip install codex-cli
 
 # Authenticate with ChatGPT
-codex auth login
+codex login
 ```
 
 ### Using Codex Provider with CAO
@@ -59,8 +59,9 @@ The provider automatically extracts the last assistant response from terminal ou
 CAO's Codex provider currently launches `codex` and relies on your existing Codex CLI configuration/authentication.
 
 - `--provider codex` selects the provider.
-- `--agents <name>` is stored as terminal metadata and used for tmux window naming; it does not change Codex behavior.
-- Model/timeout/approval settings are configured in Codex CLI itself (outside of CAO).
+- `--agents <name>` selects the agent profile CAO uses to prepare a per-terminal Codex home directory (via `CODEX_HOME`),
+  including `AGENTS.md` (agent instructions) and `config.toml` (model/MCP/trust settings).
+- Most model/timeout/approval settings are configured in Codex CLI itself, but CAO may apply per-agent overrides when preparing `CODEX_HOME`.
 
 ## Workflows
 
@@ -120,13 +121,13 @@ PY
 
 2. **Authenticate**:
    ```bash
-   codex auth login
+   codex login
    # Follow browser authentication flow
    ```
 
 3. **Verify Authentication**:
    ```bash
-   codex auth status
+   codex login status
    ```
 
 ### Workspace Setup
