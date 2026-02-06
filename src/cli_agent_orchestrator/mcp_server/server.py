@@ -13,6 +13,7 @@ from pydantic import Field
 from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.utils import agent_profiles as agent_profiles_utils
 from cli_agent_orchestrator.utils.terminal import generate_session_name, wait_until_terminal_status
 
 logger = logging.getLogger(__name__)
@@ -429,6 +430,41 @@ async def send_message(
         return _send_to_inbox(receiver_id, message)
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def list_agent_profiles() -> Dict[str, Any]:
+    """List available CAO agent profiles (built-in + locally installed).
+
+    Returns:
+        Dict with `success` and `profiles` (name-sorted).
+    """
+    try:
+        profiles = agent_profiles_utils.list_agent_profiles()
+        return {"success": True, "profiles": profiles}
+    except Exception as e:
+        return {"success": False, "error": str(e), "profiles": []}
+
+
+@mcp.tool()
+async def get_agent_profile(
+    agent_name: str = Field(description='Agent profile name (e.g., "developer")'),
+    include_prompt: bool = Field(
+        default=False,
+        description="If true, include the profile's system prompt content in the response.",
+    ),
+) -> Dict[str, Any]:
+    """Get a single CAO agent profile by name.
+
+    Args:
+        agent_name: Agent profile name
+        include_prompt: Include system prompt content
+    """
+    try:
+        profile = agent_profiles_utils.get_agent_profile(agent_name, include_prompt=include_prompt)
+        return {"success": True, "profile": profile}
+    except Exception as e:
+        return {"success": False, "error": str(e), "profile": None}
 
 
 def main():
