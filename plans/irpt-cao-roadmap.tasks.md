@@ -6,7 +6,7 @@ Policy: any task that changes code requires reviewer gate before it is considere
 
 ## Task index
 
-### T01 — Agent profile metadata (provider/role/tags/reasoning_effort)
+### T01 — Agent profile metadata (provider/role/tags/reasoning_effort) (DONE)
 
 - owner_role: developer
 - dispatch_mode: handoff
