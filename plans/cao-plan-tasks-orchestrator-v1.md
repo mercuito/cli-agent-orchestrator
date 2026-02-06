@@ -178,30 +178,9 @@ Responsibilities:
 
 ## CAO / MCP Prerequisites (Implementation Work)
 
-### 1) Cross-provider spawn support (required)
-
-Currently `cao-mcp-server` infers provider from the current terminal. To support a real mixed pool, update:
-- `assign(...)` and `handoff(...)` to accept `provider: Optional[str]`
-- If `provider` is not provided, infer it from the chosen agent profile (`get_agent_profile` result).
-
-### 2) Worker lifecycle tools (required for async)
-
-Add MCP tool(s) to allow orchestrator to clean up `assign` workers deterministically:
-- `exit_terminal(terminal_id)` → calls CAO `POST /terminals/{id}/exit`
-
-Also recommended:
-- `get_terminal(terminal_id)` → status/provider/session
-- `get_last_output(terminal_id)` → for polling if a callback never arrives
-
-### 3) Agent profile “enhancement” (required)
-
-Add minimal metadata fields to the `AgentProfile` model and loader:
-- `provider`, `role`, `tags`
-
-### 4) Docs + examples (after prerequisites)
-
-Add an example set under `examples/` once the dispatch surface is stable:
-- `examples/plan-execute/` with templates and sample orchestrator/developer/reviewer profiles.
+This section is intentionally short. The detailed backlog/roadmap for enabling yard/IRPT-style orchestration in CAO lives in:
+- `plans/irpt-cao-roadmap.md`
+- `plans/irpt-cao-roadmap.tasks.md`
 
 ---
 
