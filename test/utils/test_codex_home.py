@@ -155,6 +155,7 @@ class TestPrepareCodexHome:
                     }
                 },
                 "model": "gpt-5.2",
+                "reasoning_effort": "low",
                 "codexConfig": {"model_reasoning_effort": "high"},
             },
         )()
@@ -190,6 +191,54 @@ class TestPrepareCodexHome:
 
         # CAO MCP server is always present
         assert data["mcp_servers"]["cao-mcp-server"]["command"] == "cao-mcp-server"
+
+    def test_prepare_codex_home_applies_reasoning_effort_when_not_overridden(self, tmp_path: Path):
+        from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
+        (global_codex_home / "auth.json").write_text('{"ok":true}\n')
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+
+        profile = type(
+            "Profile",
+            (),
+            {
+                "name": "codex_developer",
+                "description": "desc",
+                "system_prompt": "x",
+                "mcpServers": None,
+                "model": None,
+                "reasoning_effort": "high",
+                "codexConfig": None,
+            },
+        )()
+
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=True,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
+            codex_home = prepare_codex_home(
+                terminal_id="abcd1234",
+                agent_profile="codex_developer",
+                working_directory=str(workdir),
+                cao_home_dir=tmp_path / "cao",
+                global_codex_home_dir=global_codex_home,
+            )
+
+        data = _read_toml(codex_home / "config.toml")
+        assert data["model_reasoning_effort"] == "high"
 
     def test_prepare_codex_home_overrides_cao_mcp_server_to_local_binary(self, tmp_path: Path):
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home

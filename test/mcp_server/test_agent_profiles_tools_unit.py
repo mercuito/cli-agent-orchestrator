@@ -66,6 +66,10 @@ async def test_local_profile_overrides_builtin(monkeypatch, tmp_path):
             ---
             name: developer
             description: Local developer override
+            provider: codex
+            role: developer
+            tags: [python]
+            reasoning_effort: medium
             model: my-model
             ---
 
@@ -81,6 +85,10 @@ async def test_local_profile_overrides_builtin(monkeypatch, tmp_path):
     assert developer["source"] == "local"
     assert developer["description"] == "Local developer override"
     assert developer["model"] == "my-model"
+    assert developer["provider"] == "codex"
+    assert developer["role"] == "developer"
+    assert developer["tags"] == ["python"]
+    assert developer["reasoning_effort"] == "medium"
 
     get_tool_result = await mcp_server.get_agent_profile.run(
         {"agent_name": "developer", "include_prompt": True}
@@ -91,6 +99,10 @@ async def test_local_profile_overrides_builtin(monkeypatch, tmp_path):
     assert profile["source"] == "local"
     assert profile["description"] == "Local developer override"
     assert profile["model"] == "my-model"
+    assert profile["provider"] == "codex"
+    assert profile["role"] == "developer"
+    assert profile["tags"] == ["python"]
+    assert profile["reasoning_effort"] == "medium"
     assert profile["system_prompt"] == "LOCAL PROMPT"
 
 

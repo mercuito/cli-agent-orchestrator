@@ -24,6 +24,10 @@ Define the agent's role, responsibilities, and behavior here.
 
 ## Optional Fields
 
+- `provider` (string): Provider used when spawning this profile (`q_cli`, `kiro_cli`, `claude_code`, `codex`)
+- `role` (string): Routing role label for orchestration (e.g., `orchestrator`, `developer`, `reviewer`, `researcher`)
+- `tags` (array): Routing tags for orchestration (e.g., `["security", "python"]`)
+- `reasoning_effort` (string): Canonical reasoning effort knob (`low`, `medium`, `high`). Providers may ignore if unsupported.
 - `mcpServers` (object): MCP server configurations for additional tools
 - `tools` (array): List of allowed tools, use `["*"]` for all
 - `allowedTools` (array): Whitelist of tools (e.g., `["@builtin", "@cao-mcp-server"]`)
@@ -38,6 +42,10 @@ Define the agent's role, responsibilities, and behavior here.
 ---
 name: developer
 description: Developer Agent in a multi-agent system
+provider: codex
+role: developer
+tags: [python]
+reasoning_effort: medium
 mcpServers:
   cao-mcp-server:
     type: stdio

@@ -1,6 +1,7 @@
 ---
 name: reviewer
 description: Code Reviewer Agent in a multi-agent system
+role: reviewer
 mcpServers:
   cao-mcp-server:
     type: stdio

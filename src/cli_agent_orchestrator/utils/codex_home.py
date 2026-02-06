@@ -218,6 +218,13 @@ def prepare_codex_home(
     if isinstance(codex_config, dict):
         _merge_into(base_config, codex_config)
 
+    # Apply canonical reasoning effort if present and not explicitly overridden by codexConfig.
+    reasoning_effort = getattr(profile, "reasoning_effort", None)
+    if reasoning_effort and not (
+        isinstance(codex_config, dict) and "model_reasoning_effort" in codex_config
+    ):
+        base_config["model_reasoning_effort"] = str(reasoning_effort)
+
     # Merge MCP servers
     mcp_servers = base_config.get("mcp_servers", {})
     if not isinstance(mcp_servers, dict):

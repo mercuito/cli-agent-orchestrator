@@ -1,6 +1,7 @@
 ---
 name: code_supervisor
 description: Coding Supervisor Agent in a multi-agent system
+role: orchestrator
 mcpServers:
   cao-mcp-server:
     type: stdio

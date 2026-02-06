@@ -1,6 +1,7 @@
 ---
 name: developer
 description: Developer Agent in a multi-agent system
+role: developer
 mcpServers:
   cao-mcp-server:
     type: stdio

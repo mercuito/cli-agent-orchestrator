@@ -70,6 +70,10 @@ def list_agent_profiles() -> List[Dict[str, Any]]:
             "name": name,
             "description": metadata.get("description"),
             "model": metadata.get("model"),
+            "provider": metadata.get("provider"),
+            "role": metadata.get("role"),
+            "tags": metadata.get("tags"),
+            "reasoning_effort": metadata.get("reasoning_effort"),
             "source": "builtin",
         }
 
@@ -86,6 +90,10 @@ def list_agent_profiles() -> List[Dict[str, Any]]:
                 "name": name,
                 "description": metadata.get("description"),
                 "model": metadata.get("model"),
+                "provider": metadata.get("provider"),
+                "role": metadata.get("role"),
+                "tags": metadata.get("tags"),
+                "reasoning_effort": metadata.get("reasoning_effort"),
                 "source": "local",
             }
 
@@ -100,7 +108,7 @@ def get_agent_profile(agent_name: str, *, include_prompt: bool = False) -> Dict[
         include_prompt: If true, include the profile's `system_prompt` content.
     """
     profile = load_agent_profile(agent_name)
-    data: Dict[str, Any] = profile.model_dump(exclude_none=True)
+    data: Dict[str, Any] = profile.model_dump(exclude_none=True, mode="json")
     if not include_prompt:
         data.pop("system_prompt", None)
 

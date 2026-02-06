@@ -1,8 +1,11 @@
 """Agent profile models."""
 
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from cli_agent_orchestrator.models.provider import ProviderType
 
 
 class McpServer(BaseModel):
@@ -18,9 +21,23 @@ class McpServer(BaseModel):
 class AgentProfile(BaseModel):
     """Agent profile configuration with Q CLI agent fields."""
 
+    model_config = ConfigDict(use_enum_values=True)
+
     name: str
     description: str
     system_prompt: Optional[str] = None  # The markdown content
+
+    # Worker-pool routing metadata (optional)
+    provider: Optional[ProviderType] = None
+    role: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+    class ReasoningEffort(str, Enum):
+        LOW = "low"
+        MEDIUM = "medium"
+        HIGH = "high"
+
+    reasoning_effort: Optional[ReasoningEffort] = None
 
     # Q CLI agent fields (all optional, will be passed through to JSON)
     prompt: Optional[str] = None
