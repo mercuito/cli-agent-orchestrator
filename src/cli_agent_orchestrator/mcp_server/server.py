@@ -31,7 +31,7 @@ mcp = FastMCP(
 
     ## Best Practices
 
-    - Use specific agent profiles and providers
+    - Use specific agent profiles (provider is inferred from profile metadata when set)
     - Provide clear and concise messages
     - Ensure you're running within a CAO terminal (CAO_TERMINAL_ID must be set)
     """,
@@ -53,7 +53,8 @@ def _create_terminal(
     Raises:
         Exception: If terminal creation fails
     """
-    provider = DEFAULT_PROVIDER
+    profile = agent_profiles_utils.load_agent_profile(agent_profile)
+    chosen_provider = getattr(profile.provider, "value", profile.provider)
 
     # Get current terminal ID from environment
     current_terminal_id = os.environ.get("CAO_TERMINAL_ID")
@@ -63,8 +64,11 @@ def _create_terminal(
         response.raise_for_status()
         terminal_metadata = response.json()
 
-        provider = terminal_metadata["provider"]
+        conductor_provider = terminal_metadata["provider"]
         session_name = terminal_metadata["session_name"]
+
+        if chosen_provider is None:
+            chosen_provider = conductor_provider
 
         # If no working_directory specified, get conductor's current directory
         if working_directory is None:
@@ -86,7 +90,7 @@ def _create_terminal(
                 )
 
         # Create new terminal in existing session - always pass working_directory
-        params = {"provider": provider, "agent_profile": agent_profile}
+        params = {"provider": chosen_provider, "agent_profile": agent_profile}
         if working_directory:
             params["working_directory"] = working_directory
 
@@ -95,9 +99,11 @@ def _create_terminal(
         terminal = response.json()
     else:
         # Create new session with terminal
+        if chosen_provider is None:
+            chosen_provider = DEFAULT_PROVIDER
         session_name = generate_session_name()
         params = {
-            "provider": provider,
+            "provider": chosen_provider,
             "agent_profile": agent_profile,
             "session_name": session_name,
         }
@@ -108,7 +114,7 @@ def _create_terminal(
         response.raise_for_status()
         terminal = response.json()
 
-    return terminal["id"], provider
+    return terminal["id"], chosen_provider
 
 
 def _send_direct_input(terminal_id: str, message: str) -> None:
@@ -245,7 +251,7 @@ if ENABLE_WORKING_DIRECTORY:
 
         Use this tool to hand off tasks to another agent and wait for the results.
         The tool will:
-        1. Create a new terminal with the specified agent profile and provider
+        1. Create a new terminal with the specified agent profile (provider inferred from profile/caller/default)
         2. Set the working directory for the terminal (defaults to supervisor's cwd)
         3. Send the message to the terminal
         4. Monitor until completion
@@ -299,7 +305,7 @@ else:
 
         Use this tool to hand off tasks to another agent and wait for the results.
         The tool will:
-        1. Create a new terminal with the specified agent profile and provider
+        1. Create a new terminal with the specified agent profile (provider inferred from profile/caller/default)
         2. Send the message to the terminal (starts in supervisor's current directory)
         3. Monitor until completion
         4. Return the agent's response

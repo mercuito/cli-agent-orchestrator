@@ -215,6 +215,14 @@ Each agent terminal is assigned a unique `CAO_TERMINAL_ID` environment variable.
 
 When an agent calls an MCP tool, the server identifies the caller by their `CAO_TERMINAL_ID` and orchestrates accordingly.
 
+### Provider Selection (Assign/Handoff)
+
+When `handoff`/`assign` spawns a worker terminal, CAO determines which provider to use:
+
+1. If the agent profile frontmatter sets `provider: ...`, that provider is used.
+2. Otherwise, if `CAO_TERMINAL_ID` is set (tool called from inside a CAO terminal), the worker inherits the caller's provider.
+3. Otherwise, CAO uses `DEFAULT_PROVIDER`.
+
 ### Orchestration Modes
 
 CAO supports three orchestration patterns:

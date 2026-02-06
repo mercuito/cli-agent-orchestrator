@@ -28,7 +28,7 @@ Policy: any task that changes code requires reviewer gate before it is considere
   - `src/.../mcp_server/...` new tools
   - unit tests for tool outputs
 
-### T03 — Cross-provider dispatch for `assign`/`handoff`
+### T03 — Cross-provider dispatch for `assign`/`handoff` (DONE)
 
 - owner_role: developer
 - dispatch_mode: handoff
