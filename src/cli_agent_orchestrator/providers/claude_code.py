@@ -55,6 +55,9 @@ class ClaudeCodeProvider(BaseProvider):
             try:
                 profile = load_agent_profile(self._agent_profile)
 
+                if profile.reasoning_effort is not None:
+                    command_parts.extend(["--reasoning-effort", str(profile.reasoning_effort)])
+
                 # Add system prompt - escape newlines to prevent tmux chunking issues
                 system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
                 if system_prompt:

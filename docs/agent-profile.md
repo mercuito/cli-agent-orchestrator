@@ -27,7 +27,7 @@ Define the agent's role, responsibilities, and behavior here.
 - `provider` (string): Provider used when spawning this profile (`q_cli`, `kiro_cli`, `claude_code`, `codex`)
 - `role` (string): Routing role label for orchestration (e.g., `orchestrator`, `developer`, `reviewer`, `researcher`)
 - `tags` (array): Routing tags for orchestration (e.g., `["security", "python"]`)
-- `reasoning_effort` (string): Canonical reasoning effort knob (`low`, `medium`, `high`). Providers may ignore if unsupported.
+- `reasoning_effort` (string): Canonical reasoning effort knob (`low`, `medium`, `high`). Codex maps this to `model_reasoning_effort`; Claude Code maps this to `--reasoning-effort` when set.
 - `mcpServers` (object): MCP server configurations for additional tools
 - `tools` (array): List of allowed tools, use `["*"]` for all
 - `allowedTools` (array): Whitelist of tools (e.g., `["@builtin", "@cao-mcp-server"]`)
