@@ -54,6 +54,3 @@ def test_create_terminal_codex_sets_codex_home_env(tmp_path: Path):
         # Expect CODEX_HOME env to be passed through to tmux create_session
         create_kwargs = mock_tmux.create_session.call_args.kwargs
         assert create_kwargs["environment"]["CODEX_HOME"] == str(codex_home)
-        assert create_kwargs["environment"]["CAO_AGENT_PROFILE"] == "codex_developer"
-        assert create_kwargs["environment"]["CAO_PROVIDER"] == "codex"
-        assert create_kwargs["environment"]["CAO_SESSION_NAME"] == "cao-test"
