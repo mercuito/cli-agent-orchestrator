@@ -58,9 +58,9 @@ class TmuxClient:
             working_directory = self._resolve_and_validate_working_directory(working_directory)
 
             base_environment = os.environ.copy()
-            base_environment["CAO_TERMINAL_ID"] = terminal_id
             if environment:
                 base_environment.update(environment)
+            base_environment["CAO_TERMINAL_ID"] = terminal_id
 
             session = self.server.new_session(
                 session_name=session_name,
@@ -99,7 +99,7 @@ class TmuxClient:
             window = session.new_window(
                 window_name=window_name,
                 start_directory=working_directory,
-                environment={**({"CAO_TERMINAL_ID": terminal_id}), **(environment or {})},
+                environment={**(environment or {}), "CAO_TERMINAL_ID": terminal_id},
             )
 
             logger.info(

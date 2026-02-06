@@ -51,21 +51,26 @@ def create_terminal(
         if not session_name:
             session_name = generate_session_name()
 
-        window_name = generate_window_name(agent_profile)
-
-        env: Optional[Dict[str, str]] = None
-        if provider == ProviderType.CODEX.value:
-            # Prepare per-terminal Codex home directory and inject CODEX_HOME for this window.
-            workdir = os.path.realpath(working_directory or os.getcwd())
-            codex_home = prepare_codex_home(terminal_id, agent_profile, workdir)
-            env = {"CODEX_HOME": str(codex_home)}
-            created_codex_home = True
-
         if new_session:
             # Apply SESSION_PREFIX if not already present
             if not session_name.startswith(SESSION_PREFIX):
                 session_name = f"{SESSION_PREFIX}{session_name}"
 
+        window_name = generate_window_name(agent_profile)
+
+        env: Dict[str, str] = {
+            "CAO_AGENT_PROFILE": agent_profile,
+            "CAO_PROVIDER": provider,
+            "CAO_SESSION_NAME": session_name,
+        }
+        if provider == ProviderType.CODEX.value:
+            # Prepare per-terminal Codex home directory and inject CODEX_HOME for this window.
+            workdir = os.path.realpath(working_directory or os.getcwd())
+            codex_home = prepare_codex_home(terminal_id, agent_profile, workdir)
+            env["CODEX_HOME"] = str(codex_home)
+            created_codex_home = True
+
+        if new_session:
             # Check if session already exists
             if tmux_client.session_exists(session_name):
                 raise ValueError(f"Session '{session_name}' already exists")

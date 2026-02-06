@@ -109,6 +109,7 @@ class TestTmuxClientWorkingDirectory:
         self.mock_server.new_session.assert_called_once()
         call_args = self.mock_server.new_session.call_args
         assert call_args[1]["start_directory"] == "/test/dir"
+        assert call_args[1]["environment"]["CAO_TERMINAL_ID"] == "terminal-1"
 
     def test_create_session_defaults_working_directory(self):
         """Test create_session with None working_directory."""
@@ -152,6 +153,57 @@ class TestTmuxClientWorkingDirectory:
         mock_session.new_window.assert_called_once()
         call_args = mock_session.new_window.call_args
         assert call_args[1]["start_directory"] == "/test/dir"
+        assert call_args[1]["environment"]["CAO_TERMINAL_ID"] == "terminal-1"
+
+    def test_create_session_merges_environment(self):
+        """Test create_session sets CAO_TERMINAL_ID and merges extra environment."""
+        mock_session = Mock()
+        mock_window = Mock()
+        mock_window.name = "test-window"
+        mock_session.windows = [mock_window]
+
+        self.mock_server.new_session.return_value = mock_session
+
+        client = TmuxClient()
+        with patch("os.path.isdir", return_value=True):
+            with patch("os.path.realpath", return_value="/test/dir"):
+                client.create_session(
+                    "test-session",
+                    "test-window",
+                    "terminal-1",
+                    "/test/dir",
+                    environment={"CAO_AGENT_PROFILE": "developer", "CAO_TERMINAL_ID": "nope"},
+                )
+
+        call_args = self.mock_server.new_session.call_args
+        env = call_args[1]["environment"]
+        assert env["CAO_TERMINAL_ID"] == "terminal-1"
+        assert env["CAO_AGENT_PROFILE"] == "developer"
+
+    def test_create_window_merges_environment(self):
+        """Test create_window sets CAO_TERMINAL_ID and merges extra environment."""
+        mock_session = Mock()
+        mock_window = Mock()
+        mock_window.name = "test-window"
+
+        self.mock_server.sessions.get.return_value = mock_session
+        mock_session.new_window.return_value = mock_window
+
+        client = TmuxClient()
+        with patch("os.path.isdir", return_value=True):
+            with patch("os.path.realpath", return_value="/test/dir"):
+                client.create_window(
+                    "test-session",
+                    "test-window",
+                    "terminal-1",
+                    "/test/dir",
+                    environment={"CAO_AGENT_PROFILE": "developer", "CAO_TERMINAL_ID": "nope"},
+                )
+
+        call_args = mock_session.new_window.call_args
+        env = call_args[1]["environment"]
+        assert env["CAO_TERMINAL_ID"] == "terminal-1"
+        assert env["CAO_AGENT_PROFILE"] == "developer"
 
     def test_get_pane_working_directory_window_not_found(self):
         """Test returns None when window not found."""
