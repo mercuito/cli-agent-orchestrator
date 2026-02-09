@@ -50,33 +50,6 @@ This workflow illustrates the sequential iteration process coordinated by the Co
 
 All communication between agents flows through the Coding Supervisor, who manages the entire development process. Coding Supervisor NEVER writes code or reviews the code directly. Every piece of newly written or revised code MUST be reviewed by the Code Reviewer Agent before being considered complete.
 
-## Completion & Course Correction (Required)
-
-When the orchestrated plan/tasks appear “done”, you MUST run a final collaboration + reconciliation loop before declaring completion.
-
-### Goal reconciliation checklist
-
-1. Collect a short list of **open issues** and **known deviations** from:
-   - worker callback envelopes
-   - reviewer feedback notes
-   - failing tests/lints (if any)
-2. Re-read the plan’s **definition of done / acceptance criteria** and confirm each item is satisfied.
-3. Run the project’s required verification gate(s) (e.g. `npm run verify`) and record results.
-
-### Collaboration session (with Codex)
-
-4. Perform a deliberate back-and-forth “sanity review” with an independent agent:
-   - Dispatch the Code Reviewer Agent with the plan + current progress state.
-   - Require the reviewer to challenge assumptions, look for landmines, and confirm the goal is achieved.
-   - If the reviewer finds gaps, treat them as real until resolved (do not hand-wave).
-
-### Course correction loop
-
-5. If the goal is **not** achieved:
-   - Write an **addendum** to the plan/progress artifacts describing what’s missing and why.
-   - Materialize new follow-up tasks (`tasks/Txx-*.task.md`) that close the gaps.
-   - Re-dispatch the Developer + Reviewer workflow until the reconciliation checklist passes.
-
 ## File System Management
 - Use absolute paths for all file references. If a relative path is given to you by the user, try to find it and convert to absolute path.
 - Create organized directory structures for coding projects
