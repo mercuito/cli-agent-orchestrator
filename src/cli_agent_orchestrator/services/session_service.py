@@ -1,4 +1,23 @@
-"""Session service for session-level operations."""
+"""Session service for session-level operations.
+
+This module provides session management functionality for CAO, where a "session"
+corresponds to a tmux session that may contain multiple terminal windows (agents).
+
+Session Hierarchy:
+- Session: A tmux session (e.g., "cao-my-project")
+  - Terminal: A tmux window within the session (e.g., "developer-abc123")
+    - Provider: The CLI agent running in the terminal (e.g., KiroCliProvider)
+
+Key Operations:
+- list_sessions(): Get all CAO-managed sessions (filtered by SESSION_PREFIX)
+- get_session(): Get session details including all terminal metadata
+- delete_session(): Clean up session, providers, database records, and tmux session
+
+Session Lifecycle:
+1. create_terminal() with new_session=True creates a new tmux session
+2. Additional terminals are added via create_terminal() with new_session=False
+3. delete_session() removes the entire session and all contained terminals
+"""
 
 import logging
 from typing import Dict, List
@@ -45,17 +64,25 @@ def get_session(session_name: str) -> Dict:
         raise
 
 
-def delete_session(session_name: str) -> bool:
-    """Delete session and cleanup."""
+def delete_session(session_name: str) -> Dict:
+    """Delete session and cleanup.
+
+    Returns:
+        Dict with 'deleted' (list of deleted session names) and 'errors' (list of error dicts).
+    """
+    result: Dict = {"deleted": [], "errors": []}
     try:
         if not tmux_client.session_exists(session_name):
             raise ValueError(f"Session '{session_name}' not found")
 
         terminals = list_terminals_by_session(session_name)
 
-        # Cleanup providers
+        # Cleanup providers (non-blocking — don't let failures stop deletion)
         for terminal in terminals:
-            provider_manager.cleanup_provider(terminal["id"])
+            try:
+                provider_manager.cleanup_provider(terminal["id"])
+            except Exception as e:
+                logger.warning(f"Provider cleanup failed for {terminal['id']}: {e}")
             try:
                 cleanup_codex_home(terminal["id"])
             except Exception as e:
@@ -69,8 +96,9 @@ def delete_session(session_name: str) -> bool:
         # Delete terminal metadata
         delete_terminals_by_session(session_name)
 
+        result["deleted"].append(session_name)
         logger.info(f"Deleted session: {session_name}")
-        return True
+        return result
 
     except Exception as e:
         logger.error(f"Failed to delete session {session_name}: {e}")

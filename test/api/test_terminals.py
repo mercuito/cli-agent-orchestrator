@@ -1,18 +1,12 @@
-"""Tests for terminal-related API endpoints including working directory."""
+"""Tests for terminal-related API endpoints including working directory and exit."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from cli_agent_orchestrator.api.main import app
 from cli_agent_orchestrator.models.terminal import Terminal
-
-
-@pytest.fixture
-def client():
-    """Create a test client."""
-    return TestClient(app)
 
 
 class TestWorkingDirectoryEndpoint:
@@ -129,7 +123,13 @@ class TestTerminalCreationWithWorkingDirectory:
 
     def test_create_terminal_passes_working_directory(self, client, tmp_path):
         """Test that working_directory parameter is passed to service."""
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+        with (
+            patch(
+                "cli_agent_orchestrator.api.main.resolve_provider",
+                side_effect=lambda _, fallback_provider: fallback_provider,
+            ),
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
             mock_svc.create_terminal.return_value = Terminal(
                 id="abcd5678",
                 name="test-window",
@@ -153,7 +153,13 @@ class TestTerminalCreationWithWorkingDirectory:
 
     def test_create_terminal_in_session_with_working_directory(self, client):
         """Test POST /sessions/{session}/terminals with working_directory."""
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+        with (
+            patch(
+                "cli_agent_orchestrator.api.main.resolve_provider",
+                side_effect=lambda _, fallback_provider: fallback_provider,
+            ),
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
             mock_svc.create_terminal.return_value = Terminal(
                 id="abcd5678",
                 name="test-window",
@@ -174,3 +180,333 @@ class TestTerminalCreationWithWorkingDirectory:
             assert response.status_code == 201
             call_kwargs = mock_svc.create_terminal.call_args.kwargs
             assert call_kwargs.get("working_directory") == "/session/path"
+
+
+class TestExitTerminalEndpoint:
+    """Test POST /terminals/{terminal_id}/exit endpoint.
+
+    Verifies that text commands (e.g., /exit) are sent via send_input()
+    and tmux special key sequences (e.g., C-d) are sent via send_special_key().
+    """
+
+    def test_exit_terminal_text_command(self, client):
+        """Text exit commands (e.g., /exit) should use send_input."""
+        mock_provider = MagicMock()
+        mock_provider.exit_cli.return_value = "/exit"
+
+        with (
+            patch("cli_agent_orchestrator.api.main.provider_manager") as mock_pm,
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
+            mock_pm.get_provider.return_value = mock_provider
+
+            response = client.post("/terminals/abcd1234/exit")
+
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            mock_svc.send_input.assert_called_once_with("abcd1234", "/exit")
+            mock_svc.send_special_key.assert_not_called()
+
+    def test_exit_terminal_special_key(self, client):
+        """Tmux key sequences (e.g., C-d) should use send_special_key."""
+        mock_provider = MagicMock()
+        mock_provider.exit_cli.return_value = "C-d"
+
+        with (
+            patch("cli_agent_orchestrator.api.main.provider_manager") as mock_pm,
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
+            mock_pm.get_provider.return_value = mock_provider
+
+            response = client.post("/terminals/abcd1234/exit")
+
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            mock_svc.send_special_key.assert_called_once_with("abcd1234", "C-d")
+            mock_svc.send_input.assert_not_called()
+
+    def test_exit_terminal_meta_key(self, client):
+        """Meta key sequences (M-x) should also use send_special_key."""
+        mock_provider = MagicMock()
+        mock_provider.exit_cli.return_value = "M-x"
+
+        with (
+            patch("cli_agent_orchestrator.api.main.provider_manager") as mock_pm,
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
+            mock_pm.get_provider.return_value = mock_provider
+
+            response = client.post("/terminals/abcd1234/exit")
+
+            assert response.status_code == 200
+            mock_svc.send_special_key.assert_called_once_with("abcd1234", "M-x")
+            mock_svc.send_input.assert_not_called()
+
+    def test_exit_terminal_provider_not_found(self, client):
+        """Should return 404 when provider is not found."""
+        with patch("cli_agent_orchestrator.api.main.provider_manager") as mock_pm:
+            mock_pm.get_provider.side_effect = ValueError("Terminal not found in database")
+
+            response = client.post("/terminals/deadbeef/exit")
+
+            assert response.status_code == 404
+
+    def test_exit_terminal_server_error(self, client):
+        """Should return 500 on unexpected errors."""
+        mock_provider = MagicMock()
+        mock_provider.exit_cli.return_value = "/exit"
+
+        with (
+            patch("cli_agent_orchestrator.api.main.provider_manager") as mock_pm,
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
+            mock_pm.get_provider.return_value = mock_provider
+            mock_svc.send_input.side_effect = RuntimeError("TMux error")
+
+            response = client.post("/terminals/abcd1234/exit")
+
+            assert response.status_code == 500
+            assert "Failed to exit terminal" in response.json()["detail"]
+
+    def test_exit_terminal_provider_returns_none(self, client):
+        """Should return 404 when get_provider returns None (not ValueError)."""
+        with patch("cli_agent_orchestrator.api.main.provider_manager") as mock_pm:
+            mock_pm.get_provider.return_value = None
+
+            response = client.post("/terminals/deadbeef/exit")
+
+            assert response.status_code == 404
+            assert "Provider not found" in response.json()["detail"]
+
+
+class TestDeleteTerminalEndpoint:
+    """Test DELETE /terminals/{terminal_id} endpoint."""
+
+    def test_delete_terminal_success(self, client):
+        """DELETE /terminals/{terminal_id} deletes and returns success."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.delete_terminal.return_value = True
+
+            response = client.delete("/terminals/abcd1234")
+
+            assert response.status_code == 200
+            assert response.json() == {"success": True}
+            mock_svc.delete_terminal.assert_called_once_with("abcd1234")
+
+    def test_delete_terminal_not_found(self, client):
+        """DELETE /terminals/{terminal_id} returns 404 for missing terminal."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.delete_terminal.side_effect = ValueError("Terminal not found")
+
+            response = client.delete("/terminals/deadbeef")
+
+            assert response.status_code == 404
+
+    def test_delete_terminal_server_error(self, client):
+        """DELETE /terminals/{terminal_id} returns 500 on internal error."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.delete_terminal.side_effect = Exception("TMux error")
+
+            response = client.delete("/terminals/abcd1234")
+
+            assert response.status_code == 500
+            assert "Failed to delete terminal" in response.json()["detail"]
+
+
+class TestCreateInboxMessageEndpoint:
+    """Test POST /terminals/{receiver_id}/inbox/messages endpoint."""
+
+    def test_create_inbox_message_success(self, client):
+        """POST creates an inbox message and returns success."""
+        mock_msg = MagicMock()
+        mock_msg.id = 1
+        mock_msg.sender_id = "sender1"
+        mock_msg.receiver_id = "abcd1234"
+        mock_msg.created_at.isoformat.return_value = "2026-03-13T12:00:00"
+
+        with (
+            patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create,
+            patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
+        ):
+            mock_create.return_value = mock_msg
+
+            response = client.post(
+                "/terminals/abcd1234/inbox/messages",
+                params={"sender_id": "sender1", "message": "hello"},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["message_id"] == 1
+            assert data["sender_id"] == "sender1"
+
+    def test_create_inbox_message_delivery_failure_still_succeeds(self, client):
+        """Immediate delivery failure should not fail the API response."""
+        mock_msg = MagicMock()
+        mock_msg.id = 2
+        mock_msg.sender_id = "sender1"
+        mock_msg.receiver_id = "abcd1234"
+        mock_msg.created_at.isoformat.return_value = "2026-03-13T12:00:00"
+
+        with (
+            patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create,
+            patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
+        ):
+            mock_create.return_value = mock_msg
+            mock_inbox.check_and_send_pending_messages.side_effect = Exception("TMux busy")
+
+            response = client.post(
+                "/terminals/abcd1234/inbox/messages",
+                params={"sender_id": "sender1", "message": "hello"},
+            )
+
+            assert response.status_code == 200
+            assert response.json()["success"] is True
+
+    def test_create_inbox_message_not_found(self, client):
+        """POST returns 404 when terminal not found."""
+        with patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create:
+            mock_create.side_effect = ValueError("Terminal not found")
+
+            response = client.post(
+                "/terminals/deadbeef/inbox/messages",
+                params={"sender_id": "sender1", "message": "hello"},
+            )
+
+            assert response.status_code == 404
+
+    def test_create_inbox_message_server_error(self, client):
+        """POST returns 500 on internal error."""
+        with patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create:
+            mock_create.side_effect = Exception("DB error")
+
+            response = client.post(
+                "/terminals/abcd1234/inbox/messages",
+                params={"sender_id": "sender1", "message": "hello"},
+            )
+
+            assert response.status_code == 500
+            assert "Failed to create inbox message" in response.json()["detail"]
+
+
+class TestWebSocketLocalhostRestriction:
+    """Test that WebSocket endpoint rejects non-loopback clients."""
+
+    def test_websocket_rejects_non_loopback(self, client):
+        """WebSocket should close with 4003 for non-localhost clients."""
+        # TestClient uses "testclient" as host, which is not in the allowlist
+        with pytest.raises(Exception):
+            with client.websocket_connect("/terminals/abcd1234/ws"):
+                pass
+
+
+class TestCrossProviderResolution:
+    """Test that create_terminal_in_session resolves provider from agent profile
+    while create_session always uses the explicit provider parameter."""
+
+    def test_create_terminal_uses_profile_provider(self, client):
+        """create_terminal_in_session should resolve provider from agent profile."""
+        with (
+            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
+            mock_resolve.return_value = "claude_code"
+            mock_svc.create_terminal.return_value = Terminal(
+                id="abcd1234",
+                name="test-window",
+                session_name="test-session",
+                provider="claude_code",
+                agent_profile="developer",
+            )
+
+            response = client.post(
+                "/sessions/test-session/terminals",
+                params={
+                    "provider": "kiro_cli",
+                    "agent_profile": "developer",
+                },
+            )
+
+            assert response.status_code == 201
+            # Verify resolve_provider was called with the fallback
+            mock_resolve.assert_called_once_with("developer", fallback_provider="kiro_cli")
+            # Verify terminal_service got the resolved provider
+            call_kwargs = mock_svc.create_terminal.call_args.kwargs
+            assert call_kwargs["provider"] == "claude_code"
+
+    def test_create_terminal_falls_back_when_no_profile_provider(self, client):
+        """create_terminal_in_session should use fallback when profile has no provider."""
+        with (
+            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
+            # resolve_provider returns the fallback (no profile provider key)
+            mock_resolve.return_value = "kiro_cli"
+            mock_svc.create_terminal.return_value = Terminal(
+                id="abcd5678",
+                name="test-window",
+                session_name="test-session",
+                provider="kiro_cli",
+                agent_profile="reviewer",
+            )
+
+            response = client.post(
+                "/sessions/test-session/terminals",
+                params={
+                    "provider": "kiro_cli",
+                    "agent_profile": "reviewer",
+                },
+            )
+
+            assert response.status_code == 201
+            call_kwargs = mock_svc.create_terminal.call_args.kwargs
+            assert call_kwargs["provider"] == "kiro_cli"
+
+    def test_create_session_does_not_resolve_provider(self, client):
+        """create_session should NOT call resolve_provider — CLI flag is the override."""
+        with (
+            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
+            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
+        ):
+            mock_svc.create_terminal.return_value = Terminal(
+                id="abcd1234",
+                name="test-window",
+                session_name="test-session",
+                provider="kiro_cli",
+                agent_profile="supervisor",
+            )
+
+            response = client.post(
+                "/sessions",
+                params={
+                    "provider": "kiro_cli",
+                    "agent_profile": "supervisor",
+                },
+            )
+
+            assert response.status_code == 201
+            # resolve_provider should NOT have been called
+            mock_resolve.assert_not_called()
+            # terminal_service should get the raw provider param
+            call_kwargs = mock_svc.create_terminal.call_args.kwargs
+            assert call_kwargs["provider"] == "kiro_cli"
+
+    def test_create_terminal_returns_500_on_resolve_error(self, client):
+        """Internal errors during provider resolution should return 500."""
+        with (
+            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
+            patch("cli_agent_orchestrator.api.main.terminal_service"),
+        ):
+            mock_resolve.side_effect = Exception("Unexpected filesystem error")
+
+            response = client.post(
+                "/sessions/test-session/terminals",
+                params={
+                    "provider": "kiro_cli",
+                    "agent_profile": "developer",
+                },
+            )
+
+            assert response.status_code == 500
+            assert "Failed to create terminal" in response.json()["detail"]

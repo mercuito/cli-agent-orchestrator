@@ -2,8 +2,8 @@
 
 import json
 import shutil
-import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -11,6 +11,7 @@ import pytest
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.q_cli import QCliProvider
+from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 # Mark all tests in this module as integration and slow
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
@@ -59,8 +60,6 @@ def ensure_test_agent(q_cli_available):
 @pytest.fixture
 def test_session_name():
     """Generate a unique test session name."""
-    import uuid
-
     return f"test-q-cli-{uuid.uuid4().hex[:8]}"
 
 
@@ -418,32 +417,45 @@ class TestQCliProviderHandoffIntegration:
 class TestQCliProviderWorkingDirectory:
     """Integration tests for working directory functionality."""
 
-    def test_session_starts_in_custom_directory(self, test_session_name, cleanup_session, tmp_path):
+    @pytest.fixture
+    def home_tmp_path(self):
+        """Create a temporary directory inside home directory to pass path validation."""
+        path = Path.home() / f".cao_test_tmp_{uuid.uuid4().hex[:8]}"
+        path.mkdir(parents=True, exist_ok=True)
+        yield path
+        shutil.rmtree(path, ignore_errors=True)
+
+    def test_session_starts_in_custom_directory(
+        self, test_session_name, cleanup_session, home_tmp_path
+    ):
         """Test that terminal starts in specified working directory."""
         # Create session with custom working directory
         window_name = tmux_client.create_session(
-            test_session_name, "test-window", "test-term-id", working_directory=str(tmp_path)
+            test_session_name, "test-window", "test-term-id", working_directory=str(home_tmp_path)
         )
 
         # Query the working directory
         actual_dir = tmux_client.get_pane_working_directory(test_session_name, window_name)
 
-        assert actual_dir == str(tmp_path.resolve())
+        assert actual_dir == str(home_tmp_path.resolve())
 
     def test_working_directory_changes_are_detected(
-        self, test_session_name, cleanup_session, tmp_path
+        self, test_session_name, cleanup_session, home_tmp_path
     ):
         """Test that directory changes in terminal are detected."""
         # Create session
         window_name = tmux_client.create_session(
-            test_session_name, "test-window", "test-term-id", working_directory=str(tmp_path)
+            test_session_name, "test-window", "test-term-id", working_directory=str(home_tmp_path)
         )
 
         # Create subdirectory
-        subdir = tmp_path / "subdir"
+        subdir = home_tmp_path / "subdir"
         subdir.mkdir()
 
         # Change directory in tmux pane
+        # wait_for_shell ensures shell is initialized before sending commands
+        # (paste-buffer delivery is instant, so shell must be ready first)
+        wait_for_shell(tmux_client, test_session_name, window_name, timeout=10.0)
         tmux_client.send_keys(test_session_name, window_name, f"cd {subdir}")
         time.sleep(0.5)  # Wait for command to execute
 
@@ -452,12 +464,12 @@ class TestQCliProviderWorkingDirectory:
 
         assert actual_dir == str(subdir.resolve())
 
-    def test_symlink_resolution(self, test_session_name, cleanup_session, tmp_path):
+    def test_symlink_resolution(self, test_session_name, cleanup_session, home_tmp_path):
         """Test that symlinks are resolved to real paths."""
         # Create real directory and symlink
-        real_dir = tmp_path / "real"
+        real_dir = home_tmp_path / "real"
         real_dir.mkdir()
-        link_dir = tmp_path / "link"
+        link_dir = home_tmp_path / "link"
         link_dir.symlink_to(real_dir)
 
         # Create session with symlink path

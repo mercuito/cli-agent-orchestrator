@@ -17,13 +17,63 @@ Check if the server is running.
 
 ---
 
+## Providers
+
+### GET /agents/providers
+List available providers with installation status.
+
+**Response:** Array of provider objects
+```json
+[
+  {
+    "name": "kiro_cli",
+    "binary": "kiro-cli",
+    "installed": true
+  },
+  {
+    "name": "claude_code",
+    "binary": "claude",
+    "installed": true
+  },
+  {
+    "name": "q_cli",
+    "binary": "q",
+    "installed": false
+  },
+  {
+    "name": "codex",
+    "binary": "codex",
+    "installed": true
+  },
+  {
+    "name": "gemini_cli",
+    "binary": "gemini",
+    "installed": true
+  },
+  {
+    "name": "kimi_cli",
+    "binary": "kimi",
+    "installed": false
+  },
+  {
+    "name": "copilot_cli",
+    "binary": "copilot",
+    "installed": false
+  }
+]
+```
+
+**Note:** The `installed` field checks if the provider binary is available in the system PATH via `shutil.which()`.
+
+---
+
 ## Sessions
 
 ### POST /sessions
 Create a new session with one terminal.
 
 **Parameters:**
-- `provider` (string, required): Provider type ("q_cli" or "claude_code")
+- `provider` (string, required): Provider type ("kiro_cli", "claude_code", "codex", "gemini_cli", "kimi_cli", "copilot_cli", or "q_cli")
 - `agent_profile` (string, required): Agent profile name
 - `session_name` (string, optional): Custom session name
 - `working_directory` (string, optional): Working directory for the agent session
@@ -79,7 +129,7 @@ Get terminal details.
 {
   "id": "string",
   "name": "string",
-  "provider": "q_cli|claude_code",
+  "provider": "kiro_cli|claude_code|codex|gemini_cli|kimi_cli|copilot_cli|q_cli",
   "session_name": "string",
   "agent_profile": "string",
   "status": "idle|processing|completed|waiting_user_answer|error",
@@ -128,6 +178,21 @@ Get the current working directory of a terminal's pane.
 
 ### POST /terminals/{terminal_id}/exit
 Send provider-specific exit command to terminal.
+
+**Behavior:**
+- Calls the provider's `exit_cli()` method to get the exit command
+- Text commands (e.g., `/exit`, `quit`) are sent as literal text via `send_input()`
+- Key sequences prefixed with `C-` or `M-` (e.g., `C-d` for Ctrl+D) are sent as tmux key sequences via `send_special_key()`, which tmux interprets as actual key presses
+
+| Provider | Exit Command | Type |
+|----------|-------------|------|
+| kiro_cli | `/exit` | Text |
+| claude_code | `/exit` | Text |
+| codex | `/exit` | Text |
+| gemini_cli | `/exit` | Text |
+| kimi_cli | `/exit` | Text |
+| copilot_cli | `/exit` | Text |
+| q_cli | `/exit` | Text |
 
 **Response:**
 ```json
@@ -193,4 +258,3 @@ Error response format:
 ```
 
 ---
-

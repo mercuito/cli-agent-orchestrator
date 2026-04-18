@@ -2,7 +2,8 @@
 
 import logging
 import re
-from typing import List, Optional
+import shlex
+from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -17,7 +18,6 @@ ANSI_CODE_PATTERN = r"\x1b\[[0-9;]*m"
 ESCAPE_SEQUENCE_PATTERN = r"\[[?0-9;]*[a-zA-Z]"
 CONTROL_CHAR_PATTERN = r"[\x00-\x1f\x7f-\x9f]"
 BELL_CHAR = "\x07"
-GENERIC_PROMPT_PATTERN = r"\x1b\[38;5;13m>\s*\x1b\[39m\s*$"
 IDLE_PROMPT_PATTERN_LOG = r"\x1b\[38;5;13m>\s*\x1b\[39m"
 
 # Error indicators
@@ -27,20 +27,26 @@ ERROR_INDICATORS = ["Amazon Q is having trouble responding right now"]
 class QCliProvider(BaseProvider):
     """Provider for Q CLI tool integration."""
 
-    def __init__(self, terminal_id: str, session_name: str, window_name: str, agent_profile: str):
-        super().__init__(terminal_id, session_name, window_name)
+    def __init__(
+        self,
+        terminal_id: str,
+        session_name: str,
+        window_name: str,
+        agent_profile: str,
+        allowed_tools: Optional[list] = None,
+    ):
+        super().__init__(terminal_id, session_name, window_name, allowed_tools)
         # TODO: remove the ._initialized if it's not referenced anywhere
         self._initialized = False
         self._agent_profile = agent_profile
         # Create dynamic prompt pattern based on agent profile (ANSI-free)
         # Matches: [agent] !> or [agent] > or [agent] X% > or [agent] λ > or [agent] X% λ >
         # after ANSI codes are stripped
+        # Also matches with trailing text like "How can I help?"
         self._idle_prompt_pattern = (
-            rf"\[{re.escape(self._agent_profile)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*[\s\n]*$"
+            rf"\[{re.escape(self._agent_profile)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*"
         )
-        self._permission_prompt_pattern = (
-            r"Allow this action\?.*\[.*y.*\/.*n.*\/.*t.*\]:\s*" + self._idle_prompt_pattern
-        )
+        self._permission_prompt_pattern = r"Allow this action\?.*?\[.*?y.*?/.*?n.*?/.*?t.*?\]:"
 
     def initialize(self) -> bool:
         """Initialize Q CLI provider by starting q chat command."""
@@ -48,10 +54,12 @@ class QCliProvider(BaseProvider):
         if not wait_for_shell(tmux_client, self.session_name, self.window_name, timeout=10.0):
             raise TimeoutError("Shell initialization timed out after 10 seconds")
 
-        command = f"q chat --agent {self._agent_profile}"
+        command = shlex.join(["q", "chat", "--agent", self._agent_profile])
         tmux_client.send_keys(self.session_name, self.window_name, command)
 
-        if not wait_until_status(self, TerminalStatus.IDLE, timeout=30.0):
+        if not wait_until_status(
+            self, {TerminalStatus.IDLE, TerminalStatus.COMPLETED}, timeout=30.0
+        ):
             raise TimeoutError("Q CLI initialization timed out after 30 seconds")
 
         self._initialized = True
@@ -78,14 +86,34 @@ class QCliProvider(BaseProvider):
         if any(indicator.lower() in clean_output.lower() for indicator in ERROR_INDICATORS):
             return TerminalStatus.ERROR
 
-        # Check for permission prompt
-        if re.search(self._permission_prompt_pattern, clean_output, re.MULTILINE | re.DOTALL):
-            return TerminalStatus.WAITING_USER_ANSWER
+        # Check for permission prompt — count lines with idle prompt after last [y/n/t]:
+        # Active prompt: 0-1 lines with idle prompt (CLI renders prompt on next line)
+        # Stale prompt: 2+ lines with idle prompt (user answered, agent continued)
+        # Line-based counting handles \r redraws (same line, no \n) correctly
+        perm_matches = list(re.finditer(self._permission_prompt_pattern, clean_output, re.DOTALL))
+        if perm_matches:
+            after_last_perm = clean_output[perm_matches[-1].end() :]
+            lines_after = after_last_perm.split("\n")
+            idle_lines = sum(
+                1 for line in lines_after if re.search(self._idle_prompt_pattern, line)
+            )
+            if idle_lines <= 1:
+                return TerminalStatus.WAITING_USER_ANSWER
 
-        # Check for completed state (has response + agent prompt)
-        if re.search(GREEN_ARROW_PATTERN, clean_output, re.MULTILINE):
-            logger.debug(f"get_status: returning COMPLETED")
-            return TerminalStatus.COMPLETED
+        # Check for completed state (has response + agent prompt AFTER the response)
+        green_arrows = list(re.finditer(GREEN_ARROW_PATTERN, clean_output, re.MULTILINE))
+        if green_arrows:
+            # Find if there's an idle prompt after the last green arrow
+            last_arrow_pos = green_arrows[-1].end()
+            idle_prompts = list(re.finditer(self._idle_prompt_pattern, clean_output))
+
+            for prompt in idle_prompts:
+                if prompt.start() > last_arrow_pos:
+                    logger.debug(f"get_status: returning COMPLETED")
+                    return TerminalStatus.COMPLETED
+
+            # Has green arrow but no prompt after it - still processing
+            return TerminalStatus.PROCESSING
 
         # Just agent prompt, no response
         return TerminalStatus.IDLE
@@ -105,9 +133,22 @@ class QCliProvider(BaseProvider):
         if not idle_prompts:
             raise ValueError("Incomplete Q CLI response - no final prompt detected")
 
+        # Find the last green arrow (response start)
+        last_arrow_pos = green_arrows[-1].end()
+
+        # Find idle prompt that comes AFTER the last green arrow
+        final_prompt = None
+        for prompt in idle_prompts:
+            if prompt.start() > last_arrow_pos:
+                final_prompt = prompt
+                break
+
+        if not final_prompt:
+            raise ValueError("Incomplete Q CLI response - no final prompt detected after response")
+
         # Extract directly from clean output
-        start_pos = green_arrows[-1].end()
-        end_pos = idle_prompts[-1].start()
+        start_pos = last_arrow_pos
+        end_pos = final_prompt.start()
 
         final_answer = clean_output[start_pos:end_pos].strip()
 
