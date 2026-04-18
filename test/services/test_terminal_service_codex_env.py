@@ -25,7 +25,7 @@ def test_create_terminal_codex_sets_codex_home_env(tmp_path: Path):
         ),
         patch(
             "cli_agent_orchestrator.services.terminal_service.generate_window_name",
-            return_value="codex_developer-0000",
+            return_value="developer-0000",
         ),
         patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal"),
         patch(
@@ -42,7 +42,7 @@ def test_create_terminal_codex_sets_codex_home_env(tmp_path: Path):
 
         terminal = terminal_service.create_terminal(
             provider="codex",
-            agent_profile="codex_developer",
+            agent_profile="developer",
             session_name=None,
             new_session=True,
             working_directory=str(tmp_path),

@@ -10,9 +10,9 @@ def test_load_agent_profile_parses_codex_config(tmp_path: Path):
     local_store = tmp_path / "agent-store"
     local_store.mkdir(parents=True)
 
-    (local_store / "codex_developer.md").write_text(
+    (local_store / "developer.md").write_text(
         """---
-name: codex_developer
+name: developer
 description: Test profile
 codexConfig:
   model_reasoning_effort: high
@@ -23,6 +23,6 @@ You are a test agent.
     )
 
     with patch("cli_agent_orchestrator.utils.agent_profiles.LOCAL_AGENT_STORE_DIR", local_store):
-        profile = load_agent_profile("codex_developer")
+        profile = load_agent_profile("developer")
 
     assert profile.codexConfig == {"model_reasoning_effort": "high"}

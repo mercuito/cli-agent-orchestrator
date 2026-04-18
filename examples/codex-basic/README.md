@@ -34,7 +34,7 @@ This example demonstrates how to use the **Codex CLI provider** for basic AI age
 cao-server
 
 # In another terminal, create a Codex session
-cao launch --agents codex_developer --provider codex
+cao launch --agents developer --provider codex
 ```
 
 ### 2. Send Your First Task
@@ -79,22 +79,19 @@ PY
 
 ## Agent Profiles
 
-The example includes pre-configured agent profiles for different Codex-based tasks:
+Nothing in this example ships its own agent profiles — profiles describe a
+role (developer, reviewer, supervisor), and the provider is a runtime choice.
+Use the built-in profiles CAO ships with and select `--provider codex` at
+launch time:
 
-### 1. Codex Developer (`codex_developer.md`)
-- General programming and development tasks
-- Code writing, debugging, refactoring
-- Language: Python, JavaScript, TypeScript
+| Profile | Role |
+|---|---|
+| `developer` | General programming and development tasks |
+| `reviewer` | Code review, security analysis, best practices |
+| `code_supervisor` | Orchestrates developer + reviewer via `assign`/`handoff` |
 
-### 2. Codex Reviewer (`codex_reviewer.md`)
-- Code review and security analysis
-- Best practices and optimization
-- Testing and quality assurance
-
-### 3. Codex Documenter (`codex_documenter.md`)
-- Technical writing and documentation
-- README files, API docs, tutorials
-- Clear, structured communication
+If you want a specialized variant (e.g., a "documenter" agent), author your own
+profile with `cao install ./my-profile.md` and pick any provider at launch.
 
 ## Setup
 
@@ -110,7 +107,7 @@ Agent profiles are loaded from:
 
 ```bash
 # Launch a Codex developer
-cao launch --agents codex_developer --provider codex
+cao launch --agents developer --provider codex
 
 # In the agent terminal:
 "Write a Python function that:
@@ -131,7 +128,7 @@ Include proper error handling and docstring."
 
 ```bash
 # Launch a Codex reviewer
-cao launch --agents codex_reviewer --provider codex
+cao launch --agents reviewer --provider codex
 ```
 
 Paste this prompt into the Codex CLI:
@@ -156,7 +153,7 @@ Focus on:
 
 ```bash
 # Launch a Codex documenter
-cao launch --agents codex_documenter --provider codex
+cao launch --agents developer --provider codex
 
 # Request documentation:
 "Create comprehensive README documentation for a Python package that:
@@ -215,7 +212,7 @@ def validate_email(email):
 
 ```bash
 # Launch developer
-cao launch --agents codex_developer --provider codex
+cao launch --agents developer --provider codex
 
 # Multi-step task:
 "1. First, write a Python class for User with fields: id, name, email, created_at
@@ -229,7 +226,7 @@ Proceed step by step and show me each part."
 
 ```bash
 # Launch reviewer then developer
-cao launch --agents codex_reviewer --provider codex
+cao launch --agents reviewer --provider codex
 ```
 
 Paste this prompt into the Codex CLI:
