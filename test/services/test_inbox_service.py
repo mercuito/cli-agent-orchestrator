@@ -1,6 +1,5 @@
 """Tests for the inbox service."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,85 +8,8 @@ from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services.inbox_service import (
     LogFileHandler,
-    _get_log_tail,
-    _has_idle_pattern,
     check_and_send_pending_messages,
 )
-
-
-class TestGetLogTail:
-    """Tests for _get_log_tail function."""
-
-    @patch("cli_agent_orchestrator.services.inbox_service.subprocess.run")
-    @patch("cli_agent_orchestrator.services.inbox_service.TERMINAL_LOG_DIR")
-    def test_get_log_tail_success(self, mock_log_dir, mock_run):
-        """Test getting log tail successfully."""
-        mock_log_dir.__truediv__ = lambda self, x: Path("/tmp") / x
-        mock_run.return_value = MagicMock(stdout="last line\n")
-
-        result = _get_log_tail("test-terminal", lines=5)
-
-        assert result == "last line\n"
-        mock_run.assert_called_once()
-
-    @patch("cli_agent_orchestrator.services.inbox_service.subprocess.run")
-    @patch("cli_agent_orchestrator.services.inbox_service.TERMINAL_LOG_DIR")
-    def test_get_log_tail_exception(self, mock_log_dir, mock_run):
-        """Test getting log tail with exception."""
-        mock_log_dir.__truediv__ = lambda self, x: Path("/tmp") / x
-        mock_run.side_effect = Exception("Subprocess error")
-
-        result = _get_log_tail("test-terminal")
-
-        assert result == ""
-
-
-class TestHasIdlePattern:
-    """Tests for _has_idle_pattern function."""
-
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
-    @patch("cli_agent_orchestrator.services.inbox_service._get_log_tail")
-    def test_has_idle_pattern_true(self, mock_tail, mock_provider_manager):
-        """Test idle pattern detection returns True."""
-        mock_tail.return_value = "[developer]> "
-        mock_provider = MagicMock()
-        mock_provider.get_idle_pattern_for_log.return_value = r"\[developer\]>"
-        mock_provider_manager.get_provider.return_value = mock_provider
-
-        result = _has_idle_pattern("test-terminal")
-
-        assert result is True
-
-    @patch("cli_agent_orchestrator.services.inbox_service._get_log_tail")
-    def test_has_idle_pattern_empty_tail(self, mock_tail):
-        """Test idle pattern detection with empty tail."""
-        mock_tail.return_value = ""
-
-        result = _has_idle_pattern("test-terminal")
-
-        assert result is False
-
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
-    @patch("cli_agent_orchestrator.services.inbox_service._get_log_tail")
-    def test_has_idle_pattern_no_provider(self, mock_tail, mock_provider_manager):
-        """Test idle pattern detection with no provider."""
-        mock_tail.return_value = "some content"
-        mock_provider_manager.get_provider.return_value = None
-
-        result = _has_idle_pattern("test-terminal")
-
-        assert result is False
-
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
-    @patch("cli_agent_orchestrator.services.inbox_service._get_log_tail")
-    def test_has_idle_pattern_exception(self, mock_tail, mock_provider_manager):
-        """Test idle pattern detection with exception."""
-        mock_tail.return_value = "some content"
-        mock_provider_manager.get_provider.side_effect = Exception("Error")
-
-        result = _has_idle_pattern("test-terminal")
-
-        assert result is False
 
 
 class TestCheckAndSendPendingMessages:
@@ -178,14 +100,13 @@ class TestLogFileHandler:
     """Tests for LogFileHandler class."""
 
     @patch("cli_agent_orchestrator.services.inbox_service.check_and_send_pending_messages")
-    @patch("cli_agent_orchestrator.services.inbox_service._has_idle_pattern")
     @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
-    def test_on_modified_triggers_delivery(self, mock_get_messages, mock_has_idle, mock_check_send):
-        """Test on_modified triggers message delivery."""
+    def test_on_modified_triggers_delivery(self, mock_get_messages, mock_check_send):
+        """Any log-file modification for a terminal with pending messages
+        should delegate to check_and_send_pending_messages."""
         from watchdog.events import FileModifiedEvent
 
         mock_get_messages.return_value = [MagicMock()]
-        mock_has_idle.return_value = True
 
         handler = LogFileHandler()
         event = FileModifiedEvent("/path/to/test-terminal.log")
@@ -194,59 +115,89 @@ class TestLogFileHandler:
 
         mock_check_send.assert_called_once_with("test-terminal")
 
+    @patch("cli_agent_orchestrator.services.inbox_service.check_and_send_pending_messages")
     @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
-    def test_handle_log_change_no_pending_messages(self, mock_get_messages):
-        """Test _handle_log_change with no pending messages (covers lines 105-107)."""
+    def test_handle_log_change_no_pending_messages(self, mock_get_messages, mock_check_send):
+        """No DB row for this terminal means nothing to deliver — skip the
+        expensive status check entirely."""
         mock_get_messages.return_value = []
 
         handler = LogFileHandler()
-
-        # Should return early - covers lines 105-107
         handler._handle_log_change("test-terminal")
 
         mock_get_messages.assert_called_once_with("test-terminal", limit=1)
-
-    @patch("cli_agent_orchestrator.services.inbox_service._has_idle_pattern")
-    @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
-    def test_handle_log_change_not_idle(self, mock_get_messages, mock_has_idle):
-        """Test _handle_log_change when terminal not idle (covers lines 110-114)."""
-        mock_get_messages.return_value = [MagicMock()]
-        mock_has_idle.return_value = False
-
-        handler = LogFileHandler()
-
-        # Should return early - covers lines 110-114
-        handler._handle_log_change("test-terminal")
-
-        mock_has_idle.assert_called_once_with("test-terminal")
+        mock_check_send.assert_not_called()
 
     def test_on_modified_non_log_file(self):
-        """Test on_modified ignores non-log files."""
+        """on_modified ignores files without a .log suffix."""
         from watchdog.events import FileModifiedEvent
 
         handler = LogFileHandler()
-        # Create a non-.log file event
         event = MagicMock(spec=FileModifiedEvent)
         event.src_path = "/path/to/test-terminal.txt"
 
-        # Should not process non-log files
-        handler.on_modified(event)
+        handler.on_modified(event)  # should not raise
 
     def test_on_modified_not_file_modified_event(self):
-        """Test on_modified ignores non-FileModifiedEvent."""
+        """on_modified ignores non-modification events (create, delete, etc)."""
         handler = LogFileHandler()
-        event = MagicMock()  # Not a FileModifiedEvent
+        event = MagicMock()
         event.src_path = "/path/to/test-terminal.log"
 
-        # Should not process non-FileModifiedEvent
-        handler.on_modified(event)
+        handler.on_modified(event)  # should not raise
 
     @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
     def test_handle_log_change_exception(self, mock_get_messages):
-        """Test _handle_log_change handles exceptions (covers line 119-120)."""
+        """_handle_log_change must swallow exceptions so a single DB hiccup
+        doesn't kill the watchdog thread."""
         mock_get_messages.side_effect = Exception("Database error")
 
         handler = LogFileHandler()
+        handler._handle_log_change("test-terminal")  # must not raise
 
-        # Should not raise exception - handles it gracefully
-        handler._handle_log_change("test-terminal")
+
+class TestAutoDeliveryRegression:
+    """Regression: supervisor's pipe-pane log updates while supervisor is
+    IDLE → watchdog must deliver the pending message.
+
+    Previously a fast-path pre-filter scanned the raw pipe-pane log for each
+    provider's ``get_idle_pattern_for_log()`` marker before proceeding to
+    the accurate status check. For Codex v0.111+ the marker is drawn via
+    cursor-positioning escapes and never appears as contiguous bytes in the
+    raw log, so the fast-path always rejected and no message was ever
+    delivered automatically. Deleting the fast-path fixes this.
+    """
+
+    @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
+    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
+    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
+    def test_watchdog_delivers_even_when_log_has_no_idle_marker(
+        self, mock_get_messages, mock_provider_manager, mock_term_svc, mock_update
+    ):
+        """Simulates the exact failure mode we hit with Codex in production.
+
+        The receiver's pipe-pane log file has grown (cursor-addressed TUI
+        redraws) but contains NO contiguous idle marker. A full
+        ``provider.get_status()`` reports IDLE (it reads the rendered
+        ``capture-pane`` output, where the marker IS visible).
+        """
+        from watchdog.events import FileModifiedEvent
+
+        message = MagicMock()
+        message.id = 42
+        message.message = "callback from worker"
+        mock_get_messages.return_value = [message]
+
+        provider = MagicMock()
+        provider.get_status.return_value = TerminalStatus.IDLE
+        # Sanity: even if a caller wanted to check get_idle_pattern_for_log
+        # against the raw log, it would not match — the marker isn't there.
+        provider.get_idle_pattern_for_log.return_value = r"\? for shortcuts"
+        mock_provider_manager.get_provider.return_value = provider
+
+        handler = LogFileHandler()
+        handler.on_modified(FileModifiedEvent("/path/to/cao-logs/89ce8e03.log"))
+
+        mock_term_svc.send_input.assert_called_once_with("89ce8e03", "callback from worker")
+        mock_update.assert_called_once_with(42, MessageStatus.DELIVERED)
