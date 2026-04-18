@@ -64,6 +64,13 @@ TRUST_PROMPT_PATTERN = r"allow Codex to work in this folder"
 # Codex welcome banner indicating normal startup (no trust prompt)
 CODEX_WELCOME_PATTERN = r"OpenAI Codex"
 
+# Fatal startup errors that never recover — short-circuit to ERROR before
+# the normal status-detection logic runs.
+SHELL_COMMAND_NOT_FOUND_PATTERN = (
+    r"(?:command not found: codex|codex: command not found|not found: codex)"
+)
+CODEX_TERM_DUMB_PATTERN = r'TERM is set to "dumb"\. Refusing to start'
+
 
 def _compute_tui_footer_cutoff(all_lines: list) -> int:
     """Compute the character position where the TUI footer area starts.
@@ -286,6 +293,13 @@ class CodexProvider(BaseProvider):
 
         clean_output = re.sub(ANSI_CODE_PATTERN, "", output)
         tail_output = "\n".join(clean_output.splitlines()[-25:])
+
+        # Fatal startup errors: codex binary missing, or a non-interactive
+        # TERM (e.g. dumb) that codex refuses to start under.
+        if re.search(SHELL_COMMAND_NOT_FOUND_PATTERN, clean_output, re.IGNORECASE):
+            return TerminalStatus.ERROR
+        if re.search(CODEX_TERM_DUMB_PATTERN, clean_output, re.IGNORECASE):
+            return TerminalStatus.ERROR
 
         # Search for user messages, excluding the Codex TUI footer when present.
         # The TUI footer (idle prompt hint like "› Summarize recent commits" +
