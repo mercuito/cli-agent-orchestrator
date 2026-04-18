@@ -27,14 +27,30 @@ function defaultLabel(): string {
 export function MonitoringButton({ terminalId }: { terminalId: string }) {
   const session = useStore(s => s.activeMonitoringByTerminal[terminalId])
   const showSnackbar = useStore(s => s.showSnackbar)
+  const setActiveMonitoringSessions = useStore(s => s.setActiveMonitoringSessions)
   const [inFlight, setInFlight] = useState(false)
 
   const isActive = Boolean(session)
+
+  /** Refresh the active-sessions map right after a start/stop instead of
+   *  waiting ~3s for the next poll. Keeps the button's disabled window
+   *  covering the whole "click → state reflected in UI" cycle, so a user
+   *  never sees a stale label on an enabled button. Silently no-ops on
+   *  failure — the next poll will reconcile. */
+  async function refreshStore() {
+    try {
+      const sessions = await api.listActiveMonitoringSessions()
+      setActiveMonitoringSessions(sessions)
+    } catch {
+      // intentional
+    }
+  }
 
   async function handleStart() {
     setInFlight(true)
     try {
       await api.startMonitoring(terminalId, defaultLabel())
+      await refreshStore()
     } catch (e: any) {
       showSnackbar({
         type: 'error',
@@ -50,6 +66,7 @@ export function MonitoringButton({ terminalId }: { terminalId: string }) {
     setInFlight(true)
     try {
       await api.endMonitoring(session.id)
+      await refreshStore()
     } catch (e: any) {
       showSnackbar({
         type: 'error',

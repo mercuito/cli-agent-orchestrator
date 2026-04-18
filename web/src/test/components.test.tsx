@@ -199,17 +199,17 @@ describe('MonitoringButton', () => {
 
   it('clicking Monitor calls startMonitoring with terminal_id and a dashboard-HHmmss label', async () => {
     const spy = vi.spyOn(api, 'startMonitoring').mockResolvedValue(mockSession())
+    vi.spyOn(api, 'listActiveMonitoringSessions').mockResolvedValue([])
 
     render(<MonitoringButton terminalId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
 
-    // Allow the async handler to resolve
-    await Promise.resolve()
+    // Allow both the action and the post-action store refresh to resolve
+    await new Promise(r => setTimeout(r, 0))
 
     expect(spy).toHaveBeenCalledTimes(1)
     const [terminalId, label] = spy.mock.calls[0]
     expect(terminalId).toBe('term-x')
-    // Label should match dashboard-HHmmss — 6 digits after the prefix
     expect(label).toMatch(/^dashboard-\d{6}$/)
   })
 
@@ -224,12 +224,72 @@ describe('MonitoringButton', () => {
       status: 'ended' as const,
       ended_at: new Date().toISOString(),
     })
+    vi.spyOn(api, 'listActiveMonitoringSessions').mockResolvedValue([])
 
     render(<MonitoringButton terminalId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
-    await Promise.resolve()
+    await new Promise(r => setTimeout(r, 0))
 
     expect(spy).toHaveBeenCalledWith('sess-to-end')
+  })
+
+  it('refreshes the store immediately after a successful start', async () => {
+    /** The existing 3s poll would eventually flip the button's state, but
+     *  that's too slow — users see a stale "Monitor" label on an enabled
+     *  button for up to three seconds. Trigger an immediate refresh so
+     *  the button's disabled window covers the whole click → UI-flipped
+     *  cycle. */
+    const newSession = mockSession({ id: 'new' })
+    vi.spyOn(api, 'startMonitoring').mockResolvedValue(newSession)
+    const listSpy = vi
+      .spyOn(api, 'listActiveMonitoringSessions')
+      .mockResolvedValue([newSession])
+
+    render(<MonitoringButton terminalId="term-x" />)
+    fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(listSpy).toHaveBeenCalled()
+    // And the store reflects the new state
+    expect(useStore.getState().activeMonitoringByTerminal['term-x']).toEqual(newSession)
+  })
+
+  it('refreshes the store immediately after a successful stop', async () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': mockSession({ id: 'sess-to-end' }),
+      },
+    })
+    vi.spyOn(api, 'endMonitoring').mockResolvedValue({
+      ...mockSession({ id: 'sess-to-end' }),
+      status: 'ended' as const,
+      ended_at: new Date().toISOString(),
+    })
+    vi.spyOn(api, 'listActiveMonitoringSessions').mockResolvedValue([])
+
+    render(<MonitoringButton terminalId="term-x" />)
+    fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
+    await new Promise(r => setTimeout(r, 0))
+
+    // Session dropped from the map
+    expect(useStore.getState().activeMonitoringByTerminal['term-x']).toBeUndefined()
+  })
+
+  it('silent-fails the store refresh if it errors after a successful action', async () => {
+    /** Refresh is an optimization; a failure there should not surface a
+     *  bogus "failed to start" snackbar given the action itself worked.
+     *  Next 3s poll will reconcile. */
+    vi.spyOn(api, 'startMonitoring').mockResolvedValue(mockSession())
+    vi.spyOn(api, 'listActiveMonitoringSessions').mockRejectedValue(
+      new Error('refresh network blip')
+    )
+
+    render(<MonitoringButton terminalId="term-x" />)
+    fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
+    await new Promise(r => setTimeout(r, 0))
+
+    // No snackbar because the action succeeded
+    expect(useStore.getState().snackbar).toBeNull()
   })
 
   it('start error surfaces as a snackbar', async () => {
