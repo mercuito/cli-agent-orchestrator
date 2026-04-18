@@ -103,18 +103,18 @@ class TestLoadSkillTool:
     """Tests for the load_skill MCP tool registration and wrapper."""
 
     def test_tool_is_registered_with_clear_description(self):
-        """The MCP server should expose a load_skill tool with descriptive text."""
-        # FastMCP 2.x: mcp.get_tools() returns dict
-        # FastMCP 3.x: get_tools() removed, use mcp.get_tool("load_skill")
-        if hasattr(mcp, "get_tools"):
-            tools = _run_coroutine(mcp.get_tools())
-            if isinstance(tools, dict):
-                tool = tools["load_skill"]
-            else:
-                tool = {t.name: t for t in tools}["load_skill"]
-        else:
-            tool = _run_coroutine(mcp.get_tool("load_skill"))
-        description = tool.description
+        """The MCP server should expose a load_skill tool with descriptive text.
+
+        Since tools are now registered lazily in main() via the deferred
+        registry (Phase 3), we look up the tool's metadata directly from
+        _PENDING_TOOLS rather than querying the FastMCP instance.
+        """
+        from cli_agent_orchestrator.mcp_server.server import _PENDING_TOOLS
+
+        match = next(((n, fn, kw) for n, fn, kw in _PENDING_TOOLS if n == "load_skill"), None)
+        assert match is not None, "load_skill not in deferred tool registry"
+        _, _, kwargs = match
+        description = kwargs.get("description", "")
         assert "full Markdown body of an available skill" in description
         assert "need its full instructions at runtime" in description
 

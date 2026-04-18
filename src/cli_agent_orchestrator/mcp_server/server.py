@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import requests
 from fastmcp import FastMCP
@@ -14,6 +14,8 @@ from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.utils import agent_profiles as agent_profiles_utils
+from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 from cli_agent_orchestrator.utils.terminal import generate_session_name, wait_until_terminal_status
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,83 @@ mcp = FastMCP(
     - Ensure you're running within a CAO terminal (CAO_TERMINAL_ID must be set)
     """,
 )
+
+# Deferred tool registry. Each @_deferred_tool(...) decoration records its
+# function here at import time; actual FastMCP tool registration happens in
+# main() after the per-terminal allowlist has been resolved. This lets us
+# gate which tools the LLM sees (and can call) based on the agent's profile
+# without changing any tool implementation bodies.
+_PENDING_TOOLS: List[Tuple[str, Callable, Dict[str, Any]]] = []
+
+
+def _deferred_tool(name: Optional[str] = None, **tool_kwargs: Any) -> Callable:
+    """Drop-in replacement for FastMCP's @mcp.tool() that defers registration.
+
+    The wrapped function is returned unchanged (so other call sites and
+    tests can still import and invoke it directly) and recorded in
+    _PENDING_TOOLS for later registration via _register_tools().
+    """
+
+    def decorator(fn: Callable) -> Callable:
+        tool_name = name or fn.__name__
+        _PENDING_TOOLS.append((tool_name, fn, dict(tool_kwargs)))
+        return fn
+
+    return decorator
+
+
+def _register_tools(
+    pending: List[Tuple[str, Callable, Dict[str, Any]]],
+    allowlist: Optional[List[str]],
+    mcp_instance: Any,
+) -> List[str]:
+    """Apply FastMCP's @mcp.tool() to each pending tool whose name is in the allowlist.
+
+    Args:
+        pending: Items from the deferred registry.
+        allowlist: Tool names to register. ``None`` = register all (permissive
+            fallback for agents without per-profile or per-role configuration).
+            ``[]`` = register nothing (explicit deny-all).
+        mcp_instance: The FastMCP instance to register against.
+
+    Returns:
+        Names of tools actually registered, in the order they appeared.
+    """
+    registered: List[str] = []
+    allowed: Optional[set] = None if allowlist is None else set(allowlist)
+    for tool_name, fn, kwargs in pending:
+        if allowed is not None and tool_name not in allowed:
+            logger.info(f"Tool '{tool_name}' not in allowlist — skipping registration")
+            continue
+        mcp_instance.tool(**kwargs)(fn)
+        registered.append(tool_name)
+    return registered
+
+
+def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
+    """Ask cao-server which tools this terminal's agent profile permits.
+
+    Fail-open on any error: a None return means "don't filter, register all
+    tools." This keeps existing agents (no caoTools, no role mapping) working
+    unchanged while users opt in to filtering by configuring their profiles.
+    Fail-closed behavior is a later, opt-in choice (Phase 5).
+    """
+    try:
+        response = requests.get(f"{API_BASE_URL}/terminals/{terminal_id}")
+        response.raise_for_status()
+        metadata = response.json()
+        profile_name = metadata.get("agent_profile")
+        if not profile_name:
+            return None
+        profile = load_agent_profile(profile_name)
+        return resolve_cao_tool_allowlist(profile)
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve tool allowlist for terminal {terminal_id!r}: {e}. "
+            "Registering all tools (permissive fallback)."
+        )
+        return None
+
 
 LOAD_SKILL_TOOL_DESCRIPTION = """Retrieve the full Markdown body of an available skill from cao-server.
 
@@ -369,7 +448,7 @@ async def _handoff_impl(
 # Conditional tool registration based on environment variable
 if ENABLE_WORKING_DIRECTORY:
 
-    @mcp.tool()
+    @_deferred_tool()
     async def handoff(
         agent_profile: str = Field(
             description='The agent profile to hand off to (e.g., "developer", "analyst")'
@@ -427,7 +506,7 @@ if ENABLE_WORKING_DIRECTORY:
 
 else:
 
-    @mcp.tool()
+    @_deferred_tool()
     async def handoff(
         agent_profile: str = Field(
             description='The agent profile to hand off to (e.g., "developer", "analyst")'
@@ -548,7 +627,7 @@ _assign_message_field_desc = (
 
 if ENABLE_WORKING_DIRECTORY:
 
-    @mcp.tool(description=_assign_description)
+    @_deferred_tool(description=_assign_description)
     async def assign(
         agent_profile: str = Field(
             description='The agent profile for the worker agent (e.g., "developer", "analyst")'
@@ -562,7 +641,7 @@ if ENABLE_WORKING_DIRECTORY:
 
 else:
 
-    @mcp.tool(description=_assign_description)
+    @_deferred_tool(description=_assign_description)
     async def assign(
         agent_profile: str = Field(
             description='The agent profile for the worker agent (e.g., "developer", "analyst")'
@@ -599,7 +678,7 @@ def _terminate_impl(terminal_id: str) -> Dict[str, Any]:
         }
 
 
-@mcp.tool()
+@_deferred_tool()
 async def terminate(
     terminal_id: str = Field(description="Terminal ID to gracefully exit and clean up"),
 ) -> Dict[str, Any]:
@@ -638,7 +717,7 @@ def _send_message_impl(receiver_id: str, message: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@_deferred_tool()
 async def send_message(
     receiver_id: str = Field(description="Target terminal ID to send message to"),
     message: str = Field(description="Message content to send"),
@@ -658,7 +737,7 @@ async def send_message(
     return _send_message_impl(receiver_id, message)
 
 
-@mcp.tool(description=LOAD_SKILL_TOOL_DESCRIPTION)
+@_deferred_tool(description=LOAD_SKILL_TOOL_DESCRIPTION)
 async def load_skill(
     name: str = Field(description="Name of the skill to retrieve"),
 ) -> Any:
@@ -682,7 +761,7 @@ def _get_agent_profile_impl(agent_name: str, include_prompt: bool = False) -> Di
         return {"success": False, "error": str(e), "profile": None}
 
 
-@mcp.tool()
+@_deferred_tool()
 async def list_agent_profiles() -> Dict[str, Any]:
     """List available CAO agent profiles (built-in + locally installed).
 
@@ -692,7 +771,7 @@ async def list_agent_profiles() -> Dict[str, Any]:
     return _list_agent_profiles_impl()
 
 
-@mcp.tool()
+@_deferred_tool()
 async def get_agent_profile(
     agent_name: str = Field(description='Agent profile name (e.g., "developer")'),
     include_prompt: bool = Field(
@@ -710,7 +789,26 @@ async def get_agent_profile(
 
 
 def main():
-    """Main entry point for the MCP server."""
+    """Main entry point for the MCP server.
+
+    Resolves the per-terminal tool allowlist (if any) and registers the
+    matching subset of tools with FastMCP, then starts the MCP loop.
+
+    ``CAO_TERMINAL_ID`` is injected into this subprocess by the parent
+    provider (codex/claude/etc.) via the ``env_vars`` directive in its
+    MCP config. Without it (e.g. a developer invoking cao-mcp-server
+    directly outside of CAO for testing) we register all tools.
+    """
+    terminal_id = os.environ.get("CAO_TERMINAL_ID")
+    allowlist: Optional[List[str]] = None
+    if terminal_id:
+        allowlist = _resolve_allowlist_for_terminal(terminal_id)
+    registered = _register_tools(_PENDING_TOOLS, allowlist, mcp)
+    logger.info(
+        f"Registered {len(registered)}/{len(_PENDING_TOOLS)} MCP tools "
+        f"(allowlist={'permissive' if allowlist is None else sorted(allowlist)}): "
+        f"{sorted(registered)}"
+    )
     mcp.run()
 
 
