@@ -93,11 +93,9 @@ def _delete(path: str) -> Optional[Any]:
 
 
 def _format_session_line(s: Dict[str, Any]) -> str:
-    peer_str = ",".join(s.get("peer_terminal_ids") or []) or "all"
     return (
         f"{s['id']} [{s['status']}] terminal={s['terminal_id']} "
-        f"peers={peer_str} label={s.get('label') or '-'} "
-        f"started={s['started_at']}"
+        f"label={s.get('label') or '-'} started={s['started_at']}"
     )
 
 
@@ -108,16 +106,16 @@ def monitor() -> None:
 
 @monitor.command("start")
 @click.option("--terminal", "terminal_id", required=True, help="Monitored terminal id")
-@click.option("--peer", "peers", multiple=True, help="Peer terminal id (repeatable)")
 @click.option("--label", default=None, help="Human-readable label for the session")
 @click.option("--json", "json_output", is_flag=True, help="Print full session JSON instead of just the id")
 def start_session(
-    terminal_id: str, peers: tuple, label: Optional[str], json_output: bool
+    terminal_id: str, label: Optional[str], json_output: bool
 ) -> None:
-    """Start a new monitoring session; prints the session id."""
+    """Start monitoring a terminal, or echo the existing session if already
+    recording. Idempotent on the active state — calling this twice is safe
+    and does not create duplicate sessions."""
     body = {
         "terminal_id": terminal_id,
-        "peer_terminal_ids": list(peers) if peers else None,
         "label": label,
     }
     session = _post_json("/monitoring/sessions", body=body)
@@ -140,31 +138,8 @@ def end_session(session_id: str, json_output: bool) -> None:
         click.echo(_format_session_line(session))
 
 
-@monitor.command("add-peer")
-@click.argument("session_id")
-@click.argument("peer_id")
-def add_peer_cmd(session_id: str, peer_id: str) -> None:
-    """Add a peer terminal to a session's peer set."""
-    session = _post_json(
-        f"/monitoring/sessions/{session_id}/peers",
-        body={"peer_terminal_ids": [peer_id]},
-    )
-    click.echo(_format_session_line(session))
-
-
-@monitor.command("remove-peer")
-@click.argument("session_id")
-@click.argument("peer_id")
-def remove_peer_cmd(session_id: str, peer_id: str) -> None:
-    """Remove a peer terminal from a session's peer set."""
-    session = _delete(f"/monitoring/sessions/{session_id}/peers/{peer_id}")
-    click.echo(_format_session_line(session))
-
-
 @monitor.command("list")
 @click.option("--terminal", "terminal_id", default=None, help="Filter by monitored terminal")
-@click.option("--peer", "peer_terminal_id", default=None, help="Filter by peer in session's set")
-@click.option("--involves", default=None, help="Match terminal OR peer == this id")
 @click.option("--active", is_flag=True, help="Only active sessions")
 @click.option("--ended", is_flag=True, help="Only ended sessions")
 @click.option("--label", default=None, help="Filter by exact label match")
@@ -173,8 +148,6 @@ def remove_peer_cmd(session_id: str, peer_id: str) -> None:
 @click.option("--json", "json_output", is_flag=True, help="Output structured JSON")
 def list_cmd(
     terminal_id: Optional[str],
-    peer_terminal_id: Optional[str],
-    involves: Optional[str],
     active: bool,
     ended: bool,
     label: Optional[str],
@@ -189,10 +162,6 @@ def list_cmd(
     params: Dict[str, Any] = {"limit": limit, "offset": offset}
     if terminal_id:
         params["terminal_id"] = terminal_id
-    if peer_terminal_id:
-        params["peer_terminal_id"] = peer_terminal_id
-    if involves:
-        params["involves"] = involves
     if active:
         params["status"] = "active"
     elif ended:
@@ -232,16 +201,52 @@ def show_cmd(session_id: str, json_output: bool) -> None:
     show_default=True,
     help="Artifact format",
 )
-def log_cmd(session_id: str, format_choice: str) -> None:
-    """Fetch and print a session's log artifact (markdown by default)."""
+@click.option(
+    "--peer",
+    "peers",
+    multiple=True,
+    help="Filter to messages involving a peer (repeatable; sender OR receiver).",
+)
+@click.option(
+    "--since",
+    default=None,
+    help="ISO datetime — only include messages at or after this time (narrows within session window).",
+)
+@click.option(
+    "--until",
+    default=None,
+    help="ISO datetime — only include messages at or before this time (narrows within session window).",
+)
+def log_cmd(
+    session_id: str,
+    format_choice: str,
+    peers: tuple,
+    since: Optional[str],
+    until: Optional[str],
+) -> None:
+    """Fetch and print a session's log artifact (markdown by default).
+
+    Filters apply at query time — sessions record everything, and
+    --peer / --since / --until slice the recording without altering it.
+    Running the same command with different filters yields different
+    artifacts from one capture.
+    """
+    params: Dict[str, Any] = {"format": format_choice}
+    if peers:
+        params["peer"] = list(peers)
+    if since:
+        params["started_after"] = since
+    if until:
+        params["started_before"] = until
+
     if format_choice == "json":
         payload = _get_json(
-            f"/monitoring/sessions/{session_id}/log", params={"format": "json"}
+            f"/monitoring/sessions/{session_id}/log", params=params
         )
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
         body = _get_text(
-            f"/monitoring/sessions/{session_id}/log", params={"format": "markdown"}
+            f"/monitoring/sessions/{session_id}/log", params=params
         )
         click.echo(body, nl=False)
 
