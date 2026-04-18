@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, declarative_base, sessionmaker
 
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
@@ -43,6 +43,36 @@ class InboxModel(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class MonitoringSessionModel(Base):
+    """A monitoring session is a query window over the inbox table.
+
+    It scopes retrospective visibility to messages involving ``terminal_id``
+    within ``[started_at, ended_at]`` (or ``[started_at, now]`` while active),
+    optionally restricted to a peer set in ``monitoring_session_peers``.
+    """
+
+    __tablename__ = "monitoring_sessions"
+
+    id = Column(String, primary_key=True)
+    terminal_id = Column(String, nullable=False)
+    label = Column(String, nullable=True)
+    started_at = Column(DateTime, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+
+
+class MonitoringSessionPeerModel(Base):
+    """Peer set for a monitoring session. Empty set = capture all peers."""
+
+    __tablename__ = "monitoring_session_peers"
+
+    session_id = Column(
+        String,
+        ForeignKey("monitoring_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    peer_terminal_id = Column(String, primary_key=True)
+
+
 class FlowModel(Base):
     """SQLAlchemy model for flow metadata."""
 
@@ -62,6 +92,18 @@ class FlowModel(Base):
 # Module-level singletons
 DB_DIR.mkdir(parents=True, exist_ok=True)
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+
+@event.listens_for(engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
+    """SQLite does not enforce foreign keys by default; turn it on per-connection
+    so ON DELETE CASCADE on monitoring_session_peers actually fires when a
+    monitoring session is deleted."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
