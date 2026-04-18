@@ -665,7 +665,11 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
     winsize = struct.pack("HHHH", 24, 80, 0, 0)
     fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
 
-    # Start tmux attach inside the PTY
+    # Start tmux attach inside the PTY.
+    # Force a known TERM so tmux can initialize its terminfo regardless of
+    # how cao-server was launched (GUI/daemon contexts may not inherit TERM,
+    # which surfaces as "terminal does not support clear" on attach).
+    tmux_env = {**os.environ, "TERM": os.environ.get("TERM") or "xterm-256color"}
     proc = subprocess.Popen(
         ["tmux", "-u", "attach-session", "-t", f"{session_name}:{window_name}"],
         stdin=slave_fd,
@@ -673,6 +677,7 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
         stderr=slave_fd,
         close_fds=True,
         preexec_fn=os.setsid,
+        env=tmux_env,
     )
     os.close(slave_fd)
 
