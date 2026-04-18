@@ -2,6 +2,9 @@
 name: reviewer
 description: Code Reviewer Agent in a multi-agent system
 role: reviewer  # @builtin, fs_read, fs_list, @cao-mcp-server. For fine-grained control, see docs/tool-restrictions.md
+caoTools:
+  - send_message
+  - load_skill
 mcpServers:
   cao-mcp-server:
     type: stdio
