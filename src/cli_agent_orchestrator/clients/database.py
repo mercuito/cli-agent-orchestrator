@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, create_engine, event
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, declarative_base, sessionmaker
 
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
@@ -44,11 +44,17 @@ class InboxModel(Base):
 
 
 class MonitoringSessionModel(Base):
-    """A monitoring session is a query window over the inbox table.
+    """A monitoring session is a recording window over the inbox table.
 
-    It scopes retrospective visibility to messages involving ``terminal_id``
-    within ``[started_at, ended_at]`` (or ``[started_at, now]`` while active),
-    optionally restricted to a peer set in ``monitoring_session_peers``.
+    Captures all inbox activity involving ``terminal_id`` within
+    ``[started_at, ended_at]`` (or ``[started_at, now]`` while active). Peer
+    and time-range filtering happens at query time on reads (see
+    ``monitoring_service.get_session_messages``), not baked into the session
+    record — one recording, many possible views.
+
+    There is at most one active session per terminal at any given time (see
+    ``create_session`` idempotency). Ended sessions remain in the table so
+    their artifacts stay fetchable.
     """
 
     __tablename__ = "monitoring_sessions"
@@ -58,19 +64,6 @@ class MonitoringSessionModel(Base):
     label = Column(String, nullable=True)
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
-
-
-class MonitoringSessionPeerModel(Base):
-    """Peer set for a monitoring session. Empty set = capture all peers."""
-
-    __tablename__ = "monitoring_session_peers"
-
-    session_id = Column(
-        String,
-        ForeignKey("monitoring_sessions.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    peer_terminal_id = Column(String, primary_key=True)
 
 
 class FlowModel(Base):
@@ -96,9 +89,10 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 @event.listens_for(engine, "connect")
 def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
-    """SQLite does not enforce foreign keys by default; turn it on per-connection
-    so ON DELETE CASCADE on monitoring_session_peers actually fires when a
-    monitoring session is deleted."""
+    """SQLite does not enforce foreign keys by default. Enable them
+    per-connection so any FK constraints (current or future) actually
+    fire. Leaving this disabled would be a silent regression the moment
+    the schema grows a CASCADE relationship."""
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
@@ -111,6 +105,37 @@ def init_db() -> None:
     """Initialize database tables and apply schema migrations."""
     Base.metadata.create_all(bind=engine)
     _migrate_add_allowed_tools()
+    _migrate_drop_monitoring_session_peers()
+
+
+def _migrate_drop_monitoring_session_peers() -> None:
+    """Drop the obsolete ``monitoring_session_peers`` table.
+
+    Session-level peer scoping was removed in favor of query-time peer
+    filtering. Existing active sessions that had peer rows simply become
+    unscoped (capture all) — which is the intended behavior under the new
+    model. Dropping the table keeps the schema honest.
+    """
+    import sqlite3
+
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    try:
+        conn = sqlite3.connect(str(DATABASE_FILE))
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='monitoring_session_peers'"
+        )
+        if cursor.fetchone():
+            conn.execute("DROP TABLE monitoring_session_peers")
+            conn.commit()
+            logger.info(
+                "Migration: dropped obsolete monitoring_session_peers table"
+            )
+        conn.close()
+    except Exception as e:
+        logger.warning(
+            f"Migration check for monitoring_session_peers failed: {e}"
+        )
 
 
 def _migrate_add_allowed_tools() -> None:
