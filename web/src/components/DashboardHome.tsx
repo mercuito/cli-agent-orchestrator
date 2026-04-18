@@ -16,7 +16,7 @@ interface SessionWithTerminals {
 }
 
 export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => void }) {
-  const { sessions, terminalStatuses, setTerminalStatus, clearTerminalStatuses, setMonitoredTerminalIds, showSnackbar } = useStore()
+  const { sessions, terminalStatuses, setTerminalStatus, clearTerminalStatuses, setActiveMonitoringSessions, showSnackbar } = useStore()
   const [profileCount, setProfileCount] = useState(0)
   const [sessionData, setSessionData] = useState<SessionWithTerminals[]>([])
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set())
@@ -71,7 +71,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
           .catch(() => {})
       })
       api.listActiveMonitoringSessions()
-        .then(sessions => setMonitoredTerminalIds(sessions.map(s => s.terminal_id)))
+        .then(setActiveMonitoringSessions)
         .catch(() => {})
     }
     fetch()

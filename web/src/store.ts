@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api, Session, SessionDetail, TerminalMeta } from './api'
+import { api, MonitoringSession, Session, SessionDetail, TerminalMeta } from './api'
 
 // Only trigger React re-renders when data actually changed
 function jsonEqual(a: unknown, b: unknown): boolean {
@@ -18,9 +18,11 @@ interface Store {
   connected: boolean
   snackbar: Snackbar | null
   terminalStatuses: Record<string, string>
-  /** Set of terminal ids that currently have an active monitoring session.
-   *  Replaced wholesale each poll (see setMonitoredTerminalIds). */
-  monitoredTerminalIds: Record<string, boolean>
+  /** Map of terminal_id → the active monitoring session targeting it.
+   *  Replaced wholesale each poll (see setActiveMonitoringSessions). The
+   *  indicator component reads the full session so its hover tooltip can
+   *  display label / started_at / peers. */
+  activeMonitoringByTerminal: Record<string, MonitoringSession>
 
   fetchSessions: () => Promise<void>
   selectSession: (name: string | null) => Promise<void>
@@ -31,7 +33,7 @@ interface Store {
   setConnected: (connected: boolean) => void
   setTerminalStatus: (id: string, status: string) => void
   clearTerminalStatuses: (ids: string[]) => void
-  setMonitoredTerminalIds: (ids: string[]) => void
+  setActiveMonitoringSessions: (sessions: MonitoringSession[]) => void
 }
 
 export const useStore = create<Store>((set, get) => ({
@@ -41,7 +43,7 @@ export const useStore = create<Store>((set, get) => ({
   connected: false,
   snackbar: null,
   terminalStatuses: {},
-  monitoredTerminalIds: {},
+  activeMonitoringByTerminal: {},
 
   fetchSessions: async () => {
     try {
@@ -111,13 +113,15 @@ export const useStore = create<Store>((set, get) => ({
       if (Object.keys(next).length === Object.keys(state.terminalStatuses).length) return state
       return { terminalStatuses: next }
     }),
-  setMonitoredTerminalIds: (ids) =>
+  setActiveMonitoringSessions: (sessions) =>
     set(state => {
       // Replace, don't merge: if a monitoring session just ended, we want
       // its terminal to drop out of the map immediately on the next poll.
-      const next: Record<string, boolean> = {}
-      for (const id of ids) next[id] = true
-      if (jsonEqual(state.monitoredTerminalIds, next)) return state
-      return { monitoredTerminalIds: next }
+      // If multiple active sessions target the same terminal, the last one
+      // wins — rare but benign for the indicator's purposes.
+      const next: Record<string, MonitoringSession> = {}
+      for (const s of sessions) next[s.terminal_id] = s
+      if (jsonEqual(state.activeMonitoringByTerminal, next)) return state
+      return { activeMonitoringByTerminal: next }
     }),
 }))

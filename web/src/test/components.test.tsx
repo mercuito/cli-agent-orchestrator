@@ -39,8 +39,21 @@ describe('StatusBadge', () => {
 })
 
 describe('MonitoringIndicator', () => {
+  function mockSession(overrides: Partial<import('../api').MonitoringSession> = {}): import('../api').MonitoringSession {
+    return {
+      id: 'sess-1',
+      terminal_id: 'term-x',
+      peer_terminal_ids: [],
+      label: null,
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      status: 'active',
+      ...overrides,
+    }
+  }
+
   beforeEach(() => {
-    useStore.setState({ monitoredTerminalIds: {} })
+    useStore.setState({ activeMonitoringByTerminal: {} })
   })
 
   it('renders nothing when the terminal is not monitored', () => {
@@ -49,9 +62,10 @@ describe('MonitoringIndicator', () => {
   })
 
   it('renders an indicator when the terminal is monitored', () => {
-    useStore.setState({ monitoredTerminalIds: { 'term-x': true } })
+    useStore.setState({
+      activeMonitoringByTerminal: { 'term-x': mockSession() },
+    })
     render(<MonitoringIndicator terminalId="term-x" />)
-    // Accessible label so the element is discoverable by screen readers
     expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
   })
 
@@ -60,22 +74,84 @@ describe('MonitoringIndicator', () => {
     expect(screen.queryByLabelText(/being monitored/i)).not.toBeInTheDocument()
 
     act(() => {
-      useStore.setState({ monitoredTerminalIds: { 'term-x': true } })
+      useStore.setState({
+        activeMonitoringByTerminal: { 'term-x': mockSession() },
+      })
     })
     expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
 
     act(() => {
-      useStore.setState({ monitoredTerminalIds: {} })
+      useStore.setState({ activeMonitoringByTerminal: {} })
     })
     expect(screen.queryByLabelText(/being monitored/i)).not.toBeInTheDocument()
   })
 
   it('shows indicator for the right terminal only', () => {
-    useStore.setState({ monitoredTerminalIds: { 'term-a': true } })
+    useStore.setState({
+      activeMonitoringByTerminal: { 'term-a': mockSession({ terminal_id: 'term-a' }) },
+    })
     const { container: aEl } = render(<MonitoringIndicator terminalId="term-a" />)
     const { container: bEl } = render(<MonitoringIndicator terminalId="term-b" />)
     expect(aEl).not.toBeEmptyDOMElement()
     expect(bEl).toBeEmptyDOMElement()
+  })
+
+  it('tooltip shows the session label', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': mockSession({ label: 'review-v2' }),
+      },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    const tooltip = screen.getByRole('tooltip')
+    expect(tooltip).toHaveTextContent('Label:')
+    expect(tooltip).toHaveTextContent('review-v2')
+  })
+
+  it('tooltip falls back to short session id when label is null', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': mockSession({ id: '068d4299-0f97-4b34-b29c-05555995be21', label: null }),
+      },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    const tooltip = screen.getByRole('tooltip')
+    // First 8 chars of the uuid — enough to disambiguate without being noisy
+    expect(tooltip).toHaveTextContent('068d4299')
+  })
+
+  it('tooltip shows "all" for empty peer set', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': mockSession({ peer_terminal_ids: [] }),
+      },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    const tooltip = screen.getByRole('tooltip')
+    expect(tooltip).toHaveTextContent('Peers:')
+    expect(tooltip).toHaveTextContent('all')
+  })
+
+  it('tooltip lists peers when scoped', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': mockSession({ peer_terminal_ids: ['rev-1', 'rev-2'] }),
+      },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    const tooltip = screen.getByRole('tooltip')
+    expect(tooltip).toHaveTextContent('rev-1, rev-2')
+  })
+
+  it('tooltip shows relative start time', () => {
+    const started = new Date(Date.now() - 5 * 60 * 1000).toISOString()  // 5 min ago
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': mockSession({ started_at: started }),
+      },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    expect(screen.getByRole('tooltip')).toHaveTextContent(/5m ago/)
   })
 })
 

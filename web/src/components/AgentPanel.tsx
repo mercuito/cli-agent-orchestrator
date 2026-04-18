@@ -22,7 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function AgentPanel() {
-  const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus, setMonitoredTerminalIds } = useStore()
+  const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus, setActiveMonitoringSessions } = useStore()
   const [provider, setProvider] = usePersistedState('cao.spawn.provider', 'kiro_cli')
   const [profile, setProfile] = usePersistedState('cao.spawn.profile', '')
   const [creating, setCreating] = useState(false)
@@ -138,7 +138,7 @@ export function AgentPanel() {
           .catch(() => {})
       })
       api.listActiveMonitoringSessions()
-        .then(sessions => setMonitoredTerminalIds(sessions.map(s => s.terminal_id)))
+        .then(setActiveMonitoringSessions)
         .catch(() => {})
     }
     fetchStatuses()

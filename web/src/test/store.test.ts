@@ -1,5 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useStore } from '../store'
+import { MonitoringSession } from '../api'
+
+function mockSession(overrides: Partial<MonitoringSession> = {}): MonitoringSession {
+  return {
+    id: overrides.id || 'sess-1',
+    terminal_id: overrides.terminal_id || 'term-a',
+    peer_terminal_ids: overrides.peer_terminal_ids || [],
+    label: overrides.label !== undefined ? overrides.label : null,
+    started_at: overrides.started_at || '2026-04-18T10:00:00',
+    ended_at: overrides.ended_at !== undefined ? overrides.ended_at : null,
+    status: overrides.status || 'active',
+  }
+}
 
 describe('Store', () => {
   beforeEach(() => {
@@ -9,7 +22,7 @@ describe('Store', () => {
       activeSession: null,
       activeSessionDetail: null,
       terminalStatuses: {},
-      monitoredTerminalIds: {},
+      activeMonitoringByTerminal: {},
       snackbar: null,
     })
   })
@@ -47,27 +60,33 @@ describe('Store', () => {
     expect(useStore.getState().snackbar).toBeNull()
   })
 
-  it('sets monitored terminal ids from an active-session list', () => {
-    const { setMonitoredTerminalIds } = useStore.getState()
-    setMonitoredTerminalIds(['term-a', 'term-b'])
-    const ids = useStore.getState().monitoredTerminalIds
-    expect(ids).toEqual({ 'term-a': true, 'term-b': true })
+  it('maps active monitoring sessions by terminal_id', () => {
+    const { setActiveMonitoringSessions } = useStore.getState()
+    const a = mockSession({ id: 's-a', terminal_id: 'term-a', label: 'x' })
+    const b = mockSession({ id: 's-b', terminal_id: 'term-b' })
+    setActiveMonitoringSessions([a, b])
+    const map = useStore.getState().activeMonitoringByTerminal
+    expect(map['term-a']).toEqual(a)
+    expect(map['term-b']).toEqual(b)
   })
 
-  it('replaces the monitored set rather than merging', () => {
-    const { setMonitoredTerminalIds } = useStore.getState()
-    setMonitoredTerminalIds(['a', 'b'])
-    setMonitoredTerminalIds(['c'])
+  it('replaces the monitoring map rather than merging', () => {
+    const { setActiveMonitoringSessions } = useStore.getState()
+    setActiveMonitoringSessions([
+      mockSession({ id: 's-a', terminal_id: 'a' }),
+      mockSession({ id: 's-b', terminal_id: 'b' }),
+    ])
+    setActiveMonitoringSessions([mockSession({ id: 's-c', terminal_id: 'c' })])
     // A session ending must cause its terminal to stop appearing — merge
     // semantics would leak ended sessions into the display forever.
-    expect(useStore.getState().monitoredTerminalIds).toEqual({ c: true })
+    expect(Object.keys(useStore.getState().activeMonitoringByTerminal)).toEqual(['c'])
   })
 
   it('empty list clears all entries', () => {
-    const { setMonitoredTerminalIds } = useStore.getState()
-    setMonitoredTerminalIds(['a'])
-    setMonitoredTerminalIds([])
-    expect(useStore.getState().monitoredTerminalIds).toEqual({})
+    const { setActiveMonitoringSessions } = useStore.getState()
+    setActiveMonitoringSessions([mockSession()])
+    setActiveMonitoringSessions([])
+    expect(useStore.getState().activeMonitoringByTerminal).toEqual({})
   })
 
   it('shows error snackbar', () => {
