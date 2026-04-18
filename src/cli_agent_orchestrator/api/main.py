@@ -11,10 +11,12 @@ import struct
 import subprocess
 import termios
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -43,9 +45,11 @@ from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import (
     flow_service,
     inbox_service,
+    monitoring_service,
     session_service,
     terminal_service,
 )
+from cli_agent_orchestrator.utils import monitoring_formatter
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
@@ -101,6 +105,43 @@ class WorkingDirectoryResponse(BaseModel):
     working_directory: Optional[str] = Field(
         description="Current working directory of the terminal, or None if unavailable"
     )
+
+
+class CreateMonitoringSessionRequest(BaseModel):
+    """Request body for creating a monitoring session."""
+
+    terminal_id: str
+    peer_terminal_ids: Optional[List[str]] = None
+    label: Optional[str] = None
+
+
+class AddMonitoringPeersRequest(BaseModel):
+    """Request body for adding peers to a monitoring session."""
+
+    peer_terminal_ids: List[str] = Field(min_length=1)
+
+
+class MonitoringMessageEntry(BaseModel):
+    """A single message in a monitoring session's window."""
+
+    id: int
+    sender_id: str
+    receiver_id: str
+    message: str
+    status: str
+    created_at: datetime
+
+
+class MonitoringSessionResponse(BaseModel):
+    """Response shape for monitoring session endpoints."""
+
+    id: str
+    terminal_id: str
+    label: Optional[str]
+    peer_terminal_ids: List[str]
+    started_at: datetime
+    ended_at: Optional[datetime]
+    status: Literal["active", "ended"]
 
 
 class CreateFlowRequest(BaseModel):
@@ -863,6 +904,196 @@ async def run_flow(name: str) -> Dict:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to execute flow: {str(e)}",
         )
+
+
+# -----------------------------------------------------------------------------
+# Monitoring session routes
+#
+# Thin adapter over ``monitoring_service``. All correctness belongs to the
+# service layer; these routes only handle request/response shape and exception
+# mapping. Intentionally NOT exposed as MCP tools (design decision #2 in
+# docs/plans/monitoring-sessions.md).
+# -----------------------------------------------------------------------------
+
+
+@app.post(
+    "/monitoring/sessions",
+    response_model=MonitoringSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_monitoring_session(
+    body: CreateMonitoringSessionRequest,
+) -> MonitoringSessionResponse:
+    result = monitoring_service.create_session(
+        terminal_id=body.terminal_id,
+        peer_terminal_ids=body.peer_terminal_ids,
+        label=body.label,
+    )
+    return MonitoringSessionResponse(**result)
+
+
+@app.get("/monitoring/sessions", response_model=List[MonitoringSessionResponse])
+async def list_monitoring_sessions(
+    terminal_id: Optional[str] = None,
+    peer_terminal_id: Optional[str] = None,
+    involves: Optional[str] = None,
+    status: Optional[Literal["active", "ended"]] = None,
+    label: Optional[str] = None,
+    started_after: Optional[datetime] = None,
+    started_before: Optional[datetime] = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> List[MonitoringSessionResponse]:
+    rows = monitoring_service.list_sessions(
+        terminal_id=terminal_id,
+        peer_terminal_id=peer_terminal_id,
+        involves=involves,
+        status=status,
+        label=label,
+        started_after=started_after,
+        started_before=started_before,
+        limit=limit,
+        offset=offset,
+    )
+    return [MonitoringSessionResponse(**r) for r in rows]
+
+
+@app.get(
+    "/monitoring/sessions/{session_id}", response_model=MonitoringSessionResponse
+)
+async def get_monitoring_session(session_id: str) -> MonitoringSessionResponse:
+    result = monitoring_service.get_session(session_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring session not found: {session_id}",
+        )
+    return MonitoringSessionResponse(**result)
+
+
+@app.post(
+    "/monitoring/sessions/{session_id}/end",
+    response_model=MonitoringSessionResponse,
+)
+async def end_monitoring_session(session_id: str) -> MonitoringSessionResponse:
+    try:
+        result = monitoring_service.end_session(session_id)
+    except monitoring_service.SessionNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring session not found: {session_id}",
+        )
+    except monitoring_service.SessionAlreadyEnded:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Monitoring session already ended: {session_id}",
+        )
+    return MonitoringSessionResponse(**result)
+
+
+@app.post(
+    "/monitoring/sessions/{session_id}/peers",
+    response_model=MonitoringSessionResponse,
+)
+async def add_monitoring_peers(
+    session_id: str, body: AddMonitoringPeersRequest
+) -> MonitoringSessionResponse:
+    try:
+        monitoring_service.add_peers(session_id, body.peer_terminal_ids)
+    except monitoring_service.SessionNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring session not found: {session_id}",
+        )
+    except monitoring_service.SessionAlreadyEnded:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Monitoring session already ended: {session_id}",
+        )
+    # Return fresh state so caller sees the updated peer set.
+    result = monitoring_service.get_session(session_id)
+    return MonitoringSessionResponse(**result)
+
+
+@app.delete(
+    "/monitoring/sessions/{session_id}/peers/{peer_terminal_id}",
+    response_model=MonitoringSessionResponse,
+)
+async def remove_monitoring_peer(
+    session_id: str, peer_terminal_id: str
+) -> MonitoringSessionResponse:
+    try:
+        monitoring_service.remove_peer(session_id, peer_terminal_id)
+    except monitoring_service.SessionNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring session not found: {session_id}",
+        )
+    except monitoring_service.SessionAlreadyEnded:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Monitoring session already ended: {session_id}",
+        )
+    result = monitoring_service.get_session(session_id)
+    return MonitoringSessionResponse(**result)
+
+
+@app.get(
+    "/monitoring/sessions/{session_id}/messages",
+    response_model=List[MonitoringMessageEntry],
+)
+async def get_monitoring_messages(session_id: str) -> List[MonitoringMessageEntry]:
+    try:
+        rows = monitoring_service.get_session_messages(session_id)
+    except monitoring_service.SessionNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring session not found: {session_id}",
+        )
+    return [MonitoringMessageEntry(**r) for r in rows]
+
+
+@app.get("/monitoring/sessions/{session_id}/log")
+async def get_monitoring_log(
+    session_id: str,
+    format: Literal["markdown", "json"] = "markdown",
+):
+    """Render a monitoring session as a drop-in artifact.
+
+    Default is Markdown (intended to sit next to a review document). ``format=json``
+    returns a structured ``{session, messages}`` payload for programmatic use.
+    """
+    from fastapi.responses import JSONResponse, PlainTextResponse
+
+    session = monitoring_service.get_session(session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring session not found: {session_id}",
+        )
+    messages = monitoring_service.get_session_messages(session_id)
+
+    if format == "json":
+        payload = monitoring_formatter.format_json(session, messages)
+        return JSONResponse(content=jsonable_encoder(payload))
+    body = monitoring_formatter.format_markdown(session, messages)
+    return PlainTextResponse(body, media_type="text/markdown; charset=utf-8")
+
+
+@app.delete(
+    "/monitoring/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_monitoring_session(session_id: str) -> Response:
+    try:
+        monitoring_service.delete_session(session_id)
+    except monitoring_service.SessionNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Monitoring session not found: {session_id}",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # Static file serving for built web UI.
