@@ -6,6 +6,7 @@ import { TerminalView } from './TerminalView'
 import { ConfirmModal } from './ConfirmModal'
 import { InboxPanel } from './InboxPanel'
 import { StatusBadge } from './StatusBadge'
+import { MonitoringIndicator } from './MonitoringIndicator'
 import { OutputViewer } from './OutputViewer'
 
 interface SessionWithTerminals {
@@ -15,7 +16,7 @@ interface SessionWithTerminals {
 }
 
 export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => void }) {
-  const { sessions, terminalStatuses, setTerminalStatus, clearTerminalStatuses, showSnackbar } = useStore()
+  const { sessions, terminalStatuses, setTerminalStatus, clearTerminalStatuses, setMonitoredTerminalIds, showSnackbar } = useStore()
   const [profileCount, setProfileCount] = useState(0)
   const [sessionData, setSessionData] = useState<SessionWithTerminals[]>([])
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set())
@@ -56,7 +57,9 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
     return () => clearInterval(interval)
   }, [sessions.map(s => s.id).join(',')])
 
-  // Poll statuses
+  // Poll statuses + active monitoring sessions. Monitoring is a single
+  // list call per tick, not per-terminal, so it doesn't multiply with the
+  // terminal count the way the status polls do.
   useEffect(() => {
     const allIds = sessionData.flatMap(s => s.terminals.map(t => t.id))
     if (!allIds.length) return
@@ -67,6 +70,9 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
           .then(status => { if (status) setTerminalStatus(id, status) })
           .catch(() => {})
       })
+      api.listActiveMonitoringSessions()
+        .then(sessions => setMonitoredTerminalIds(sessions.map(s => s.terminal_id)))
+        .catch(() => {})
     }
     fetch()
     const interval = setInterval(fetch, 3000)
@@ -233,6 +239,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
                           <span className="text-sm font-medium text-gray-200 truncate">{t.agent_profile || 'default'}</span>
                           <span className="text-xs font-mono text-gray-500">{t.id}</span>
                           <StatusBadge status={terminalStatuses[t.id] || null} />
+                          <MonitoringIndicator terminalId={t.id} />
                           <span className="text-[10px] text-gray-600">{t.provider}</span>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">

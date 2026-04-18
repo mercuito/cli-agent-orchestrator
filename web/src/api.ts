@@ -81,6 +81,16 @@ export interface ProviderInfo {
   installed: boolean
 }
 
+export interface MonitoringSession {
+  id: string
+  terminal_id: string
+  peer_terminal_ids: string[]
+  label: string | null
+  started_at: string
+  ended_at: string | null
+  status: 'active' | 'ended'
+}
+
 export const api = {
   // Agent Profiles & Providers
   listProfiles: () => fetchJSON<AgentProfileInfo[]>('/agents/profiles'),
@@ -122,6 +132,10 @@ export const api = {
     fetchJSON<InboxMessage[]>(`/terminals/${terminalId}/inbox/messages?limit=${limit || 50}${status ? `&status=${status}` : ''}`),
   sendInboxMessage: (receiverId: string, senderId: string, message: string) =>
     fetchJSON<{ success: boolean }>(`/terminals/${receiverId}/inbox/messages?sender_id=${senderId}&message=${encodeURIComponent(message)}`, { method: 'POST' }),
+
+  // Monitoring
+  listActiveMonitoringSessions: () =>
+    fetchJSON<MonitoringSession[]>('/monitoring/sessions?status=active'),
 
   // Flows
   listFlows: () => fetchJSON<Flow[]>('/flows'),

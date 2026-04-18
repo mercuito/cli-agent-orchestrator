@@ -9,6 +9,7 @@ describe('Store', () => {
       activeSession: null,
       activeSessionDetail: null,
       terminalStatuses: {},
+      monitoredTerminalIds: {},
       snackbar: null,
     })
   })
@@ -44,6 +45,29 @@ describe('Store', () => {
 
     useStore.setState({ snackbar: null })
     expect(useStore.getState().snackbar).toBeNull()
+  })
+
+  it('sets monitored terminal ids from an active-session list', () => {
+    const { setMonitoredTerminalIds } = useStore.getState()
+    setMonitoredTerminalIds(['term-a', 'term-b'])
+    const ids = useStore.getState().monitoredTerminalIds
+    expect(ids).toEqual({ 'term-a': true, 'term-b': true })
+  })
+
+  it('replaces the monitored set rather than merging', () => {
+    const { setMonitoredTerminalIds } = useStore.getState()
+    setMonitoredTerminalIds(['a', 'b'])
+    setMonitoredTerminalIds(['c'])
+    // A session ending must cause its terminal to stop appearing — merge
+    // semantics would leak ended sessions into the display forever.
+    expect(useStore.getState().monitoredTerminalIds).toEqual({ c: true })
+  })
+
+  it('empty list clears all entries', () => {
+    const { setMonitoredTerminalIds } = useStore.getState()
+    setMonitoredTerminalIds(['a'])
+    setMonitoredTerminalIds([])
+    expect(useStore.getState().monitoredTerminalIds).toEqual({})
   })
 
   it('shows error snackbar', () => {

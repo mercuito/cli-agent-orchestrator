@@ -21,6 +21,20 @@ describe('API wrapper', () => {
     })
   }
 
+  it('listActiveMonitoringSessions fetches active-scoped endpoint', async () => {
+    const sessions = [
+      { id: 's1', terminal_id: 't1', peer_terminal_ids: [], label: null, started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active' },
+    ]
+    mockResponse(sessions)
+    const result = await api.listActiveMonitoringSessions()
+    expect(result).toEqual(sessions)
+    // Must scope to status=active so the client only sees currently-monitored agents
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/monitoring/sessions?status=active',
+      expect.any(Object)
+    )
+  })
+
   it('listSessions fetches /sessions', async () => {
     const sessions = [{ id: 's1', name: 'test', status: 'active' }]
     mockResponse(sessions)

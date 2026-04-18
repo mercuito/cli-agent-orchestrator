@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, act } from '@testing-library/react'
 import { StatusBadge } from '../components/StatusBadge'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { ConfirmModal } from '../components/ConfirmModal'
+import { MonitoringIndicator } from '../components/MonitoringIndicator'
+import { useStore } from '../store'
 
 describe('StatusBadge', () => {
   it('renders idle status', () => {
@@ -33,6 +35,47 @@ describe('StatusBadge', () => {
   it('renders null status as unknown', () => {
     render(<StatusBadge status={null} />)
     expect(screen.getByText('Unknown')).toBeInTheDocument()
+  })
+})
+
+describe('MonitoringIndicator', () => {
+  beforeEach(() => {
+    useStore.setState({ monitoredTerminalIds: {} })
+  })
+
+  it('renders nothing when the terminal is not monitored', () => {
+    const { container } = render(<MonitoringIndicator terminalId="term-x" />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('renders an indicator when the terminal is monitored', () => {
+    useStore.setState({ monitoredTerminalIds: { 'term-x': true } })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    // Accessible label so the element is discoverable by screen readers
+    expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
+  })
+
+  it('reacts to store changes without remounting', () => {
+    render(<MonitoringIndicator terminalId="term-x" />)
+    expect(screen.queryByLabelText(/being monitored/i)).not.toBeInTheDocument()
+
+    act(() => {
+      useStore.setState({ monitoredTerminalIds: { 'term-x': true } })
+    })
+    expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
+
+    act(() => {
+      useStore.setState({ monitoredTerminalIds: {} })
+    })
+    expect(screen.queryByLabelText(/being monitored/i)).not.toBeInTheDocument()
+  })
+
+  it('shows indicator for the right terminal only', () => {
+    useStore.setState({ monitoredTerminalIds: { 'term-a': true } })
+    const { container: aEl } = render(<MonitoringIndicator terminalId="term-a" />)
+    const { container: bEl } = render(<MonitoringIndicator terminalId="term-b" />)
+    expect(aEl).not.toBeEmptyDOMElement()
+    expect(bEl).toBeEmptyDOMElement()
   })
 })
 

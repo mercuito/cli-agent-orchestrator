@@ -9,6 +9,7 @@ import { InboxPanel } from './InboxPanel'
 import { CustomSelect, SelectOption } from './CustomSelect'
 import { TerminalMeta } from '../api'
 import { StatusBadge } from './StatusBadge'
+import { MonitoringIndicator } from './MonitoringIndicator'
 import { OutputViewer } from './OutputViewer'
 
 const FALLBACK_PROVIDERS = ['kiro_cli', 'claude_code', 'q_cli', 'codex', 'gemini_cli', 'kimi_cli', 'copilot_cli']
@@ -21,7 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function AgentPanel() {
-  const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus } = useStore()
+  const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus, setMonitoredTerminalIds } = useStore()
   const [provider, setProvider] = usePersistedState('cao.spawn.provider', 'kiro_cli')
   const [profile, setProfile] = usePersistedState('cao.spawn.profile', '')
   const [creating, setCreating] = useState(false)
@@ -124,7 +125,9 @@ export function AgentPanel() {
     }
   }, [activeSession])
 
-  // Poll terminal statuses for visible terminals in the session detail
+  // Poll terminal statuses + active monitoring sessions for the detail view.
+  // Monitoring is a single list call per tick, shared across all rendered
+  // terminals.
   useEffect(() => {
     if (!activeSessionDetail?.terminals.length) return
     const terminalIds = activeSessionDetail.terminals.map(t => t.id)
@@ -134,6 +137,9 @@ export function AgentPanel() {
           .then(status => { if (status) setTerminalStatus(id, status) })
           .catch(() => {})
       })
+      api.listActiveMonitoringSessions()
+        .then(sessions => setMonitoredTerminalIds(sessions.map(s => s.terminal_id)))
+        .catch(() => {})
     }
     fetchStatuses()
     const interval = setInterval(fetchStatuses, 3000)
@@ -355,6 +361,7 @@ export function AgentPanel() {
                     <TermIcon size={14} className="text-gray-400" />
                     <span className="text-sm font-mono text-gray-300">{t.id}</span>
                     <StatusBadge status={terminalStatuses[t.id] || null} />
+                    <MonitoringIndicator terminalId={t.id} />
                     <span className="text-xs text-gray-500">{t.provider}</span>
                     {t.agent_profile && <span className="text-xs text-emerald-400">{t.agent_profile}</span>}
                   </div>
