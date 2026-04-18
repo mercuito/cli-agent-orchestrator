@@ -273,24 +273,15 @@ def _create_terminal(
     return terminal["id"], provider
 
 
-def _send_direct_input(terminal_id: str, message: str) -> None:
-    """Send input directly to a terminal (bypasses inbox).
+def _deliver_handoff_payload(terminal_id: str, provider: str, message: str) -> None:
+    """Deliver a handoff payload through the worker's inbox.
 
-    Args:
-        terminal_id: Terminal ID
-        message: Message to send
-
-    Raises:
-        Exception: If sending fails
+    Routing via the inbox (rather than typing straight into the tmux pane)
+    keeps all inter-agent communication on a single channel, so monitoring
+    sessions capture the supervisor → worker handoff just like any other
+    send_message. The worker is still instructed not to reply via
+    send_message — the supervisor is blocked until the worker completes.
     """
-    response = requests.post(
-        f"{API_BASE_URL}/terminals/{terminal_id}/input", params={"message": message}
-    )
-    response.raise_for_status()
-
-
-def _send_direct_input_handoff(terminal_id: str, provider: str, message: str) -> None:
-    """Send handoff payload to an agent, prepending orchestrator instructions if needed."""
     # For Codex provider: prepend handoff context so the worker agent knows
     # this is a blocking handoff and should simply output results rather than
     # attempting to call send_message back to the supervisor.
@@ -307,11 +298,17 @@ def _send_direct_input_handoff(terminal_id: str, provider: str, message: str) ->
     else:
         handoff_message = message
 
-    _send_direct_input(terminal_id, handoff_message)
+    _send_to_inbox(terminal_id, handoff_message)
 
 
-def _send_direct_input_assign(terminal_id: str, message: str) -> None:
-    """Send assign payload to a worker agent, appending callback instructions."""
+def _deliver_assign_payload(terminal_id: str, message: str) -> None:
+    """Deliver an assign payload through the worker's inbox.
+
+    Routing via the inbox keeps assign on the same channel as send_message
+    so monitoring sessions capture it. The supervisor is the sender (via
+    CAO_TERMINAL_ID), matching what the worker would see for any hand-rolled
+    send_message from the same supervisor.
+    """
     # Auto-inject sender terminal ID suffix when enabled
     if ENABLE_SENDER_ID_INJECTION:
         sender_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
@@ -320,7 +317,7 @@ def _send_direct_input_assign(terminal_id: str, message: str) -> None:
             f"When done, send results back to terminal {sender_id} using send_message]"
         )
 
-    _send_direct_input(terminal_id, message)
+    _send_to_inbox(terminal_id, message)
 
 
 def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
@@ -420,8 +417,9 @@ async def _handoff_impl(
 
         await asyncio.sleep(2)  # wait another 2s
 
-        # Send message to terminal (injects handoff instructions for codex if needed)
-        _send_direct_input_handoff(terminal_id, provider, message)
+        # Deliver handoff payload via the worker's inbox so monitoring
+        # captures it (injects handoff instructions for codex if needed).
+        _deliver_handoff_payload(terminal_id, provider, message)
 
         # Monitor until completion with timeout
         if not wait_until_terminal_status(
@@ -575,8 +573,8 @@ def _assign_impl(
         # Create terminal
         terminal_id, _ = _create_terminal(agent_profile, working_directory)
 
-        # Send message immediately (auto-injects sender terminal ID suffix when enabled)
-        _send_direct_input_assign(terminal_id, message)
+        # Deliver via inbox (auto-injects sender terminal ID suffix when enabled)
+        _deliver_assign_payload(terminal_id, message)
 
         return {
             "success": True,

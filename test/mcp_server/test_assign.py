@@ -12,7 +12,7 @@ class TestAssignSenderIdInjection:
     """Tests for sender ID injection in _assign_impl."""
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_assign_appends_sender_id_when_injection_enabled(self, mock_create, mock_send):
         """When injection is enabled, assign should append sender ID suffix."""
@@ -31,7 +31,7 @@ class TestAssignSenderIdInjection:
         assert "send results back to terminal supervisor-abc123 using send_message]" in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", False)
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_assign_no_suffix_when_injection_disabled(self, mock_create, mock_send):
         """When injection is disabled, assign should send the message unchanged."""
@@ -48,7 +48,7 @@ class TestAssignSenderIdInjection:
         assert sent_message == "Analyze the logs"
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_assign_sender_id_fallback_unknown(self, mock_create, mock_send):
         """When CAO_TERMINAL_ID is not set, suffix should use 'unknown'."""
@@ -64,7 +64,7 @@ class TestAssignSenderIdInjection:
         assert "[Assigned by terminal unknown" in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_assign_suffix_is_appended_not_prepended(self, mock_create, mock_send):
         """The sender ID should be a suffix, not a prefix."""

@@ -12,7 +12,7 @@ from cli_agent_orchestrator.mcp_server.server import _handoff_impl
 class TestHandoffMessageContext:
     """Tests for handoff message context prepended to worker agents."""
 
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_codex_provider_prepends_handoff_context(self, mock_create, mock_wait, mock_send):
@@ -34,7 +34,7 @@ class TestHandoffMessageContext:
                     _handoff_impl("developer", "Implement hello world")
                 )
 
-        # Verify _send_direct_input was called with the handoff prefix
+        # Verify _send_to_inbox was called with the handoff prefix
         mock_send.assert_called_once()
         sent_message = mock_send.call_args[0][1]
         assert sent_message.startswith("[CAO Handoff]")
@@ -42,7 +42,7 @@ class TestHandoffMessageContext:
         assert "Implement hello world" in sent_message
         assert "Do NOT use send_message" in sent_message
 
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_claude_code_provider_no_handoff_context(self, mock_create, mock_wait, mock_send):
@@ -67,7 +67,7 @@ class TestHandoffMessageContext:
         sent_message = mock_send.call_args[0][1]
         assert sent_message == "Implement hello world"
 
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_kiro_cli_provider_no_handoff_context(self, mock_create, mock_wait, mock_send):
@@ -91,7 +91,7 @@ class TestHandoffMessageContext:
         sent_message = mock_send.call_args[0][1]
         assert sent_message == "Implement hello world"
 
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_codex_handoff_context_includes_supervisor_id_from_env(
@@ -118,7 +118,7 @@ class TestHandoffMessageContext:
         assert "sup-xyz789" in sent_message
         assert "Build feature X" in sent_message
 
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_codex_handoff_context_fallback_when_no_env(self, mock_create, mock_wait, mock_send):
@@ -142,7 +142,7 @@ class TestHandoffMessageContext:
         assert "[CAO Handoff]" in sent_message
         assert "Do task" in sent_message
 
-    @patch("cli_agent_orchestrator.mcp_server.server._send_direct_input")
+    @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_codex_handoff_original_message_preserved(self, mock_create, mock_wait, mock_send):
