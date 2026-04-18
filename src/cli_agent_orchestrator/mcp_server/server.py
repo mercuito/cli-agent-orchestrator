@@ -572,6 +572,55 @@ else:
         return _assign_impl(agent_profile, message, None)
 
 
+def _terminate_impl(terminal_id: str) -> Dict[str, Any]:
+    """Gracefully exit a terminal via the existing REST endpoint.
+
+    Used by a supervisor to clean up a worker it no longer needs (typically
+    an ``assign``'d worker after it delivers its callback). ``handoff``
+    already self-cleans, so this is primarily for the async flow.
+
+    Degrades gracefully: any HTTP failure (unknown terminal, server error,
+    network issue) is returned as a structured ``{success: False, error: ...}``
+    rather than raised, so the calling agent gets a dict it can reason about.
+    """
+    try:
+        response = requests.post(f"{API_BASE_URL}/terminals/{terminal_id}/exit")
+        response.raise_for_status()
+        return {
+            "success": True,
+            "terminal_id": terminal_id,
+            "message": f"Sent exit command to terminal {terminal_id}",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "terminal_id": terminal_id,
+            "error": str(e),
+        }
+
+
+@mcp.tool()
+async def terminate(
+    terminal_id: str = Field(description="Terminal ID to gracefully exit and clean up"),
+) -> Dict[str, Any]:
+    """Gracefully exit an existing terminal.
+
+    Sends the provider-specific exit command (e.g. ``/exit`` for Codex and
+    Claude Code, ``C-d`` for some others). The tmux window dies, the
+    provider's cleanup hooks run, and the terminal is removed from the
+    database.
+
+    Use after an ``assign``'d worker has delivered its callback via
+    ``send_message`` and you no longer need it. ``handoff`` does this
+    automatically, so don't call ``terminate`` on a handoff'd worker.
+
+    Returns:
+        Dict with ``success`` (bool), ``terminal_id``, and either a
+        ``message`` on success or an ``error`` on failure.
+    """
+    return _terminate_impl(terminal_id)
+
+
 # Implementation function for send_message
 def _send_message_impl(receiver_id: str, message: str) -> Dict[str, Any]:
     """Implementation of send_message logic."""
