@@ -84,7 +84,6 @@ export interface ProviderInfo {
 export interface MonitoringSession {
   id: string
   terminal_id: string
-  peer_terminal_ids: string[]
   label: string | null
   started_at: string
   ended_at: string | null

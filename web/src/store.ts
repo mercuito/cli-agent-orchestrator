@@ -18,13 +18,12 @@ interface Store {
   connected: boolean
   snackbar: Snackbar | null
   terminalStatuses: Record<string, string>
-  /** Map of terminal_id → list of active monitoring sessions targeting it.
-   *  Multiple sessions can target the same terminal simultaneously (design
-   *  decision #10 in the monitoring plan — e.g. a run-level + step-level
-   *  window). Replaced wholesale each poll (see
-   *  setActiveMonitoringSessions). The indicator component reads the full
-   *  list so its hover tooltip can surface every active session. */
-  activeMonitoringByTerminal: Record<string, MonitoringSession[]>
+  /** Map of terminal_id → its active monitoring session (if any). Under
+   *  the single-session model at most one session per terminal can be
+   *  active at a time (see ``create_session`` idempotency on the backend),
+   *  so a single-value map is all we need. Replaced wholesale each poll
+   *  via setActiveMonitoringSessions. */
+  activeMonitoringByTerminal: Record<string, MonitoringSession>
 
   fetchSessions: () => Promise<void>
   selectSession: (name: string | null) => Promise<void>
@@ -117,16 +116,12 @@ export const useStore = create<Store>((set, get) => ({
     }),
   setActiveMonitoringSessions: (sessions) =>
     set(state => {
-      // Replace, don't merge: if a monitoring session just ended, we want
-      // its terminal to drop out of the map immediately on the next poll.
-      // Group by terminal_id so overlapping sessions (design decision #10)
-      // are all visible in the hover tooltip — not silently collapsed to
-      // the last one received.
-      const next: Record<string, MonitoringSession[]> = {}
-      for (const s of sessions) {
-        if (!next[s.terminal_id]) next[s.terminal_id] = []
-        next[s.terminal_id].push(s)
-      }
+      // Replace, don't merge: a session ending should drop from the map
+      // on the next poll. One session per terminal under the single-session
+      // model — if the server ever returns multiples (shouldn't happen),
+      // last one wins and we accept it rather than special-casing.
+      const next: Record<string, MonitoringSession> = {}
+      for (const s of sessions) next[s.terminal_id] = s
       if (jsonEqual(state.activeMonitoringByTerminal, next)) return state
       return { activeMonitoringByTerminal: next }
     }),

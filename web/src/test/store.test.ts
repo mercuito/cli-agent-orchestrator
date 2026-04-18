@@ -6,7 +6,6 @@ function mockSession(overrides: Partial<MonitoringSession> = {}): MonitoringSess
   return {
     id: overrides.id || 'sess-1',
     terminal_id: overrides.terminal_id || 'term-a',
-    peer_terminal_ids: overrides.peer_terminal_ids || [],
     label: overrides.label !== undefined ? overrides.label : null,
     started_at: overrides.started_at || '2026-04-18T10:00:00',
     ended_at: overrides.ended_at !== undefined ? overrides.ended_at : null,
@@ -33,6 +32,7 @@ describe('Store', () => {
     expect(state.activeSession).toBeNull()
     expect(state.activeSessionDetail).toBeNull()
     expect(state.terminalStatuses).toEqual({})
+    expect(state.activeMonitoringByTerminal).toEqual({})
     expect(state.snackbar).toBeNull()
   })
 
@@ -60,27 +60,14 @@ describe('Store', () => {
     expect(useStore.getState().snackbar).toBeNull()
   })
 
-  it('groups active monitoring sessions into lists keyed by terminal_id', () => {
+  it('maps active monitoring sessions by terminal_id', () => {
     const { setActiveMonitoringSessions } = useStore.getState()
     const a = mockSession({ id: 's-a', terminal_id: 'term-a', label: 'x' })
     const b = mockSession({ id: 's-b', terminal_id: 'term-b' })
     setActiveMonitoringSessions([a, b])
     const map = useStore.getState().activeMonitoringByTerminal
-    expect(map['term-a']).toEqual([a])
-    expect(map['term-b']).toEqual([b])
-  })
-
-  it('keeps all overlapping sessions on the same terminal', () => {
-    // Design decision #10 allows multiple active sessions per terminal.
-    // The store must preserve them all so the indicator tooltip can
-    // surface each one.
-    const { setActiveMonitoringSessions } = useStore.getState()
-    const first = mockSession({ id: 's-1', terminal_id: 'shared' })
-    const second = mockSession({ id: 's-2', terminal_id: 'shared' })
-    setActiveMonitoringSessions([first, second])
-    const list = useStore.getState().activeMonitoringByTerminal['shared']
-    expect(list).toHaveLength(2)
-    expect(list.map(s => s.id).sort()).toEqual(['s-1', 's-2'])
+    expect(map['term-a']).toEqual(a)
+    expect(map['term-b']).toEqual(b)
   })
 
   it('replaces the monitoring map rather than merging', () => {

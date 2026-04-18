@@ -23,7 +23,7 @@ describe('API wrapper', () => {
 
   it('listActiveMonitoringSessions fetches active-scoped endpoint', async () => {
     const sessions = [
-      { id: 's1', terminal_id: 't1', peer_terminal_ids: [], label: null, started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active' },
+      { id: 's1', terminal_id: 't1', label: null, started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active' },
     ]
     mockResponse(sessions)
     const result = await api.listActiveMonitoringSessions()
