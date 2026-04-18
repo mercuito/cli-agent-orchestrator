@@ -8,11 +8,7 @@ caoTools:
 mcpServers:
   cao-mcp-server:
     type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
+    command: cao-mcp-server
 ---
 
 # CODE REVIEWER AGENT

@@ -94,6 +94,14 @@ def _register_tools(
     return registered
 
 
+# Hard budget for the HTTP call during MCP server startup. Provider MCP
+# clients commonly kill the stdio connection after ~30s with no handshake
+# response, so we must finish the whole startup (resolve + register +
+# mcp.run()) well under that. Keep this short; on failure we fall open
+# and register everything.
+_ALLOWLIST_RESOLVE_TIMEOUT_SEC = 3.0
+
+
 def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
     """Ask cao-server which tools this terminal's agent profile permits.
 
@@ -101,9 +109,17 @@ def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
     tools." This keeps existing agents (no caoTools, no role mapping) working
     unchanged while users opt in to filtering by configuring their profiles.
     Fail-closed behavior is a later, opt-in choice (Phase 5).
+
+    Any hang past the short budget also fails open — a slow API call at
+    startup would otherwise exceed the provider MCP client's handshake
+    timeout and kill the whole connection, which is strictly worse than
+    not filtering.
     """
     try:
-        response = requests.get(f"{API_BASE_URL}/terminals/{terminal_id}")
+        response = requests.get(
+            f"{API_BASE_URL}/terminals/{terminal_id}",
+            timeout=_ALLOWLIST_RESOLVE_TIMEOUT_SEC,
+        )
         response.raise_for_status()
         metadata = response.json()
         profile_name = metadata.get("agent_profile")

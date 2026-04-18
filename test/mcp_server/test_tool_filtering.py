@@ -135,6 +135,22 @@ class TestResolveAllowlistForTerminal:
 
         assert result is None
 
+    @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
+    def test_api_hang_is_bounded_and_fails_open(self, mock_get):
+        """A hung API call at startup would exceed the provider MCP client's
+        handshake timeout (codex kills after ~30s) and leave the agent with
+        no MCP connection. We must cut the request off well under that and
+        fail open, even though the filter won't apply for that spawn."""
+        mock_get.side_effect = requests.Timeout("read timed out")
+
+        result = server._resolve_allowlist_for_terminal("abc123")
+
+        assert result is None
+        # And we passed a short timeout, not 'no timeout'
+        _, kwargs = mock_get.call_args
+        assert kwargs.get("timeout") is not None
+        assert kwargs["timeout"] <= 10
+
     @patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
     def test_unknown_profile_returns_none_permissive(
