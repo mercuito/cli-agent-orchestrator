@@ -146,8 +146,9 @@ export function AgentPanel() {
     await createSession(provider, profile.trim(), workingDirectory.trim() || undefined)
     setCreating(false)
     setShowSpawnModal(false)
-    setProfile('')
-    setWorkingDirectory('')
+    // Intentionally NOT resetting profile/workingDirectory — they're
+    // persisted across sessions so the user doesn't have to re-enter the
+    // same values every time. Clearing here would defeat that.
   }
 
   const openTerminal = (terminalId: string, provider?: string, agentProfile?: string | null) => {
@@ -173,8 +174,8 @@ export function AgentPanel() {
       await api.addTerminalToSession(activeSession, addProvider, addProfile.trim(), addWorkDir.trim() || undefined)
       showSnackbar({ type: 'success', message: 'Agent added to session' })
       setShowAddAgent(false)
-      setAddProfile('')
-      setAddWorkDir('')
+      // Intentionally NOT resetting addProfile/addWorkDir — they're
+      // persisted so the next add-agent click starts with the same values.
       if (activeSession) await selectSession(activeSession)
     } catch (e: any) {
       showSnackbar({ type: 'error', message: e.message || 'Failed to add agent' })
