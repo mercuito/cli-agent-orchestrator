@@ -145,7 +145,26 @@ class CodexProvider(BaseProvider):
         # non-interactive tmux sessions where interactive approval prompts
         # block handoff/assign flows. This mirrors Claude Code's
         # --dangerously-skip-permissions and Gemini CLI's --yolo flags.
-        command_parts = ["codex", "--yolo", "--no-alt-screen", "--disable", "shell_snapshot"]
+        #
+        # --disable plugins / apps: Codex's plugin and apps systems load
+        # user-level tools (e.g. github@openai-curated registers ~86 tools,
+        # ~70K tokens of schema) from ~/.codex/plugins/ regardless of
+        # CODEX_HOME. Suppressing these at the feature-flag level is the
+        # only reliable off switch; a local `[plugins.*].enabled = false`
+        # in config.toml is overwritten by Codex on interactive startup
+        # (plugin state is account-authoritative). CAO agents get their
+        # tools via MCP servers declared in the agent profile instead.
+        command_parts = [
+            "codex",
+            "--yolo",
+            "--no-alt-screen",
+            "--disable",
+            "shell_snapshot",
+            "--disable",
+            "plugins",
+            "--disable",
+            "apps",
+        ]
 
         if self._agent_profile is not None:
             try:

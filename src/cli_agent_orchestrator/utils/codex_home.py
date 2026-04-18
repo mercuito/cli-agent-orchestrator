@@ -33,15 +33,15 @@ from cli_agent_orchestrator.utils.config_inheritance import (
 #     (agents.*.config_file, profiles.*.instructions_file, mcp_servers.*.cwd)
 #     contain relative filesystem paths that silently break when copied to a
 #     per-terminal CODEX_HOME. Default-deny is the only safe posture.
-#   - disable_plugins=True: Codex auto-discovers plugins from ~/.codex/plugins/
-#     regardless of CODEX_HOME. A globally enabled plugin (e.g. github@openai-
-#     curated registers ~86 tools, ~70K tokens) would otherwise bleed into
-#     every CAO agent's context. We emit enabled=false per plugin to override.
+#   - disable_plugins is NOT set. Empirically Codex overwrites any local
+#     ``[plugins.*].enabled = false`` entries on interactive startup —
+#     plugin state is account-authoritative. Suppression is done instead at
+#     the CLI-flag layer via ``--disable plugins --disable apps`` in
+#     providers/codex.py (see CodexProvider._build_codex_command).
 #   - features.multi_agent=false: CAO is the multi-agent orchestration layer.
 #     Codex's own multi_agent mode conflicts and is force-disabled.
 CODEX_INHERIT_POLICY = InheritPolicy(
     allowlist=frozenset({"model", "model_reasoning_effort", "notice"}),
-    disable_plugins=True,
     extra_overrides={"features": {"multi_agent": False}},
 )
 

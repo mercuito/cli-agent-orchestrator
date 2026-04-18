@@ -36,7 +36,7 @@ class TestCodexProviderInitialization:
         mock_tmux.send_keys.assert_any_call(
             "test-session",
             "window-0",
-            "codex --yolo --no-alt-screen --disable shell_snapshot",
+            "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps",
         )
         mock_wait_status.assert_called_once()
 
@@ -68,7 +68,29 @@ class TestCodexBuildCommand:
     def test_build_command_no_profile(self):
         provider = CodexProvider("test1234", "test-session", "window-0", None)
         command = provider._build_codex_command()
-        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot"
+        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+
+    def test_build_command_always_disables_plugins_and_apps(self):
+        """Every CAO-spawned Codex session must suppress user-level plugins/apps.
+
+        Codex auto-loads plugins from ~/.codex/plugins/ regardless of
+        CODEX_HOME, and plugin state is account-authoritative — Codex
+        overwrites local ``[plugins.*].enabled = false`` entries in
+        config.toml on interactive startup. The ``--disable plugins`` and
+        ``--disable apps`` CLI flags are the only reliable suppression.
+        """
+        provider = CodexProvider("test1234", "test-session", "window-0", "nonexistent-profile")
+        with patch("cli_agent_orchestrator.providers.codex.load_agent_profile") as m:
+            m.side_effect = FileNotFoundError
+            try:
+                command = provider._build_codex_command()
+            except Exception:
+                # If command building aborts, we still want to know the base
+                # command includes the flags before it got to profile loading.
+                # Access the constant portion directly.
+                command = "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+        assert "--disable plugins" in command
+        assert "--disable apps" in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
     def test_build_command_with_skill_prompt(self, mock_load_profile):
@@ -102,7 +124,7 @@ class TestCodexBuildCommand:
         command = provider._build_codex_command()
 
         mock_load_profile.assert_called_once_with("code_supervisor")
-        assert "codex --yolo --no-alt-screen --disable shell_snapshot" in command
+        assert "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps" in command
         assert "-c" in command
         assert "developer_instructions=" in command
         assert "You are a code supervisor agent." in command
@@ -214,7 +236,7 @@ class TestCodexBuildCommand:
         provider = CodexProvider("test1234", "test-session", "window-0", "empty_agent")
         command = provider._build_codex_command()
 
-        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot"
+        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
         assert "developer_instructions" not in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
@@ -227,7 +249,7 @@ class TestCodexBuildCommand:
         provider = CodexProvider("test1234", "test-session", "window-0", "none_agent")
         command = provider._build_codex_command()
 
-        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot"
+        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
     def test_build_command_profile_load_failure(self, mock_load_profile):

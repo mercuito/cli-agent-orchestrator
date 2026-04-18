@@ -417,13 +417,17 @@ class TestPrepareCodexHome:
         # Overridden: CAO forces features.multi_agent off even if user has it on.
         assert data["features"]["multi_agent"] is False
 
-    def test_global_plugins_are_explicitly_disabled_in_per_terminal(self, tmp_path: Path):
-        """Every [plugins.*] in global must emit enabled=false in per-terminal.
+    def test_global_plugins_section_is_dropped_from_per_terminal_config(
+        self, tmp_path: Path
+    ):
+        """User-level ``[plugins.*]`` entries must not leak into per-terminal config.
 
-        Codex auto-discovers plugins from ~/.codex/plugins/ regardless of
-        CODEX_HOME. Without an explicit ``enabled = false`` override in the
-        per-terminal config, those plugins load and inject tens of thousands
-        of tokens of tool schemas into every CAO-spawned agent's context.
+        Note: this is *not* a suppression mechanism — Codex rewrites
+        ``[plugins.*].enabled`` on interactive startup regardless of what's
+        in the per-terminal config. Actual plugin suppression happens via
+        the ``--disable plugins --disable apps`` CLI flags in
+        ``providers/codex.py``. This test only asserts config-level
+        isolation: CAO doesn't carry user globals into its sessions.
         """
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
 
@@ -472,8 +476,7 @@ class TestPrepareCodexHome:
             )
 
         data = _read_toml(codex_home / "config.toml")
-        assert data["plugins"]["github@openai-curated"]["enabled"] is False
-        assert data["plugins"]["another-plugin"]["enabled"] is False
+        assert "plugins" not in data
 
     def test_profile_model_wins_over_inherited_global_model(self, tmp_path: Path):
         """Agent profile settings take precedence over inherited globals."""
