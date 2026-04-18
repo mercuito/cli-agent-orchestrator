@@ -1,230 +1,139 @@
-# Monitoring Sessions — Implementation Plan
+# Monitoring Sessions — Design Record
 
-**Status:** shipped. All six phases complete with reviewer sign-off per phase. Integration tests and live E2E smoke test both passed. This document is retained as the design record; update it only if the feature's model genuinely changes.
+**Status:** shipped. Single-session model landed across backend, API, CLI, and UI. This document is the design record; update it only if the feature's model genuinely changes.
 
 ## Goal
 
-Give operators retrospective visibility into agent-to-agent conversations so that workflow variants (e.g., "does 3 reviewers beat 1?") can be compared and the reasoning behind an agent's output can be audited.
+Retrospective visibility into agent-to-agent conversations. Tag a terminal as "being recorded," let it run, then extract readable artifacts of its inbound/outbound messages — optionally scoped to specific peers or time windows at read time.
 
-The feature intentionally does **not** introduce a first-class "conversation" concept. A monitoring session is a query window — a terminal, a time range, and an optional peer set — that filters the existing `inbox` messages table.
+Primary use case: capturing the reasoning behind an agent-produced artifact (e.g., a review document) so a reviewer can see what exchange led to it, and so operators can compare workflow variants ("does 3 reviewers beat 1?").
 
-## Design decisions (and why)
+## Model
 
-1. **No side log / no message duplication.** The existing `inbox` table already captures every agent-to-agent message (send_message, assign, handoff all land there). A monitoring session is metadata that scopes a query over that table.
+A **monitoring session** is a recording window over the existing `inbox` table. It has four fields worth storing:
 
-2. **Sessions are not exposed to agents.** No `@mcp.tool()` registration. The monitoring API lives only on the HTTP server and is driven by procedures (yards) or operators, not by LLM agents. Agents cannot start, stop, or query sessions.
+- `terminal_id` — the agent being recorded
+- `started_at` — when recording began
+- `ended_at` — when recording stopped (NULL while active)
+- `label` — free-form operator-facing nickname (nullable)
 
-3. **Pair filter is retroactive by default.** Adding a peer mid-session exposes earlier in-window messages involving that peer. Users who want prospective-per-peer semantics end the session and start a new one with the expanded peer set. We ship without a `rotate` convenience endpoint; add it only if procedures find end+start clunky.
+Sessions don't carry peer sets. They capture all inbox activity involving the terminal for their lifetime. Peer and time-window filtering happens at read time via query parameters on the `/messages` and `/log` endpoints.
 
-4. **Null / empty peer set means "all peers."** No rows in `monitoring_session_peers` for a session = unscoped (capture all I/O of the monitored terminal). One or more rows = scoped to that set.
+### What it is not
 
-5. **Free-form `label` only, no structured metadata blob.** Procedures that need structured correlation either store it in yards instance state or encode it into the label. Revisit only if a concrete query demands it.
+- **Not** a chat room or multi-party thread primitive.
+- **Not** an agent-facing feature. Agents cannot create, inspect, or end monitoring sessions. The API is operator/procedure-facing only.
+- **Not** multiple concurrent captures per terminal. A terminal is "recording" or "not recording" — binary state.
 
-6. **Persisted until explicit delete.** No TTL, no auto-archive. Sessions are tiny.
+## Design decisions
 
-7. **Deleting a session does not delete messages.** Messages have their own retention story. Deleting a session removes the query window only. FK CASCADE applies only to the peer rows.
+1. **Sessions scope a query; they do not duplicate messages.** The `inbox` table stays the single source of truth. A session is just metadata (when recording started/stopped, who was being recorded).
 
-8. **Ended sessions are immutable w.r.t. peer set.** Add/remove peer on an ended session returns 409. No reason to mutate a historical window.
+2. **Not exposed to agents.** No MCP tools. Monitoring is a procedure/operator concern — something happening *to* an agent, not a tool an agent wields.
 
-9. **Timestamp source is `inbox.created_at`** (sender side). Windows map to when the sender emitted, not when the recipient received. Simpler and intuitive.
+3. **Filtering is query-time, not session-config-time.** The `/messages` and `/log` endpoints accept repeated `peer` params and `started_after` / `started_before` datetime params. Same recording yields different artifacts via different queries.
 
-10. **Overlapping sessions on the same terminal are allowed.** A procedure may want run-level + step-level windows concurrently. No conflict — each session is an independent query.
+4. **Sessions record everything involving the monitored terminal.** No peer scoping at capture. This was originally an option; simplified away because query-time filtering covers the same use cases without the UI and data-model complexity.
+
+5. **One active session per terminal.** `create_session` is idempotent: if an active session already exists for the target terminal, it's returned unchanged — the label argument is ignored in that case. Clicking "Monitor" when already recording is a no-op, not an error. Ended sessions don't count toward this cap.
+
+6. **Persisted until explicit delete.** Sessions are cheap — a few string columns and two timestamps. No TTL, no archive. `DELETE /monitoring/sessions/{id}` removes the record (but not the captured messages, which have their own retention story via `inbox`).
+
+7. **`SessionAlreadyEnded` applies only to `end_session`.** Double-ending a session returns 409 so the operator knows they raced themselves. Double-starting via `create_session` is fine and returns the existing session.
+
+8. **Artifacts self-describe applied filters.** When the `/log` endpoint is called with a peer or time filter, the rendered Markdown adds a `**Filter:** ...` line (and JSON gets a `filter` key) so a saved artifact can't be mistaken for the whole recording.
+
+9. **Sub-window narrowing composes with session bounds.** `started_after` / `started_before` query params AND with the session's own `started_at` / `ended_at` — a caller can't read past the session window by asking for a broader range.
+
+10. **FK enforcement stays on.** The `monitoring_session_peers` table is gone but the `PRAGMA foreign_keys=ON` connect hook remains; it protects any future schema additions.
 
 ## Schema
 
 ```
 monitoring_sessions
-  id            TEXT PRIMARY KEY
-  terminal_id   TEXT NOT NULL
-  label         TEXT NULL
-  started_at    DATETIME NOT NULL
-  ended_at      DATETIME NULL              -- NULL = still recording
-
-monitoring_session_peers
-  session_id        TEXT NOT NULL
-  peer_terminal_id  TEXT NOT NULL
-  PRIMARY KEY (session_id, peer_terminal_id)
-  FOREIGN KEY (session_id) REFERENCES monitoring_sessions(id) ON DELETE CASCADE
+  id           TEXT PRIMARY KEY
+  terminal_id  TEXT NOT NULL
+  label        TEXT NULL
+  started_at   DATETIME NOT NULL
+  ended_at     DATETIME NULL        -- NULL = still recording
 ```
 
-No ALTER TABLE required. `Base.metadata.create_all()` picks up the new tables on startup.
+One row per session. Indexed implicitly on `id` (primary key); no other indexes — volume is low.
+
+Migration: a legacy `monitoring_session_peers` table is dropped at startup via `_migrate_drop_monitoring_session_peers`. Idempotent (no-op when the table is absent).
 
 ## API surface
 
-All routes on the HTTP server (`src/cli_agent_orchestrator/api/main.py`). **Not** on the MCP tool surface.
+All routes under `/monitoring/`. Not registered as MCP tools.
 
-| Method | Path | Notes |
+| Verb | Path | Notes |
 |---|---|---|
-| POST | `/monitoring/sessions` | body: `{terminal_id, peer_terminal_ids?, label?}` → 201 |
-| POST | `/monitoring/sessions/{id}/end` | 409 if already ended |
-| POST | `/monitoring/sessions/{id}/peers` | body: `{peer_terminal_ids}`; 409 if ended |
-| DELETE | `/monitoring/sessions/{id}/peers/{peer_id}` | 409 if ended |
-| GET | `/monitoring/sessions` | filters: `terminal_id`, `peer_terminal_id`, `involves`, `status`, `label`, `started_after`, `started_before`, `limit`, `offset` |
+| POST | `/monitoring/sessions` | body: `{terminal_id, label?}` → 201 (idempotent) |
+| GET | `/monitoring/sessions` | filters: `terminal_id`, `status` (`active`\|`ended`), `label`, `started_after`, `started_before`, `limit`, `offset` |
 | GET | `/monitoring/sessions/{id}` | 404 if missing |
-| GET | `/monitoring/sessions/{id}/messages` | ordered JSON list |
-| GET | `/monitoring/sessions/{id}/log?format=markdown\|json` | default markdown — implemented in Phase 4 alongside the formatter |
-| DELETE | `/monitoring/sessions/{id}` | 204 |
+| POST | `/monitoring/sessions/{id}/end` | 409 if already ended |
+| GET | `/monitoring/sessions/{id}/messages` | query-time filters: `peer` (repeatable), `started_after`, `started_before` |
+| GET | `/monitoring/sessions/{id}/log` | same filters as `/messages`; `?format=markdown\|json` |
+| DELETE | `/monitoring/sessions/{id}` | 204 (session metadata only; messages untouched) |
 
 ### Message query (`get_session_messages`)
 
+Base predicate (always applied):
 ```sql
-SELECT * FROM inbox
-WHERE (sender_id = :terminal_id OR receiver_id = :terminal_id)
-  AND (
-    NOT EXISTS (SELECT 1 FROM monitoring_session_peers WHERE session_id = :sid)
-    OR sender_id   IN (SELECT peer_terminal_id FROM monitoring_session_peers WHERE session_id = :sid)
-    OR receiver_id IN (SELECT peer_terminal_id FROM monitoring_session_peers WHERE session_id = :sid)
-  )
-  AND created_at >= :started_at
-  AND (:ended_at IS NULL OR created_at <= :ended_at)
-ORDER BY created_at
+(sender_id = terminal OR receiver_id = terminal)
+  AND created_at >= session.started_at
+  AND (session.ended_at IS NULL OR created_at <= session.ended_at)
 ```
+
+Optional query-time filters layer on top:
+```sql
+  AND (peers IS empty OR sender_id IN peers OR receiver_id IN peers)
+  AND (:started_after IS NULL OR created_at >= :started_after)
+  AND (:started_before IS NULL OR created_at <= :started_before)
+```
+
+`peers=[]` is treated the same as `peers=None` — no filter. Prevents a UI with an empty multi-select from silently returning nothing.
 
 ## CLI surface
 
 ```
-cao monitor start    --terminal T [--peer P ...] [--label ...]   # prints session_id
+cao monitor start    --terminal T [--label L]
 cao monitor end      <session_id>
-cao monitor add-peer <session_id> <peer_id>
-cao monitor remove-peer <session_id> <peer_id>
-cao monitor list     [--terminal T] [--peer P] [--involves X] [--active] [--label ...]
+cao monitor list     [--terminal T] [--active] [--ended] [--label L] [--limit N] [--offset N]
 cao monitor show     <session_id>
-cao monitor log      <session_id> [--format markdown|json]        # stdout
+cao monitor log      <session_id> [--format markdown|json]
+                     [--peer P ...] [--since ISO] [--until ISO]
 cao monitor delete   <session_id>
 ```
 
-CLI commands call the local HTTP API (mirror `cli/commands/launch.py`).
+`CAO_API_HOST` / `CAO_API_PORT` env vars override the server target (defaults: `127.0.0.1:9889`).
 
-## Phases
+## Web UI surface
 
-Each phase is a separately committable unit. TDD: tests first, then implementation. Do not mark a phase "done" until tests pass and the reviewer has signed off.
+Indicator (shipped):
+- Small sky-blue eye icon with a pulsing red dot next to a terminal's status badge when a session is recording it.
+- Hover shows a tooltip with the session's label and age.
+- Rendered via React portal with fixed positioning so it escapes the dashboard's `overflow-hidden` session card.
 
-### Phase 1 — Data layer
+Operator action buttons (separate follow-up, not shipped at time of this record):
+- "Monitor" button when no active session. One click starts with defaults (label `dashboard-HHmmss` or similar).
+- "Stop" button when an active session exists. One click ends it.
+- Single button toggles based on store state. Simple because the model is simple — no popover, no multi-session UI.
 
-**Files:**
-- Modify: `src/cli_agent_orchestrator/clients/database.py` — add `MonitoringSessionModel`, `MonitoringSessionPeerModel`
-- Add: `test/clients/test_monitoring_tables.py`
+## Simplification history
 
-**Tests must cover:**
-- Tables exist after `init_db()`
-- Insert session, insert peer row referencing it
-- FK CASCADE: deleting a session deletes its peer rows
-- `ended_at` nullable; `label` nullable
+The feature originally shipped with a multi-session, peer-scoped design (overlapping concurrent sessions per terminal, each carrying a peer set; session-level `add_peers`/`remove_peer` mutations; UI popover for disambiguating stop actions).
 
-**Acceptance:** fresh DB has both tables; tests green.
+During post-ship review the operator observed that:
+- Every scenario the multi-session model was trying to address (run-level + step-level captures, per-reviewer scoping, etc.) can be satisfied by one session + query-time filters.
+- The complexity was real: UI popovers, duplicate storage, retroactive peer filtering semantics, concurrent-mutation edge cases, label-collision disambiguation.
+- The value was marginal.
 
-### Phase 2 — Service layer
+The model was simplified in Phases 1–5:
+1. Schema + service (drop `monitoring_session_peers`, make `create_session` idempotent, move peer filter to query time on `get_session_messages`).
+2. HTTP API + formatter (drop peer routes, add query-time filter params, artifact self-describes applied filter).
+3. CLI (drop peer-related flags on `start`/`list`, add filter flags on `log`).
+4. Web UI (flip store shape, simplify tooltip, drop multi-session rendering).
+5. Docs (this rewrite).
 
-**Files:**
-- Add: `src/cli_agent_orchestrator/services/monitoring_service.py`
-- Add: `test/services/test_monitoring_service.py`
-
-**Functions:**
-```
-create_session(terminal_id, peer_terminal_ids=None, label=None) -> dict
-end_session(session_id) -> dict
-get_session(session_id) -> dict | None
-list_sessions(**filters, limit=50, offset=0) -> list[dict]
-delete_session(session_id) -> None
-add_peers(session_id, peer_terminal_ids) -> None           # raise on ended
-remove_peer(session_id, peer_terminal_id) -> None          # raise on ended
-get_session_messages(session_id) -> list[dict]
-```
-
-**Tests must cover:**
-- Happy-path create/get/end/delete
-- `end_session` on already-ended session raises
-- `add_peers` / `remove_peer` on ended session raises
-- `list_sessions` filter combinations (terminal_id, peer_terminal_id, involves, status, label, time range)
-- `get_session_messages` retroactive peer filter: add peer mid-window, earlier in-window messages with that peer become visible
-- Empty peer set = captures all I/O of the monitored terminal
-- `involves=X` matches both `terminal_id=X` and `X in peers`
-- Session still recording (`ended_at=NULL`): messages query bounded upper by "now"
-
-**Acceptance:** service tests cover every behavioral decision above; run with in-memory SQLite.
-
-### Phase 3 — HTTP API
-
-**Files:**
-- Modify: `src/cli_agent_orchestrator/api/main.py` — routes inline, matching
-  the existing convention of decorating ``@app`` directly. An initial
-  `APIRouter` split was reverted for consistency; if we later want split
-  routers, do it as a codebase-wide refactor, not a one-off for this feature.
-- Add: `test/api/test_monitoring_routes.py`
-
-**Must confirm before implementing:** these routes are NOT registered as MCP tools.
-
-**Tests must cover:**
-- Each endpoint happy path (8 routes — `/log` deferred to Phase 4)
-- 404 on missing session
-- 409 on mutation of ended session
-- 422 on malformed body (FastAPI's default for Pydantic validation failures)
-- List pagination + filter combinations
-
-**Acceptance:** full feature (minus `/log`) driveable from curl.
-
-### Phase 4 — Artifact formatter + `/log` endpoint
-
-**Files:**
-- Add: `src/cli_agent_orchestrator/utils/monitoring_formatter.py` — pure
-  transforms (`format_markdown`, `format_json`) belong in `utils/`, not
-  `services/`. `services/*_service.py` is reserved for modules that
-  coordinate state/DB/orchestration; a formatter is in the same family as
-  `utils/template.py`.
-- Add: `test/utils/test_monitoring_formatter.py`
-- Modify: `src/cli_agent_orchestrator/api/main.py` — add `GET /log`
-- Modify: `test/api/test_monitoring_routes.py` — add `/log` endpoint tests
-
-**Functions:**
-```
-format_markdown(session: dict, messages: list[dict]) -> str
-format_json(session: dict, messages: list[dict]) -> dict
-```
-
-**Markdown layout:**
-```
-# Monitoring session: {label or session_id}
-**Monitored:** {terminal_id}
-**Peers:** {peer list or "all"}
-**Window:** {started_at} → {ended_at or "ongoing"}
-
----
-
-**{timestamp} — {sender} → {recipient}**
-> {message}
-```
-
-**Tests must cover:** golden markdown for representative input; JSON round-trip.
-
-### Phase 5 — CLI wrapper
-
-**Files:**
-- Add: `src/cli_agent_orchestrator/cli/commands/monitor.py`
-- Modify: `src/cli_agent_orchestrator/cli/main.py` to register the group
-- Add: `test/cli/test_monitor_commands.py`
-
-**Tests must cover:** each subcommand with `CliRunner` + mocked HTTP.
-
-### Phase 6 — End-to-end verification + docs
-
-- Live test: spin up `cao-server`, spawn two terminals, start monitoring, send messages via `assign`, end session, fetch markdown log, eyeball.
-- Add `docs/monitoring.md` (or a section in an existing doc) with a short yards procedure example.
-- No agent-facing docs (no agent surface).
-
-## Review protocol
-
-One reviewer per phase, spawned fresh each time. The reviewer:
-
-1. Reads this plan document in full.
-2. Reads the commits / working tree for the phase under review.
-3. Checks:
-   - Were tests written first (evidenced by test file present and covering the behavioral decisions listed for this phase)?
-   - Does the implementation actually make the tests pass?
-   - Does the code drift from the plan? If yes: is it a legitimate discovery that warrants updating the plan, or drift that should be corrected?
-   - Are there behavioral decisions in the plan not covered by tests?
-   - Any obvious bugs, security issues, or tight coupling to unrelated code?
-4. Reports gaps as a punch list. Not a rubber stamp — reviewers must push back when the plan is underspecified or the implementation is weak.
-
-Implementer addresses gaps. If the reviewer is wrong, the implementer pushes back and the disagreement surfaces to the user. If the plan is genuinely wrong, update the plan *and* the code in the same pass so the document stays canonical.
-
-A phase is "done" when: tests green, reviewer has no open items, user has approved the commit.
+The capabilities lost: session-level peer scoping as a setup-time option; concurrent captures with different purposes on the same terminal. Both were addressing needs better solved by filtering the unscoped recording at read time.

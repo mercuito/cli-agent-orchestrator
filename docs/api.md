@@ -248,25 +248,25 @@ integration example. Monitoring routes are operator-facing and **not**
 exposed as MCP tools — agents cannot see or call them.
 
 ### POST /monitoring/sessions
-Create a monitoring session.
+Start recording a terminal.
 
 **Request body:**
 ```json
 {
   "terminal_id": "impl-abc123",
-  "peer_terminal_ids": ["rev-def456"],
   "label": "review-v2"
 }
 ```
-`peer_terminal_ids` and `label` are optional. Empty/null peer set captures
-all I/O of the monitored terminal.
+`label` is optional. **Idempotent on active state:** if `terminal_id` already
+has an active session, that session is returned unchanged (label argument
+ignored). Status code is `201` in both cases.
 
-**Response (201):** session object.
+**Response (201):** session object with fields `id`, `terminal_id`, `label`,
+`started_at`, `ended_at`, `status`.
 
 ### GET /monitoring/sessions
-List sessions. Query params: `terminal_id`, `peer_terminal_id`, `involves`,
-`status` (`active`|`ended`), `label`, `started_after`, `started_before`,
-`limit` (1–500), `offset`.
+List sessions. Query params: `terminal_id`, `status` (`active`|`ended`),
+`label`, `started_after`, `started_before`, `limit` (1–500), `offset`.
 
 ### GET /monitoring/sessions/{session_id}
 Show a single session. `404` if missing.
@@ -274,19 +274,26 @@ Show a single session. `404` if missing.
 ### POST /monitoring/sessions/{session_id}/end
 End an active session. `409` if already ended; `404` if missing.
 
-### POST /monitoring/sessions/{session_id}/peers
-Add one or more peers to an active session. Body: `{ "peer_terminal_ids": [...] }`
-(must be non-empty). `409` if session ended.
-
-### DELETE /monitoring/sessions/{session_id}/peers/{peer_terminal_id}
-Remove a peer. `409` if session ended.
-
 ### GET /monitoring/sessions/{session_id}/messages
-Inbox messages in the session's window, ordered by creation time. JSON list.
+Inbox messages captured by the session, ordered by creation time.
+
+**Query params (all optional):**
+- `peer` (repeatable): filter to messages whose sender OR receiver is one of
+  the listed peers. Omit for all messages.
+- `started_after` / `started_before` (ISO datetime): narrow to a sub-window
+  inside the session's bounds.
 
 ### GET /monitoring/sessions/{session_id}/log
-Rendered artifact. Query param: `format=markdown` (default) or `format=json`.
-Markdown returns `text/markdown`; JSON returns `{session, messages}`.
+Rendered artifact.
+
+**Query params:**
+- `format=markdown` (default) or `format=json`.
+- `peer` (repeatable), `started_after`, `started_before`: same as
+  `/messages`. When any filter is applied, the artifact declares it in a
+  `**Filter:** ...` header line (Markdown) or `filter` key (JSON).
+
+Markdown returns `text/markdown`; JSON returns `{session, messages}` (plus
+`filter` when applicable).
 
 ### DELETE /monitoring/sessions/{session_id}
 Delete the session metadata. Does **not** delete messages. Returns `204`.

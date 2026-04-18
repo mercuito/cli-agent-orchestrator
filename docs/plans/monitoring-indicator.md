@@ -1,6 +1,16 @@
 # Web UI: "Being Monitored" Indicator
 
-**Status:** in progress. Small follow-up to the monitoring-sessions feature.
+**Status:** shipped. Follow-up to the monitoring-sessions feature. Design record only; update if the indicator's behavior genuinely changes.
+
+> **Note on Design decision #2 below:** the store shape stated here
+> (`monitoredTerminalIds: Record<string, boolean>`) was the original
+> indicator design. During the model simplification we later enriched it
+> to `activeMonitoringByTerminal: Record<string, MonitoringSession>` so
+> the tooltip could surface label + age. The rationale ("Record, not
+> Set; match existing conventions") still stands — only the value type
+> changed. See
+> [`monitoring-sessions.md`](monitoring-sessions.md) for the canonical
+> current state.
 
 ## Goal
 
