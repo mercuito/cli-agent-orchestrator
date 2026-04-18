@@ -14,8 +14,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-import tomli
-
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 
@@ -78,13 +76,6 @@ def _dump_toml(data: Dict[str, Any]) -> str:
 
     emit_table([], data)
     return "\n".join(lines).rstrip() + "\n"
-
-
-def _load_global_codex_config(global_codex_home_dir: Path) -> Dict[str, Any]:
-    config_path = global_codex_home_dir / "config.toml"
-    if not config_path.exists():
-        return {}
-    return tomli.loads(config_path.read_text())
 
 
 def _merge_into(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,37 +189,36 @@ def prepare_codex_home(
                 "Codex CLI is not logged in (or requires user interaction). Run `codex auth login` first."
             )
 
-    base_config = _load_global_codex_config(global_codex_home_dir)
-
     profile = load_agent_profile(agent_profile)
 
-    # Always trust the working directory
-    projects = base_config.get("projects", {})
-    if not isinstance(projects, dict):
-        projects = {}
-    projects[str(Path(working_directory))] = {"trust_level": "trusted"}
-    base_config["projects"] = projects
+    # Build a minimal config from scratch — intentionally NOT inheriting from
+    # ~/.codex/config.toml. The global config may reference files by relative
+    # path (e.g. [agents.*].config_file, profiles.*.instructions_file,
+    # mcp_servers.*.cwd) which resolve against CODEX_HOME. Copying the config
+    # into a per-terminal CODEX_HOME silently breaks those references. Ship a
+    # clean, CAO-controlled config instead; user's custom Codex agents in
+    # ~/.codex/ remain untouched and keep working for standalone codex usage.
+    base_config: Dict[str, Any] = {
+        "projects": {str(Path(working_directory)): {"trust_level": "trusted"}},
+    }
 
-    # Apply profile model
     if getattr(profile, "model", None):
         base_config["model"] = profile.model  # type: ignore[attr-defined]
 
-    # Apply codexConfig overrides (top-level keys only, for now)
     codex_config = getattr(profile, "codexConfig", None)
     if isinstance(codex_config, dict):
         _merge_into(base_config, codex_config)
 
-    # Apply canonical reasoning effort if present and not explicitly overridden by codexConfig.
     reasoning_effort = getattr(profile, "reasoning_effort", None)
     if reasoning_effort and not (
         isinstance(codex_config, dict) and "model_reasoning_effort" in codex_config
     ):
         base_config["model_reasoning_effort"] = str(reasoning_effort)
 
-    # Merge MCP servers
-    mcp_servers = base_config.get("mcp_servers", {})
-    if not isinstance(mcp_servers, dict):
-        mcp_servers = {}
+    # MCP servers from the agent profile + the mandatory CAO MCP server.
+    mcp_servers: Dict[str, Any] = {}
+    if isinstance(base_config.get("mcp_servers"), dict):
+        mcp_servers = base_config["mcp_servers"]  # type: ignore[assignment]
 
     profile_mcp = getattr(profile, "mcpServers", None)
     if isinstance(profile_mcp, dict):
@@ -243,15 +233,9 @@ def prepare_codex_home(
                     entry["env"] = server["env"]
                 if "cwd" in server:
                     entry["cwd"] = server["cwd"]
-                if "enabled" in server:
-                    entry["enabled"] = bool(server["enabled"])
-                else:
-                    entry["enabled"] = True
+                entry["enabled"] = bool(server.get("enabled", True))
                 mcp_servers[name] = entry
 
-    # Ensure CAO MCP is present and points at the local binary.
-    # If the profile/global config defines a different command (e.g., uvx from git), override it so the
-    # Codex terminal uses the same installed CAO version as the orchestrator.
     cao_existing = mcp_servers.get("cao-mcp-server")
     cao_entry: Dict[str, Any] = {"command": "cao-mcp-server", "enabled": True}
     if isinstance(cao_existing, dict):

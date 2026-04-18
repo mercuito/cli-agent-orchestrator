@@ -331,3 +331,66 @@ class TestPrepareCodexHome:
                     cao_home_dir=tmp_path / "cao",
                     global_codex_home_dir=global_codex_home,
                 )
+
+    def test_prepare_codex_home_does_not_inherit_global_config(self, tmp_path: Path):
+        """Per-terminal config must NOT clone ~/.codex/config.toml.
+
+        The global config often contains relative file paths (e.g. custom
+        [agents.*].config_file entries) that resolve against CODEX_HOME.
+        Copying them into a per-terminal CODEX_HOME would break those paths
+        and surface as "malformed agent role definition" warnings from Codex.
+        """
+        from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text(
+            'model = "gpt-user-override"\n'
+            "\n"
+            "[agents.implementer]\n"
+            'description = "User custom agent"\n'
+            'config_file = "agents/implementer.toml"\n'
+            "\n"
+            "[projects.'/some/other/dir']\n"
+            'trust_level = "trusted"\n'
+        )
+        (global_codex_home / "auth.json").write_text('{"ok":true}\n')
+
+        profile = type(
+            "Profile",
+            (),
+            {
+                "name": "codex_developer",
+                "description": "desc",
+                "system_prompt": "x",
+                "mcpServers": None,
+                "model": None,
+                "codexConfig": None,
+                "reasoning_effort": None,
+            },
+        )()
+
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
+            codex_home = prepare_codex_home(
+                terminal_id="abcd1234",
+                agent_profile="codex_developer",
+                working_directory=str(tmp_path / "work"),
+                cao_home_dir=tmp_path / "cao",
+                global_codex_home_dir=global_codex_home,
+            )
+
+        data = _read_toml(codex_home / "config.toml")
+        assert "agents" not in data
+        assert data.get("model") != "gpt-user-override"
+        # Only the CAO-managed workdir trust entry should be present.
+        assert list(data["projects"].keys()) == [str(tmp_path / "work")]
