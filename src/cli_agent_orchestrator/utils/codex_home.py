@@ -14,8 +14,36 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+import tomli
+
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.utils.config_inheritance import (
+    InheritPolicy,
+    apply_inherit_policy,
+    deep_merge,
+)
+
+
+# Policy for what CAO inherits from the user's ~/.codex/config.toml into the
+# per-terminal CODEX_HOME. See :mod:`utils.config_inheritance` for the shape.
+#
+# Intentional choices:
+#   - allowlist is tiny. Codex adds config sections every release and several
+#     (agents.*.config_file, profiles.*.instructions_file, mcp_servers.*.cwd)
+#     contain relative filesystem paths that silently break when copied to a
+#     per-terminal CODEX_HOME. Default-deny is the only safe posture.
+#   - disable_plugins=True: Codex auto-discovers plugins from ~/.codex/plugins/
+#     regardless of CODEX_HOME. A globally enabled plugin (e.g. github@openai-
+#     curated registers ~86 tools, ~70K tokens) would otherwise bleed into
+#     every CAO agent's context. We emit enabled=false per plugin to override.
+#   - features.multi_agent=false: CAO is the multi-agent orchestration layer.
+#     Codex's own multi_agent mode conflicts and is force-disabled.
+CODEX_INHERIT_POLICY = InheritPolicy(
+    allowlist=frozenset({"model", "model_reasoning_effort", "notice"}),
+    disable_plugins=True,
+    extra_overrides={"features": {"multi_agent": False}},
+)
 
 
 def _format_toml_key(key: str) -> str:
@@ -78,14 +106,17 @@ def _dump_toml(data: Dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _merge_into(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep merge updates into base (mutates base)."""
-    for key, value in updates.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _merge_into(base[key], value)  # type: ignore[index]
-        else:
-            base[key] = value
-    return base
+def _load_global_codex_config(global_codex_home_dir: Path) -> Dict[str, Any]:
+    """Read ``~/.codex/config.toml`` or return an empty dict if unavailable."""
+    config_path = global_codex_home_dir / "config.toml"
+    if not config_path.exists():
+        return {}
+    try:
+        return tomli.loads(config_path.read_text())
+    except Exception:
+        # A malformed global config shouldn't prevent CAO from spawning an
+        # agent — CAO's own overrides are enough for a functional session.
+        return {}
 
 
 def _codex_login_ok(codex_home_dir: Path) -> bool:
@@ -191,23 +222,25 @@ def prepare_codex_home(
 
     profile = load_agent_profile(agent_profile)
 
-    # Build a minimal config from scratch — intentionally NOT inheriting from
-    # ~/.codex/config.toml. The global config may reference files by relative
-    # path (e.g. [agents.*].config_file, profiles.*.instructions_file,
-    # mcp_servers.*.cwd) which resolve against CODEX_HOME. Copying the config
-    # into a per-terminal CODEX_HOME silently breaks those references. Ship a
-    # clean, CAO-controlled config instead; user's custom Codex agents in
-    # ~/.codex/ remain untouched and keep working for standalone codex usage.
-    base_config: Dict[str, Any] = {
-        "projects": {str(Path(working_directory)): {"trust_level": "trusted"}},
-    }
+    # Start from a filtered slice of the user's global ~/.codex/config.toml.
+    # The inheritance policy (see CODEX_INHERIT_POLICY) allowlists the few
+    # keys that are safe to carry across (model, reasoning, notice prefs),
+    # disables globally-enabled plugins to suppress context bloat, and forces
+    # features.multi_agent off since CAO is the orchestration layer itself.
+    base_config: Dict[str, Any] = apply_inherit_policy(
+        _load_global_codex_config(global_codex_home_dir), CODEX_INHERIT_POLICY
+    )
+
+    # CAO always writes its own workdir trust entry; inherited [projects]
+    # entries are dropped by the policy allowlist.
+    base_config["projects"] = {str(Path(working_directory)): {"trust_level": "trusted"}}
 
     if getattr(profile, "model", None):
         base_config["model"] = profile.model  # type: ignore[attr-defined]
 
     codex_config = getattr(profile, "codexConfig", None)
     if isinstance(codex_config, dict):
-        _merge_into(base_config, codex_config)
+        deep_merge(base_config, codex_config)
 
     reasoning_effort = getattr(profile, "reasoning_effort", None)
     if reasoning_effort and not (
@@ -216,6 +249,7 @@ def prepare_codex_home(
         base_config["model_reasoning_effort"] = str(reasoning_effort)
 
     # MCP servers from the agent profile + the mandatory CAO MCP server.
+    # User-global mcp_servers are dropped by the policy allowlist.
     mcp_servers: Dict[str, Any] = {}
     if isinstance(base_config.get("mcp_servers"), dict):
         mcp_servers = base_config["mcp_servers"]  # type: ignore[assignment]
