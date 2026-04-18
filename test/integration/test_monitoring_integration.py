@@ -1,13 +1,14 @@
 """End-to-end integration tests for the monitoring sessions feature.
 
-Exercise HTTP → service → real SQLite together. Per-layer unit tests mock the
-layer below, so integration bugs (Pydantic response-model mismatches, SQL
-semantic errors, FK behavior in production shape) wouldn't surface. These
-tests close that gap.
+Exercises HTTP → service → real SQLite together under the single-session,
+query-time-filter model. Per-layer unit tests mock the layer below, so
+integration bugs (Pydantic response-model mismatches, SQL semantic errors)
+wouldn't surface. These tests close that gap.
 
-Uses the FastAPI ``TestClient`` with ``SessionLocal`` rebound to an in-memory
-SQLite engine that has the same ``PRAGMA foreign_keys=ON`` listener as
-production, so FK cascade fires exactly as in the deployed app.
+Uses the FastAPI ``TestClient`` with ``SessionLocal`` rebound to an
+in-memory SQLite engine configured the same way as production (FK
+enforcement on, ``StaticPool`` so the worker thread shares the single
+in-memory DB).
 """
 
 from __future__ import annotations
@@ -29,11 +30,6 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def live_db(monkeypatch):
-    """Rebind ``SessionLocal`` to an in-memory SQLite engine configured the
-    same way as production (FK enforcement on). Return the sessionmaker so
-    tests can seed inbox rows directly."""
-    # StaticPool + check_same_thread=False so TestClient worker threads share
-    # the single in-memory database rather than each getting a fresh empty one.
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -74,219 +70,177 @@ def _seed_inbox(session_maker, *, sender_id, receiver_id, message, created_at,
         s.commit()
 
 
-# ---------------------------------------------------------------------------
-# Full lifecycle: create → send messages → end → fetch log artifact
-# ---------------------------------------------------------------------------
-
-
 class TestFullLifecycle:
     def test_create_seed_messages_end_fetch_artifact(self, client, live_db):
-        """The primary use case from the plan: start monitoring an implementer,
-        exchange messages with a reviewer, end the session, fetch the markdown
-        artifact that will sit next to the review document."""
-        # 1. Create session monitoring implementer, scoped to reviewer R1
+        """Primary use case: start monitoring an implementer, exchange
+        messages with reviewers (no peer scoping — we capture everything),
+        fetch the unfiltered markdown artifact, then a per-reviewer
+        filtered view from the same recording, then end the session."""
         resp = client.post(
             "/monitoring/sessions",
-            json={"terminal_id": "IMP", "peer_terminal_ids": ["R1"], "label": "review-v1"},
+            json={"terminal_id": "IMP", "label": "review-v1"},
         )
         assert resp.status_code == 201
+        assert "peer_terminal_ids" not in resp.json()
         session_id = resp.json()["id"]
         started_at = datetime.fromisoformat(resp.json()["started_at"])
 
-        # 2. Seed inbox with messages in the window (mix of in-scope and off-scope).
-        # Use microsecond offsets so the seeded timestamps land within the
-        # session window even though end_session stamps ended_at only a few
-        # milliseconds after started_at.
+        # Seed three in-window messages — two with R1, one with R2
         t1 = started_at + timedelta(microseconds=100)
         t2 = started_at + timedelta(microseconds=200)
-        t_off = started_at + timedelta(microseconds=300)
-        _seed_inbox(live_db, sender_id="IMP", receiver_id="R1", message="please review", created_at=t1)
-        _seed_inbox(live_db, sender_id="R1", receiver_id="IMP", message="lgtm with nits", created_at=t2)
-        _seed_inbox(live_db, sender_id="IMP", receiver_id="OTHER", message="off-scope", created_at=t_off)
+        t3 = started_at + timedelta(microseconds=300)
+        _seed_inbox(live_db, sender_id="IMP", receiver_id="R1", message="hi R1", created_at=t1)
+        _seed_inbox(live_db, sender_id="R1", receiver_id="IMP", message="hi IMP", created_at=t2)
+        _seed_inbox(live_db, sender_id="IMP", receiver_id="R2", message="hi R2", created_at=t3)
 
-        # 3. Messages endpoint honors scope: OTHER is excluded because R1 is the only peer
-        msgs = client.get(f"/monitoring/sessions/{session_id}/messages")
-        assert msgs.status_code == 200
-        bodies = [m["message"] for m in msgs.json()]
-        assert bodies == ["please review", "lgtm with nits"]
+        # Unfiltered messages — all three captured
+        unfiltered = client.get(f"/monitoring/sessions/{session_id}/messages").json()
+        assert [m["message"] for m in unfiltered] == ["hi R1", "hi IMP", "hi R2"]
 
-        # 4. Fetch the markdown log artifact while session is still active
-        #    (the "live artifact during review" case — ended_at=None means the
-        #    upper bound is now, which is still after the seeded timestamps).
+        # Filtered to R1 — only the two R1 messages
+        filtered = client.get(
+            f"/monitoring/sessions/{session_id}/messages",
+            params=[("peer", "R1")],
+        ).json()
+        assert [m["message"] for m in filtered] == ["hi R1", "hi IMP"]
+
+        # Unfiltered markdown log — header omits Filter line
         log = client.get(f"/monitoring/sessions/{session_id}/log")
         assert log.status_code == 200
         body = log.text
         assert body.startswith("# Monitoring session: review-v1")
-        assert "**Monitored:** IMP" in body
-        assert "**Peers:** R1" in body
-        assert "> please review" in body
-        assert "> lgtm with nits" in body
-        assert "off-scope" not in body
+        assert "Filter:" not in body
+        assert "> hi R1" in body and "> hi R2" in body
 
-        # 5. Fetch the JSON log artifact for programmatic use
-        log_json = client.get(f"/monitoring/sessions/{session_id}/log?format=json")
-        assert log_json.status_code == 200
-        payload = log_json.json()
-        assert payload["session"]["id"] == session_id
-        assert len(payload["messages"]) == 2
+        # Filtered markdown artifact — Filter line present, R2 excluded
+        filtered_log = client.get(
+            f"/monitoring/sessions/{session_id}/log",
+            params=[("peer", "R1")],
+        )
+        assert filtered_log.status_code == 200
+        fbody = filtered_log.text
+        assert "**Filter:** peers = R1" in fbody
+        assert "> hi R1" in fbody
+        assert "> hi R2" not in fbody
 
-        # 6. End the session, confirm status flips and the ended artifact also works
+        # End the session; status flips
         end = client.post(f"/monitoring/sessions/{session_id}/end")
         assert end.status_code == 200
         assert end.json()["status"] == "ended"
 
 
-# ---------------------------------------------------------------------------
-# Retroactive peer filter — add peer mid-session, verify via HTTP
-# ---------------------------------------------------------------------------
-
-
-class TestRetroactivePeerFilter:
-    def test_adding_peer_mid_window_reveals_earlier_messages(self, client, live_db):
-        resp = client.post(
+class TestIdempotentCreate:
+    def test_create_on_monitored_terminal_returns_existing(self, client, live_db):
+        a = client.post(
             "/monitoring/sessions",
-            json={"terminal_id": "IMP", "peer_terminal_ids": ["R1"]},
-        )
-        session_id = resp.json()["id"]
-        started_at = datetime.fromisoformat(resp.json()["started_at"])
+            json={"terminal_id": "T", "label": "first"},
+        ).json()
+        b = client.post(
+            "/monitoring/sessions",
+            json={"terminal_id": "T", "label": "second-ignored"},
+        ).json()
+        assert a["id"] == b["id"]
+        assert b["label"] == "first"
 
-        # Seed a message involving R2 (not yet in peer set)
-        _seed_inbox(
-            live_db,
-            sender_id="IMP",
-            receiver_id="R2",
-            message="hidden-until-R2-added",
-            created_at=started_at + timedelta(seconds=1),
-        )
-
-        # Invisible pre-add
-        assert client.get(f"/monitoring/sessions/{session_id}/messages").json() == []
-
-        # Add R2 as a peer
-        add = client.post(
-            f"/monitoring/sessions/{session_id}/peers",
-            json={"peer_terminal_ids": ["R2"]},
-        )
-        assert add.status_code == 200
-
-        # Now visible
-        msgs = client.get(f"/monitoring/sessions/{session_id}/messages").json()
-        assert [m["message"] for m in msgs] == ["hidden-until-R2-added"]
+    def test_create_after_ending_yields_new_session(self, client, live_db):
+        first_id = client.post(
+            "/monitoring/sessions", json={"terminal_id": "T"}
+        ).json()["id"]
+        client.post(f"/monitoring/sessions/{first_id}/end").raise_for_status()
+        second_id = client.post(
+            "/monitoring/sessions", json={"terminal_id": "T"}
+        ).json()["id"]
+        assert first_id != second_id
 
 
-# ---------------------------------------------------------------------------
-# FK CASCADE really fires through HTTP DELETE
-# ---------------------------------------------------------------------------
-
-
-class TestCascadeOnDelete:
-    def test_delete_session_removes_peer_rows(self, client, live_db):
-        """Confirms that the production pragma + FK schema together actually
-        enforce cascade when the route performs a DELETE. Peer rows must not
-        linger as orphans."""
-        from cli_agent_orchestrator.clients.database import (
-            MonitoringSessionPeerModel,
-        )
+class TestTimeWindowFilter:
+    def test_sub_window_query_narrows_messages(self, client, live_db):
+        """Extract a sub-window (e.g. 'step 3' of a long recording)."""
+        from cli_agent_orchestrator.clients.database import MonitoringSessionModel
 
         resp = client.post(
-            "/monitoring/sessions",
-            json={"terminal_id": "T", "peer_terminal_ids": ["P1", "P2"]},
+            "/monitoring/sessions", json={"terminal_id": "IMP"}
         )
         session_id = resp.json()["id"]
 
-        # Sanity: two peer rows exist
+        # Pin the session start to a known timestamp so we can seed deterministically
+        start = datetime(2026, 4, 18, 10, 0, 0)
         with live_db() as s:
-            assert s.query(MonitoringSessionPeerModel).filter_by(
-                session_id=session_id
-            ).count() == 2
+            s.query(MonitoringSessionModel).filter_by(id=session_id).update(
+                {"started_at": start}
+            )
+            s.commit()
 
-        resp = client.delete(f"/monitoring/sessions/{session_id}")
-        assert resp.status_code == 204
+        for i in range(5):
+            _seed_inbox(
+                live_db,
+                sender_id="IMP",
+                receiver_id="R",
+                message=f"m{i}",
+                created_at=start + timedelta(minutes=i),
+            )
 
-        with live_db() as s:
-            assert s.query(MonitoringSessionPeerModel).filter_by(
-                session_id=session_id
-            ).count() == 0
-
-
-# ---------------------------------------------------------------------------
-# Response model round-trip — Pydantic can actually coerce service output
-# ---------------------------------------------------------------------------
+        resp = client.get(
+            f"/monitoring/sessions/{session_id}/messages",
+            params={
+                "started_after": (start + timedelta(minutes=2)).isoformat(),
+                "started_before": (start + timedelta(minutes=3)).isoformat(),
+            },
+        )
+        assert resp.status_code == 200
+        assert [m["message"] for m in resp.json()] == ["m2", "m3"]
 
 
 class TestResponseModelShapes:
-    """Unit tests for routes mock the service to return hand-rolled dicts, so
-    a real mismatch between ``monitoring_service`` output and the route's
-    ``response_model`` wouldn't surface. Drive a real create/get/list against
-    the live DB and assert Pydantic coerces cleanly (i.e., no 500 from a
-    ValidationError on the response side)."""
+    """Per-layer tests mock the service; real coercion isn't exercised
+    until HTTP→service→DB run together. Catches Pydantic shape drift."""
 
-    def test_create_and_get_returns_shapes_pydantic_accepts(self, client):
-        create = client.post(
-            "/monitoring/sessions",
-            json={"terminal_id": "T", "peer_terminal_ids": ["P"], "label": "hi"},
+    def test_create_and_get_shapes_pydantic_accepts(self, client, live_db):
+        body = client.post(
+            "/monitoring/sessions", json={"terminal_id": "T", "label": "hi"}
         )
-        assert create.status_code == 201
-        body = create.json()
-        assert set(body.keys()) == {
-            "id",
-            "terminal_id",
-            "peer_terminal_ids",
-            "label",
-            "started_at",
-            "ended_at",
-            "status",
+        assert body.status_code == 201
+        payload = body.json()
+        assert set(payload.keys()) == {
+            "id", "terminal_id", "label", "started_at", "ended_at", "status"
         }
 
-        fetched = client.get(f"/monitoring/sessions/{body['id']}")
+        fetched = client.get(f"/monitoring/sessions/{payload['id']}")
         assert fetched.status_code == 200
-        assert fetched.json()["id"] == body["id"]
+        assert fetched.json()["id"] == payload["id"]
 
-    def test_list_returns_shape_pydantic_accepts(self, client):
-        client.post(
-            "/monitoring/sessions", json={"terminal_id": "T1"}
-        ).raise_for_status()
-        client.post(
-            "/monitoring/sessions", json={"terminal_id": "T2"}
-        ).raise_for_status()
-
+    def test_list_shape_pydantic_accepts(self, client, live_db):
+        client.post("/monitoring/sessions", json={"terminal_id": "T1"}).raise_for_status()
+        client.post("/monitoring/sessions", json={"terminal_id": "T2"}).raise_for_status()
         resp = client.get("/monitoring/sessions")
         assert resp.status_code == 200
         assert len(resp.json()) == 2
         for item in resp.json():
-            assert "started_at" in item
+            assert "peer_terminal_ids" not in item
             assert item["status"] in {"active", "ended"}
 
 
-# ---------------------------------------------------------------------------
-# Mutation-on-ended-session end-to-end
-# ---------------------------------------------------------------------------
-
-
-class TestEndedSessionImmutability:
-    def test_add_peers_on_ended_session_returns_409(self, client):
+class TestPeerEndpointsGone:
+    def test_add_peer_endpoint_removed(self, client, live_db):
         session_id = client.post(
             "/monitoring/sessions", json={"terminal_id": "T"}
         ).json()["id"]
-        client.post(f"/monitoring/sessions/{session_id}/end").raise_for_status()
-
         resp = client.post(
             f"/monitoring/sessions/{session_id}/peers",
             json={"peer_terminal_ids": ["P"]},
         )
-        assert resp.status_code == 409
+        assert resp.status_code in (404, 405)
 
-    def test_remove_peer_on_ended_session_returns_409(self, client):
+    def test_remove_peer_endpoint_removed(self, client, live_db):
         session_id = client.post(
-            "/monitoring/sessions",
-            json={"terminal_id": "T", "peer_terminal_ids": ["P"]},
+            "/monitoring/sessions", json={"terminal_id": "T"}
         ).json()["id"]
-        client.post(f"/monitoring/sessions/{session_id}/end").raise_for_status()
-
         resp = client.delete(f"/monitoring/sessions/{session_id}/peers/P")
-        assert resp.status_code == 409
+        assert resp.status_code in (404, 405)
 
-    def test_end_twice_returns_409(self, client):
+
+class TestEndedSessionImmutability:
+    def test_end_twice_returns_409(self, client, live_db):
         session_id = client.post(
             "/monitoring/sessions", json={"terminal_id": "T"}
         ).json()["id"]
@@ -294,3 +248,18 @@ class TestEndedSessionImmutability:
 
         resp = client.post(f"/monitoring/sessions/{session_id}/end")
         assert resp.status_code == 409
+
+    def test_create_after_ending_on_same_terminal_is_fine(self, client, live_db):
+        """Ending doesn't block future sessions — the idempotency contract
+        is 'while active' not 'ever'."""
+        sid = client.post(
+            "/monitoring/sessions", json={"terminal_id": "T"}
+        ).json()["id"]
+        client.post(f"/monitoring/sessions/{sid}/end").raise_for_status()
+
+        resp = client.post(
+            "/monitoring/sessions", json={"terminal_id": "T"}
+        )
+        assert resp.status_code == 201
+        assert resp.json()["id"] != sid
+        assert resp.json()["status"] == "active"

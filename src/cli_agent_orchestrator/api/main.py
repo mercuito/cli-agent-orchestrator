@@ -111,14 +111,7 @@ class CreateMonitoringSessionRequest(BaseModel):
     """Request body for creating a monitoring session."""
 
     terminal_id: str
-    peer_terminal_ids: Optional[List[str]] = None
     label: Optional[str] = None
-
-
-class AddMonitoringPeersRequest(BaseModel):
-    """Request body for adding peers to a monitoring session."""
-
-    peer_terminal_ids: List[str] = Field(min_length=1)
 
 
 class MonitoringMessageEntry(BaseModel):
@@ -138,7 +131,6 @@ class MonitoringSessionResponse(BaseModel):
     id: str
     terminal_id: str
     label: Optional[str]
-    peer_terminal_ids: List[str]
     started_at: datetime
     ended_at: Optional[datetime]
     status: Literal["active", "ended"]
@@ -907,12 +899,13 @@ async def run_flow(name: str) -> Dict:
 
 
 # -----------------------------------------------------------------------------
-# Monitoring session routes
+# Monitoring session routes (single-session, query-time filtering)
 #
-# Thin adapter over ``monitoring_service``. All correctness belongs to the
-# service layer; these routes only handle request/response shape and exception
-# mapping. Intentionally NOT exposed as MCP tools (design decision #2 in
-# docs/plans/monitoring-sessions.md).
+# Thin adapter over ``monitoring_service``. Sessions record everything
+# involving a terminal; filtering (by peer, by time sub-window) is a
+# query-time concern on ``/messages`` and ``/log``. Intentionally NOT exposed
+# as MCP tools — monitoring is operator / procedure concern, not agent.
+# See docs/plans/monitoring-sessions.md.
 # -----------------------------------------------------------------------------
 
 
@@ -924,9 +917,15 @@ async def run_flow(name: str) -> Dict:
 async def create_monitoring_session(
     body: CreateMonitoringSessionRequest,
 ) -> MonitoringSessionResponse:
+    """Start monitoring a terminal, or return the existing active session.
+
+    Idempotent on active state: calling this for a terminal that already
+    has an active session returns that session unchanged — the label
+    argument is ignored in that case. Clients that want to check state
+    first can call ``GET /monitoring/sessions?terminal_id=X&status=active``.
+    """
     result = monitoring_service.create_session(
         terminal_id=body.terminal_id,
-        peer_terminal_ids=body.peer_terminal_ids,
         label=body.label,
     )
     return MonitoringSessionResponse(**result)
@@ -935,8 +934,6 @@ async def create_monitoring_session(
 @app.get("/monitoring/sessions", response_model=List[MonitoringSessionResponse])
 async def list_monitoring_sessions(
     terminal_id: Optional[str] = None,
-    peer_terminal_id: Optional[str] = None,
-    involves: Optional[str] = None,
     status: Optional[Literal["active", "ended"]] = None,
     label: Optional[str] = None,
     started_after: Optional[datetime] = None,
@@ -946,8 +943,6 @@ async def list_monitoring_sessions(
 ) -> List[MonitoringSessionResponse]:
     rows = monitoring_service.list_sessions(
         terminal_id=terminal_id,
-        peer_terminal_id=peer_terminal_id,
-        involves=involves,
         status=status,
         label=label,
         started_after=started_after,
@@ -991,60 +986,31 @@ async def end_monitoring_session(session_id: str) -> MonitoringSessionResponse:
     return MonitoringSessionResponse(**result)
 
 
-@app.post(
-    "/monitoring/sessions/{session_id}/peers",
-    response_model=MonitoringSessionResponse,
-)
-async def add_monitoring_peers(
-    session_id: str, body: AddMonitoringPeersRequest
-) -> MonitoringSessionResponse:
-    try:
-        monitoring_service.add_peers(session_id, body.peer_terminal_ids)
-    except monitoring_service.SessionNotFound:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Monitoring session not found: {session_id}",
-        )
-    except monitoring_service.SessionAlreadyEnded:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Monitoring session already ended: {session_id}",
-        )
-    # Return fresh state so caller sees the updated peer set.
-    result = monitoring_service.get_session(session_id)
-    return MonitoringSessionResponse(**result)
-
-
-@app.delete(
-    "/monitoring/sessions/{session_id}/peers/{peer_terminal_id}",
-    response_model=MonitoringSessionResponse,
-)
-async def remove_monitoring_peer(
-    session_id: str, peer_terminal_id: str
-) -> MonitoringSessionResponse:
-    try:
-        monitoring_service.remove_peer(session_id, peer_terminal_id)
-    except monitoring_service.SessionNotFound:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Monitoring session not found: {session_id}",
-        )
-    except monitoring_service.SessionAlreadyEnded:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Monitoring session already ended: {session_id}",
-        )
-    result = monitoring_service.get_session(session_id)
-    return MonitoringSessionResponse(**result)
-
-
 @app.get(
     "/monitoring/sessions/{session_id}/messages",
     response_model=List[MonitoringMessageEntry],
 )
-async def get_monitoring_messages(session_id: str) -> List[MonitoringMessageEntry]:
+async def get_monitoring_messages(
+    session_id: str,
+    peer: List[str] = Query(default_factory=list),
+    started_after: Optional[datetime] = None,
+    started_before: Optional[datetime] = None,
+) -> List[MonitoringMessageEntry]:
+    """Return messages captured by the session, with optional query filters.
+
+    Query params:
+      peer: repeatable — match messages whose sender OR receiver is one of
+        the listed peers. Omit for no peer filter.
+      started_after / started_before: narrow to a sub-window inside the
+        session's bounds.
+    """
     try:
-        rows = monitoring_service.get_session_messages(session_id)
+        rows = monitoring_service.get_session_messages(
+            session_id,
+            peers=peer,
+            started_after=started_after,
+            started_before=started_before,
+        )
     except monitoring_service.SessionNotFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1057,11 +1023,20 @@ async def get_monitoring_messages(session_id: str) -> List[MonitoringMessageEntr
 async def get_monitoring_log(
     session_id: str,
     format: Literal["markdown", "json"] = "markdown",
+    peer: List[str] = Query(default_factory=list),
+    started_after: Optional[datetime] = None,
+    started_before: Optional[datetime] = None,
 ):
     """Render a monitoring session as a drop-in artifact.
 
-    Default is Markdown (intended to sit next to a review document). ``format=json``
-    returns a structured ``{session, messages}`` payload for programmatic use.
+    Default is Markdown (intended to sit next to a review document).
+    ``format=json`` returns a structured ``{session, messages, filter}``
+    payload for programmatic use.
+
+    The same ``peer`` / ``started_after`` / ``started_before`` filters as
+    ``/messages`` apply at rendering time — so you can generate multiple
+    distinct artifacts (one per peer, or one per step time window) from a
+    single recording.
     """
     from fastapi.responses import JSONResponse, PlainTextResponse
 
@@ -1071,12 +1046,31 @@ async def get_monitoring_log(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Monitoring session not found: {session_id}",
         )
-    messages = monitoring_service.get_session_messages(session_id)
+    messages = monitoring_service.get_session_messages(
+        session_id,
+        peers=peer,
+        started_after=started_after,
+        started_before=started_before,
+    )
+
+    # Capture the filter (if any was applied) so the artifact self-describes
+    # what slice of the recording it represents.
+    applied_filter = None
+    if peer or started_after or started_before:
+        applied_filter = {
+            "peers": peer or None,
+            "started_after": started_after,
+            "started_before": started_before,
+        }
 
     if format == "json":
-        payload = monitoring_formatter.format_json(session, messages)
+        payload = monitoring_formatter.format_json(
+            session, messages, applied_filter=applied_filter
+        )
         return JSONResponse(content=jsonable_encoder(payload))
-    body = monitoring_formatter.format_markdown(session, messages)
+    body = monitoring_formatter.format_markdown(
+        session, messages, applied_filter=applied_filter
+    )
     return PlainTextResponse(body, media_type="text/markdown; charset=utf-8")
 
 
