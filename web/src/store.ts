@@ -18,11 +18,13 @@ interface Store {
   connected: boolean
   snackbar: Snackbar | null
   terminalStatuses: Record<string, string>
-  /** Map of terminal_id → the active monitoring session targeting it.
-   *  Replaced wholesale each poll (see setActiveMonitoringSessions). The
-   *  indicator component reads the full session so its hover tooltip can
-   *  display label / started_at / peers. */
-  activeMonitoringByTerminal: Record<string, MonitoringSession>
+  /** Map of terminal_id → list of active monitoring sessions targeting it.
+   *  Multiple sessions can target the same terminal simultaneously (design
+   *  decision #10 in the monitoring plan — e.g. a run-level + step-level
+   *  window). Replaced wholesale each poll (see
+   *  setActiveMonitoringSessions). The indicator component reads the full
+   *  list so its hover tooltip can surface every active session. */
+  activeMonitoringByTerminal: Record<string, MonitoringSession[]>
 
   fetchSessions: () => Promise<void>
   selectSession: (name: string | null) => Promise<void>
@@ -117,10 +119,14 @@ export const useStore = create<Store>((set, get) => ({
     set(state => {
       // Replace, don't merge: if a monitoring session just ended, we want
       // its terminal to drop out of the map immediately on the next poll.
-      // If multiple active sessions target the same terminal, the last one
-      // wins — rare but benign for the indicator's purposes.
-      const next: Record<string, MonitoringSession> = {}
-      for (const s of sessions) next[s.terminal_id] = s
+      // Group by terminal_id so overlapping sessions (design decision #10)
+      // are all visible in the hover tooltip — not silently collapsed to
+      // the last one received.
+      const next: Record<string, MonitoringSession[]> = {}
+      for (const s of sessions) {
+        if (!next[s.terminal_id]) next[s.terminal_id] = []
+        next[s.terminal_id].push(s)
+      }
       if (jsonEqual(state.activeMonitoringByTerminal, next)) return state
       return { activeMonitoringByTerminal: next }
     }),

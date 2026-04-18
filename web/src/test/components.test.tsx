@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent } from '@testing-library/react'
 import { StatusBadge } from '../components/StatusBadge'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -52,6 +52,15 @@ describe('MonitoringIndicator', () => {
     }
   }
 
+  /** Trigger the tooltip and return it. The tooltip is rendered via a
+   *  portal only while hovered/focused (to escape the dashboard's
+   *  overflow:hidden session card), so tests must simulate the hover. */
+  function hoverAndGetTooltip() {
+    const trigger = screen.getByLabelText(/being monitored/i)
+    fireEvent.mouseEnter(trigger)
+    return screen.getByRole('tooltip')
+  }
+
   beforeEach(() => {
     useStore.setState({ activeMonitoringByTerminal: {} })
   })
@@ -63,10 +72,25 @@ describe('MonitoringIndicator', () => {
 
   it('renders an indicator when the terminal is monitored', () => {
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-x': mockSession() },
+      activeMonitoringByTerminal: { 'term-x': [mockSession()] },
     })
     render(<MonitoringIndicator terminalId="term-x" />)
     expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
+  })
+
+  it('tooltip only renders when hovered or focused', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: { 'term-x': [mockSession()] },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    // Not in the DOM before interaction — the portal node isn't mounted.
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+
+    fireEvent.mouseEnter(screen.getByLabelText(/being monitored/i))
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(screen.getByLabelText(/being monitored/i))
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
   it('reacts to store changes without remounting', () => {
@@ -75,7 +99,7 @@ describe('MonitoringIndicator', () => {
 
     act(() => {
       useStore.setState({
-        activeMonitoringByTerminal: { 'term-x': mockSession() },
+        activeMonitoringByTerminal: { 'term-x': [mockSession()] },
       })
     })
     expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
@@ -88,7 +112,7 @@ describe('MonitoringIndicator', () => {
 
   it('shows indicator for the right terminal only', () => {
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-a': mockSession({ terminal_id: 'term-a' }) },
+      activeMonitoringByTerminal: { 'term-a': [mockSession({ terminal_id: 'term-a' })] },
     })
     const { container: aEl } = render(<MonitoringIndicator terminalId="term-a" />)
     const { container: bEl } = render(<MonitoringIndicator terminalId="term-b" />)
@@ -99,11 +123,11 @@ describe('MonitoringIndicator', () => {
   it('tooltip shows the session label', () => {
     useStore.setState({
       activeMonitoringByTerminal: {
-        'term-x': mockSession({ label: 'review-v2' }),
+        'term-x': [mockSession({ label: 'review-v2' })],
       },
     })
     render(<MonitoringIndicator terminalId="term-x" />)
-    const tooltip = screen.getByRole('tooltip')
+    const tooltip = hoverAndGetTooltip()
     expect(tooltip).toHaveTextContent('Label:')
     expect(tooltip).toHaveTextContent('review-v2')
   })
@@ -111,23 +135,22 @@ describe('MonitoringIndicator', () => {
   it('tooltip falls back to short session id when label is null', () => {
     useStore.setState({
       activeMonitoringByTerminal: {
-        'term-x': mockSession({ id: '068d4299-0f97-4b34-b29c-05555995be21', label: null }),
+        'term-x': [mockSession({ id: '068d4299-0f97-4b34-b29c-05555995be21', label: null })],
       },
     })
     render(<MonitoringIndicator terminalId="term-x" />)
-    const tooltip = screen.getByRole('tooltip')
-    // First 8 chars of the uuid — enough to disambiguate without being noisy
+    const tooltip = hoverAndGetTooltip()
     expect(tooltip).toHaveTextContent('068d4299')
   })
 
   it('tooltip shows "all" for empty peer set', () => {
     useStore.setState({
       activeMonitoringByTerminal: {
-        'term-x': mockSession({ peer_terminal_ids: [] }),
+        'term-x': [mockSession({ peer_terminal_ids: [] })],
       },
     })
     render(<MonitoringIndicator terminalId="term-x" />)
-    const tooltip = screen.getByRole('tooltip')
+    const tooltip = hoverAndGetTooltip()
     expect(tooltip).toHaveTextContent('Peers:')
     expect(tooltip).toHaveTextContent('all')
   })
@@ -135,23 +158,52 @@ describe('MonitoringIndicator', () => {
   it('tooltip lists peers when scoped', () => {
     useStore.setState({
       activeMonitoringByTerminal: {
-        'term-x': mockSession({ peer_terminal_ids: ['rev-1', 'rev-2'] }),
+        'term-x': [mockSession({ peer_terminal_ids: ['rev-1', 'rev-2'] })],
       },
     })
     render(<MonitoringIndicator terminalId="term-x" />)
-    const tooltip = screen.getByRole('tooltip')
+    const tooltip = hoverAndGetTooltip()
     expect(tooltip).toHaveTextContent('rev-1, rev-2')
   })
 
   it('tooltip shows relative start time', () => {
-    const started = new Date(Date.now() - 5 * 60 * 1000).toISOString()  // 5 min ago
+    const started = new Date(Date.now() - 5 * 60 * 1000).toISOString()
     useStore.setState({
       activeMonitoringByTerminal: {
-        'term-x': mockSession({ started_at: started }),
+        'term-x': [mockSession({ started_at: started })],
       },
     })
     render(<MonitoringIndicator terminalId="term-x" />)
-    expect(screen.getByRole('tooltip')).toHaveTextContent(/5m ago/)
+    expect(hoverAndGetTooltip()).toHaveTextContent(/5m ago/)
+  })
+
+  it('tooltip omits the count when only one session is active', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': [mockSession({ label: 'only' })],
+      },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    const tooltip = hoverAndGetTooltip()
+    expect(tooltip.textContent).not.toMatch(/\(\d+ active\)/)
+  })
+
+  it('tooltip shows count and lists every session when multiple are active', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': [
+          mockSession({ id: 's-1', label: 'run-level' }),
+          mockSession({ id: 's-2', label: 'step-level' }),
+        ],
+      },
+    })
+    render(<MonitoringIndicator terminalId="term-x" />)
+    const tooltip = hoverAndGetTooltip()
+    expect(tooltip).toHaveTextContent(/\(2 active\)/)
+    // Both labels must be visible — we don't want the tooltip collapsing
+    // the overlap into a single session
+    expect(tooltip).toHaveTextContent('run-level')
+    expect(tooltip).toHaveTextContent('step-level')
   })
 })
 
