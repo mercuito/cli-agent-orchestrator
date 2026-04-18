@@ -617,6 +617,22 @@ async def load_skill(
     return _load_skill_impl(name)
 
 
+def _list_agent_profiles_impl() -> Dict[str, Any]:
+    try:
+        profiles = agent_profiles_utils.list_agent_profiles()
+        return {"success": True, "profiles": profiles}
+    except Exception as e:
+        return {"success": False, "error": str(e), "profiles": []}
+
+
+def _get_agent_profile_impl(agent_name: str, include_prompt: bool = False) -> Dict[str, Any]:
+    try:
+        profile = agent_profiles_utils.get_agent_profile(agent_name, include_prompt=include_prompt)
+        return {"success": True, "profile": profile}
+    except Exception as e:
+        return {"success": False, "error": str(e), "profile": None}
+
+
 @mcp.tool()
 async def list_agent_profiles() -> Dict[str, Any]:
     """List available CAO agent profiles (built-in + locally installed).
@@ -624,11 +640,7 @@ async def list_agent_profiles() -> Dict[str, Any]:
     Returns:
         Dict with `success` and `profiles` (name-sorted).
     """
-    try:
-        profiles = agent_profiles_utils.list_agent_profiles()
-        return {"success": True, "profiles": profiles}
-    except Exception as e:
-        return {"success": False, "error": str(e), "profiles": []}
+    return _list_agent_profiles_impl()
 
 
 @mcp.tool()
@@ -645,11 +657,7 @@ async def get_agent_profile(
         agent_name: Agent profile name
         include_prompt: Include system prompt content
     """
-    try:
-        profile = agent_profiles_utils.get_agent_profile(agent_name, include_prompt=include_prompt)
-        return {"success": True, "profile": profile}
-    except Exception as e:
-        return {"success": False, "error": str(e), "profile": None}
+    return _get_agent_profile_impl(agent_name, include_prompt=include_prompt)
 
 
 def main():

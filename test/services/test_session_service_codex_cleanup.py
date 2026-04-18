@@ -26,7 +26,9 @@ def test_delete_session_cleans_up_codex_homes():
     ):
         mock_tmux.session_exists.return_value = True
 
-        assert session_service.delete_session("cao-test") is True
+        result = session_service.delete_session("cao-test")
+        assert result["deleted"] == ["cao-test"]
+        assert result["errors"] == []
 
         # Best-effort: always attempt per-terminal Codex home cleanup.
         assert mock_cleanup.call_args_list == [call("t1"), call("t2")]

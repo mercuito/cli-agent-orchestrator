@@ -37,7 +37,11 @@ def _profile_entry_from_metadata(
 
 
 def _scan_directory(directory: Path, source_label: str, profiles: Dict[str, Dict]) -> None:
-    """Scan a directory for agent profiles (.md files, .json files, or subdirectories)."""
+    """Scan a directory for agent profiles (.md files, .json files, or subdirectories).
+
+    First-in wins: later scans do not replace existing entries. Callers control
+    precedence by scanning higher-priority directories first.
+    """
     if not directory.exists():
         return
     for item in directory.iterdir():
@@ -80,13 +84,19 @@ def list_agent_profiles() -> List[Dict]:
 
     profiles: Dict[str, Dict] = {}
 
-    # 1. Built-in agent store
+    # 1. Local agent store (~/.aws/cli-agent-orchestrator/agent-store/) — scanned first so
+    # local profiles win precedence over same-named built-ins (first-in-wins).
+    _scan_directory(LOCAL_AGENT_STORE_DIR, "local", profiles)
+
+    # 2. Built-in agent store
     try:
         agent_store = resources.files("cli_agent_orchestrator.agent_store")
         for item in agent_store.iterdir():
             name = item.name
             if name.endswith(".md"):
                 profile_name = name[:-3]
+                if profile_name in profiles:
+                    continue
                 metadata: Dict[str, Any] = {}
                 try:
                     metadata = dict(frontmatter.loads(item.read_text()).metadata)
@@ -97,9 +107,6 @@ def list_agent_profiles() -> List[Dict]:
                 )
     except Exception as e:
         logger.debug(f"Could not scan built-in agent store: {e}")
-
-    # 2. Local agent store (~/.aws/cli-agent-orchestrator/agent-store/)
-    _scan_directory(LOCAL_AGENT_STORE_DIR, "local", profiles)
 
     # 3. Provider-specific directories (from settings)
     agent_dirs = get_agent_dirs()

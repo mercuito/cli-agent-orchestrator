@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cli_agent_orchestrator.models.provider import ProviderType
-
 
 class McpServer(BaseModel):
     """MCP server configuration."""
@@ -28,10 +26,6 @@ class AgentProfile(BaseModel):
     provider: Optional[str] = None  # Provider override (e.g. "claude_code", "kiro_cli")
     system_prompt: Optional[str] = None  # The markdown content
     role: Optional[str] = None  # "supervisor", "developer", "reviewer"
-
-    # Worker-pool routing metadata (optional)
-    provider: Optional[ProviderType] = None
-    role: Optional[str] = None
     tags: Optional[List[str]] = None
 
     class ReasoningEffort(str, Enum):

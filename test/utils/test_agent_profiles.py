@@ -245,7 +245,11 @@ class TestListAgentProfiles:
     def test_list_agent_profiles_deduplicates_profiles_with_same_name(
         self, mock_resources, mock_local_dir, mock_scan, mock_get_agent_dirs, mock_get_extra_dirs
     ):
-        """Test that profiles with the same name are deduplicated (first wins)."""
+        """Test that profiles with the same name are deduplicated.
+
+        Local profiles win precedence over same-named built-ins so that users
+        who install a local override see it reflected in the listing.
+        """
         from cli_agent_orchestrator.utils.agent_profiles import list_agent_profiles
 
         # Built-in store has "developer" profile
@@ -258,7 +262,7 @@ class TestListAgentProfiles:
         mock_agent_store.iterdir.return_value = [mock_builtin_file]
         mock_resources.files.return_value = mock_agent_store
 
-        # Local store also has "developer" profile — should be skipped (built-in scanned first)
+        # Local store also has "developer" profile — takes precedence
         mock_local_dir.exists.return_value = True
         mock_local_dir.resolve.return_value = Path(
             "/home/user/.aws/cli-agent-orchestrator/agent-store"
@@ -278,10 +282,10 @@ class TestListAgentProfiles:
 
         result = list_agent_profiles()
 
-        # Should have exactly one "developer" profile, from built-in (scanned first)
+        # Should have exactly one "developer" profile, from local (scanned first)
         developer_profiles = [p for p in result if p["name"] == "developer"]
         assert len(developer_profiles) == 1
-        assert developer_profiles[0]["source"] == "built-in"
+        assert developer_profiles[0]["source"] == "local"
 
     @patch("cli_agent_orchestrator.services.settings_service.get_extra_agent_dirs", return_value=[])
     @patch("cli_agent_orchestrator.services.settings_service.get_agent_dirs", return_value={})
