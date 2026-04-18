@@ -76,3 +76,30 @@ def set_extra_agent_dirs(dirs: List[str]) -> List[str]:
     settings["extra_agent_dirs"] = [d for d in dirs if d.strip()]
     _save(settings)
     return settings["extra_agent_dirs"]
+
+
+def get_role_cao_tools(role: str) -> Optional[List[str]]:
+    """Look up the cao-mcp-server tool allowlist for a role from settings.
+
+    Reads ``settings.role_cao_tools`` — a user-owned mapping like::
+
+        {"supervisor": ["assign", "handoff", "send_message", "terminate"],
+         "developer": ["send_message", "load_skill"]}
+
+    CAO ships no built-in role→tool mapping; the framework intentionally
+    does not know which role names exist. Users define roles and their
+    MCP tool capabilities in their own settings.json.
+
+    Returns ``None`` if the role isn't configured or the value under it
+    isn't a list of strings (defensive against hand-edits).
+    """
+    settings = _load()
+    mapping = settings.get("role_cao_tools", {})
+    if not isinstance(mapping, dict):
+        return None
+    value = mapping.get(role)
+    if not isinstance(value, list):
+        return None
+    if not all(isinstance(t, str) for t in value):
+        return None
+    return list(value)

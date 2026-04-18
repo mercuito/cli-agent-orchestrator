@@ -28,6 +28,12 @@ class AgentProfile(BaseModel):
     role: Optional[str] = None  # "supervisor", "developer", "reviewer"
     tags: Optional[List[str]] = None
 
+    # Allowlist of cao-mcp-server tool names this agent is permitted to call
+    # (e.g. ["assign", "handoff", "send_message"]). Empty list explicitly
+    # denies all cao-mcp-server tools. None defers to role-based settings
+    # (see utils/cao_tool_allowlist.resolve_cao_tool_allowlist).
+    caoTools: Optional[List[str]] = None
+
     class ReasoningEffort(str, Enum):
         LOW = "low"
         MEDIUM = "medium"
