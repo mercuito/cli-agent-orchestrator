@@ -21,6 +21,41 @@ describe('API wrapper', () => {
     })
   }
 
+  it('startMonitoring POSTs terminal_id + label', async () => {
+    const session = {
+      id: 's1', terminal_id: 't1', label: 'dashboard-123456',
+      started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active',
+    }
+    mockResponse(session, 201)
+    const result = await api.startMonitoring('t1', 'dashboard-123456')
+    expect(result).toEqual(session)
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('/monitoring/sessions')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({
+      terminal_id: 't1',
+      label: 'dashboard-123456',
+    })
+  })
+
+  it('startMonitoring sends label: null when not provided', async () => {
+    mockResponse({ id: 's1' }, 201)
+    await api.startMonitoring('t1')
+    const [, opts] = mockFetch.mock.calls[0]
+    const body = JSON.parse(opts.body)
+    expect(body).toEqual({ terminal_id: 't1', label: null })
+  })
+
+  it('endMonitoring POSTs to /end endpoint', async () => {
+    const ended = { id: 's1', ended_at: '2026-04-18T10:05:00', status: 'ended' }
+    mockResponse(ended)
+    const result = await api.endMonitoring('s1')
+    expect(result).toEqual(ended)
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('/monitoring/sessions/s1/end')
+    expect(opts.method).toBe('POST')
+  })
+
   it('listActiveMonitoringSessions fetches active-scoped endpoint', async () => {
     const sessions = [
       { id: 's1', terminal_id: 't1', label: null, started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active' },

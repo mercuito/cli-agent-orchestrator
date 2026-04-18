@@ -7,6 +7,7 @@ import { ConfirmModal } from './ConfirmModal'
 import { InboxPanel } from './InboxPanel'
 import { StatusBadge } from './StatusBadge'
 import { MonitoringIndicator } from './MonitoringIndicator'
+import { MonitoringButton } from './MonitoringButton'
 import { OutputViewer } from './OutputViewer'
 
 interface SessionWithTerminals {
@@ -243,6 +244,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
                           <span className="text-[10px] text-gray-600">{t.provider}</span>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
+                          <MonitoringButton terminalId={t.id} />
                           <button
                             onClick={() => setInboxTerminalId(t.id)}
                             className="p-1.5 text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"

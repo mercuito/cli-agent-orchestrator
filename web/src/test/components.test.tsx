@@ -4,7 +4,9 @@ import { StatusBadge } from '../components/StatusBadge'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { MonitoringIndicator } from '../components/MonitoringIndicator'
+import { MonitoringButton } from '../components/MonitoringButton'
 import { useStore } from '../store'
+import { api } from '../api'
 
 describe('StatusBadge', () => {
   it('renders idle status', () => {
@@ -158,6 +160,118 @@ describe('MonitoringIndicator', () => {
     render(<MonitoringIndicator terminalId="term-x" />)
     const tooltip = hoverAndGetTooltip()
     expect(tooltip.textContent).not.toMatch(/peers:/i)
+  })
+})
+
+describe('MonitoringButton', () => {
+  function mockSession(overrides: Partial<import('../api').MonitoringSession> = {}): import('../api').MonitoringSession {
+    return {
+      id: 'sess-1',
+      terminal_id: 'term-x',
+      label: null,
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      status: 'active',
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    useStore.setState({
+      activeMonitoringByTerminal: {},
+      snackbar: null,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('renders a Monitor button when the terminal has no active session', () => {
+    render(<MonitoringButton terminalId="term-x" />)
+    expect(screen.getByRole('button', { name: /^monitor$/i })).toBeInTheDocument()
+  })
+
+  it('renders a Stop button when the terminal has an active session', () => {
+    useStore.setState({
+      activeMonitoringByTerminal: { 'term-x': mockSession() },
+    })
+    render(<MonitoringButton terminalId="term-x" />)
+    expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument()
+  })
+
+  it('clicking Monitor calls startMonitoring with terminal_id and a dashboard-HHmmss label', async () => {
+    const spy = vi.spyOn(api, 'startMonitoring').mockResolvedValue(mockSession())
+
+    render(<MonitoringButton terminalId="term-x" />)
+    fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
+
+    // Allow the async handler to resolve
+    await Promise.resolve()
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    const [terminalId, label] = spy.mock.calls[0]
+    expect(terminalId).toBe('term-x')
+    // Label should match dashboard-HHmmss — 6 digits after the prefix
+    expect(label).toMatch(/^dashboard-\d{6}$/)
+  })
+
+  it('clicking Stop calls endMonitoring with the active session id', async () => {
+    useStore.setState({
+      activeMonitoringByTerminal: {
+        'term-x': mockSession({ id: 'sess-to-end' }),
+      },
+    })
+    const spy = vi.spyOn(api, 'endMonitoring').mockResolvedValue({
+      ...mockSession({ id: 'sess-to-end' }),
+      status: 'ended' as const,
+      ended_at: new Date().toISOString(),
+    })
+
+    render(<MonitoringButton terminalId="term-x" />)
+    fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
+    await Promise.resolve()
+
+    expect(spy).toHaveBeenCalledWith('sess-to-end')
+  })
+
+  it('start error surfaces as a snackbar', async () => {
+    vi.spyOn(api, 'startMonitoring').mockRejectedValue(new Error('500 server broke'))
+    render(<MonitoringButton terminalId="term-x" />)
+    fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
+    await new Promise(r => setTimeout(r, 0))
+
+    const snackbar = useStore.getState().snackbar
+    expect(snackbar?.type).toBe('error')
+    expect(snackbar?.message.toLowerCase()).toContain('failed to start monitoring')
+  })
+
+  it('stop error surfaces as a snackbar', async () => {
+    useStore.setState({
+      activeMonitoringByTerminal: { 'term-x': mockSession() },
+    })
+    vi.spyOn(api, 'endMonitoring').mockRejectedValue(new Error('404 missing'))
+    render(<MonitoringButton terminalId="term-x" />)
+    fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
+    await new Promise(r => setTimeout(r, 0))
+
+    const snackbar = useStore.getState().snackbar
+    expect(snackbar?.type).toBe('error')
+    expect(snackbar?.message.toLowerCase()).toContain('failed to stop monitoring')
+  })
+
+  it('button is disabled while the request is in flight', async () => {
+    // Never-resolving promise so we can inspect the in-flight state
+    let _resolve: ((s: any) => void) = () => {}
+    vi.spyOn(api, 'startMonitoring').mockImplementation(
+      () => new Promise(r => { _resolve = r }) as Promise<any>
+    )
+
+    render(<MonitoringButton terminalId="term-x" />)
+    const btn = screen.getByRole('button', { name: /^monitor$/i })
+    fireEvent.click(btn)
+    // After click, button must be disabled (prevents double-submit)
+    expect(btn).toBeDisabled()
+
+    // Resolve to keep the test environment clean
+    act(() => { _resolve(mockSession()) })
   })
 })
 

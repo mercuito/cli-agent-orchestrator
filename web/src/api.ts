@@ -135,6 +135,19 @@ export const api = {
   // Monitoring
   listActiveMonitoringSessions: () =>
     fetchJSON<MonitoringSession[]>('/monitoring/sessions?status=active'),
+  startMonitoring: (terminalId: string, label?: string) =>
+    fetchJSON<MonitoringSession>('/monitoring/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        terminal_id: terminalId,
+        label: label ?? null,
+      }),
+    }),
+  endMonitoring: (sessionId: string) =>
+    fetchJSON<MonitoringSession>(`/monitoring/sessions/${sessionId}/end`, {
+      method: 'POST',
+    }),
 
   // Flows
   listFlows: () => fetchJSON<Flow[]>('/flows'),

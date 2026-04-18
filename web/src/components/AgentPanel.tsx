@@ -10,6 +10,7 @@ import { CustomSelect, SelectOption } from './CustomSelect'
 import { TerminalMeta } from '../api'
 import { StatusBadge } from './StatusBadge'
 import { MonitoringIndicator } from './MonitoringIndicator'
+import { MonitoringButton } from './MonitoringButton'
 import { OutputViewer } from './OutputViewer'
 
 const FALLBACK_PROVIDERS = ['kiro_cli', 'claude_code', 'q_cli', 'codex', 'gemini_cli', 'kimi_cli', 'copilot_cli']
@@ -366,6 +367,7 @@ export function AgentPanel() {
                     {t.agent_profile && <span className="text-xs text-emerald-400">{t.agent_profile}</span>}
                   </div>
                   <div className="flex items-center gap-2">
+                    <MonitoringButton terminalId={t.id} />
                     <button
                       onClick={() => setInboxTerminalId(t.id)}
                       className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors"
