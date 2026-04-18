@@ -240,14 +240,70 @@ Send a message to another terminal's inbox.
 
 ---
 
+## Monitoring Sessions
+
+Retrospective visibility into agent-to-agent conversations. See
+[`monitoring.md`](monitoring.md) for the conceptual overview and yards
+integration example. Monitoring routes are operator-facing and **not**
+exposed as MCP tools — agents cannot see or call them.
+
+### POST /monitoring/sessions
+Create a monitoring session.
+
+**Request body:**
+```json
+{
+  "terminal_id": "impl-abc123",
+  "peer_terminal_ids": ["rev-def456"],
+  "label": "review-v2"
+}
+```
+`peer_terminal_ids` and `label` are optional. Empty/null peer set captures
+all I/O of the monitored terminal.
+
+**Response (201):** session object.
+
+### GET /monitoring/sessions
+List sessions. Query params: `terminal_id`, `peer_terminal_id`, `involves`,
+`status` (`active`|`ended`), `label`, `started_after`, `started_before`,
+`limit` (1–500), `offset`.
+
+### GET /monitoring/sessions/{session_id}
+Show a single session. `404` if missing.
+
+### POST /monitoring/sessions/{session_id}/end
+End an active session. `409` if already ended; `404` if missing.
+
+### POST /monitoring/sessions/{session_id}/peers
+Add one or more peers to an active session. Body: `{ "peer_terminal_ids": [...] }`
+(must be non-empty). `409` if session ended.
+
+### DELETE /monitoring/sessions/{session_id}/peers/{peer_terminal_id}
+Remove a peer. `409` if session ended.
+
+### GET /monitoring/sessions/{session_id}/messages
+Inbox messages in the session's window, ordered by creation time. JSON list.
+
+### GET /monitoring/sessions/{session_id}/log
+Rendered artifact. Query param: `format=markdown` (default) or `format=json`.
+Markdown returns `text/markdown`; JSON returns `{session, messages}`.
+
+### DELETE /monitoring/sessions/{session_id}
+Delete the session metadata. Does **not** delete messages. Returns `204`.
+
+---
+
 ## Error Responses
 
 All endpoints return standard HTTP status codes:
 
 - `200 OK`: Success
 - `201 Created`: Resource created
+- `204 No Content`: Success with no body
 - `400 Bad Request`: Invalid parameters
 - `404 Not Found`: Resource not found
+- `409 Conflict`: Operation conflicts with resource state (e.g., ending an already-ended session)
+- `422 Unprocessable Entity`: Request body/params failed validation
 - `500 Internal Server Error`: Server error
 
 Error response format:
