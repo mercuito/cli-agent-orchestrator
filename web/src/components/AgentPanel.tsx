@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store'
+import { usePersistedState } from '../hooks/usePersistedState'
 import { api, AgentProfileInfo, ProviderInfo } from '../api'
 import { Bot, Play, Trash2, ChevronRight, Terminal as TermIcon, Monitor, Package, FolderOpen, Search, Mail, Plus, LogOut, Send, FileText, X } from 'lucide-react'
 import { TerminalView } from './TerminalView'
@@ -21,8 +22,8 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export function AgentPanel() {
   const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus } = useStore()
-  const [provider, setProvider] = useState('kiro_cli')
-  const [profile, setProfile] = useState('')
+  const [provider, setProvider] = usePersistedState('cao.spawn.provider', 'kiro_cli')
+  const [profile, setProfile] = usePersistedState('cao.spawn.profile', '')
   const [creating, setCreating] = useState(false)
   const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentProfile?: string | null } | null>(null)
   const [profiles, setProfiles] = useState<AgentProfileInfo[]>([])
@@ -33,22 +34,27 @@ export function AgentPanel() {
     api.listProviders()
       .then(p => {
         setProviders(p)
-        // Default to first installed provider
-        const firstInstalled = p.find(prov => prov.installed)
-        if (firstInstalled) setProvider(firstInstalled.name)
+        // Only override the (possibly persisted) provider if the current one
+        // isn't available/installed. Otherwise respect the user's last choice.
+        const current = p.find(prov => prov.name === provider)
+        if (!current || !current.installed) {
+          const firstInstalled = p.find(prov => prov.installed)
+          if (firstInstalled) setProvider(firstInstalled.name)
+        }
       })
       .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const [pendingClose, setPendingClose] = useState<TerminalMeta | null>(null)
   const [closingTerminal, setClosingTerminal] = useState<string | null>(null)
   const [sessionSearch, setSessionSearch] = useState('')
   const [inboxTerminalId, setInboxTerminalId] = useState<string | null>(null)
-  const [workingDirectory, setWorkingDirectory] = useState('')
+  const [workingDirectory, setWorkingDirectory] = usePersistedState('cao.spawn.workingDirectory', '')
   const [terminalWorkDirs, setTerminalWorkDirs] = useState<Record<string, string | null>>({})
   const [showAddAgent, setShowAddAgent] = useState(false)
-  const [addProvider, setAddProvider] = useState('kiro_cli')
-  const [addProfile, setAddProfile] = useState('')
-  const [addWorkDir, setAddWorkDir] = useState('')
+  const [addProvider, setAddProvider] = usePersistedState('cao.addAgent.provider', 'kiro_cli')
+  const [addProfile, setAddProfile] = usePersistedState('cao.addAgent.profile', '')
+  const [addWorkDir, setAddWorkDir] = usePersistedState('cao.addAgent.workingDirectory', '')
   const [addingAgent, setAddingAgent] = useState(false)
   const [pendingExit, setPendingExit] = useState<TerminalMeta | null>(null)
   const [exitingTerminal, setExitingTerminal] = useState<string | null>(null)
