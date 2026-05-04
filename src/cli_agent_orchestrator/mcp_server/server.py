@@ -10,9 +10,12 @@ import requests
 from fastmcp import FastMCP
 from pydantic import Field
 
+from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
+from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.utils import agent_profiles as agent_profiles_utils
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
@@ -749,6 +752,294 @@ async def send_message(
         Dict with success status and message details
     """
     return _send_message_impl(receiver_id, message)
+
+
+def _require_cao_terminal_id() -> str:
+    terminal_id = os.getenv("CAO_TERMINAL_ID")
+    if not terminal_id:
+        raise ValueError("CAO_TERMINAL_ID not set - baton tools must run inside a CAO terminal")
+    return terminal_id
+
+
+def _baton_to_dict(baton: Baton) -> Dict[str, Any]:
+    return baton.model_dump(mode="json")
+
+
+def _baton_event_to_dict(event: BatonEvent) -> Dict[str, Any]:
+    return event.model_dump(mode="json")
+
+
+def _baton_success(baton: Baton, message: str) -> Dict[str, Any]:
+    return {
+        "success": True,
+        "message": message,
+        "baton": _baton_to_dict(baton),
+        "baton_id": baton.id,
+        "status": baton.status,
+        "current_holder_id": baton.current_holder_id,
+    }
+
+
+def _baton_error(exc: Exception) -> Dict[str, Any]:
+    if isinstance(exc, ValueError):
+        error_type = "missing_context" if "CAO_TERMINAL_ID" in str(exc) else "invalid_request"
+    elif isinstance(exc, baton_service.BatonNotFound):
+        error_type = "not_found"
+    elif isinstance(exc, baton_service.BatonAuthorizationError):
+        error_type = "authorization_error"
+    elif isinstance(exc, baton_service.BatonInvalidTransition):
+        error_type = "invalid_transition"
+    else:
+        error_type = "baton_error"
+
+    return {
+        "success": False,
+        "error_type": error_type,
+        "error": str(exc),
+    }
+
+
+def _parse_baton_status(status: Optional[str]) -> Optional[BatonStatus]:
+    if status is None:
+        return None
+    try:
+        return BatonStatus(status)
+    except ValueError as exc:
+        allowed = ", ".join(s.value for s in BatonStatus)
+        raise ValueError(f"invalid baton status {status!r}; expected one of: {allowed}") from exc
+
+
+def _actor_can_view_baton(actor_id: str, baton: Baton) -> bool:
+    return (
+        actor_id == baton.originator_id
+        or actor_id == baton.current_holder_id
+        or actor_id in baton.return_stack
+    )
+
+
+def _create_baton_impl(
+    title: str,
+    holder_id: str,
+    message: str,
+    expected_next_action: Optional[str] = None,
+    artifact_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    try:
+        actor_id = _require_cao_terminal_id()
+        baton = baton_service.create_baton(
+            title=title,
+            originator_id=actor_id,
+            holder_id=holder_id,
+            message=message,
+            expected_next_action=expected_next_action,
+            artifact_paths=artifact_paths,
+        )
+        return _baton_success(baton, f"Created baton {baton.id} for holder {holder_id}")
+    except Exception as exc:
+        return _baton_error(exc)
+
+
+def _pass_baton_impl(
+    baton_id: str,
+    receiver_id: str,
+    message: str,
+    expected_next_action: Optional[str] = None,
+    artifact_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    try:
+        actor_id = _require_cao_terminal_id()
+        baton = baton_service.pass_baton(
+            baton_id=baton_id,
+            actor_id=actor_id,
+            receiver_id=receiver_id,
+            message=message,
+            expected_next_action=expected_next_action,
+            artifact_paths=artifact_paths,
+        )
+        return _baton_success(baton, f"Passed baton {baton_id} to {receiver_id}")
+    except Exception as exc:
+        return _baton_error(exc)
+
+
+def _return_baton_impl(
+    baton_id: str,
+    message: str,
+    expected_next_action: Optional[str] = None,
+    artifact_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    try:
+        actor_id = _require_cao_terminal_id()
+        baton = baton_service.return_baton(
+            baton_id=baton_id,
+            actor_id=actor_id,
+            message=message,
+            expected_next_action=expected_next_action,
+            artifact_paths=artifact_paths,
+        )
+        return _baton_success(baton, f"Returned baton {baton_id} to {baton.current_holder_id}")
+    except Exception as exc:
+        return _baton_error(exc)
+
+
+def _complete_baton_impl(
+    baton_id: str,
+    message: str,
+    artifact_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    try:
+        actor_id = _require_cao_terminal_id()
+        baton = baton_service.complete_baton(
+            baton_id=baton_id,
+            actor_id=actor_id,
+            message=message,
+            artifact_paths=artifact_paths,
+        )
+        return _baton_success(baton, f"Completed baton {baton_id}")
+    except Exception as exc:
+        return _baton_error(exc)
+
+
+def _block_baton_impl(
+    baton_id: str,
+    reason: str,
+    artifact_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    try:
+        actor_id = _require_cao_terminal_id()
+        baton = baton_service.block_baton(
+            baton_id=baton_id,
+            actor_id=actor_id,
+            reason=reason,
+            artifact_paths=artifact_paths,
+        )
+        return _baton_success(baton, f"Blocked baton {baton_id}")
+    except Exception as exc:
+        return _baton_error(exc)
+
+
+def _get_my_batons_impl(status: Optional[str] = None) -> Dict[str, Any]:
+    try:
+        actor_id = _require_cao_terminal_id()
+        status_filter = _parse_baton_status(status)
+        batons = db_module.list_batons_held_by(actor_id, status=status_filter)
+        return {
+            "success": True,
+            "terminal_id": actor_id,
+            "batons": [_baton_to_dict(baton) for baton in batons],
+            "count": len(batons),
+        }
+    except Exception as exc:
+        return _baton_error(exc)
+
+
+def _get_baton_impl(baton_id: str) -> Dict[str, Any]:
+    try:
+        actor_id = _require_cao_terminal_id()
+        baton = db_module.get_baton_record(baton_id)
+        if baton is None:
+            raise baton_service.BatonNotFound(baton_id)
+        if not _actor_can_view_baton(actor_id, baton):
+            raise baton_service.BatonAuthorizationError(
+                f"actor {actor_id} is not allowed to view baton {baton_id}"
+            )
+        events = db_module.list_baton_events(baton_id)
+        return {
+            "success": True,
+            "baton": _baton_to_dict(baton),
+            "events": [_baton_event_to_dict(event) for event in events],
+        }
+    except Exception as exc:
+        return _baton_error(exc)
+
+
+@_deferred_tool()
+async def create_baton(
+    title: str = Field(description="Human-readable baton title"),
+    holder_id: str = Field(description="Terminal ID that should hold the new baton"),
+    message: str = Field(description="Self-contained message to queue for the initial holder"),
+    expected_next_action: Optional[str] = Field(
+        default=None, description="What the holder is expected to do next"
+    ),
+    artifact_paths: Optional[List[str]] = Field(
+        default=None, description="Absolute artifact paths relevant to this baton"
+    ),
+) -> Dict[str, Any]:
+    """Create a baton and queue the initial holder message as one operation."""
+    return _create_baton_impl(title, holder_id, message, expected_next_action, artifact_paths)
+
+
+@_deferred_tool()
+async def pass_baton(
+    baton_id: str = Field(description="Baton ID to pass"),
+    receiver_id: str = Field(description="Terminal ID that should receive the baton"),
+    message: str = Field(description="Self-contained message to queue for the receiver"),
+    expected_next_action: Optional[str] = Field(
+        default=None, description="What the receiver is expected to do next"
+    ),
+    artifact_paths: Optional[List[str]] = Field(
+        default=None, description="Absolute artifact paths relevant to this transfer"
+    ),
+) -> Dict[str, Any]:
+    """Pass a baton to another terminal and queue the transfer message."""
+    return _pass_baton_impl(baton_id, receiver_id, message, expected_next_action, artifact_paths)
+
+
+@_deferred_tool()
+async def return_baton(
+    baton_id: str = Field(description="Baton ID to return"),
+    message: str = Field(description="Self-contained message to queue for the previous holder"),
+    expected_next_action: Optional[str] = Field(
+        default=None, description="What the receiving holder is expected to do next"
+    ),
+    artifact_paths: Optional[List[str]] = Field(
+        default=None, description="Absolute artifact paths relevant to this return"
+    ),
+) -> Dict[str, Any]:
+    """Return a baton to the previous holder, or originator if the stack is empty."""
+    return _return_baton_impl(baton_id, message, expected_next_action, artifact_paths)
+
+
+@_deferred_tool()
+async def complete_baton(
+    baton_id: str = Field(description="Baton ID to complete"),
+    message: str = Field(description="Completion message to queue for the originator"),
+    artifact_paths: Optional[List[str]] = Field(
+        default=None, description="Absolute artifact paths relevant to completion"
+    ),
+) -> Dict[str, Any]:
+    """Complete a baton and notify the originator."""
+    return _complete_baton_impl(baton_id, message, artifact_paths)
+
+
+@_deferred_tool()
+async def block_baton(
+    baton_id: str = Field(description="Baton ID to block"),
+    reason: str = Field(description="Why the baton is blocked and what input is needed"),
+    artifact_paths: Optional[List[str]] = Field(
+        default=None, description="Absolute artifact paths relevant to the blocker"
+    ),
+) -> Dict[str, Any]:
+    """Mark a baton blocked and notify the originator."""
+    return _block_baton_impl(baton_id, reason, artifact_paths)
+
+
+@_deferred_tool()
+async def get_my_batons(
+    status: Optional[str] = Field(
+        default=None,
+        description="Optional status filter: active, completed, blocked, canceled, or orphaned",
+    ),
+) -> Dict[str, Any]:
+    """List batons currently held by this terminal."""
+    return _get_my_batons_impl(status)
+
+
+@_deferred_tool()
+async def get_baton(
+    baton_id: str = Field(description="Baton ID to inspect"),
+) -> Dict[str, Any]:
+    """Get baton details and audit events for a baton involving this terminal."""
+    return _get_baton_impl(baton_id)
 
 
 @_deferred_tool(description=LOAD_SKILL_TOOL_DESCRIPTION)

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api, MonitoringSession, Session, SessionDetail, TerminalMeta } from './api'
+import { api, Baton, MonitoringSession, Session, SessionDetail, TerminalMeta } from './api'
 
 // Only trigger React re-renders when data actually changed
 function jsonEqual(a: unknown, b: unknown): boolean {
@@ -24,6 +24,11 @@ interface Store {
    *  so a single-value map is all we need. Replaced wholesale each poll
    *  via setActiveMonitoringSessions. */
   activeMonitoringByTerminal: Record<string, MonitoringSession>
+  /** Map of terminal_id -> active batons currently held by that terminal.
+   *  Unlike monitoring, a terminal can hold several batons, so each value is
+   *  an array. Replaced wholesale each poll so completed/transferred batons
+   *  disappear promptly. */
+  activeBatonsByHolder: Record<string, Baton[]>
 
   fetchSessions: () => Promise<void>
   selectSession: (name: string | null) => Promise<void>
@@ -35,6 +40,7 @@ interface Store {
   setTerminalStatus: (id: string, status: string) => void
   clearTerminalStatuses: (ids: string[]) => void
   setActiveMonitoringSessions: (sessions: MonitoringSession[]) => void
+  setActiveBatons: (batons: Baton[]) => void
 }
 
 export const useStore = create<Store>((set, get) => ({
@@ -45,6 +51,7 @@ export const useStore = create<Store>((set, get) => ({
   snackbar: null,
   terminalStatuses: {},
   activeMonitoringByTerminal: {},
+  activeBatonsByHolder: {},
 
   fetchSessions: async () => {
     try {
@@ -124,5 +131,16 @@ export const useStore = create<Store>((set, get) => ({
       for (const s of sessions) next[s.terminal_id] = s
       if (jsonEqual(state.activeMonitoringByTerminal, next)) return state
       return { activeMonitoringByTerminal: next }
+    }),
+  setActiveBatons: (batons) =>
+    set(state => {
+      const next: Record<string, Baton[]> = {}
+      for (const baton of batons) {
+        if (!baton.current_holder_id) continue
+        if (!next[baton.current_holder_id]) next[baton.current_holder_id] = []
+        next[baton.current_holder_id].push(baton)
+      }
+      if (jsonEqual(state.activeBatonsByHolder, next)) return state
+      return { activeBatonsByHolder: next }
     }),
 }))

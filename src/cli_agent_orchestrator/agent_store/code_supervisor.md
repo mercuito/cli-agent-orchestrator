@@ -6,6 +6,13 @@ caoTools:
   - assign
   - handoff
   - send_message
+  - create_baton
+  - pass_baton
+  - return_baton
+  - complete_baton
+  - block_baton
+  - get_my_batons
+  - get_baton
   - terminate
   - list_agent_profiles
   - get_agent_profile

@@ -4,6 +4,12 @@ description: Developer Agent in a multi-agent system
 role: developer  # @builtin, fs_*, execute_bash, @cao-mcp-server. For fine-grained control, see docs/tool-restrictions.md
 caoTools:
   - send_message
+  - pass_baton
+  - return_baton
+  - complete_baton
+  - block_baton
+  - get_my_batons
+  - get_baton
   - load_skill
 mcpServers:
   cao-mcp-server:

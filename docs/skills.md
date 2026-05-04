@@ -51,8 +51,8 @@ Lists all installed skills with their name and description.
 ```
 $ cao skills list
 Name                        Description
-cao-supervisor-protocols    Supervisor-side orchestration patterns for assign, handoff, and idle inbox delivery in CAO
-cao-worker-protocols        Worker-side callback and completion rules for assigned and handed-off tasks in CAO
+cao-supervisor-protocols    Supervisor-side orchestration patterns for assign, handoff, baton control, and idle inbox delivery in CAO
+cao-worker-protocols        Worker-side callback, baton holder, and completion rules for assigned and handed-off tasks in CAO
 ```
 
 ### `cao skills add <folder-path> [--force]`
@@ -95,8 +95,8 @@ CAO ships with two builtin skills:
 
 | Skill | Description |
 |-------|-------------|
-| `cao-supervisor-protocols` | Multi-agent orchestration patterns for supervisors: `assign`, `handoff`, idle-based message delivery |
-| `cao-worker-protocols` | Worker-side callback and completion rules for assigned and handed-off tasks |
+| `cao-supervisor-protocols` | Multi-agent orchestration patterns for supervisors: `assign`, `handoff`, baton control, idle-based message delivery |
+| `cao-worker-protocols` | Worker-side callback, baton holder, and completion rules for assigned and handed-off tasks |
 
 ## How Agents Discover Skills
 

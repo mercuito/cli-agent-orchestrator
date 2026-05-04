@@ -10,6 +10,7 @@ import { CustomSelect, SelectOption } from './CustomSelect'
 import { TerminalMeta } from '../api'
 import { StatusBadge } from './StatusBadge'
 import { MonitoringIndicator } from './MonitoringIndicator'
+import { BatonIndicator } from './BatonIndicator'
 import { MonitoringButton } from './MonitoringButton'
 import { OutputViewer } from './OutputViewer'
 
@@ -23,7 +24,7 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function AgentPanel() {
-  const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus, setActiveMonitoringSessions } = useStore()
+  const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus, setActiveMonitoringSessions, setActiveBatons } = useStore()
   const [provider, setProvider] = usePersistedState('cao.spawn.provider', 'kiro_cli')
   const [profile, setProfile] = usePersistedState('cao.spawn.profile', '')
   const [creating, setCreating] = useState(false)
@@ -126,9 +127,9 @@ export function AgentPanel() {
     }
   }, [activeSession])
 
-  // Poll terminal statuses + active monitoring sessions for the detail view.
-  // Monitoring is a single list call per tick, shared across all rendered
-  // terminals.
+  // Poll terminal statuses plus dashboard-wide indicators for the detail view.
+  // Monitoring and batons are single list calls per tick, shared across all
+  // rendered terminals.
   useEffect(() => {
     if (!activeSessionDetail?.terminals.length) return
     const terminalIds = activeSessionDetail.terminals.map(t => t.id)
@@ -140,6 +141,9 @@ export function AgentPanel() {
       })
       api.listActiveMonitoringSessions()
         .then(setActiveMonitoringSessions)
+        .catch(() => {})
+      api.listActiveBatons()
+        .then(setActiveBatons)
         .catch(() => {})
     }
     fetchStatuses()
@@ -363,6 +367,7 @@ export function AgentPanel() {
                     <span className="text-sm font-mono text-gray-300">{t.id}</span>
                     <StatusBadge status={terminalStatuses[t.id] || null} />
                     <MonitoringIndicator terminalId={t.id} />
+                    <BatonIndicator terminalId={t.id} />
                     <span className="text-xs text-gray-500">{t.provider}</span>
                     {t.agent_profile && <span className="text-xs text-emerald-400">{t.agent_profile}</span>}
                   </div>

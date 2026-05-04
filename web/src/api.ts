@@ -90,6 +90,29 @@ export interface MonitoringSession {
   status: 'active' | 'ended'
 }
 
+export interface Baton {
+  id: string
+  title: string
+  status: 'active' | 'completed' | 'blocked' | 'canceled' | 'orphaned'
+  originator_id: string
+  current_holder_id: string | null
+  return_stack: string[]
+  expected_next_action: string | null
+  created_at: string
+  updated_at: string
+  last_nudged_at: string | null
+  completed_at: string | null
+}
+
+export interface BatonEvent {
+  event_type: string
+  actor_id: string
+  from_holder_id: string | null
+  to_holder_id: string | null
+  message: string | null
+  created_at: string
+}
+
 export const api = {
   // Agent Profiles & Providers
   listProfiles: () => fetchJSON<AgentProfileInfo[]>('/agents/profiles'),
@@ -148,6 +171,11 @@ export const api = {
     fetchJSON<MonitoringSession>(`/monitoring/sessions/${sessionId}/end`, {
       method: 'POST',
     }),
+
+  // Batons
+  listActiveBatons: () => fetchJSON<Baton[]>('/batons'),
+  getBaton: (id: string) => fetchJSON<Baton>(`/batons/${id}`),
+  listBatonEvents: (id: string) => fetchJSON<BatonEvent[]>(`/batons/${id}/events`),
 
   // Flows
   listFlows: () => fetchJSON<Flow[]>('/flows'),

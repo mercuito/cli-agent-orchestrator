@@ -13,7 +13,7 @@ import termios
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Dict, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, NoReturn, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.encoders import jsonable_encoder
@@ -24,9 +24,12 @@ from watchdog.observers.polling import PollingObserver
 
 from cli_agent_orchestrator.clients.database import (
     create_inbox_message,
+    get_baton_record,
     get_inbox_messages,
     get_terminal_metadata,
     init_db,
+    list_baton_events,
+    list_batons,
 )
 from cli_agent_orchestrator.constants import (
     ALLOWED_HOSTS,
@@ -38,11 +41,14 @@ from cli_agent_orchestrator.constants import (
     SERVER_VERSION,
     TERMINAL_LOG_DIR,
 )
+from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import (
+    baton_service,
+    baton_watchdog_service,
     flow_service,
     inbox_service,
     monitoring_service,
@@ -136,6 +142,51 @@ class MonitoringSessionResponse(BaseModel):
     status: Literal["active", "ended"]
 
 
+class BatonResponse(BaseModel):
+    """Operator-facing baton state."""
+
+    id: str
+    title: str
+    current_holder_id: Optional[str]
+    originator_id: str
+    status: str
+    return_stack: List[str]
+    expected_next_action: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    last_nudged_at: Optional[datetime]
+    completed_at: Optional[datetime]
+
+
+class BatonEventResponse(BaseModel):
+    """Operator-facing baton audit event."""
+
+    id: int
+    baton_id: str
+    event_type: str
+    actor_id: str
+    from_holder_id: Optional[str]
+    to_holder_id: Optional[str]
+    message: Optional[str]
+    created_at: datetime
+
+
+class CancelBatonRequest(BaseModel):
+    """Operator recovery body for canceling a baton."""
+
+    actor_id: str = "operator"
+    message: Optional[str] = None
+
+
+class ReassignBatonRequest(BaseModel):
+    """Operator recovery body for reassigning a baton."""
+
+    holder_id: str
+    actor_id: str = "operator"
+    message: Optional[str] = None
+    expected_next_action: Optional[str] = None
+
+
 class CreateFlowRequest(BaseModel):
     """Request model for creating a flow."""
 
@@ -167,6 +218,9 @@ async def lifespan(app: FastAPI):
     # Start flow daemon as background task
     daemon_task = asyncio.create_task(flow_daemon())
 
+    # Start baton watchdog as background task
+    baton_watchdog_task = asyncio.create_task(baton_watchdog_service.baton_watchdog_loop())
+
     # Start inbox watcher
     inbox_observer = PollingObserver(timeout=INBOX_POLLING_INTERVAL)
     inbox_observer.schedule(LogFileHandler(), str(TERMINAL_LOG_DIR), recursive=False)
@@ -184,6 +238,13 @@ async def lifespan(app: FastAPI):
     daemon_task.cancel()
     try:
         await daemon_task
+    except asyncio.CancelledError:
+        pass
+
+    # Cancel baton watchdog on shutdown
+    baton_watchdog_task.cancel()
+    try:
+        await baton_watchdog_task
     except asyncio.CancelledError:
         pass
 
@@ -778,6 +839,118 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
             await asyncio.to_thread(proc.wait)
 
 
+# -----------------------------------------------------------------------------
+# Baton routes (operator inspection and recovery)
+#
+# ``GET /batons`` defaults to active batons because the primary operator and
+# dashboard need is current ownership visibility. Pass a concrete status to
+# inspect another lifecycle bucket.
+# -----------------------------------------------------------------------------
+
+
+def _baton_response(baton: Baton) -> BatonResponse:
+    return BatonResponse(**baton.model_dump())
+
+
+def _baton_event_response(event: BatonEvent) -> BatonEventResponse:
+    return BatonEventResponse(**event.model_dump())
+
+
+def _raise_baton_http_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, baton_service.BatonNotFound):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Baton not found: {str(exc)}",
+        )
+    if isinstance(exc, baton_service.BatonAuthorizationError):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        )
+    if isinstance(exc, baton_service.BatonInvalidTransition):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Failed to process baton request: {str(exc)}",
+    )
+
+
+@app.get("/batons", response_model=List[BatonResponse])
+async def list_batons_endpoint(
+    status_filter: Optional[BatonStatus] = Query(
+        default=BatonStatus.ACTIVE,
+        alias="status",
+        description="Filter by lifecycle status. Defaults to active for dashboard ownership visibility.",
+    ),
+    holder_id: Optional[str] = None,
+    originator_id: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> List[BatonResponse]:
+    batons = list_batons(
+        status=status_filter,
+        holder_id=holder_id,
+        originator_id=originator_id,
+        limit=limit,
+        offset=offset,
+    )
+    return [_baton_response(baton) for baton in batons]
+
+
+@app.get("/batons/{baton_id}", response_model=BatonResponse)
+async def get_baton_endpoint(baton_id: str) -> BatonResponse:
+    baton = get_baton_record(baton_id)
+    if baton is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Baton not found: {baton_id}",
+        )
+    return _baton_response(baton)
+
+
+@app.get("/batons/{baton_id}/events", response_model=List[BatonEventResponse])
+async def get_baton_events_endpoint(baton_id: str) -> List[BatonEventResponse]:
+    if get_baton_record(baton_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Baton not found: {baton_id}",
+        )
+    return [_baton_event_response(event) for event in list_baton_events(baton_id)]
+
+
+@app.post("/batons/{baton_id}/cancel", response_model=BatonResponse)
+async def cancel_baton_endpoint(baton_id: str, body: CancelBatonRequest) -> BatonResponse:
+    try:
+        baton = baton_service.cancel_baton(
+            baton_id=baton_id,
+            actor_id=body.actor_id,
+            message=body.message,
+            operator_recovery=True,
+        )
+        return _baton_response(baton)
+    except Exception as exc:
+        _raise_baton_http_error(exc)
+
+
+@app.post("/batons/{baton_id}/reassign", response_model=BatonResponse)
+async def reassign_baton_endpoint(baton_id: str, body: ReassignBatonRequest) -> BatonResponse:
+    try:
+        baton = baton_service.reassign_baton(
+            baton_id=baton_id,
+            actor_id=body.actor_id,
+            receiver_id=body.holder_id,
+            message=body.message,
+            expected_next_action=body.expected_next_action,
+            operator_recovery=True,
+        )
+        return _baton_response(baton)
+    except Exception as exc:
+        _raise_baton_http_error(exc)
+
+
 # ── Flow management endpoints ────────────────────────────────────────
 
 
@@ -1066,7 +1239,7 @@ async def get_monitoring_log(
             "peers": peer or None,
             "started_after": started_after,
             "started_before": started_before,
-        }
+    }
 
     if format == "json":
         payload = monitoring_formatter.format_json(

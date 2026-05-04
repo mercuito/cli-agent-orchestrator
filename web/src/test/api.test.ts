@@ -70,6 +70,52 @@ describe('API wrapper', () => {
     )
   })
 
+  it('listActiveBatons fetches the active baton list', async () => {
+    const batons = [
+      {
+        id: 'baton-1',
+        title: 'Review implementation',
+        status: 'active',
+        originator_id: 'term-origin',
+        current_holder_id: 'term-reviewer',
+        return_stack: ['term-author'],
+        expected_next_action: 'review the patch',
+        created_at: '2026-05-04T10:00:00',
+        updated_at: '2026-05-04T10:05:00',
+        last_nudged_at: null,
+        completed_at: null,
+      },
+    ]
+    mockResponse(batons)
+    const result = await api.listActiveBatons()
+    expect(result).toEqual(batons)
+    expect(mockFetch).toHaveBeenCalledWith('/batons', expect.any(Object))
+  })
+
+  it('getBaton fetches a baton by id', async () => {
+    mockResponse({ id: 'baton-1', title: 'Review implementation' })
+    const result = await api.getBaton('baton-1')
+    expect(result.id).toBe('baton-1')
+    expect(mockFetch).toHaveBeenCalledWith('/batons/baton-1', expect.any(Object))
+  })
+
+  it('listBatonEvents fetches baton audit events', async () => {
+    const events = [
+      {
+        event_type: 'passed',
+        actor_id: 'term-author',
+        from_holder_id: 'term-author',
+        to_holder_id: 'term-reviewer',
+        message: 'Please review',
+        created_at: '2026-05-04T10:05:00',
+      },
+    ]
+    mockResponse(events)
+    const result = await api.listBatonEvents('baton-1')
+    expect(result).toEqual(events)
+    expect(mockFetch).toHaveBeenCalledWith('/batons/baton-1/events', expect.any(Object))
+  })
+
   it('listSessions fetches /sessions', async () => {
     const sessions = [{ id: 's1', name: 'test', status: 'active' }]
     mockResponse(sessions)

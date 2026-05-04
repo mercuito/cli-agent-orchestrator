@@ -1,13 +1,15 @@
-"""Minimal database client with only terminal metadata."""
+"""Minimal database client with terminal, inbox, monitoring, flow, and baton metadata."""
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, create_engine, event
-from sqlalchemy.orm import DeclarativeBase, declarative_base, sessionmaker
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, create_engine, event
+from sqlalchemy.orm import DeclarativeBase, Session, declarative_base, sessionmaker
 
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
+from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonEventType, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
 
@@ -66,6 +68,39 @@ class MonitoringSessionModel(Base):
     ended_at = Column(DateTime, nullable=True)
 
 
+class BatonModel(Base):
+    """SQLAlchemy model for baton state."""
+
+    __tablename__ = "batons"
+
+    id = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    originator_id = Column(String, nullable=False)
+    current_holder_id = Column(String, nullable=True)
+    return_stack_json = Column(String, nullable=False, default="[]")
+    expected_next_action = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now)
+    last_nudged_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class BatonEventModel(Base):
+    """SQLAlchemy model for baton audit events."""
+
+    __tablename__ = "baton_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    baton_id = Column(String, ForeignKey("batons.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(String, nullable=False)
+    actor_id = Column(String, nullable=False)
+    from_holder_id = Column(String, nullable=True)
+    to_holder_id = Column(String, nullable=True)
+    message = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
 class FlowModel(Base):
     """SQLAlchemy model for flow metadata."""
 
@@ -104,8 +139,23 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """Initialize database tables and apply schema migrations."""
     Base.metadata.create_all(bind=engine)
+    _migrate_ensure_baton_tables()
     _migrate_add_allowed_tools()
     _migrate_drop_monitoring_session_peers()
+
+
+def _migrate_ensure_baton_tables() -> None:
+    """Create baton tables on existing databases.
+
+    ``Base.metadata.create_all`` covers normal startup, but keeping this
+    checkfirst migration hook makes the baton schema explicit and safely
+    repeatable for databases initialized before batons existed.
+    """
+    try:
+        BatonModel.__table__.create(bind=engine, checkfirst=True)
+        BatonEventModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for baton tables failed: {e}")
 
 
 def _migrate_drop_monitoring_session_peers() -> None:
@@ -128,14 +178,10 @@ def _migrate_drop_monitoring_session_peers() -> None:
         if cursor.fetchone():
             conn.execute("DROP TABLE monitoring_session_peers")
             conn.commit()
-            logger.info(
-                "Migration: dropped obsolete monitoring_session_peers table"
-            )
+            logger.info("Migration: dropped obsolete monitoring_session_peers table")
         conn.close()
     except Exception as e:
-        logger.warning(
-            f"Migration check for monitoring_session_peers failed: {e}"
-        )
+        logger.warning(f"Migration check for monitoring_session_peers failed: {e}")
 
 
 def _migrate_add_allowed_tools() -> None:
@@ -276,18 +322,26 @@ def delete_terminals_by_session(tmux_session: str) -> int:
         return deleted
 
 
-def create_inbox_message(sender_id: str, receiver_id: str, message: str) -> InboxMessage:
-    """Create inbox message with status=MessageStatus.PENDING."""
-    with SessionLocal() as db:
+def create_inbox_message(
+    sender_id: str, receiver_id: str, message: str, db: Optional[Session] = None
+) -> InboxMessage:
+    """Create inbox message with status=MessageStatus.PENDING.
+
+    When ``db`` is supplied, the message participates in the caller's
+    transaction and is only flushed. Callers that omit ``db`` retain the
+    historical self-contained commit behavior.
+    """
+
+    def _add_message(session: Session) -> InboxMessage:
         inbox_msg = InboxModel(
             sender_id=sender_id,
             receiver_id=receiver_id,
             message=message,
             status=MessageStatus.PENDING.value,
         )
-        db.add(inbox_msg)
-        db.commit()
-        db.refresh(inbox_msg)
+        session.add(inbox_msg)
+        session.flush()
+        session.refresh(inbox_msg)
         return InboxMessage(
             id=inbox_msg.id,
             sender_id=inbox_msg.sender_id,
@@ -296,6 +350,14 @@ def create_inbox_message(sender_id: str, receiver_id: str, message: str) -> Inbo
             status=MessageStatus(inbox_msg.status),
             created_at=inbox_msg.created_at,
         )
+
+    if db is not None:
+        return _add_message(db)
+
+    with SessionLocal() as session:
+        inbox_message = _add_message(session)
+        session.commit()
+        return inbox_message
 
 
 def get_pending_messages(receiver_id: str, limit: int = 1) -> List[InboxMessage]:
@@ -346,6 +408,98 @@ def update_message_status(message_id: int, status: MessageStatus) -> bool:
             db.commit()
             return True
         return False
+
+
+# Baton database functions
+
+
+def baton_from_model(row: BatonModel) -> Baton:
+    """Convert a SQLAlchemy baton row to its typed domain model."""
+    return Baton(
+        id=row.id,
+        title=row.title,
+        status=BatonStatus(row.status),
+        originator_id=row.originator_id,
+        current_holder_id=row.current_holder_id,
+        return_stack=json.loads(row.return_stack_json or "[]"),
+        expected_next_action=row.expected_next_action,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        last_nudged_at=row.last_nudged_at,
+        completed_at=row.completed_at,
+    )
+
+
+def baton_event_from_model(row: BatonEventModel) -> BatonEvent:
+    """Convert a SQLAlchemy baton event row to its typed domain model."""
+    return BatonEvent(
+        id=row.id,
+        baton_id=row.baton_id,
+        event_type=BatonEventType(row.event_type),
+        actor_id=row.actor_id,
+        from_holder_id=row.from_holder_id,
+        to_holder_id=row.to_holder_id,
+        message=row.message,
+        created_at=row.created_at,
+    )
+
+
+def get_baton_record(baton_id: str) -> Optional[Baton]:
+    """Get a baton by ID."""
+    with SessionLocal() as db:
+        row = db.query(BatonModel).filter(BatonModel.id == baton_id).first()
+        if row is None:
+            return None
+        return baton_from_model(row)
+
+
+def list_batons(
+    *,
+    status: Optional[BatonStatus] = None,
+    holder_id: Optional[str] = None,
+    originator_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> List[Baton]:
+    """List batons with operator-facing filters, newest update first."""
+    with SessionLocal() as db:
+        query = db.query(BatonModel)
+        if status is not None:
+            query = query.filter(BatonModel.status == status.value)
+        if holder_id is not None:
+            query = query.filter(BatonModel.current_holder_id == holder_id)
+        if originator_id is not None:
+            query = query.filter(BatonModel.originator_id == originator_id)
+
+        rows = (
+            query.order_by(BatonModel.updated_at.desc(), BatonModel.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return [baton_from_model(row) for row in rows]
+
+
+def list_batons_held_by(holder_id: str, status: Optional[BatonStatus] = None) -> List[Baton]:
+    """List batons currently held by ``holder_id``, newest update first."""
+    with SessionLocal() as db:
+        query = db.query(BatonModel).filter(BatonModel.current_holder_id == holder_id)
+        if status is not None:
+            query = query.filter(BatonModel.status == status.value)
+        rows = query.order_by(BatonModel.updated_at.desc(), BatonModel.created_at.desc()).all()
+        return [baton_from_model(row) for row in rows]
+
+
+def list_baton_events(baton_id: str) -> List[BatonEvent]:
+    """List baton audit events ordered oldest first."""
+    with SessionLocal() as db:
+        rows = (
+            db.query(BatonEventModel)
+            .filter(BatonEventModel.baton_id == baton_id)
+            .order_by(BatonEventModel.created_at.asc(), BatonEventModel.id.asc())
+            .all()
+        )
+        return [baton_event_from_model(row) for row in rows]
 
 
 # Flow database functions

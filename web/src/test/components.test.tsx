@@ -5,8 +5,9 @@ import { ErrorBoundary } from '../components/ErrorBoundary'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { MonitoringIndicator } from '../components/MonitoringIndicator'
 import { MonitoringButton } from '../components/MonitoringButton'
+import { BatonIndicator } from '../components/BatonIndicator'
 import { useStore } from '../store'
-import { api } from '../api'
+import { api, Baton } from '../api'
 
 describe('StatusBadge', () => {
   it('renders idle status', () => {
@@ -160,6 +161,109 @@ describe('MonitoringIndicator', () => {
     render(<MonitoringIndicator terminalId="term-x" />)
     const tooltip = hoverAndGetTooltip()
     expect(tooltip.textContent).not.toMatch(/peers:/i)
+  })
+})
+
+describe('BatonIndicator', () => {
+  function mockBaton(overrides: Partial<Baton> = {}): Baton {
+    return {
+      id: overrides.id || 'baton-1',
+      title: overrides.title || 'Review implementation',
+      status: overrides.status || 'active',
+      originator_id: overrides.originator_id || 'term-origin',
+      current_holder_id: overrides.current_holder_id !== undefined ? overrides.current_holder_id : 'term-x',
+      return_stack: overrides.return_stack || ['term-author'],
+      expected_next_action: overrides.expected_next_action !== undefined ? overrides.expected_next_action : 'review the patch',
+      created_at: overrides.created_at || new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      updated_at: overrides.updated_at || new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      last_nudged_at: overrides.last_nudged_at !== undefined ? overrides.last_nudged_at : null,
+      completed_at: overrides.completed_at !== undefined ? overrides.completed_at : null,
+    }
+  }
+
+  function hoverAndGetTooltip(label = /holding 1 baton/i) {
+    const trigger = screen.getByLabelText(label)
+    fireEvent.mouseEnter(trigger)
+    return screen.getByRole('tooltip')
+  }
+
+  beforeEach(() => {
+    useStore.setState({ activeBatonsByHolder: {} })
+  })
+
+  it('renders nothing when the terminal holds no batons', () => {
+    const { container } = render(<BatonIndicator terminalId="term-x" />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('renders an indicator when the terminal holds a baton', () => {
+    useStore.setState({
+      activeBatonsByHolder: { 'term-x': [mockBaton()] },
+    })
+    render(<BatonIndicator terminalId="term-x" />)
+    expect(screen.getByLabelText(/holding 1 baton/i)).toBeInTheDocument()
+  })
+
+  it('shows baton holder details in the tooltip', () => {
+    useStore.setState({
+      activeBatonsByHolder: {
+        'term-x': [
+          mockBaton({
+            title: 'T07 dashboard visibility',
+            originator_id: 'term-origin',
+            current_holder_id: 'term-x',
+            expected_next_action: 'render a baton indicator',
+            return_stack: ['term-author', 'term-origin'],
+          }),
+        ],
+      },
+    })
+    render(<BatonIndicator terminalId="term-x" />)
+
+    const tooltip = hoverAndGetTooltip()
+    expect(tooltip).toHaveTextContent('T07 dashboard visibility')
+    expect(tooltip).toHaveTextContent('Holder:')
+    expect(tooltip).toHaveTextContent('term-x')
+    expect(tooltip).toHaveTextContent('Originator:')
+    expect(tooltip).toHaveTextContent('term-origin')
+    expect(tooltip).toHaveTextContent('Expected:')
+    expect(tooltip).toHaveTextContent('render a baton indicator')
+    expect(tooltip).toHaveTextContent('Return:')
+    expect(tooltip).toHaveTextContent('term-author -> term-origin')
+  })
+
+  it('shows a count and multiple baton titles when several are held', () => {
+    useStore.setState({
+      activeBatonsByHolder: {
+        'term-x': [
+          mockBaton({ id: 'baton-1', title: 'First review' }),
+          mockBaton({ id: 'baton-2', title: 'Second review' }),
+        ],
+      },
+    })
+    render(<BatonIndicator terminalId="term-x" />)
+
+    const tooltip = hoverAndGetTooltip(/holding 2 batons/i)
+    expect(screen.getByLabelText(/holding 2 batons/i)).toHaveTextContent('2')
+    expect(tooltip).toHaveTextContent('First review')
+    expect(tooltip).toHaveTextContent('Second review')
+  })
+
+  it('reacts to store changes without remounting', () => {
+    render(<BatonIndicator terminalId="term-x" />)
+    expect(screen.queryByLabelText(/holding 1 baton/i)).not.toBeInTheDocument()
+
+    act(() => {
+      useStore.setState({
+        activeBatonsByHolder: { 'term-x': [mockBaton()] },
+      })
+    })
+    expect(screen.getByLabelText(/holding 1 baton/i)).toBeInTheDocument()
+
+    act(() => {
+      useStore.setState({ activeBatonsByHolder: {} })
+    })
+    expect(screen.queryByLabelText(/holding 1 baton/i)).not.toBeInTheDocument()
   })
 })
 

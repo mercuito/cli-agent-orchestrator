@@ -2,6 +2,7 @@
 
 import click
 
+from cli_agent_orchestrator.cli.commands.baton import baton
 from cli_agent_orchestrator.cli.commands.diagnostics import diagnostics
 from cli_agent_orchestrator.cli.commands.env import env
 from cli_agent_orchestrator.cli.commands.flow import flow
@@ -36,6 +37,7 @@ cli.add_command(diagnostics)
 cli.add_command(terminals)
 cli.add_command(inbox)
 cli.add_command(monitor)
+cli.add_command(baton)
 
 
 if __name__ == "__main__":

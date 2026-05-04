@@ -820,6 +820,9 @@ class TestLifespan:
         """lifespan starts background tasks on entry, cleans up on exit."""
         from cli_agent_orchestrator.api.main import lifespan
 
+        async def stub_background_loop():
+            await asyncio.Event().wait()
+
         mock_observer = MagicMock()
 
         with (
@@ -832,7 +835,11 @@ class TestLifespan:
             ),
             patch(
                 "cli_agent_orchestrator.api.main.flow_daemon",
-                return_value=asyncio.sleep(0),
+                side_effect=stub_background_loop,
+            ),
+            patch(
+                "cli_agent_orchestrator.api.main.baton_watchdog_service.baton_watchdog_loop",
+                side_effect=stub_background_loop,
             ),
         ):
             async with lifespan(app):

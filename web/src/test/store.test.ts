@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useStore } from '../store'
-import { MonitoringSession } from '../api'
+import { Baton, MonitoringSession } from '../api'
 
 function mockSession(overrides: Partial<MonitoringSession> = {}): MonitoringSession {
   return {
@@ -13,6 +13,22 @@ function mockSession(overrides: Partial<MonitoringSession> = {}): MonitoringSess
   }
 }
 
+function mockBaton(overrides: Partial<Baton> = {}): Baton {
+  return {
+    id: overrides.id || 'baton-1',
+    title: overrides.title || 'Review implementation',
+    status: overrides.status || 'active',
+    originator_id: overrides.originator_id || 'term-origin',
+    current_holder_id: overrides.current_holder_id !== undefined ? overrides.current_holder_id : 'term-a',
+    return_stack: overrides.return_stack || [],
+    expected_next_action: overrides.expected_next_action !== undefined ? overrides.expected_next_action : 'review the patch',
+    created_at: overrides.created_at || '2026-05-04T10:00:00',
+    updated_at: overrides.updated_at || '2026-05-04T10:05:00',
+    last_nudged_at: overrides.last_nudged_at !== undefined ? overrides.last_nudged_at : null,
+    completed_at: overrides.completed_at !== undefined ? overrides.completed_at : null,
+  }
+}
+
 describe('Store', () => {
   beforeEach(() => {
     // Reset store state between tests
@@ -22,6 +38,7 @@ describe('Store', () => {
       activeSessionDetail: null,
       terminalStatuses: {},
       activeMonitoringByTerminal: {},
+      activeBatonsByHolder: {},
       snackbar: null,
     })
   })
@@ -33,6 +50,7 @@ describe('Store', () => {
     expect(state.activeSessionDetail).toBeNull()
     expect(state.terminalStatuses).toEqual({})
     expect(state.activeMonitoringByTerminal).toEqual({})
+    expect(state.activeBatonsByHolder).toEqual({})
     expect(state.snackbar).toBeNull()
   })
 
@@ -87,6 +105,43 @@ describe('Store', () => {
     setActiveMonitoringSessions([mockSession()])
     setActiveMonitoringSessions([])
     expect(useStore.getState().activeMonitoringByTerminal).toEqual({})
+  })
+
+  it('groups active batons by current_holder_id', () => {
+    const { setActiveBatons } = useStore.getState()
+    const a1 = mockBaton({ id: 'baton-a1', current_holder_id: 'term-a' })
+    const a2 = mockBaton({ id: 'baton-a2', current_holder_id: 'term-a' })
+    const b1 = mockBaton({ id: 'baton-b1', current_holder_id: 'term-b' })
+
+    setActiveBatons([a1, a2, b1])
+
+    expect(useStore.getState().activeBatonsByHolder).toEqual({
+      'term-a': [a1, a2],
+      'term-b': [b1],
+    })
+  })
+
+  it('replaces the baton holder map rather than merging', () => {
+    const { setActiveBatons } = useStore.getState()
+    setActiveBatons([
+      mockBaton({ id: 'baton-a', current_holder_id: 'term-a' }),
+      mockBaton({ id: 'baton-b', current_holder_id: 'term-b' }),
+    ])
+    setActiveBatons([mockBaton({ id: 'baton-c', current_holder_id: 'term-c' })])
+
+    expect(Object.keys(useStore.getState().activeBatonsByHolder)).toEqual(['term-c'])
+  })
+
+  it('skips batons without a current holder', () => {
+    const { setActiveBatons } = useStore.getState()
+    setActiveBatons([
+      mockBaton({ id: 'orphanish', current_holder_id: null }),
+      mockBaton({ id: 'held', current_holder_id: 'term-a' }),
+    ])
+
+    expect(useStore.getState().activeBatonsByHolder).toEqual({
+      'term-a': [mockBaton({ id: 'held', current_holder_id: 'term-a' })],
+    })
   })
 
   it('shows error snackbar', () => {

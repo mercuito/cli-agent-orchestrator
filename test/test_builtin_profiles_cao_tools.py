@@ -35,6 +35,14 @@ def test_code_supervisor_can_orchestrate():
     assert "handoff" in allowlist
     assert "terminate" in allowlist
     assert "send_message" in allowlist
+    # Baton orchestration and inspection
+    assert "create_baton" in allowlist
+    assert "pass_baton" in allowlist
+    assert "return_baton" in allowlist
+    assert "complete_baton" in allowlist
+    assert "block_baton" in allowlist
+    assert "get_my_batons" in allowlist
+    assert "get_baton" in allowlist
     # Profile discovery for runtime orchestration choices
     assert "list_agent_profiles" in allowlist
     assert "get_agent_profile" in allowlist
@@ -46,8 +54,17 @@ def test_developer_cannot_spawn_or_terminate():
     profile = _load_builtin_profile("developer")
     allowlist = resolve_cao_tool_allowlist(profile)
 
-    # Callback and skill loading only — no orchestration
-    assert allowlist == ["send_message", "load_skill"]
+    # Callback, baton-holder, and skill loading only — no spawning.
+    assert allowlist == [
+        "send_message",
+        "pass_baton",
+        "return_baton",
+        "complete_baton",
+        "block_baton",
+        "get_my_batons",
+        "get_baton",
+        "load_skill",
+    ]
     assert "assign" not in allowlist
     assert "handoff" not in allowlist
     assert "terminate" not in allowlist
@@ -57,8 +74,17 @@ def test_reviewer_cannot_spawn_or_terminate():
     profile = _load_builtin_profile("reviewer")
     allowlist = resolve_cao_tool_allowlist(profile)
 
-    # Same minimal surface as developer
-    assert allowlist == ["send_message", "load_skill"]
+    # Same baton-holder surface as developer.
+    assert allowlist == [
+        "send_message",
+        "pass_baton",
+        "return_baton",
+        "complete_baton",
+        "block_baton",
+        "get_my_batons",
+        "get_baton",
+        "load_skill",
+    ]
     assert "assign" not in allowlist
     assert "handoff" not in allowlist
     assert "terminate" not in allowlist
