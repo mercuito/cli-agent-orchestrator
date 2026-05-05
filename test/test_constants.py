@@ -52,6 +52,39 @@ class TestServerConstants:
             importlib.reload(constants_module)
             assert constants_module.SERVER_HOST != "localhost"
 
+    def test_allowed_hosts_default_to_loopback_hosts(self):
+        """Test that ALLOWED_HOSTS defaults to local loopback hosts."""
+        import os
+
+        env_copy = os.environ.copy()
+        env_copy.pop("CAO_ALLOWED_HOSTS", None)
+        with patch.dict("os.environ", env_copy, clear=True):
+            import importlib
+
+            import cli_agent_orchestrator.constants as constants_module
+
+            importlib.reload(constants_module)
+            assert constants_module.ALLOWED_HOSTS == ["localhost", "127.0.0.1"]
+
+    def test_allowed_hosts_include_cao_allowed_hosts_env(self):
+        """Test that CAO_ALLOWED_HOSTS appends trusted tunnel hostnames."""
+        with patch.dict(
+            "os.environ",
+            {"CAO_ALLOWED_HOSTS": "macmini.bagrid-halfbeak.ts.net, cao.awwwwjay.com"},
+            clear=False,
+        ):
+            import importlib
+
+            import cli_agent_orchestrator.constants as constants_module
+
+            importlib.reload(constants_module)
+            assert constants_module.ALLOWED_HOSTS == [
+                "localhost",
+                "127.0.0.1",
+                "macmini.bagrid-halfbeak.ts.net",
+                "cao.awwwwjay.com",
+            ]
+
 
 class TestCorsOrigins:
     """Tests for CORS configuration constants."""

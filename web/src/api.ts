@@ -173,7 +173,14 @@ export const api = {
     }),
 
   // Batons
-  listActiveBatons: () => fetchJSON<Baton[]>('/batons'),
+  listActiveBatons: async () => {
+    try {
+      return await fetchJSON<Baton[]>('/batons')
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('404 ')) return []
+      throw error
+    }
+  },
   getBaton: (id: string) => fetchJSON<Baton>(`/batons/${id}`),
   listBatonEvents: (id: string) => fetchJSON<BatonEvent[]>(`/batons/${id}/events`),
 

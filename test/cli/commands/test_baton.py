@@ -234,5 +234,6 @@ class TestConnectionAndRegistration:
 
     def test_baton_is_registered_on_cli(self):
         from cli_agent_orchestrator.cli.main import cli
+        from cli_agent_orchestrator.services.baton_feature import is_baton_enabled
 
-        assert "baton" in cli.commands
+        assert ("baton" in cli.commands) is is_baton_enabled()

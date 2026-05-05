@@ -43,6 +43,14 @@ def _event(**overrides):
 
 
 class TestListBatons:
+    def test_disabled_feature_returns_404(self, client, monkeypatch):
+        monkeypatch.setenv("CAO_BATON_ENABLED", "false")
+
+        resp = client.get("/batons")
+
+        assert resp.status_code == 404
+        assert "Baton feature is disabled" in resp.json()["detail"]
+
     def test_defaults_to_active_batons_for_dashboard_visibility(self, client):
         with patch("cli_agent_orchestrator.api.main.list_batons", return_value=[]) as mock_fn:
             resp = client.get("/batons")

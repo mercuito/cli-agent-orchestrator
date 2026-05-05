@@ -25,6 +25,7 @@ class TestClientWithHost(TestClient):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     """Test client with proper Host header for security middleware."""
+    monkeypatch.setenv("CAO_BATON_ENABLED", "true")
     return TestClientWithHost(app)

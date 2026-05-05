@@ -101,6 +101,33 @@ class TestRegisterTools:
 
         mcp_instance.tool.assert_called_once_with(description="doc")
 
+    def test_baton_tools_are_hidden_when_feature_disabled(self, monkeypatch):
+        monkeypatch.setenv("CAO_BATON_ENABLED", "false")
+        pending = [
+            ("send_message", lambda: None, {}),
+            ("create_baton", lambda: None, {}),
+            ("pass_baton", lambda: None, {}),
+        ]
+        mcp_instance = self._mock_mcp()
+
+        registered = server._register_tools(pending, None, mcp_instance)
+
+        assert registered == ["send_message"]
+        assert mcp_instance.tool.call_count == 1
+
+    def test_baton_tools_register_when_feature_enabled(self, monkeypatch):
+        monkeypatch.setenv("CAO_BATON_ENABLED", "true")
+        pending = [
+            ("send_message", lambda: None, {}),
+            ("create_baton", lambda: None, {}),
+        ]
+        mcp_instance = self._mock_mcp()
+
+        registered = server._register_tools(pending, None, mcp_instance)
+
+        assert registered == ["send_message", "create_baton"]
+        assert mcp_instance.tool.call_count == 2
+
 
 class TestResolveAllowlistForTerminal:
     @patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")

@@ -16,6 +16,7 @@ from cli_agent_orchestrator.mcp_server.models import HandoffResult
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services import baton_service
+from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
 from cli_agent_orchestrator.utils import agent_profiles as agent_profiles_utils
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
@@ -88,7 +89,14 @@ def _register_tools(
     """
     registered: List[str] = []
     allowed: Optional[set] = None if allowlist is None else set(allowlist)
+    baton_enabled = is_baton_enabled()
     for tool_name, fn, kwargs in pending:
+        if tool_name in BATON_MCP_TOOL_NAMES and not baton_enabled:
+            logger.info(
+                "Tool '%s' belongs to disabled baton feature — skipping registration",
+                tool_name,
+            )
+            continue
         if allowed is not None and tool_name not in allowed:
             logger.info(f"Tool '{tool_name}' not in allowlist — skipping registration")
             continue

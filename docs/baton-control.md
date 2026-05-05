@@ -6,8 +6,13 @@ question for multi-agent workflows:
 
 > Who currently owes the next move?
 
-The baton tool surface is planned/in-progress and may not be available in every
-deployment yet:
+The local baton surface is experimental and disabled by default. Set
+`CAO_BATON_ENABLED=true` to expose the HTTP routes, MCP tools, CLI command, and
+watchdog. When disabled, the code remains in the repo for future spikes, but the
+tools are not registered with MCP, the `cao baton` command is not attached to the
+main CLI, the API returns 404 for `/batons`, and the watchdog does not run.
+
+When enabled, the tool surface is:
 
 - `create_baton(title, holder_id, message, expected_next_action?, artifact_paths?)`
 - `pass_baton(baton_id, receiver_id, message, expected_next_action?, artifact_paths?)`

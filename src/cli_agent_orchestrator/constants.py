@@ -13,6 +13,11 @@ from pathlib import Path
 
 from cli_agent_orchestrator.models.provider import ProviderType
 
+
+def _parse_csv_env(name: str) -> list[str]:
+    value = os.environ.get(name, "")
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
+
 # =============================================================================
 # Session Configuration
 # =============================================================================
@@ -110,14 +115,14 @@ CORS_ORIGINS = [
 ]
 
 # Allowed Host headers for DNS rebinding protection (CVE mitigation)
-# Only localhost connections permitted - CAO is a local-only service
+# Only localhost connections permitted by default - CAO is a local-first service
 # These hosts are validated by TrustedHostMiddleware to prevent DNS rebinding attacks
 # Note: IPv6 (::1) is not included as CAO is accessed via IPv4 localhost in practice
-# Future extension point: To allow additional hosts, add --allowed-hosts CLI flag
-# or CAO_ALLOWED_HOSTS env var (comma-separated) that modifies this list
+# To expose CAO through a trusted local tunnel, append hosts with CAO_ALLOWED_HOSTS.
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
+    *_parse_csv_env("CAO_ALLOWED_HOSTS"),
 ]
 
 # =============================================================================

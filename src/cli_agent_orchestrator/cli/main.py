@@ -16,6 +16,7 @@ from cli_agent_orchestrator.cli.commands.monitor import monitor
 from cli_agent_orchestrator.cli.commands.shutdown import shutdown
 from cli_agent_orchestrator.cli.commands.skills import skills
 from cli_agent_orchestrator.cli.commands.terminals import terminals
+from cli_agent_orchestrator.services.baton_feature import is_baton_enabled
 
 
 @click.group()
@@ -37,7 +38,8 @@ cli.add_command(diagnostics)
 cli.add_command(terminals)
 cli.add_command(inbox)
 cli.add_command(monitor)
-cli.add_command(baton)
+if is_baton_enabled():
+    cli.add_command(baton)
 
 
 if __name__ == "__main__":

@@ -41,7 +41,8 @@ def live_db(monkeypatch):
 
 
 @pytest.fixture
-def client(live_db):
+def client(live_db, monkeypatch):
+    monkeypatch.setenv("CAO_BATON_ENABLED", "true")
     from cli_agent_orchestrator.api.main import app
     from test.api.conftest import TestClientWithHost
 

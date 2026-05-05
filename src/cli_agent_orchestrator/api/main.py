@@ -55,6 +55,7 @@ from cli_agent_orchestrator.services import (
     session_service,
     terminal_service,
 )
+from cli_agent_orchestrator.services.baton_feature import is_baton_enabled
 from cli_agent_orchestrator.utils import monitoring_formatter
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
@@ -218,8 +219,11 @@ async def lifespan(app: FastAPI):
     # Start flow daemon as background task
     daemon_task = asyncio.create_task(flow_daemon())
 
-    # Start baton watchdog as background task
-    baton_watchdog_task = asyncio.create_task(baton_watchdog_service.baton_watchdog_loop())
+    # Start baton watchdog as background task only when the experimental
+    # local baton feature is explicitly exposed.
+    baton_watchdog_task = None
+    if is_baton_enabled():
+        baton_watchdog_task = asyncio.create_task(baton_watchdog_service.baton_watchdog_loop())
 
     # Start inbox watcher
     inbox_observer = PollingObserver(timeout=INBOX_POLLING_INTERVAL)
@@ -242,11 +246,12 @@ async def lifespan(app: FastAPI):
         pass
 
     # Cancel baton watchdog on shutdown
-    baton_watchdog_task.cancel()
-    try:
-        await baton_watchdog_task
-    except asyncio.CancelledError:
-        pass
+    if baton_watchdog_task is not None:
+        baton_watchdog_task.cancel()
+        try:
+            await baton_watchdog_task
+        except asyncio.CancelledError:
+            pass
 
     logger.info("Shutting down CLI Agent Orchestrator server...")
 
@@ -878,7 +883,15 @@ def _raise_baton_http_error(exc: Exception) -> NoReturn:
     )
 
 
-@app.get("/batons", response_model=List[BatonResponse])
+def _require_baton_http_enabled() -> None:
+    if not is_baton_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Baton feature is disabled. Set CAO_BATON_ENABLED=true to expose it.",
+        )
+
+
+@app.get("/batons", response_model=List[BatonResponse], include_in_schema=is_baton_enabled())
 async def list_batons_endpoint(
     status_filter: Optional[BatonStatus] = Query(
         default=BatonStatus.ACTIVE,
@@ -890,6 +903,7 @@ async def list_batons_endpoint(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> List[BatonResponse]:
+    _require_baton_http_enabled()
     batons = list_batons(
         status=status_filter,
         holder_id=holder_id,
@@ -900,8 +914,13 @@ async def list_batons_endpoint(
     return [_baton_response(baton) for baton in batons]
 
 
-@app.get("/batons/{baton_id}", response_model=BatonResponse)
+@app.get(
+    "/batons/{baton_id}",
+    response_model=BatonResponse,
+    include_in_schema=is_baton_enabled(),
+)
 async def get_baton_endpoint(baton_id: str) -> BatonResponse:
+    _require_baton_http_enabled()
     baton = get_baton_record(baton_id)
     if baton is None:
         raise HTTPException(
@@ -911,8 +930,13 @@ async def get_baton_endpoint(baton_id: str) -> BatonResponse:
     return _baton_response(baton)
 
 
-@app.get("/batons/{baton_id}/events", response_model=List[BatonEventResponse])
+@app.get(
+    "/batons/{baton_id}/events",
+    response_model=List[BatonEventResponse],
+    include_in_schema=is_baton_enabled(),
+)
 async def get_baton_events_endpoint(baton_id: str) -> List[BatonEventResponse]:
+    _require_baton_http_enabled()
     if get_baton_record(baton_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -921,8 +945,13 @@ async def get_baton_events_endpoint(baton_id: str) -> List[BatonEventResponse]:
     return [_baton_event_response(event) for event in list_baton_events(baton_id)]
 
 
-@app.post("/batons/{baton_id}/cancel", response_model=BatonResponse)
+@app.post(
+    "/batons/{baton_id}/cancel",
+    response_model=BatonResponse,
+    include_in_schema=is_baton_enabled(),
+)
 async def cancel_baton_endpoint(baton_id: str, body: CancelBatonRequest) -> BatonResponse:
+    _require_baton_http_enabled()
     try:
         baton = baton_service.cancel_baton(
             baton_id=baton_id,
@@ -935,8 +964,13 @@ async def cancel_baton_endpoint(baton_id: str, body: CancelBatonRequest) -> Bato
         _raise_baton_http_error(exc)
 
 
-@app.post("/batons/{baton_id}/reassign", response_model=BatonResponse)
+@app.post(
+    "/batons/{baton_id}/reassign",
+    response_model=BatonResponse,
+    include_in_schema=is_baton_enabled(),
+)
 async def reassign_baton_endpoint(baton_id: str, body: ReassignBatonRequest) -> BatonResponse:
+    _require_baton_http_enabled()
     try:
         baton = baton_service.reassign_baton(
             baton_id=baton_id,
