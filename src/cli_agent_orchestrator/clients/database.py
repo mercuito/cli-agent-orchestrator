@@ -215,6 +215,21 @@ class ProcessedProviderEventModel(Base):
     metadata_json = Column(Text, nullable=True)
 
 
+class PresenceInboxNotificationModel(Base):
+    """Idempotency marker for bridged presence messages sent to terminal inboxes."""
+
+    __tablename__ = "presence_inbox_notifications"
+    __table_args__ = (UniqueConstraint("receiver_id", "presence_message_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    receiver_id = Column(String, nullable=False)
+    presence_message_id = Column(
+        Integer, ForeignKey("presence_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    inbox_message_id = Column(Integer, ForeignKey("inbox.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
 # Module-level singletons
 DB_DIR.mkdir(parents=True, exist_ok=True)
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -287,6 +302,7 @@ def _migrate_ensure_presence_tables() -> None:
         PresenceThreadModel.__table__.create(bind=engine, checkfirst=True)
         PresenceMessageModel.__table__.create(bind=engine, checkfirst=True)
         ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
+        PresenceInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for presence tables failed: {e}")
 
