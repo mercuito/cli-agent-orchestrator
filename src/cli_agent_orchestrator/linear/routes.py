@@ -8,7 +8,9 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from cli_agent_orchestrator.linear import app_client, runtime
+from cli_agent_orchestrator.linear import app_client
+from cli_agent_orchestrator.linear import inbox_bridge as linear_inbox_bridge
+from cli_agent_orchestrator.linear import runtime
 from cli_agent_orchestrator.linear.presence_provider import (
     LinearPresenceProvider,
     payload_with_header_event,
@@ -138,7 +140,9 @@ async def agent_webhook(
         payload,
         header_event=header_event,
     )
-    agent_session_id = presence_event.thread.ref.id if presence_event and presence_event.thread else None
+    agent_session_id = (
+        presence_event.thread.ref.id if presence_event and presence_event.thread else None
+    )
     action = payload.get("action")
 
     logger.info(
@@ -150,8 +154,10 @@ async def agent_webhook(
         verified,
     )
 
-    routed = presence_event is not None or persisted is not None
-    if presence_event is not None and _should_run_smoke_runtime(persisted):
+    notification = linear_inbox_bridge.notify_receiver_for_persisted_event(persisted)
+
+    routed = presence_event is not None or persisted is not None or notification is not None
+    if notification is None and presence_event is not None and _should_run_smoke_runtime(persisted):
         background_tasks.add_task(runtime.handle_presence_event, presence_event)
 
     return LinearWebhookResponse(

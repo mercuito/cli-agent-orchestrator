@@ -157,7 +157,9 @@ def format_presence_notification(
         f"Message: {message_row.kind}",
         f"Preview: {_preview(message_row.body, preview_chars)}",
     ]
-    if _metadata_indicates_media(message_row.metadata_json):
+    if _metadata_indicates_media(message_row.metadata_json) or _metadata_indicates_media(
+        message_row.raw_snapshot_json
+    ):
         lines.append("Attachment/media metadata present.")
 
     return _truncate("\n".join(line for line in lines if line), notification_chars)
