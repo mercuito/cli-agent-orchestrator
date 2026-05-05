@@ -5,7 +5,18 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, create_engine, event
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    event,
+)
 from sqlalchemy.orm import DeclarativeBase, Session, declarative_base, sessionmaker
 
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
@@ -117,6 +128,83 @@ class FlowModel(Base):
     enabled = Column(Boolean, default=True)
 
 
+class PresenceWorkItemModel(Base):
+    """Provider-neutral work item reference owned by an external presence system."""
+
+    __tablename__ = "presence_work_items"
+    __table_args__ = (UniqueConstraint("provider", "external_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String, nullable=False)
+    external_id = Column(String, nullable=False)
+    external_url = Column(String, nullable=True)
+    identifier = Column(String, nullable=True)
+    title = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    raw_snapshot_json = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
+class PresenceThreadModel(Base):
+    """Provider-neutral conversation surface owned by an external presence system."""
+
+    __tablename__ = "presence_threads"
+    __table_args__ = (UniqueConstraint("provider", "external_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String, nullable=False)
+    external_id = Column(String, nullable=False)
+    external_url = Column(String, nullable=True)
+    work_item_id = Column(
+        Integer, ForeignKey("presence_work_items.id", ondelete="SET NULL"), nullable=True
+    )
+    kind = Column(String, nullable=False, default="conversation")
+    state = Column(String, nullable=False, default="active")
+    prompt_context = Column(Text, nullable=True)
+    raw_snapshot_json = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
+class PresenceMessageModel(Base):
+    """Provider-neutral message/activity inside an external conversation surface."""
+
+    __tablename__ = "presence_messages"
+    __table_args__ = (UniqueConstraint("provider", "external_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(
+        Integer, ForeignKey("presence_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    provider = Column(String, nullable=False)
+    external_id = Column(String, nullable=True)
+    direction = Column(String, nullable=False, default="inbound")
+    kind = Column(String, nullable=False, default="unknown")
+    body = Column(Text, nullable=True)
+    state = Column(String, nullable=False, default="received")
+    raw_snapshot_json = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
+class ProcessedProviderEventModel(Base):
+    """Provider event idempotency marker shared by webhook and polling paths."""
+
+    __tablename__ = "processed_provider_events"
+    __table_args__ = (UniqueConstraint("provider", "external_event_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String, nullable=False)
+    external_event_id = Column(String, nullable=False)
+    event_type = Column(String, nullable=True)
+    processed_at = Column(DateTime, nullable=False, default=datetime.now)
+    metadata_json = Column(Text, nullable=True)
+
+
 # Module-level singletons
 DB_DIR.mkdir(parents=True, exist_ok=True)
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -140,6 +228,7 @@ def init_db() -> None:
     """Initialize database tables and apply schema migrations."""
     Base.metadata.create_all(bind=engine)
     _migrate_ensure_baton_tables()
+    _migrate_ensure_presence_tables()
     _migrate_add_allowed_tools()
     _migrate_drop_monitoring_session_peers()
 
@@ -156,6 +245,17 @@ def _migrate_ensure_baton_tables() -> None:
         BatonEventModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for baton tables failed: {e}")
+
+
+def _migrate_ensure_presence_tables() -> None:
+    """Create provider-neutral presence tables on existing databases."""
+    try:
+        PresenceWorkItemModel.__table__.create(bind=engine, checkfirst=True)
+        PresenceThreadModel.__table__.create(bind=engine, checkfirst=True)
+        PresenceMessageModel.__table__.create(bind=engine, checkfirst=True)
+        ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for presence tables failed: {e}")
 
 
 def _migrate_drop_monitoring_session_peers() -> None:
