@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 Base: Any = declarative_base()
 
 
+class EffectiveMessageSource(NamedTuple):
+    """Source identity used for inbox batch selection."""
+
+    kind: str
+    id: str
+    is_legacy_message: bool = False
+
+
 class TerminalModel(Base):
     """SQLAlchemy model for terminal metadata only."""
 
@@ -52,6 +60,8 @@ class InboxModel(Base):
     sender_id = Column(String, nullable=False)
     receiver_id = Column(String, nullable=False)
     message = Column(String, nullable=False)
+    source_kind = Column(String, nullable=True)
+    source_id = Column(String, nullable=True)
     status = Column(String, nullable=False)  # MessageStatus enum value
     created_at = Column(DateTime, default=datetime.now)
 
@@ -227,10 +237,33 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """Initialize database tables and apply schema migrations."""
     Base.metadata.create_all(bind=engine)
+    _migrate_add_inbox_source_fields()
     _migrate_ensure_baton_tables()
     _migrate_ensure_presence_tables()
     _migrate_add_allowed_tools()
     _migrate_drop_monitoring_session_peers()
+
+
+def _migrate_add_inbox_source_fields() -> None:
+    """Add source identity columns to inbox table if missing."""
+    import sqlite3
+
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    try:
+        conn = sqlite3.connect(str(DATABASE_FILE))
+        cursor = conn.execute("PRAGMA table_info(inbox)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "source_kind" not in columns:
+            conn.execute("ALTER TABLE inbox ADD COLUMN source_kind TEXT")
+            logger.info("Migration: added source_kind column to inbox table")
+        if "source_id" not in columns:
+            conn.execute("ALTER TABLE inbox ADD COLUMN source_id TEXT")
+            logger.info("Migration: added source_id column to inbox table")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Migration check for inbox source fields failed: {e}")
 
 
 def _migrate_ensure_baton_tables() -> None:
@@ -422,8 +455,27 @@ def delete_terminals_by_session(tmux_session: str) -> int:
         return deleted
 
 
+def inbox_message_from_model(row: InboxModel) -> InboxMessage:
+    """Convert an inbox database row to its typed domain model."""
+    return InboxMessage(
+        id=row.id,
+        sender_id=row.sender_id,
+        receiver_id=row.receiver_id,
+        message=row.message,
+        source_kind=row.source_kind,
+        source_id=row.source_id,
+        status=MessageStatus(row.status),
+        created_at=row.created_at,
+    )
+
+
 def create_inbox_message(
-    sender_id: str, receiver_id: str, message: str, db: Optional[Session] = None
+    sender_id: str,
+    receiver_id: str,
+    message: str,
+    db: Optional[Session] = None,
+    source_kind: Optional[str] = None,
+    source_id: Optional[str] = None,
 ) -> InboxMessage:
     """Create inbox message with status=MessageStatus.PENDING.
 
@@ -431,25 +483,28 @@ def create_inbox_message(
     transaction and is only flushed. Callers that omit ``db`` retain the
     historical self-contained commit behavior.
     """
+    if (source_kind is None) != (source_id is None):
+        raise ValueError("source_kind and source_id must be provided together")
+
+    effective_source_kind = source_kind
+    effective_source_id = source_id
+    if effective_source_kind is None and effective_source_id is None:
+        effective_source_kind = "terminal"
+        effective_source_id = sender_id
 
     def _add_message(session: Session) -> InboxMessage:
         inbox_msg = InboxModel(
             sender_id=sender_id,
             receiver_id=receiver_id,
             message=message,
+            source_kind=effective_source_kind,
+            source_id=effective_source_id,
             status=MessageStatus.PENDING.value,
         )
         session.add(inbox_msg)
         session.flush()
         session.refresh(inbox_msg)
-        return InboxMessage(
-            id=inbox_msg.id,
-            sender_id=inbox_msg.sender_id,
-            receiver_id=inbox_msg.receiver_id,
-            message=inbox_msg.message,
-            status=MessageStatus(inbox_msg.status),
-            created_at=inbox_msg.created_at,
-        )
+        return inbox_message_from_model(inbox_msg)
 
     if db is not None:
         return _add_message(db)
@@ -486,17 +541,72 @@ def get_inbox_messages(
 
         messages = query.order_by(InboxModel.created_at.asc()).limit(limit).all()
 
-        return [
-            InboxMessage(
-                id=msg.id,
-                sender_id=msg.sender_id,
-                receiver_id=msg.receiver_id,
-                message=msg.message,
-                status=MessageStatus(msg.status),
-                created_at=msg.created_at,
+        return [inbox_message_from_model(msg) for msg in messages]
+
+
+def get_oldest_pending_message(receiver_id: str) -> Optional[InboxMessage]:
+    """Get the oldest pending inbox message for a receiver."""
+    with SessionLocal() as db:
+        row = (
+            db.query(InboxModel)
+            .filter(
+                InboxModel.receiver_id == receiver_id,
+                InboxModel.status == MessageStatus.PENDING.value,
             )
-            for msg in messages
-        ]
+            .order_by(InboxModel.created_at.asc(), InboxModel.id.asc())
+            .first()
+        )
+        return inbox_message_from_model(row) if row else None
+
+
+def get_effective_message_source(message: InboxMessage) -> EffectiveMessageSource:
+    """Return the batching source for a message.
+
+    Rows without a complete explicit source are treated as a unique per-message
+    source so legacy messages remain deliverable without unexpected grouping.
+    """
+    if message.source_kind is not None and message.source_id is not None:
+        return EffectiveMessageSource(message.source_kind, message.source_id)
+    return EffectiveMessageSource("legacy_message", str(message.id), is_legacy_message=True)
+
+
+def get_pending_messages_for_effective_source(
+    receiver_id: str, source_message: InboxMessage
+) -> List[InboxMessage]:
+    """Get pending messages for the receiver and source selected by ``source_message``."""
+    source = get_effective_message_source(source_message)
+
+    with SessionLocal() as db:
+        query = db.query(InboxModel).filter(
+            InboxModel.receiver_id == receiver_id,
+            InboxModel.status == MessageStatus.PENDING.value,
+        )
+
+        if source.is_legacy_message:
+            query = query.filter(InboxModel.id == int(source.id))
+        else:
+            query = query.filter(
+                InboxModel.source_kind == source.kind,
+                InboxModel.source_id == source.id,
+            )
+
+        messages = query.order_by(InboxModel.created_at.asc(), InboxModel.id.asc()).all()
+        return [inbox_message_from_model(msg) for msg in messages]
+
+
+def update_message_statuses(message_ids: List[int], status: MessageStatus) -> int:
+    """Update multiple selected message statuses as one database batch."""
+    if not message_ids:
+        return 0
+
+    with SessionLocal() as db:
+        updated = (
+            db.query(InboxModel)
+            .filter(InboxModel.id.in_(message_ids))
+            .update({InboxModel.status: status.value}, synchronize_session=False)
+        )
+        db.commit()
+        return updated
 
 
 def update_message_status(message_id: int, status: MessageStatus) -> bool:

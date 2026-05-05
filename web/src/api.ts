@@ -58,6 +58,8 @@ export interface InboxMessage {
   sender_id: string
   receiver_id: string
   message: string
+  source_kind: string | null
+  source_id: string | null
   status: 'pending' | 'delivered' | 'failed'
   created_at: string | null
 }

@@ -638,6 +638,8 @@ async def create_inbox_message_endpoint(
         "message_id": inbox_msg.id,
         "sender_id": inbox_msg.sender_id,
         "receiver_id": inbox_msg.receiver_id,
+        "source_kind": inbox_msg.source_kind,
+        "source_id": inbox_msg.source_id,
         "created_at": inbox_msg.created_at.isoformat(),
     }
 
@@ -684,6 +686,8 @@ async def get_inbox_messages_endpoint(
                     "sender_id": msg.sender_id,
                     "receiver_id": msg.receiver_id,
                     "message": msg.message,
+                    "source_kind": msg.source_kind,
+                    "source_id": msg.source_id,
                     "status": msg.status.value,
                     "created_at": msg.created_at.isoformat() if msg.created_at else None,
                 }

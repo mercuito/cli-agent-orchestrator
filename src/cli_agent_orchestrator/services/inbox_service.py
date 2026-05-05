@@ -34,19 +34,67 @@ Design note — no pre-filter on the log contents:
 
 import logging
 from pathlib import Path
+from typing import List
 
 from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 
 from cli_agent_orchestrator.clients.database import (
+    get_oldest_pending_message,
     get_pending_messages,
-    update_message_status,
+    get_pending_messages_for_effective_source,
+    update_message_statuses,
 )
-from cli_agent_orchestrator.models.inbox import MessageStatus
+from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import terminal_service
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_BATCH_BODY_CHARS = 2000
+DEFAULT_MAX_BATCH_TOTAL_CHARS = 12000
+
+
+def _source_label(message: InboxMessage) -> str:
+    if message.source_kind is not None and message.source_id is not None:
+        return f"{message.source_kind}:{message.source_id}"
+    return f"legacy message {message.id}"
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    suffix = "\n[message truncated]"
+    return text[: max(0, max_chars - len(suffix))].rstrip() + suffix
+
+
+def format_message_batch(
+    messages: List[InboxMessage],
+    *,
+    max_body_chars: int = DEFAULT_MAX_BATCH_BODY_CHARS,
+    max_total_chars: int = DEFAULT_MAX_BATCH_TOTAL_CHARS,
+) -> str:
+    """Format a selected inbox batch for terminal delivery with bounded output."""
+    if not messages:
+        return ""
+    if len(messages) == 1:
+        return _truncate_text(messages[0].message, max_total_chars)
+
+    header = f"Queued {len(messages)} messages from {_source_label(messages[0])}:"
+    lines = [header, ""]
+
+    for idx, message in enumerate(messages, start=1):
+        formatted_message = f"[{idx}] {_truncate_text(message.message, max_body_chars)}"
+        candidate = "\n".join([*lines, formatted_message])
+        if len(candidate) > max_total_chars:
+            lines.append("[batch output truncated]")
+            break
+        lines.append(formatted_message)
+
+    result = "\n".join(lines)
+    if len(result) > max_total_chars:
+        result = result[:max_total_chars].rstrip()
+    return result
 
 
 def check_and_send_pending_messages(terminal_id: str) -> bool:
@@ -61,11 +109,19 @@ def check_and_send_pending_messages(terminal_id: str) -> bool:
     Raises:
         ValueError: If provider not found for terminal
     """
-    messages = get_pending_messages(terminal_id, limit=1)
-    if not messages:
+    oldest_message = get_oldest_pending_message(terminal_id)
+    if oldest_message is None:
         return False
 
-    message = messages[0]
+    messages = get_pending_messages_for_effective_source(terminal_id, oldest_message)
+    if not messages:
+        logger.warning(
+            "Oldest pending message %s selected no deliverable batch for terminal %s",
+            oldest_message.id,
+            terminal_id,
+        )
+        return False
+    message_ids = [message.id for message in messages]
 
     provider = provider_manager.get_provider(terminal_id)
     if provider is None:
@@ -77,13 +133,17 @@ def check_and_send_pending_messages(terminal_id: str) -> bool:
         return False
 
     try:
-        terminal_service.send_input(terminal_id, message.message)
-        update_message_status(message.id, MessageStatus.DELIVERED)
-        logger.info(f"Delivered message {message.id} to terminal {terminal_id}")
+        terminal_service.send_input(terminal_id, format_message_batch(messages))
+        update_message_statuses(message_ids, MessageStatus.DELIVERED)
+        logger.info(
+            "Delivered inbox message batch %s to terminal %s",
+            message_ids,
+            terminal_id,
+        )
         return True
     except Exception as e:
-        logger.error(f"Failed to send message {message.id} to {terminal_id}: {e}")
-        update_message_status(message.id, MessageStatus.FAILED)
+        logger.error(f"Failed to send message batch {message_ids} to {terminal_id}: {e}")
+        update_message_statuses(message_ids, MessageStatus.FAILED)
         raise
 
 

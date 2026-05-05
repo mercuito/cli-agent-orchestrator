@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,5 +22,7 @@ class InboxMessage(BaseModel):
     sender_id: str = Field(..., description="Sender terminal ID")
     receiver_id: str = Field(..., description="Receiver terminal ID")
     message: str = Field(..., description="Message content")
+    source_kind: Optional[str] = Field(None, description="Provider-neutral source kind")
+    source_id: Optional[str] = Field(None, description="Provider-neutral source ID")
     status: MessageStatus = Field(..., description="Message status")
     created_at: datetime = Field(..., description="Creation timestamp")

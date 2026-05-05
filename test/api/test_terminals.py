@@ -322,6 +322,8 @@ class TestCreateInboxMessageEndpoint:
         mock_msg.id = 1
         mock_msg.sender_id = "sender1"
         mock_msg.receiver_id = "abcd1234"
+        mock_msg.source_kind = "terminal"
+        mock_msg.source_id = "sender1"
         mock_msg.created_at.isoformat.return_value = "2026-03-13T12:00:00"
 
         with (
@@ -340,6 +342,8 @@ class TestCreateInboxMessageEndpoint:
             assert data["success"] is True
             assert data["message_id"] == 1
             assert data["sender_id"] == "sender1"
+            assert data["source_kind"] == "terminal"
+            assert data["source_id"] == "sender1"
 
     def test_create_inbox_message_delivery_failure_still_succeeds(self, client):
         """Immediate delivery failure should not fail the API response."""
@@ -347,6 +351,8 @@ class TestCreateInboxMessageEndpoint:
         mock_msg.id = 2
         mock_msg.sender_id = "sender1"
         mock_msg.receiver_id = "abcd1234"
+        mock_msg.source_kind = "terminal"
+        mock_msg.source_id = "sender1"
         mock_msg.created_at.isoformat.return_value = "2026-03-13T12:00:00"
 
         with (

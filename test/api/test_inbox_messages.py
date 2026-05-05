@@ -20,6 +20,8 @@ def sample_inbox_messages():
             sender_id="sender1",
             receiver_id="abcdef12",
             message="Hello world",
+            source_kind="terminal",
+            source_id="sender1",
             status=MessageStatus.PENDING,
             created_at=datetime(2025, 12, 6, 12, 0, 0),
         ),
@@ -28,6 +30,8 @@ def sample_inbox_messages():
             sender_id="sender2",
             receiver_id="abcdef12",
             message="Another message",
+            source_kind="terminal",
+            source_id="sender2",
             status=MessageStatus.DELIVERED,
             created_at=datetime(2025, 12, 6, 12, 5, 0),
         ),
@@ -36,6 +40,8 @@ def sample_inbox_messages():
             sender_id="sender3",
             receiver_id="abcdef12",
             message="Failed message",
+            source_kind=None,
+            source_id=None,
             status=MessageStatus.FAILED,
             created_at=datetime(2025, 12, 6, 12, 10, 0),
         ),
@@ -62,8 +68,15 @@ class TestGetInboxMessagesEndpoint:
                 assert "sender_id" in msg_data
                 assert "receiver_id" in msg_data
                 assert "message" in msg_data
+                assert "source_kind" in msg_data
+                assert "source_id" in msg_data
                 assert "status" in msg_data
                 assert "created_at" in msg_data
+
+            assert data[0]["source_kind"] == "terminal"
+            assert data[0]["source_id"] == "sender1"
+            assert data[2]["source_kind"] is None
+            assert data[2]["source_id"] is None
 
     def test_get_messages_with_status_filter(self, client, sample_inbox_messages):
         """Test getting messages with status filter."""

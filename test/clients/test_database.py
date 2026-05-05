@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
     FlowModel,
@@ -20,9 +21,12 @@ from cli_agent_orchestrator.clients.database import (
     delete_flow,
     delete_terminal,
     delete_terminals_by_session,
+    get_effective_message_source,
     get_flow,
     get_inbox_messages,
+    get_oldest_pending_message,
     get_pending_messages,
+    get_pending_messages_for_effective_source,
     get_terminal_metadata,
     init_db,
     list_flows,
@@ -31,6 +35,7 @@ from cli_agent_orchestrator.clients.database import (
     update_flow_run_times,
     update_last_active,
     update_message_status,
+    update_message_statuses,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
@@ -41,6 +46,16 @@ def test_db():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
     TestSession = sessionmaker(bind=engine)
+    return TestSession
+
+
+@pytest.fixture
+def live_inbox_db(monkeypatch):
+    """Create an isolated in-memory database wired into database helpers."""
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    TestSession = sessionmaker(bind=engine)
+    monkeypatch.setattr(db_module, "SessionLocal", TestSession)
     return TestSession
 
 
@@ -198,6 +213,13 @@ class TestTerminalOperations:
 class TestInboxOperations:
     """Tests for inbox database operations."""
 
+    def test_inbox_model_has_source_columns(self):
+        """Inbox rows support provider-neutral source identity columns."""
+        columns = {column.name for column in Base.metadata.tables["inbox"].columns}
+
+        assert "source_kind" in columns
+        assert "source_id" in columns
+
     @patch("cli_agent_orchestrator.clients.database.SessionLocal")
     def test_update_message_status(self, mock_session_class):
         """Test updating message status."""
@@ -214,6 +236,235 @@ class TestInboxOperations:
         update_message_status(1, MessageStatus.DELIVERED)
 
         mock_session.commit.assert_called_once()
+
+    def test_create_inbox_message_defaults_source_to_sender_terminal(self, live_inbox_db):
+        """New agent-to-agent messages default to terminal:<sender_id>."""
+        result = create_inbox_message("sender-123", "receiver-456", "Hello")
+
+        assert result.source_kind == "terminal"
+        assert result.source_id == "sender-123"
+
+        persisted = get_inbox_messages("receiver-456")[0]
+        assert persisted.source_kind == "terminal"
+        assert persisted.source_id == "sender-123"
+
+    def test_create_inbox_message_persists_explicit_source(self, live_inbox_db):
+        """Callers can provide a non-terminal provider-neutral source."""
+        result = create_inbox_message(
+            "sender-123",
+            "receiver-456",
+            "Hello",
+            source_kind="external",
+            source_id="thread-9",
+        )
+
+        assert result.source_kind == "external"
+        assert result.source_id == "thread-9"
+        assert get_effective_message_source(result).kind == "external"
+        assert get_effective_message_source(result).id == "thread-9"
+        assert get_effective_message_source(result).is_legacy_message is False
+
+    def test_create_inbox_message_rejects_partial_source(self, live_inbox_db):
+        """Source identity must be complete so incomplete rows do not masquerade as legacy."""
+        with pytest.raises(ValueError, match="source_kind and source_id"):
+            create_inbox_message(
+                "sender-123",
+                "receiver-456",
+                "Hello",
+                source_kind="external",
+            )
+
+        with pytest.raises(ValueError, match="source_kind and source_id"):
+            create_inbox_message(
+                "sender-123",
+                "receiver-456",
+                "Hello",
+                source_id="thread-9",
+            )
+
+    def test_legacy_no_source_messages_remain_deliverable(self, live_inbox_db):
+        """No-source rows are selected as a unique per-message source."""
+        with live_inbox_db() as session:
+            row = InboxModel(
+                sender_id="old-sender",
+                receiver_id="receiver-456",
+                message="legacy",
+                status=MessageStatus.PENDING.value,
+                created_at=datetime(2026, 1, 1, 9, 0, 0),
+            )
+            session.add(row)
+            session.commit()
+
+        oldest = get_oldest_pending_message("receiver-456")
+        assert oldest is not None
+        assert oldest.source_kind is None
+        assert oldest.source_id is None
+
+        batch = get_pending_messages_for_effective_source("receiver-456", oldest)
+        assert [message.message for message in batch] == ["legacy"]
+        source = get_effective_message_source(oldest)
+        assert source.kind == "legacy_message"
+        assert source.id == str(oldest.id)
+        assert source.is_legacy_message is True
+
+    def test_same_source_pending_messages_are_batched_in_created_order(self, live_inbox_db):
+        """Messages sharing an explicit source are selected together."""
+        with live_inbox_db() as session:
+            session.add_all(
+                [
+                    InboxModel(
+                        sender_id="worker-a",
+                        receiver_id="supervisor",
+                        message="first",
+                        source_kind="terminal",
+                        source_id="worker-a",
+                        status=MessageStatus.PENDING.value,
+                        created_at=datetime(2026, 1, 1, 9, 0, 0),
+                    ),
+                    InboxModel(
+                        sender_id="worker-a",
+                        receiver_id="supervisor",
+                        message="second",
+                        source_kind="terminal",
+                        source_id="worker-a",
+                        status=MessageStatus.PENDING.value,
+                        created_at=datetime(2026, 1, 1, 9, 2, 0),
+                    ),
+                ]
+            )
+            session.commit()
+
+        oldest = get_oldest_pending_message("supervisor")
+        assert oldest is not None
+        batch = get_pending_messages_for_effective_source("supervisor", oldest)
+
+        assert [message.message for message in batch] == ["first", "second"]
+
+    def test_explicit_source_kind_cannot_collide_with_legacy_marker(self, live_inbox_db):
+        """Provider-neutral source strings are not reserved for internal sentinels."""
+        with live_inbox_db() as session:
+            session.add_all(
+                [
+                    InboxModel(
+                        sender_id="external-a",
+                        receiver_id="supervisor",
+                        message="first",
+                        source_kind="legacy_message",
+                        source_id="external-1",
+                        status=MessageStatus.PENDING.value,
+                        created_at=datetime(2026, 1, 1, 9, 0, 0),
+                    ),
+                    InboxModel(
+                        sender_id="external-a",
+                        receiver_id="supervisor",
+                        message="second",
+                        source_kind="legacy_message",
+                        source_id="external-1",
+                        status=MessageStatus.PENDING.value,
+                        created_at=datetime(2026, 1, 1, 9, 1, 0),
+                    ),
+                ]
+            )
+            session.commit()
+
+        oldest = get_oldest_pending_message("supervisor")
+        assert oldest is not None
+        source = get_effective_message_source(oldest)
+        assert source.kind == "legacy_message"
+        assert source.id == "external-1"
+        assert source.is_legacy_message is False
+
+        batch = get_pending_messages_for_effective_source("supervisor", oldest)
+        assert [message.message for message in batch] == ["first", "second"]
+
+    def test_different_sources_are_not_batched_with_oldest_source(self, live_inbox_db):
+        """A later pending message from another source stays out of the selected batch."""
+        with live_inbox_db() as session:
+            session.add_all(
+                [
+                    InboxModel(
+                        sender_id="worker-a",
+                        receiver_id="supervisor",
+                        message="oldest source",
+                        source_kind="terminal",
+                        source_id="worker-a",
+                        status=MessageStatus.PENDING.value,
+                        created_at=datetime(2026, 1, 1, 9, 0, 0),
+                    ),
+                    InboxModel(
+                        sender_id="worker-b",
+                        receiver_id="supervisor",
+                        message="other source",
+                        source_kind="terminal",
+                        source_id="worker-b",
+                        status=MessageStatus.PENDING.value,
+                        created_at=datetime(2026, 1, 1, 9, 1, 0),
+                    ),
+                    InboxModel(
+                        sender_id="worker-a",
+                        receiver_id="supervisor",
+                        message="same source later",
+                        source_kind="terminal",
+                        source_id="worker-a",
+                        status=MessageStatus.PENDING.value,
+                        created_at=datetime(2026, 1, 1, 9, 2, 0),
+                    ),
+                ]
+            )
+            session.commit()
+
+        oldest = get_oldest_pending_message("supervisor")
+        assert oldest is not None
+        batch = get_pending_messages_for_effective_source("supervisor", oldest)
+
+        assert [message.message for message in batch] == ["oldest source", "same source later"]
+
+    def test_batch_status_update_marks_only_selected_messages(self, live_inbox_db):
+        """Batch status updates leave unselected later messages pending."""
+        selected = []
+        with live_inbox_db() as session:
+            rows = [
+                InboxModel(
+                    sender_id="worker-a",
+                    receiver_id="supervisor",
+                    message="selected one",
+                    source_kind="terminal",
+                    source_id="worker-a",
+                    status=MessageStatus.PENDING.value,
+                    created_at=datetime(2026, 1, 1, 9, 0, 0),
+                ),
+                InboxModel(
+                    sender_id="worker-a",
+                    receiver_id="supervisor",
+                    message="selected two",
+                    source_kind="terminal",
+                    source_id="worker-a",
+                    status=MessageStatus.PENDING.value,
+                    created_at=datetime(2026, 1, 1, 9, 1, 0),
+                ),
+                InboxModel(
+                    sender_id="worker-b",
+                    receiver_id="supervisor",
+                    message="still pending",
+                    source_kind="terminal",
+                    source_id="worker-b",
+                    status=MessageStatus.PENDING.value,
+                    created_at=datetime(2026, 1, 1, 9, 2, 0),
+                ),
+            ]
+            session.add_all(rows)
+            session.commit()
+            selected = [rows[0].id, rows[1].id]
+
+        updated = update_message_statuses(selected, MessageStatus.DELIVERED)
+        assert updated == 2
+
+        messages = get_inbox_messages("supervisor", limit=10)
+        assert [message.status for message in messages] == [
+            MessageStatus.DELIVERED,
+            MessageStatus.DELIVERED,
+            MessageStatus.PENDING,
+        ]
 
 
 class TestFlowOperations:
