@@ -381,6 +381,74 @@ def test_ingest_event_rejects_events_normalized_for_another_provider(monkeypatch
     assert get_processed_event("workspace", "delivery-1") is None
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ("thread", "thread ref"),
+        ("work_item", "work item ref"),
+        ("message", "message ref"),
+    ],
+)
+def test_ingest_event_rejects_nested_refs_for_another_provider(
+    monkeypatch,
+    field,
+    expected,
+):
+    _test_session(monkeypatch)
+
+    class MismatchedNestedRefProvider(WorkspaceStyleProvider):
+        def normalize_event(
+            self,
+            raw_event: Mapping[str, Any],
+            *,
+            delivery_id: Optional[str] = None,
+        ) -> Optional[PresenceEvent]:
+            event = super().normalize_event(raw_event, delivery_id=delivery_id)
+            assert event is not None
+            assert event.thread is not None
+
+            if field == "thread":
+                thread = replace(
+                    event.thread,
+                    ref=ExternalRef(provider="tickets", id=event.thread.ref.id),
+                )
+                return replace(event, thread=thread)
+            if field == "work_item":
+                assert event.thread.work_item is not None
+                work_item = replace(
+                    event.thread.work_item,
+                    ref=ExternalRef(provider="tickets", id=event.thread.work_item.ref.id),
+                )
+                return replace(event, thread=replace(event.thread, work_item=work_item))
+
+            assert event.message is not None
+            assert event.message.ref is not None
+            message = replace(
+                event.message,
+                ref=ExternalRef(provider="tickets", id=event.message.ref.id),
+            )
+            return replace(event, message=message)
+
+    manager = PresenceProviderManager({"workspace": MismatchedNestedRefProvider("workspace")})
+
+    with pytest.raises(
+        PresenceProviderMismatchError,
+        match=f"Provider workspace normalized {expected} for provider tickets",
+    ):
+        manager.ingest_event(
+            "workspace",
+            {
+                "thread": {"id": "thread-1"},
+                "work": {"id": "work-1", "identifier": "WORK-1", "title": "Task"},
+                "message": {"id": "message-1", "body": "Please take this task"},
+            },
+            delivery_id="delivery-1",
+        )
+
+    assert get_processed_event("workspace", "delivery-1") is None
+    assert get_thread("tickets", "thread-1") is None
+
+
 def test_stop_acknowledgement_can_be_supported_or_explicitly_unsupported():
     workspace = WorkspaceStyleProvider("workspace")
     tickets = TicketStyleProvider("tickets")

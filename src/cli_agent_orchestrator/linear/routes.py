@@ -8,11 +8,40 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from cli_agent_orchestrator.linear import app_client, runtime, translator
+from cli_agent_orchestrator.linear import app_client, runtime
+from cli_agent_orchestrator.linear.presence_provider import (
+    LinearPresenceProvider,
+    payload_with_header_event,
+)
+from cli_agent_orchestrator.presence.manager import (
+    UnknownPresenceProviderError,
+    presence_provider_manager,
+)
+from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/linear", tags=["linear"])
+_linear_presence_provider = LinearPresenceProvider()
+
+
+def _ensure_linear_presence_provider() -> None:
+    try:
+        presence_provider_manager.get_provider(_linear_presence_provider.name)
+        return
+    except UnknownPresenceProviderError:
+        pass
+
+    presence_provider_manager.register_provider(
+        _linear_presence_provider.name,
+        _linear_presence_provider,
+    )
+
+
+def _should_run_smoke_runtime(persisted: Optional[PersistedPresenceEvent]) -> bool:
+    if persisted is None:
+        return False
+    return persisted.thread is not None
 
 
 class LinearOAuthCallbackResponse(BaseModel):
@@ -92,12 +121,23 @@ async def agent_webhook(
     except app_client.LinearWebhookVerificationError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
 
-    presence_event = translator.presence_event_from_agent_session_payload(
-        payload,
-        header_event=header_event,
+    _ensure_linear_presence_provider()
+    provider_payload = payload_with_header_event(payload, header_event=header_event)
+    presence_event = presence_provider_manager.normalize_event(
+        "linear",
+        provider_payload,
         delivery_id=delivery,
     )
-    event = app_client.webhook_event_type(payload, header_event)
+    persisted = presence_provider_manager.ingest_event(
+        "linear",
+        provider_payload,
+        delivery_id=delivery,
+    )
+    presence_event = presence_event if presence_event is not None else None
+    event = app_client.webhook_event_type(
+        payload,
+        header_event=header_event,
+    )
     agent_session_id = presence_event.thread.ref.id if presence_event and presence_event.thread else None
     action = payload.get("action")
 
@@ -110,8 +150,8 @@ async def agent_webhook(
         verified,
     )
 
-    routed = presence_event is not None
-    if presence_event is not None:
+    routed = presence_event is not None or persisted is not None
+    if presence_event is not None and _should_run_smoke_runtime(persisted):
         background_tasks.add_task(runtime.handle_presence_event, presence_event)
 
     return LinearWebhookResponse(

@@ -298,6 +298,93 @@ def create_agent_activity(agent_session_id: str, content: Dict[str, Any]) -> Dic
     return agent_activity
 
 
+def get_agent_session(agent_session_id: str) -> Dict[str, Any]:
+    """Fetch Linear AgentSession fields used by the presence provider."""
+    payload = linear_graphql(
+        """
+        query AgentSession($id: String!) {
+          agentSession(id: $id) {
+            id
+            url
+            context
+            status
+            issue {
+              id
+              identifier
+              title
+              url
+              state {
+                name
+              }
+            }
+          }
+        }
+        """,
+        {"id": agent_session_id},
+    )
+    agent_session = payload.get("data", {}).get("agentSession")
+    if not isinstance(agent_session, dict) or not agent_session.get("id"):
+        raise LinearAppError(f"Linear AgentSession not found: {agent_session_id}")
+    return agent_session
+
+
+def list_agent_session_activities(agent_session_id: str) -> list[Dict[str, Any]]:
+    """Fetch the first page of Linear AgentActivities for an AgentSession."""
+    payload = linear_graphql(
+        """
+        query AgentSessionActivities($id: String!) {
+          agentSession(id: $id) {
+            id
+            activities(first: 50) {
+              nodes {
+                id
+                signal
+                content {
+                  ... on AgentActivityPromptContent {
+                    type
+                    body
+                  }
+                  ... on AgentActivityThoughtContent {
+                    type
+                    body
+                  }
+                  ... on AgentActivityResponseContent {
+                    type
+                    body
+                  }
+                  ... on AgentActivityElicitationContent {
+                    type
+                    body
+                  }
+                  ... on AgentActivityErrorContent {
+                    type
+                    body
+                  }
+                  ... on AgentActivityActionContent {
+                    type
+                    action
+                    parameter
+                    result
+                  }
+                }
+              }
+            }
+          }
+        }
+        """,
+        {"id": agent_session_id},
+    )
+    agent_session = payload.get("data", {}).get("agentSession")
+    if not isinstance(agent_session, dict) or not agent_session.get("id"):
+        raise LinearAppError(f"Linear AgentSession not found: {agent_session_id}")
+
+    activities = agent_session.get("activities")
+    nodes = activities.get("nodes") if isinstance(activities, dict) else None
+    if not isinstance(nodes, list):
+        return []
+    return [node for node in nodes if isinstance(node, dict)]
+
+
 def verify_webhook(raw_body: bytes, signature: Optional[str], payload: Dict[str, Any]) -> bool:
     """Verify a Linear webhook when LINEAR_WEBHOOK_SECRET is configured."""
     secret = linear_env("LINEAR_WEBHOOK_SECRET")
@@ -385,8 +472,13 @@ def prompt_context_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     """Extract Linear prompt context from known AgentSession payload shapes."""
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     agent_session = agent_session_from_payload(payload)
-    value = payload.get("promptContext") or data.get("promptContext") or agent_session.get(
-        "promptContext"
+    value = (
+        payload.get("promptContext")
+        or data.get("promptContext")
+        or payload.get("context")
+        or data.get("context")
+        or agent_session.get("promptContext")
+        or agent_session.get("context")
     )
     return str(value) if value else None
 
@@ -397,4 +489,3 @@ def prompt_body_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     content = activity.get("content") if isinstance(activity.get("content"), dict) else {}
     body = activity.get("body") or content.get("body")
     return str(body) if body else None
-

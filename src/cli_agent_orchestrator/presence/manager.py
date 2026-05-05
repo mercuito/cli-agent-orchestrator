@@ -107,11 +107,43 @@ class PresenceProviderManager:
         )
         if event is None:
             return None
+        self._require_event_provider(event, provider_name)
+        return persist_presence_event(event)
+
+    def _require_event_provider(self, event: PresenceEvent, provider_name: str) -> None:
         if event.provider != provider_name:
             raise PresenceProviderMismatchError(
                 f"Provider {provider_name} normalized event for provider {event.provider}"
             )
-        return persist_presence_event(event)
+        if event.thread is not None:
+            self._require_ref_provider(
+                event.thread.ref,
+                provider_name,
+                "thread",
+            )
+            if event.thread.work_item is not None:
+                self._require_ref_provider(
+                    event.thread.work_item.ref,
+                    provider_name,
+                    "work item",
+                )
+        if event.message is not None and event.message.ref is not None:
+            self._require_ref_provider(
+                event.message.ref,
+                provider_name,
+                "message",
+            )
+
+    def _require_ref_provider(
+        self,
+        ref: ExternalRef,
+        provider_name: str,
+        label: str,
+    ) -> None:
+        if ref.provider != provider_name:
+            raise PresenceProviderMismatchError(
+                f"Provider {provider_name} normalized {label} ref for provider {ref.provider}"
+            )
 
     def fetch_thread(self, thread_ref: ExternalRef) -> ConversationThread:
         """Fetch a thread by routing through ``thread_ref.provider``."""

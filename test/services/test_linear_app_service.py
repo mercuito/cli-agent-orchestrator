@@ -172,6 +172,60 @@ def test_create_agent_activity_posts_content(monkeypatch):
     }
 
 
+def test_get_agent_session_returns_presence_fields(monkeypatch):
+    graphql = Mock(
+        return_value={
+            "data": {
+                "agentSession": {
+                    "id": "session-1",
+                    "url": "https://linear.app/session",
+                    "context": {"issue": "CAO-18"},
+                    "issue": {"id": "issue-1", "identifier": "CAO-18"},
+                }
+            }
+        }
+    )
+    monkeypatch.setattr(app_client, "linear_graphql", graphql)
+
+    session = app_client.get_agent_session("session-1")
+
+    assert session["id"] == "session-1"
+    query = graphql.call_args.args[0]
+    assert "context" in query
+    assert "promptContext" not in query
+    assert graphql.call_args.args[1] == {"id": "session-1"}
+
+
+def test_list_agent_session_activities_returns_first_page_nodes(monkeypatch):
+    graphql = Mock(
+        return_value={
+            "data": {
+                "agentSession": {
+                    "id": "session-1",
+                    "activities": {
+                        "nodes": [
+                            {"id": "activity-1", "content": {"type": "prompt"}},
+                            "not-an-activity",
+                        ]
+                    },
+                }
+            }
+        }
+    )
+    monkeypatch.setattr(app_client, "linear_graphql", graphql)
+
+    activities = app_client.list_agent_session_activities("session-1")
+
+    assert activities == [{"id": "activity-1", "content": {"type": "prompt"}}]
+    query = graphql.call_args.args[0]
+    assert "activities(first: 50)" in query
+    assert "AgentActivityPromptContent" in query
+    assert "agentActivities" not in query
+    assert "\n                type\n" not in query
+    assert "\n                body\n" not in query
+    assert graphql.call_args.args[1] == {"id": "session-1"}
+
+
 def test_verify_linear_webhook_accepts_valid_signature(monkeypatch):
     secret = "webhook-secret"
     payload = {"webhookTimestamp": int(time.time() * 1000), "action": "created"}
