@@ -21,6 +21,7 @@ from cli_agent_orchestrator.presence.persistence import (
     get_message,
     get_processed_event,
     get_thread,
+    get_thread_by_id,
     get_work_item,
     list_messages,
     mark_processed_event,
@@ -128,6 +129,7 @@ def test_linear_shaped_work_thread_message_and_event_are_upserted_idempotently(m
 
     assert updated_thread.id == thread.id
     assert get_thread("linear", "agent-session-1").state == "active"
+    assert get_thread_by_id(thread.id).external_id == "agent-session-1"
 
     message = upsert_message(
         thread_id=thread.id,

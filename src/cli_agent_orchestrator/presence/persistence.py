@@ -287,6 +287,26 @@ def get_thread(
         return _get(session)
 
 
+def get_thread_by_id(
+    thread_id: int, *, db: Optional[Session] = None
+) -> Optional[ConversationThreadRecord]:
+    """Read a conversation thread by CAO's durable internal id."""
+
+    def _get(session: Session) -> Optional[ConversationThreadRecord]:
+        row = (
+            session.query(db_module.PresenceThreadModel)
+            .filter(db_module.PresenceThreadModel.id == thread_id)
+            .first()
+        )
+        return _thread_from_row(row) if row is not None else None
+
+    if db is not None:
+        return _get(db)
+
+    with db_module.SessionLocal() as session:
+        return _get(session)
+
+
 def upsert_message(
     *,
     thread_id: int,

@@ -531,6 +531,13 @@ def create_inbox_message(
         return inbox_message
 
 
+def get_inbox_message(message_id: int) -> Optional[InboxMessage]:
+    """Get one inbox message by durable id."""
+    with SessionLocal() as db:
+        row = db.query(InboxModel).filter(InboxModel.id == message_id).first()
+        return inbox_message_from_model(row) if row else None
+
+
 def get_pending_messages(receiver_id: str, limit: int = 1) -> List[InboxMessage]:
     """Get pending messages ordered by created_at ASC (oldest first)."""
     return get_inbox_messages(receiver_id, limit=limit, status=MessageStatus.PENDING)

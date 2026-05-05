@@ -23,6 +23,7 @@ from cli_agent_orchestrator.clients.database import (
     delete_terminals_by_session,
     get_effective_message_source,
     get_flow,
+    get_inbox_message,
     get_inbox_messages,
     get_oldest_pending_message,
     get_pending_messages,
@@ -247,6 +248,16 @@ class TestInboxOperations:
         persisted = get_inbox_messages("receiver-456")[0]
         assert persisted.source_kind == "terminal"
         assert persisted.source_id == "sender-123"
+
+    def test_get_inbox_message_reads_one_message_by_id(self, live_inbox_db):
+        result = create_inbox_message("sender-123", "receiver-456", "Hello")
+
+        persisted = get_inbox_message(result.id)
+
+        assert persisted is not None
+        assert persisted.id == result.id
+        assert persisted.message == "Hello"
+        assert get_inbox_message(999) is None
 
     def test_create_inbox_message_persists_explicit_source(self, live_inbox_db):
         """Callers can provide a non-terminal provider-neutral source."""
