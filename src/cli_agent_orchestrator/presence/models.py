@@ -77,6 +77,16 @@ class PresenceEvent:
 
 
 @dataclass(frozen=True)
+class StopAcknowledgement:
+    """Result of acknowledging a provider-owned stop or cancel signal."""
+
+    thread_ref: ExternalRef
+    supported: bool
+    message: Optional[ConversationMessage] = None
+    reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class WorkItemRecord:
     """Durable provider-neutral work item stored by CAO."""
 
