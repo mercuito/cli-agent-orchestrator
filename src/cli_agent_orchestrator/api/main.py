@@ -41,6 +41,7 @@ from cli_agent_orchestrator.constants import (
     SERVER_VERSION,
     TERMINAL_LOG_DIR,
 )
+from cli_agent_orchestrator.linear.routes import router as linear_router
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
@@ -278,6 +279,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(linear_router)
 
 
 @app.get("/health")
