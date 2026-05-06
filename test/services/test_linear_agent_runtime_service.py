@@ -84,90 +84,76 @@ def test_build_terminal_message_uses_prompted_body():
 
 def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch):
     terminal = {"id": "terminal-1", "tmux_session": "cao-linear-discovery-partner"}
+    handle = Mock()
+    handle.ensure_started.return_value.as_terminal_metadata.return_value = terminal
     monkeypatch.setattr(
         runtime,
         "_resolve_linear_event",
         lambda event: _resolved_presence(session_name="linear-discovery-partner"),
     )
-    monkeypatch.setattr(runtime.tmux_client, "session_exists", lambda session: True)
-    monkeypatch.setattr(runtime, "list_terminals_by_session", lambda session: [terminal])
-    create_terminal = Mock()
-    monkeypatch.setattr(runtime.terminal_service, "create_terminal", create_terminal)
+    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
 
     assert runtime.ensure_discovery_terminal() == terminal
-    create_terminal.assert_not_called()
+    handle.ensure_started.assert_called_once()
 
 
 def test_terminal_config_comes_from_cao_identity_mapping(monkeypatch):
-    created = Mock(
-        id="terminal-1",
-        session_name="cao-implementation-partner",
-        name="developer-1234",
-        provider=Mock(value="codex"),
-        agent_profile="developer",
-    )
-    monkeypatch.setattr(runtime.tmux_client, "session_exists", lambda session: False)
-    monkeypatch.setattr(runtime, "list_terminals_by_session", lambda session: [])
-    create_terminal = Mock(return_value=created)
-    monkeypatch.setattr(runtime.terminal_service, "create_terminal", create_terminal)
+    handle = Mock()
+    handle.ensure_started.return_value.as_terminal_metadata.return_value = {"id": "terminal-1"}
+    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
 
     assert runtime._terminal_for_resolved_presence(_resolved_presence())["id"] == "terminal-1"
-    create_terminal.assert_called_once_with(
-        provider="codex",
-        agent_profile="developer",
-        session_name="cao-implementation-partner",
-        new_session=True,
-        working_directory="/repo",
-    )
+    handle.ensure_started.assert_called_once()
 
 
 def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(monkeypatch):
     event = _presence_event(prompt_context="<issue/>")
     calls = []
-    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: _resolved_presence())
-    monkeypatch.setattr(
-        runtime,
-        "_terminal_for_resolved_presence",
-        lambda resolved: {"id": "terminal-1"},
+    handle = Mock()
+    handle.notify.return_value = Mock(
+        terminal_id="terminal-1",
+        status=Mock(value="idle"),
+        notification=Mock(created=True),
     )
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: _resolved_presence())
+    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
     update_url = Mock(side_effect=lambda *args, **kwargs: calls.append("update_url"))
     create_activity = Mock(side_effect=lambda *args, **kwargs: calls.append("create_activity"))
-    send_input = Mock(side_effect=lambda *args: calls.append("send_input"))
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", update_url)
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", create_activity)
-    monkeypatch.setattr(runtime.terminal_service, "send_input", send_input)
 
     assert runtime.handle_presence_event(event) == "terminal-1"
-    assert calls == ["send_input", "update_url", "create_activity"]
+    assert calls == ["update_url", "create_activity"]
+    handle.notify.assert_called_once()
+    assert handle.notify.call_args.kwargs["source_kind"] == runtime.LINEAR_RUNTIME_SOURCE_KIND
     update_url.assert_called_once_with(
         "session-1",
         "terminal-1",
         app_key="implementation_partner",
     )
     create_activity.assert_called_once()
-    send_input.assert_called_once()
 
 
 def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch):
     event = _presence_event(prompt_context="<issue/>")
     event.raw_payload["_cao_linear_app_key"] = "implementation_partner"
+    handle = Mock()
+    handle.notify.return_value = Mock(
+        terminal_id="terminal-implementation_partner",
+        status=Mock(value="idle"),
+        notification=Mock(created=True),
+    )
     monkeypatch.setattr(
         runtime,
         "_resolve_linear_event",
         lambda event: _resolved_presence(app_key=event.raw_payload["_cao_linear_app_key"]),
     )
-    monkeypatch.setattr(
-        runtime,
-        "_terminal_for_resolved_presence",
-        lambda resolved: {"id": f"terminal-{resolved.presence.app_key}"},
-    )
+    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
     monkeypatch.setattr(runtime.app_client, "linear_app_env", lambda app_key, name: None)
     update_url = Mock()
     create_activity = Mock()
-    send_input = Mock()
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", update_url)
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", create_activity)
-    monkeypatch.setattr(runtime.terminal_service, "send_input", send_input)
 
     assert runtime.handle_presence_event(event) == "terminal-implementation_partner"
 
@@ -178,3 +164,4 @@ def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch):
     )
     create_activity.assert_called_once()
     assert create_activity.call_args.kwargs["app_key"] == "implementation_partner"
+    assert handle.notify.call_args.kwargs["sender_id"] == "linear:implementation_partner"

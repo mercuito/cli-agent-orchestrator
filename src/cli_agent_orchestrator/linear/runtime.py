@@ -1,25 +1,24 @@
-"""Smoke runtime bridge from Linear AgentSession events to CAO terminals."""
+"""Linear event interpretation for CAO agent runtime notifications."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Dict, Optional
 
-from cli_agent_orchestrator.clients.database import list_terminals_by_session
-from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.linear import app_client, translator
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearResolvedPresence,
-    canonical_session_name,
     get_linear_workspace_provider,
     normalize_app_key,
 )
 from cli_agent_orchestrator.presence.models import PresenceEvent
-from cli_agent_orchestrator.services import terminal_service
+from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TEAM_MEMBER_ID = "cao-discovery-partner"
+LINEAR_RUNTIME_SOURCE_KIND = "linear_agent_session_event"
 
 
 def _event_app_key(event: PresenceEvent) -> Optional[str]:
@@ -27,13 +26,6 @@ def _event_app_key(event: PresenceEvent) -> Optional[str]:
         return None
     value = event.raw_payload.get("_cao_linear_app_key")
     return normalize_app_key(str(value)) if value else None
-
-
-def _find_existing_terminal(session_name: str) -> Optional[Dict[str, Any]]:
-    if not tmux_client.session_exists(session_name):
-        return None
-    terminals = list_terminals_by_session(session_name)
-    return terminals[0] if terminals else None
 
 
 def _resolve_linear_event(event: PresenceEvent) -> LinearResolvedPresence:
@@ -44,27 +36,12 @@ def _resolve_linear_event(event: PresenceEvent) -> LinearResolvedPresence:
     return get_linear_workspace_provider().resolve_event(payload)
 
 
-def _terminal_for_resolved_presence(resolved: LinearResolvedPresence) -> Dict[str, Any]:
-    identity = resolved.identity
-    session_name = canonical_session_name(identity.session_name)
-    existing = _find_existing_terminal(session_name)
-    if existing is not None:
-        return existing
+def _runtime_handle_for_resolved_presence(resolved: LinearResolvedPresence) -> AgentRuntimeHandle:
+    return AgentRuntimeHandle(resolved.identity)
 
-    terminal = terminal_service.create_terminal(
-        provider=identity.cli_provider,
-        agent_profile=identity.agent_profile,
-        session_name=session_name,
-        new_session=not tmux_client.session_exists(session_name),
-        working_directory=identity.workdir,
-    )
-    return {
-        "id": terminal.id,
-        "tmux_session": terminal.session_name,
-        "tmux_window": terminal.name,
-        "provider": terminal.provider.value,
-        "agent_profile": terminal.agent_profile,
-    }
+
+def _terminal_for_resolved_presence(resolved: LinearResolvedPresence) -> Dict[str, Any]:
+    return _runtime_handle_for_resolved_presence(resolved).ensure_started().as_terminal_metadata()
 
 
 def ensure_discovery_terminal(*, app_key: Optional[str] = None) -> Dict[str, Any]:
@@ -117,17 +94,44 @@ def build_terminal_message(
     return "\n".join(parts)
 
 
+def _runtime_source_id(event: PresenceEvent) -> str:
+    if event.message is not None and event.message.ref is not None:
+        return f"message:{event.message.ref.id}"
+    if event.delivery_id:
+        return f"delivery:{event.delivery_id}"
+
+    thread_id = event.thread.ref.id if event.thread else ""
+    message_body = event.message.body if event.message else ""
+    digest = hashlib.sha256(
+        "\n".join(
+            [
+                event.provider,
+                event.event_type,
+                event.action or "",
+                thread_id,
+                message_body or "",
+            ]
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"derived:{digest}"
+
+
 def handle_presence_event(event: PresenceEvent) -> Optional[str]:
-    """Handle a provider-normalized presence event by waking a CAO terminal."""
+    """Handle a provider-normalized Linear event through the CAO runtime handle."""
     thread_id = event.thread.ref.id if event.thread else None
     resolved = _resolve_linear_event(event)
     app_key = resolved.presence.app_key
-    terminal = _terminal_for_resolved_presence(resolved)
-    terminal_id = terminal["id"]
+    handle = _runtime_handle_for_resolved_presence(resolved)
     message = build_terminal_message(event, resolved=resolved)
-    terminal_service.send_input(terminal_id, message)
+    result = handle.notify(
+        message,
+        sender_id=f"linear:{app_key or 'legacy'}",
+        source_kind=LINEAR_RUNTIME_SOURCE_KIND,
+        source_id=_runtime_source_id(event),
+    )
+    terminal_id = result.terminal_id
 
-    if thread_id:
+    if thread_id and terminal_id:
         try:
             app_client.update_agent_session_external_url(thread_id, terminal_id, app_key=app_key)
         except Exception as exc:
@@ -144,7 +148,13 @@ def handle_presence_event(event: PresenceEvent) -> Optional[str]:
         except Exception as exc:
             logger.warning("Failed to create Linear Agent Activity: %s", exc)
 
-    logger.info("Routed Linear AgentSessionEvent to CAO terminal %s", terminal_id)
+    logger.info(
+        "Accepted Linear AgentSessionEvent for CAO agent %s (terminal=%s status=%s created=%s)",
+        resolved.identity.id,
+        terminal_id,
+        result.status.value,
+        result.notification.created,
+    )
     return terminal_id
 
 

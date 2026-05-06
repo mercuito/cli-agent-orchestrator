@@ -230,6 +230,20 @@ class PresenceInboxNotificationModel(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
 
+class AgentRuntimeNotificationModel(Base):
+    """Idempotency marker for provider notifications accepted by agent runtime handles."""
+
+    __tablename__ = "agent_runtime_notifications"
+    __table_args__ = (UniqueConstraint("agent_id", "source_kind", "source_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agent_id = Column(String, nullable=False)
+    source_kind = Column(String, nullable=False)
+    source_id = Column(String, nullable=False)
+    inbox_message_id = Column(Integer, ForeignKey("inbox.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
 # Module-level singletons
 DB_DIR.mkdir(parents=True, exist_ok=True)
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -255,6 +269,7 @@ def init_db() -> None:
     _migrate_add_inbox_source_fields()
     _migrate_ensure_baton_tables()
     _migrate_ensure_presence_tables()
+    _migrate_ensure_agent_runtime_tables()
     _migrate_add_allowed_tools()
     _migrate_drop_monitoring_session_peers()
 
@@ -305,6 +320,14 @@ def _migrate_ensure_presence_tables() -> None:
         PresenceInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for presence tables failed: {e}")
+
+
+def _migrate_ensure_agent_runtime_tables() -> None:
+    """Create CAO agent runtime contract tables on existing databases."""
+    try:
+        AgentRuntimeNotificationModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for agent runtime tables failed: {e}")
 
 
 def _migrate_drop_monitoring_session_peers() -> None:
