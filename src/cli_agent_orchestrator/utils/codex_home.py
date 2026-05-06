@@ -24,7 +24,6 @@ from cli_agent_orchestrator.utils.config_inheritance import (
     deep_merge,
 )
 
-
 # Policy for what CAO inherits from the user's ~/.codex/config.toml into the
 # per-terminal CODEX_HOME. See :mod:`utils.config_inheritance` for the shape.
 #
@@ -43,6 +42,14 @@ from cli_agent_orchestrator.utils.config_inheritance import (
 CODEX_INHERIT_POLICY = InheritPolicy(
     allowlist=frozenset({"model", "model_reasoning_effort", "notice"}),
     extra_overrides={"features": {"multi_agent": False}},
+)
+
+CODEX_AUTH_STATE_GLOBS = (
+    "auth.json",
+    "installation_id",
+    "state_*.sqlite",
+    "state_*.sqlite-shm",
+    "state_*.sqlite-wal",
 )
 
 
@@ -184,6 +191,28 @@ def _codex_login_ok(codex_home_dir: Path) -> bool:
     return False
 
 
+def _copy_codex_auth_state(global_codex_home_dir: Path, terminal_codex_home: Path) -> set[str]:
+    """Copy the minimal Codex auth/session state into a per-terminal home.
+
+    Codex keeps its ChatGPT login across ``auth.json`` and versioned state
+    SQLite files. Copying only ``auth.json`` can strand a managed terminal with
+    an access token whose refresh state does not match the current login.
+    """
+
+    copied: set[str] = set()
+    for pattern in CODEX_AUTH_STATE_GLOBS:
+        for src in sorted(global_codex_home_dir.glob(pattern)):
+            if not src.is_file():
+                continue
+            shutil.copy2(src, terminal_codex_home / src.name)
+            copied.add(src.name)
+
+    if "auth.json" not in copied:
+        raise ValueError(f"Codex auth.json not found at {global_codex_home_dir / 'auth.json'}")
+
+    return copied
+
+
 def prepare_codex_home(
     terminal_id: str,
     agent_profile: str,
@@ -204,12 +233,7 @@ def prepare_codex_home(
     terminal_codex_home = cao_home_dir / "codex-homes" / terminal_id / ".codex"
     terminal_codex_home.mkdir(parents=True, exist_ok=True)
 
-    auth_src = global_codex_home_dir / "auth.json"
-    if not auth_src.exists():
-        raise ValueError(f"Codex auth.json not found at {auth_src}")
-
-    # Copy auth + (optional) config
-    shutil.copy2(auth_src, terminal_codex_home / "auth.json")
+    _copy_codex_auth_state(global_codex_home_dir, terminal_codex_home)
 
     if not _codex_login_ok(terminal_codex_home):
         # Best-effort cleanup so we don't accumulate per-terminal homes on failures.

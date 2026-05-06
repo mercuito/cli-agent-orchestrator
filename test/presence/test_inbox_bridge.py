@@ -103,9 +103,12 @@ def test_notification_body_includes_preview_and_work_context(test_session):
         receiver_id="terminal-a",
     )
 
-    assert "Presence update from generic-chat" in result.inbox_message.message
-    assert "WORK-123 - Bridge durable presence into inbox" in result.inbox_message.message
-    assert "Message: comment" in result.inbox_message.message
+    assert "[CAO inbox notification]" in result.inbox_message.message
+    assert "ID: 1" in result.inbox_message.message
+    assert "Source: generic-chat" in result.inbox_message.message
+    assert "Issue: WORK-123 - Bridge durable presence into inbox" in result.inbox_message.message
+    assert "Read: read_inbox_message(inbox_message_id=1)" in result.inbox_message.message
+    assert "Reply: reply_to_inbox_message(inbox_message_id=1" in result.inbox_message.message
     assert "missing migration test" in result.inbox_message.message
 
 

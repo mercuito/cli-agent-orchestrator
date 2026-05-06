@@ -166,6 +166,133 @@ def test_fetch_viewer_returns_viewer(monkeypatch):
     assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer access-token"}
 
 
+def test_refresh_access_token_posts_refresh_grant_and_persists_rotation(monkeypatch):
+    presence = linear_provider.LinearPresence(
+        presence_id="implementation_partner",
+        agent_id="implementation_partner",
+        app_key="implementation_partner",
+        client_id="client-id",
+        client_secret="client-secret",
+        refresh_token="old-refresh-token",
+    )
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        "access_token": "new-access-token",
+        "refresh_token": "new-refresh-token",
+        "expires_in": 3600,
+    }
+    post = Mock(return_value=response)
+    persist = Mock()
+    monkeypatch.setattr(app_client.requests, "post", post)
+    monkeypatch.setattr(linear_provider, "persist_linear_oauth_install", persist)
+
+    assert app_client.refresh_access_token(presence) == "new-access-token"
+
+    assert post.call_args.args == (app_client.LINEAR_TOKEN_URL,)
+    assert post.call_args.kwargs["data"] == {
+        "grant_type": "refresh_token",
+        "refresh_token": "old-refresh-token",
+        "client_id": "client-id",
+        "client_secret": "client-secret",
+    }
+    persist.assert_called_once()
+    assert persist.call_args.kwargs["app_key"] == "implementation_partner"
+    assert persist.call_args.kwargs["access_token"] == "new-access-token"
+    assert persist.call_args.kwargs["refresh_token"] == "new-refresh-token"
+    assert persist.call_args.kwargs["token_expires_at"] is not None
+
+
+def test_access_token_for_presence_refreshes_expired_token(monkeypatch):
+    presence = linear_provider.LinearPresence(
+        presence_id="implementation_partner",
+        agent_id="implementation_partner",
+        app_key="implementation_partner",
+        access_token="old-access-token",
+        refresh_token="refresh-token",
+        token_expires_at="2026-05-01T00:00:00+00:00",
+    )
+    refresh = Mock(return_value="new-access-token")
+    monkeypatch.setattr(app_client, "refresh_access_token", refresh)
+    monkeypatch.setattr(app_client, "_configured_presence", lambda app_key: None)
+
+    assert app_client.access_token_for_presence(presence) == "new-access-token"
+
+    refresh.assert_called_once_with(presence)
+
+
+def test_linear_graphql_refreshes_expired_configured_token_before_request(monkeypatch):
+    env = {
+        "LINEAR_APP_KEYS": "implementation_partner",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_ACCESS_TOKEN": "old-access-token",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_REFRESH_TOKEN": "old-refresh-token",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_TOKEN_EXPIRES_AT": "2026-05-01T00:00:00+00:00",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_ID": "client-id",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_SECRET": "client-secret",
+    }
+    monkeypatch.setattr(app_client, "linear_env", env.get)
+    monkeypatch.setattr(linear_provider, "persist_linear_oauth_install", Mock())
+
+    def post(url, **kwargs):
+        response = Mock(status_code=200)
+        if url == app_client.LINEAR_TOKEN_URL:
+            response.json.return_value = {
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 3600,
+            }
+            return response
+        assert url == app_client.LINEAR_GRAPHQL_URL
+        assert kwargs["headers"] == {"Authorization": "Bearer new-access-token"}
+        response.json.return_value = {"data": {"ok": True}}
+        return response
+
+    monkeypatch.setattr(app_client.requests, "post", post)
+
+    assert app_client.linear_graphql("query Test", app_key="implementation_partner") == {
+        "data": {"ok": True}
+    }
+
+
+def test_linear_graphql_refreshes_once_after_auth_error(monkeypatch):
+    env = {
+        "LINEAR_APP_KEYS": "implementation_partner",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_ACCESS_TOKEN": "old-access-token",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_REFRESH_TOKEN": "old-refresh-token",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_TOKEN_EXPIRES_AT": "2026-05-07T00:00:00+00:00",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_ID": "client-id",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_SECRET": "client-secret",
+    }
+    graph_tokens = []
+    monkeypatch.setattr(app_client, "linear_env", env.get)
+    monkeypatch.setattr(linear_provider, "persist_linear_oauth_install", Mock())
+
+    def post(url, **kwargs):
+        response = Mock(status_code=200)
+        if url == app_client.LINEAR_TOKEN_URL:
+            response.json.return_value = {
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 3600,
+            }
+            return response
+        assert url == app_client.LINEAR_GRAPHQL_URL
+        graph_tokens.append(kwargs["headers"]["Authorization"])
+        if len(graph_tokens) == 1:
+            response.json.return_value = {
+                "errors": [{"message": "Authentication required, not authenticated"}]
+            }
+        else:
+            response.json.return_value = {"data": {"ok": True}}
+        return response
+
+    monkeypatch.setattr(app_client.requests, "post", post)
+
+    assert app_client.linear_graphql("query Test", app_key="implementation_partner") == {
+        "data": {"ok": True}
+    }
+    assert graph_tokens == ["Bearer old-access-token", "Bearer new-access-token"]
+
+
 def test_install_linear_app_persists_tokens_and_viewer(monkeypatch):
     monkeypatch.setattr(app_client, "validate_oauth_state", lambda state, **kwargs: True)
     monkeypatch.setattr(
@@ -254,6 +381,62 @@ def test_get_issue_returns_linear_issue(monkeypatch):
 
     assert app_client.get_issue("CAO-14")["id"] == "issue-1"
     graphql.assert_called_once()
+
+
+def test_public_cao_terminal_url_points_to_dashboard(monkeypatch):
+    monkeypatch.setenv("LINEAR_CAO_PUBLIC_URL", "https://cao.test/")
+    monkeypatch.setattr(
+        app_client,
+        "create_terminal_dashboard_token",
+        Mock(return_value="signed.token"),
+    )
+
+    assert (
+        app_client.public_cao_terminal_url("terminal/id")
+        == "https://cao.test/?tab=agents&terminal_id=terminal%2Fid&terminal_token=signed.token"
+    )
+
+
+def test_public_cao_agent_url_points_to_stable_agent_deep_link(monkeypatch):
+    monkeypatch.setenv("LINEAR_CAO_PUBLIC_URL", "https://cao.test/")
+    monkeypatch.setattr(
+        app_client,
+        "create_agent_dashboard_token",
+        Mock(return_value="agent.signed.token"),
+    )
+
+    assert (
+        app_client.public_cao_agent_url("discovery partner")
+        == "https://cao.test/?tab=agents&agent_id=discovery%20partner&agent_token=agent.signed.token"
+    )
+
+
+def test_update_agent_session_external_url_prefers_agent_deep_link(monkeypatch):
+    graphql = Mock(return_value={"data": {"agentSessionUpdate": {"success": True}}})
+    monkeypatch.setattr(app_client, "linear_graphql", graphql)
+    monkeypatch.setattr(
+        app_client,
+        "public_cao_agent_url",
+        Mock(return_value="https://cao.test/?agent_id=discovery_partner"),
+    )
+    monkeypatch.setattr(
+        app_client,
+        "public_cao_terminal_url",
+        Mock(return_value="https://cao.test/?terminal_id=abcd1234"),
+    )
+
+    assert app_client.update_agent_session_external_url(
+        "session-1",
+        "abcd1234",
+        agent_id="discovery_partner",
+        app_key="discovery_partner",
+    )
+
+    variables = graphql.call_args.args[1]
+    assert variables["input"]["externalUrls"] == [
+        {"label": "Open CAO", "url": "https://cao.test/?agent_id=discovery_partner"}
+    ]
+    app_client.public_cao_terminal_url.assert_not_called()
 
 
 def test_get_issue_requires_issue(monkeypatch):

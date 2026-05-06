@@ -8,10 +8,11 @@ interface TerminalViewProps {
   terminalId: string
   provider?: string
   agentProfile?: string | null
+  terminalToken?: string | null
   onClose: () => void
 }
 
-export function TerminalView({ terminalId, provider, agentProfile, onClose }: TerminalViewProps) {
+export function TerminalView({ terminalId, provider, agentProfile, terminalToken, onClose }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -45,7 +46,8 @@ export function TerminalView({ terminalId, provider, agentProfile, onClose }: Te
 
     // Connect WebSocket
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${location.host}/terminals/${terminalId}/ws`)
+    const tokenQuery = terminalToken ? `?terminal_token=${encodeURIComponent(terminalToken)}` : ''
+    const ws = new WebSocket(`${protocol}//${location.host}/terminals/${terminalId}/ws${tokenQuery}`)
     ws.binaryType = 'arraybuffer'
 
     ws.onopen = () => {
@@ -117,7 +119,7 @@ export function TerminalView({ terminalId, provider, agentProfile, onClose }: Te
       ws.close()
       term.dispose()
     }
-  }, [terminalId])
+  }, [terminalId, terminalToken])
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: '#0d1117' }}>

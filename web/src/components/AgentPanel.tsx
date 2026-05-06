@@ -23,12 +23,24 @@ const SOURCE_LABELS: Record<string, string> = {
   'q_cli': 'Q CLI',
 }
 
-export function AgentPanel() {
+interface AgentPanelProps {
+  initialTerminalId?: string | null
+  initialTerminalToken?: string | null
+  initialAgentId?: string | null
+  initialAgentToken?: string | null
+}
+
+export function AgentPanel({
+  initialTerminalId = null,
+  initialTerminalToken = null,
+  initialAgentId = null,
+  initialAgentToken = null,
+}: AgentPanelProps) {
   const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus, setActiveMonitoringSessions, setActiveBatons } = useStore()
   const [provider, setProvider] = usePersistedState('cao.spawn.provider', 'kiro_cli')
   const [profile, setProfile] = usePersistedState('cao.spawn.profile', '')
   const [creating, setCreating] = useState(false)
-  const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentProfile?: string | null } | null>(null)
+  const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentProfile?: string | null; terminalToken?: string | null } | null>(null)
   const [profiles, setProfiles] = useState<AgentProfileInfo[]>([])
   const [loadingProfiles, setLoadingProfiles] = useState(true)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -67,6 +79,7 @@ export function AgentPanel() {
   const { showSnackbar } = useStore()
   const [outputTerminalId, setOutputTerminalId] = useState<string | null>(null)
   const [showSpawnModal, setShowSpawnModal] = useState(false)
+  const initialTerminalOpened = useRef(false)
 
   const handleDeleteTerminal = async () => {
     if (!pendingClose) return
@@ -162,9 +175,43 @@ export function AgentPanel() {
     // same values every time. Clearing here would defeat that.
   }
 
-  const openTerminal = (terminalId: string, provider?: string, agentProfile?: string | null) => {
-    setLiveTerminal({ id: terminalId, provider, agentProfile })
+  const openTerminal = (terminalId: string, provider?: string, agentProfile?: string | null, terminalToken?: string | null) => {
+    setLiveTerminal({ id: terminalId, provider, agentProfile, terminalToken })
   }
+
+  useEffect(() => {
+    if ((!initialTerminalId && !initialAgentId) || initialTerminalOpened.current) return
+    let cancelled = false
+
+    const terminalPromise = initialTerminalId
+      ? api.getTerminal(initialTerminalId)
+          .then(terminal => ({ terminal, terminalToken: initialTerminalToken }))
+      : api.getAgentRuntimeTerminal(initialAgentId as string, initialAgentToken)
+          .then(result => ({ terminal: result.terminal, terminalToken: result.terminal_token }))
+
+    terminalPromise
+      .then(async ({ terminal, terminalToken }) => {
+        if (cancelled) return
+        initialTerminalOpened.current = true
+        await selectSession(terminal.session_name)
+        if (cancelled) return
+        openTerminal(terminal.id, terminal.provider, terminal.agent_profile, terminalToken)
+      })
+      .catch(() => {
+        if (cancelled) return
+        initialTerminalOpened.current = true
+        showSnackbar({
+          type: 'error',
+          message: initialAgentId
+            ? `Agent ${initialAgentId} does not have a running terminal`
+            : `Terminal ${initialTerminalId} was not found`,
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [initialTerminalId, initialTerminalToken, initialAgentId, initialAgentToken])
 
   // Fetch working directories for terminals in session detail
   useEffect(() => {
@@ -470,6 +517,7 @@ export function AgentPanel() {
           terminalId={liveTerminal.id}
           provider={liveTerminal.provider}
           agentProfile={liveTerminal.agentProfile}
+          terminalToken={liveTerminal.terminalToken}
           onClose={() => setLiveTerminal(null)}
         />
       )}

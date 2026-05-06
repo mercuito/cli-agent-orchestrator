@@ -47,10 +47,16 @@ agent_id = "implementation_partner"
 app_key = "implementation_partner"
 app_user_id = "app-user-impl"
 app_user_name = "Implementation Partner"
+access_token = "access-token"
+token_expires_at = "2026-05-07T00:00:00+00:00"
 """)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.workspace_provider.LINEAR_PROVIDER_CONFIG_PATH",
         linear_config,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        lambda presence: {"id": presence.app_user_id, "name": presence.app_user_name},
     )
 
     providers = initialize_enabled_workspace_providers(
@@ -65,3 +71,42 @@ app_user_name = "Implementation Partner"
     )
     assert resolved.presence.app_user_id == "app-user-impl"
     assert resolved.identity.session_name == "implementation-partner"
+
+
+def test_initialize_workspace_providers_starts_legacy_linear_provider_when_unconfigured(
+    tmp_path, monkeypatch
+):
+    enabled = tmp_path / "missing-workspace-providers.toml"
+    agents = tmp_path / "agents.toml"
+    agents.write_text("")
+    initialized = []
+
+    class FakeLinearProvider:
+        name = "linear"
+
+        def __init__(self, *, agent_registry):
+            self.agent_registry = agent_registry
+
+        def initialize(self):
+            initialized.append(self)
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider.has_legacy_linear_provider_config",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider.LinearWorkspaceProvider",
+        FakeLinearProvider,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider.set_default_linear_workspace_provider",
+        lambda provider: None,
+    )
+
+    providers = initialize_enabled_workspace_providers(
+        enabled_config_path=enabled,
+        agents_config_path=agents,
+    )
+
+    assert providers == initialized
+    assert len(providers) == 1

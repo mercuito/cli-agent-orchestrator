@@ -8,6 +8,8 @@ from typing import Callable, Mapping, Optional, Protocol
 import tomli
 
 from cli_agent_orchestrator.agent_identity import (
+    AgentIdentity,
+    AgentIdentityConfigError,
     AgentIdentityRegistry,
     load_agent_identity_registry,
 )
@@ -31,6 +33,13 @@ class WorkspaceProvider(Protocol):
 
     def initialize(self) -> None:
         """Validate and initialize the provider."""
+
+
+class AgentIdentityWorkspaceProvider(WorkspaceProvider, Protocol):
+    """Optional workspace-provider surface for resolving CAO agent identities."""
+
+    def resolve_identity_for_agent_id(self, agent_id: str) -> AgentIdentity:
+        """Resolve a durable CAO agent identity through provider-owned mapping."""
 
 
 WorkspaceProviderFactory = Callable[[AgentIdentityRegistry], WorkspaceProvider]
@@ -118,7 +127,7 @@ def initialize_enabled_workspace_providers(
     agents_config_path: Optional[Path] = None,
     registry: Optional[WorkspaceProviderRegistry] = None,
 ) -> list[WorkspaceProvider]:
-    """Create and initialize every explicitly enabled workspace provider."""
+    """Create and initialize startup workspace providers."""
     enabled = load_enabled_workspace_providers(enabled_config_path)
     agent_registry = load_agent_identity_registry(agents_config_path)
     provider_registry = registry or default_workspace_provider_registry()
@@ -136,4 +145,57 @@ def initialize_enabled_workspace_providers(
             if isinstance(provider, LinearWorkspaceProvider):
                 set_default_linear_workspace_provider(provider)
         providers.append(provider)
+    if not workspace_provider_config_exists(enabled_config_path):
+        from cli_agent_orchestrator.linear.workspace_provider import (
+            LinearWorkspaceProvider,
+            has_legacy_linear_provider_config,
+            set_default_linear_workspace_provider,
+        )
+
+        if has_legacy_linear_provider_config():
+            provider = LinearWorkspaceProvider(agent_registry=agent_registry)
+            provider.initialize()
+            set_default_linear_workspace_provider(provider)
+            providers.append(provider)
+    return providers
+
+
+def resolve_agent_identity_for_runtime(
+    agent_id: str,
+    *,
+    agents_config_path: Optional[Path] = None,
+) -> AgentIdentity:
+    """Resolve a durable CAO agent identity through CAO config or workspace providers."""
+    try:
+        return load_agent_identity_registry(agents_config_path).get(agent_id)
+    except AgentIdentityConfigError as registry_error:
+        provider_errors: list[Exception] = []
+        for provider in _candidate_identity_workspace_providers():
+            resolver = getattr(provider, "resolve_identity_for_agent_id", None)
+            if resolver is None:
+                continue
+            try:
+                return resolver(agent_id)
+            except Exception as exc:
+                provider_errors.append(exc)
+        if provider_errors:
+            raise AgentIdentityConfigError(str(registry_error)) from provider_errors[-1]
+        raise
+
+
+def _candidate_identity_workspace_providers() -> list[WorkspaceProvider]:
+    """Return initialized/lazy workspace providers that may own agent mappings."""
+    providers: list[WorkspaceProvider] = []
+    if not workspace_provider_config_exists():
+        from cli_agent_orchestrator.linear.workspace_provider import (
+            LinearWorkspaceProviderConfigError,
+            get_linear_workspace_provider,
+            has_legacy_linear_provider_config,
+        )
+
+        if has_legacy_linear_provider_config():
+            try:
+                providers.append(get_linear_workspace_provider())
+            except LinearWorkspaceProviderConfigError:
+                pass
     return providers

@@ -10,10 +10,16 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base, get_inbox_messages
 from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
 from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
+from cli_agent_orchestrator.linear.workspace_provider import (
+    LinearPresence,
+    LinearResolvedPresence,
+    LinearWorkspaceProviderConfigError,
+)
 from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_SOURCE_KIND
 from cli_agent_orchestrator.presence.manager import (
     PresenceProviderManager,
@@ -27,6 +33,12 @@ from cli_agent_orchestrator.presence.persistence import (
 from cli_agent_orchestrator.presence.reply_service import (
     PresenceReplyDeliveryError,
     reply_to_inbox_message,
+)
+from cli_agent_orchestrator.runtime.agent import (
+    AgentRuntimeDeliveryResult,
+    AgentRuntimeNotification,
+    AgentRuntimeNotifyResult,
+    AgentRuntimeStatus,
 )
 
 
@@ -103,6 +115,91 @@ def _linear_headers(delivery_id: str = "delivery-1") -> dict:
         "Linear-Delivery": delivery_id,
         "Linear-Event": "AgentSessionEvent",
     }
+
+
+class _FakeRuntimeHandle:
+    def __init__(
+        self,
+        receiver_id: str = "agent:implementation_partner",
+        *,
+        terminal_id: str | None = "terminal-inbox",
+        status: AgentRuntimeStatus = AgentRuntimeStatus.BUSY,
+        error: str | None = None,
+    ) -> None:
+        self.inbox_receiver_id = receiver_id
+        self.terminal_id = terminal_id
+        self.status = status
+        self.error = error
+        self.accepted = []
+
+    def accept_notification(self, notification):
+        self.accepted.append(notification)
+        runtime_notification = AgentRuntimeNotification(
+            inbox_message=notification.inbox_message,
+            created=notification.created,
+            receiver_id=notification.inbox_message.receiver_id,
+        )
+        return AgentRuntimeNotifyResult(
+            notification=runtime_notification,
+            status=self.status,
+            terminal_id=self.terminal_id,
+            started=False,
+            delivery=AgentRuntimeDeliveryResult(
+                status=self.status,
+                terminal_id=self.terminal_id,
+                attempted=False,
+                delivered=False,
+            ),
+            error=self.error,
+        )
+
+
+def _resolved_presence() -> LinearResolvedPresence:
+    return LinearResolvedPresence(
+        presence=LinearPresence(
+            presence_id="implementation_partner",
+            agent_id="implementation_partner",
+            app_key="implementation_partner",
+            app_user_name="Implementation Partner",
+        ),
+        identity=AgentIdentity(
+            id="implementation_partner",
+            display_name="Implementation Partner",
+            agent_profile="developer",
+            cli_provider="codex",
+            workdir="/repo",
+            session_name="implementation-partner",
+        ),
+    )
+
+
+def _use_mapped_linear_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    terminal_id: str | None = "terminal-inbox",
+    status: AgentRuntimeStatus = AgentRuntimeStatus.BUSY,
+    error: str | None = None,
+) -> _FakeRuntimeHandle:
+    handle = _FakeRuntimeHandle(terminal_id=terminal_id, status=status, error=error)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._resolve_linear_event",
+        lambda event: _resolved_presence(),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
+        lambda resolved: handle,
+    )
+    handle.update_external_url = Mock()
+    handle.create_activity = Mock(return_value={"id": "activity-lifecycle"})
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.app_client.update_agent_session_external_url",
+        handle.update_external_url,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.app_client.create_agent_activity",
+        handle.create_activity,
+    )
+    return handle
 
 
 @pytest.fixture(autouse=True)
@@ -201,8 +298,8 @@ def test_linear_routes_require_explicit_or_legacy_provider_config(client, tmp_pa
 
 def test_linear_agent_webhook_accepts_event(client, monkeypatch):
     _test_session(monkeypatch)
-    _disable_linear_inbox_receiver(monkeypatch)
     presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.parse_webhook_payload",
         lambda raw: {
@@ -216,11 +313,6 @@ def test_linear_agent_webhook_accepts_event(client, monkeypatch):
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
-    )
-    routed = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.runtime.handle_presence_event",
-        routed,
     )
 
     response = client.post(
@@ -244,15 +336,15 @@ def test_linear_agent_webhook_accepts_event(client, monkeypatch):
         "agent_session_id": "session-1",
         "routed": True,
     }
-    routed.assert_called_once()
+    assert len(handle.accepted) == 1
     assert get_processed_event("linear", "delivery-1").event_type == "AgentSessionEvent"
     presence_provider_manager.clear_providers()
 
 
 def test_linear_agent_webhook_routes_verified_app_key_to_runtime(client, monkeypatch):
     _test_session(monkeypatch)
-    _disable_linear_inbox_receiver(monkeypatch)
     presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.parse_webhook_payload",
         lambda raw: {
@@ -270,11 +362,6 @@ def test_linear_agent_webhook_routes_verified_app_key_to_runtime(client, monkeyp
             app_key="implementation_partner",
         ),
     )
-    routed = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.runtime.handle_presence_event",
-        routed,
-    )
 
     response = client.post(
         "/linear/webhooks/agent",
@@ -284,19 +371,20 @@ def test_linear_agent_webhook_routes_verified_app_key_to_runtime(client, monkeyp
 
     assert response.status_code == 200
     assert response.json()["app_key"] == "implementation_partner"
-    routed.assert_called_once()
-    event = routed.call_args.args[0]
-    assert event.raw_payload["_cao_linear_app_key"] == "implementation_partner"
+    assert len(handle.accepted) == 1
+    assert get_inbox_messages("agent:implementation_partner", limit=10)[0].source_kind == (
+        PRESENCE_INBOX_SOURCE_KIND
+    )
     presence_provider_manager.clear_providers()
 
 
-def test_linear_agent_webhook_duplicate_delivery_does_not_rerun_smoke_runtime(
+def test_linear_agent_webhook_duplicate_delivery_does_not_duplicate_mapped_runtime_notification(
     client,
     monkeypatch,
 ):
     _test_session(monkeypatch)
-    _disable_linear_inbox_receiver(monkeypatch)
     presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.parse_webhook_payload",
         lambda raw: {
@@ -311,11 +399,6 @@ def test_linear_agent_webhook_duplicate_delivery_does_not_rerun_smoke_runtime(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
     )
-    routed = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.runtime.handle_presence_event",
-        routed,
-    )
 
     headers = {
         "Linear-Signature": "signature",
@@ -329,7 +412,39 @@ def test_linear_agent_webhook_duplicate_delivery_does_not_rerun_smoke_runtime(
     assert second.status_code == 200
     assert first.json()["routed"] is True
     assert second.json()["routed"] is True
-    routed.assert_called_once()
+    assert len(handle.accepted) == 1
+    assert len(get_inbox_messages("agent:implementation_partner", limit=10)) == 1
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_unknown_mapping_is_not_routed(client, monkeypatch):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True, app_key="unknown"),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._resolve_linear_event",
+        Mock(side_effect=LinearWorkspaceProviderConfigError("Unknown Linear app key: unknown")),
+    )
+    handle_factory = Mock()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
+        handle_factory,
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(),
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["routed"] is False
+    assert get_thread("linear", "session-1") is not None
+    assert get_inbox_messages("agent:implementation_partner", limit=10) == []
+    handle_factory.assert_not_called()
     presence_provider_manager.clear_providers()
 
 
@@ -374,15 +489,10 @@ def test_linear_agent_webhook_creates_presence_records_and_inbox_notification(
 ):
     _test_session(monkeypatch)
     presence_provider_manager.clear_providers()
-    delivery = _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
+    handle = _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
-    )
-    routed = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.runtime.handle_presence_event",
-        routed,
     )
 
     response = client.post(
@@ -393,11 +503,10 @@ def test_linear_agent_webhook_creates_presence_records_and_inbox_notification(
 
     assert response.status_code == 200
     assert response.json()["routed"] is True
-    routed.assert_not_called()
-    delivery.assert_called_once_with("terminal-inbox")
+    assert len(handle.accepted) == 1
     thread = get_thread("linear", "session-1")
     assert thread is not None
-    messages = get_inbox_messages("terminal-inbox", limit=10)
+    messages = get_inbox_messages("agent:implementation_partner", limit=10)
     assert len(messages) == 1
     assert messages[0].sender_id == "presence"
     assert messages[0].source_kind == PRESENCE_INBOX_SOURCE_KIND
@@ -407,13 +516,53 @@ def test_linear_agent_webhook_creates_presence_records_and_inbox_notification(
     presence_provider_manager.clear_providers()
 
 
+def test_linear_agent_webhook_posts_accepted_activity_and_external_url_once(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch, terminal_id="terminal-ready")
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(
+            True,
+            app_key="implementation_partner",
+        ),
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(body="Please start visibly."),
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    handle.create_activity.assert_called_once_with(
+        "session-1",
+        {
+            "type": "thought",
+            "body": "CAO accepted this Linear session and is starting or notifying "
+            "Implementation Partner.",
+        },
+        app_key="implementation_partner",
+    )
+    handle.update_external_url.assert_called_once_with(
+        "session-1",
+        "terminal-ready",
+        agent_id="implementation_partner",
+        app_key="implementation_partner",
+    )
+    presence_provider_manager.clear_providers()
+
+
 def test_linear_agent_webhook_duplicate_delivery_does_not_duplicate_inbox_or_terminal_effects(
     client,
     monkeypatch,
 ):
     _test_session(monkeypatch)
     presence_provider_manager.clear_providers()
-    delivery = _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
+    handle = _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
@@ -425,8 +574,38 @@ def test_linear_agent_webhook_duplicate_delivery_does_not_duplicate_inbox_or_ter
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert len(get_inbox_messages("terminal-inbox", limit=10)) == 1
-    delivery.assert_called_once_with("terminal-inbox")
+    assert len(get_inbox_messages("agent:implementation_partner", limit=10)) == 1
+    assert len(handle.accepted) == 1
+    handle.create_activity.assert_called_once()
+    handle.update_external_url.assert_called_once()
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_duplicate_activity_does_not_duplicate_lifecycle_effects(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
+    )
+
+    payload = _linear_agent_payload(body="Only one lifecycle set.", activity_id="activity-1")
+    first = client.post("/linear/webhooks/agent", json=payload, headers=_linear_headers())
+    second = client.post(
+        "/linear/webhooks/agent",
+        json=payload,
+        headers=_linear_headers("delivery-2"),
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(get_inbox_messages("agent:implementation_partner", limit=10)) == 1
+    handle.create_activity.assert_called_once()
+    handle.update_external_url.assert_called_once()
     presence_provider_manager.clear_providers()
 
 
@@ -436,7 +615,7 @@ def test_linear_agent_sessions_produce_distinct_presence_inbox_sources(
 ):
     _test_session(monkeypatch)
     presence_provider_manager.clear_providers()
-    _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
+    _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
@@ -453,7 +632,7 @@ def test_linear_agent_sessions_produce_distinct_presence_inbox_sources(
         headers=_linear_headers("delivery-2"),
     )
 
-    messages = get_inbox_messages("terminal-inbox", limit=10)
+    messages = get_inbox_messages("agent:implementation_partner", limit=10)
     assert len(messages) == 2
     assert {message.source_kind for message in messages} == {PRESENCE_INBOX_SOURCE_KIND}
     assert messages[0].source_id != messages[1].source_id
@@ -465,7 +644,7 @@ def test_linear_agent_sessions_produce_distinct_presence_inbox_sources(
 def test_linear_text_preview_is_lightweight_and_bounded(client, monkeypatch):
     _test_session(monkeypatch)
     presence_provider_manager.clear_providers()
-    _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
+    _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
@@ -479,7 +658,7 @@ def test_linear_text_preview_is_lightweight_and_bounded(client, monkeypatch):
     )
 
     assert response.status_code == 200
-    notification = get_inbox_messages("terminal-inbox", limit=10)[0].message
+    notification = get_inbox_messages("agent:implementation_partner", limit=10)[0].message
     assert len(notification) <= 700
     assert "Latest Linear request." in notification
     assert notification.count("older transcript line") < 20
@@ -489,7 +668,7 @@ def test_linear_text_preview_is_lightweight_and_bounded(client, monkeypatch):
 def test_linear_attachment_metadata_does_not_block_text_notification(client, monkeypatch):
     _test_session(monkeypatch)
     presence_provider_manager.clear_providers()
-    _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
+    _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
@@ -505,9 +684,74 @@ def test_linear_attachment_metadata_does_not_block_text_notification(client, mon
     )
 
     assert response.status_code == 200
-    notification = get_inbox_messages("terminal-inbox", limit=10)[0].message
+    notification = get_inbox_messages("agent:implementation_partner", limit=10)[0].message
     assert "Text should still notify." in notification
     assert "Attachment/media metadata present." in notification
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_posts_bounded_error_activity_when_runtime_startup_fails(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(
+        monkeypatch,
+        terminal_id=None,
+        status=AgentRuntimeStatus.NOT_STARTED,
+        error="Traceback: LINEAR_ACCESS_TOKEN=secret-value\n" + ("frame " * 100),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(body="Please start even if offline."),
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    assert handle.update_external_url.call_count == 0
+    assert handle.create_activity.call_count == 2
+    error_content = handle.create_activity.call_args_list[1].args[1]
+    assert error_content["type"] == "error"
+    assert len(error_content["body"]) <= 220
+    assert "could not start or reuse" in error_content["body"]
+    assert "secret-value" not in error_content["body"]
+    assert "LINEAR_ACCESS_TOKEN" not in error_content["body"]
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_does_not_report_startup_failed_for_delivery_error_after_terminal(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(
+        monkeypatch,
+        terminal_id="terminal-ready",
+        status=AgentRuntimeStatus.IDLE,
+        error="delivery failed after terminal startup",
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(body="Please start and deliver."),
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    handle.update_external_url.assert_called_once()
+    handle.create_activity.assert_called_once()
+    assert handle.create_activity.call_args.args[1]["type"] == "thought"
     presence_provider_manager.clear_providers()
 
 
@@ -517,10 +761,13 @@ def test_linear_reply_from_inbox_notification_routes_through_provider_registry(
 ):
     _test_session(monkeypatch)
     presence_provider_manager.clear_providers()
-    _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
+    _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
-        lambda raw, signature, payload: LinearWebhookVerification(True),
+        lambda raw, signature, payload: LinearWebhookVerification(
+            True,
+            app_key="implementation_partner",
+        ),
     )
     create_activity = Mock(return_value={"id": "reply-1"})
     manager = PresenceProviderManager(
@@ -536,13 +783,14 @@ def test_linear_reply_from_inbox_notification_routes_through_provider_registry(
         json=_linear_agent_payload(),
         headers=_linear_headers(),
     )
-    inbox = get_inbox_messages("terminal-inbox", limit=10)[0]
+    inbox = get_inbox_messages("agent:implementation_partner", limit=10)[0]
 
     result = reply_to_inbox_message(inbox.id, "Reply through Linear", provider_manager=manager)
 
     create_activity.assert_called_once_with(
         "session-1",
         {"type": "response", "body": "Reply through Linear"},
+        app_key="implementation_partner",
     )
     assert result.outbound_message.external_id == "reply-1"
     assert result.outbound_message.state == "delivered"
@@ -552,7 +800,7 @@ def test_linear_reply_from_inbox_notification_routes_through_provider_registry(
 def test_linear_reply_failure_from_inbox_notification_is_visible(client, monkeypatch):
     _test_session(monkeypatch)
     presence_provider_manager.clear_providers()
-    _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
+    _use_mapped_linear_runtime(monkeypatch)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         lambda raw, signature, payload: LinearWebhookVerification(True),
@@ -570,7 +818,7 @@ def test_linear_reply_failure_from_inbox_notification_is_visible(client, monkeyp
         json=_linear_agent_payload(),
         headers=_linear_headers(),
     )
-    inbox = get_inbox_messages("terminal-inbox", limit=10)[0]
+    inbox = get_inbox_messages("agent:implementation_partner", limit=10)[0]
 
     with pytest.raises(PresenceReplyDeliveryError, match="provider reply failed"):
         reply_to_inbox_message(inbox.id, "This should surface failure", provider_manager=manager)

@@ -6,6 +6,7 @@ import { ConfirmModal } from '../components/ConfirmModal'
 import { MonitoringIndicator } from '../components/MonitoringIndicator'
 import { MonitoringButton } from '../components/MonitoringButton'
 import { BatonIndicator } from '../components/BatonIndicator'
+import { parseInitialDashboardView } from '../dashboardLink'
 import { useStore } from '../store'
 import { api, Baton } from '../api'
 
@@ -38,6 +39,58 @@ describe('StatusBadge', () => {
   it('renders null status as unknown', () => {
     render(<StatusBadge status={null} />)
     expect(screen.getByText('Unknown')).toBeInTheDocument()
+  })
+})
+
+describe('parseInitialDashboardView', () => {
+  it('opens the agents tab when a terminal deep link is present', () => {
+    expect(parseInitialDashboardView('?terminal_id=t1')).toEqual({
+      tab: 'agents',
+      terminalId: 't1',
+      terminalToken: null,
+      agentId: null,
+      agentToken: null,
+    })
+  })
+
+  it('keeps a terminal dashboard token when one is present', () => {
+    expect(parseInitialDashboardView('?terminal_id=t1&terminal_token=signed.token')).toEqual({
+      tab: 'agents',
+      terminalId: 't1',
+      terminalToken: 'signed.token',
+      agentId: null,
+      agentToken: null,
+    })
+  })
+
+  it('opens the agents tab when a durable agent deep link is present', () => {
+    expect(parseInitialDashboardView('?agent_id=discovery_partner&agent_token=agent.token')).toEqual({
+      tab: 'agents',
+      terminalId: null,
+      terminalToken: null,
+      agentId: 'discovery_partner',
+      agentToken: 'agent.token',
+    })
+  })
+
+  it('accepts valid tab links without a terminal', () => {
+    expect(parseInitialDashboardView('?tab=flows')).toEqual({
+      tab: 'flows',
+      terminalId: null,
+      terminalToken: null,
+      agentId: null,
+      agentToken: null,
+    })
+  })
+
+  it('falls back to home for unknown tabs', () => {
+    expect(parseInitialDashboardView('?tab=nope')).toEqual({
+      tab: 'home',
+      terminalId: null,
+      terminalToken: null,
+      agentId: null,
+      agentToken: null,
+    })
   })
 })
 

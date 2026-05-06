@@ -11,10 +11,14 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, get_inbox_messages
+from cli_agent_orchestrator.clients.database import Base, create_inbox_message, get_inbox_messages
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle, AgentRuntimeStatus
+from cli_agent_orchestrator.runtime.agent import (
+    AgentRuntimeHandle,
+    AgentRuntimeNotification,
+    AgentRuntimeStatus,
+)
 from cli_agent_orchestrator.services import inbox_service
 
 
@@ -239,6 +243,37 @@ def test_notify_queues_without_terminal_input_while_agent_is_busy(
 
     assert result.status == AgentRuntimeStatus.BUSY
     assert result.delivery.attempted is False
+    send_input.assert_not_called()
+    assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.PENDING
+
+
+def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_busy(
+    test_session,
+    monkeypatch,
+    handle,
+):
+    _create_terminal()
+    _provider(monkeypatch, TerminalStatus.PROCESSING)
+    send_input = Mock()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.runtime.agent.terminal_service.send_input",
+        send_input,
+    )
+    inbox = create_inbox_message(
+        "presence",
+        "terminal-1",
+        "[CAO inbox notification]\nID: 1",
+        source_kind="presence_thread",
+        source_id="1",
+    )
+
+    result = handle.accept_notification(
+        AgentRuntimeNotification(inbox_message=inbox, created=True, receiver_id="terminal-1")
+    )
+
+    assert result.status == AgentRuntimeStatus.BUSY
+    assert result.delivery.attempted is False
+    assert result.notification.inbox_message.id == inbox.id
     send_input.assert_not_called()
     assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.PENDING
 

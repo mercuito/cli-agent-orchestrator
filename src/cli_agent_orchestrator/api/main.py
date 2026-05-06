@@ -15,13 +15,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Dict, List, Literal, NoReturn, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
+from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
 from cli_agent_orchestrator.clients.database import (
     create_inbox_message,
     get_baton_record,
@@ -47,6 +57,7 @@ from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 from cli_agent_orchestrator.services import (
     baton_service,
     baton_watchdog_service,
@@ -62,6 +73,11 @@ from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 from cli_agent_orchestrator.utils.agent_profiles import resolve_provider
+from cli_agent_orchestrator.utils.dashboard_links import (
+    create_terminal_dashboard_token,
+    validate_agent_dashboard_token,
+    validate_terminal_dashboard_token,
+)
 from cli_agent_orchestrator.utils.logging import setup_logging
 from cli_agent_orchestrator.utils.skills import (
     SkillNameError,
@@ -69,9 +85,39 @@ from cli_agent_orchestrator.utils.skills import (
     validate_skill_name,
 )
 from cli_agent_orchestrator.utils.terminal import generate_session_name
-from cli_agent_orchestrator.workspace_providers import initialize_enabled_workspace_providers
+from cli_agent_orchestrator.workspace_providers import (
+    initialize_enabled_workspace_providers,
+    resolve_agent_identity_for_runtime,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _terminal_ws_authorized(websocket: WebSocket, terminal_id: str) -> bool:
+    """Return whether a websocket may attach to a terminal."""
+
+    client_host = websocket.client.host if websocket.client else None
+    if client_host in (None, "127.0.0.1", "::1", "localhost"):
+        return True
+
+    token = websocket.query_params.get("terminal_token")
+    return bool(token and validate_terminal_dashboard_token(token, terminal_id))
+
+
+def _client_is_loopback(request: Request) -> bool:
+    client_host = request.client.host if request.client else None
+    return client_host in (None, "127.0.0.1", "::1", "localhost")
+
+
+def _agent_dashboard_request_authorized(
+    request: Request,
+    agent_id: str,
+    agent_token: Optional[str],
+) -> bool:
+    """Return whether an HTTP request may resolve a durable agent dashboard link."""
+    return _client_is_loopback(request) or bool(
+        agent_token and validate_agent_dashboard_token(agent_token, agent_id)
+    )
 
 
 async def flow_daemon():
@@ -99,6 +145,13 @@ async def flow_daemon():
 class TerminalOutputResponse(BaseModel):
     output: str
     mode: str
+
+
+class AgentRuntimeTerminalResponse(BaseModel):
+    """Current terminal manifestation for a durable CAO agent identity."""
+
+    terminal: Terminal
+    terminal_token: str
 
 
 class SkillContentResponse(BaseModel):
@@ -526,6 +579,43 @@ async def get_terminal(terminal_id: TerminalId) -> Terminal:
         )
 
 
+@app.get("/agents/runtime/{agent_id}/terminal", response_model=AgentRuntimeTerminalResponse)
+async def get_agent_runtime_terminal(
+    agent_id: str,
+    request: Request,
+    agent_token: Optional[str] = Query(default=None),
+) -> AgentRuntimeTerminalResponse:
+    """Resolve a durable CAO agent identity to its current terminal manifestation."""
+    if not _agent_dashboard_request_authorized(request, agent_id, agent_token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agent dashboard link token is required",
+        )
+    try:
+        identity = resolve_agent_identity_for_runtime(agent_id)
+        runtime_terminal = AgentRuntimeHandle(identity).current_terminal()
+        if runtime_terminal is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent runtime '{agent_id}' has no running terminal",
+            )
+        terminal = Terminal(**terminal_service.get_terminal(runtime_terminal.id))
+        return AgentRuntimeTerminalResponse(
+            terminal=terminal,
+            terminal_token=create_terminal_dashboard_token(runtime_terminal.id),
+        )
+    except HTTPException:
+        raise
+    except AgentIdentityConfigError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to resolve agent runtime {agent_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resolve agent runtime: {str(e)}",
+        )
+
+
 @app.get("/terminals/{terminal_id}/working-directory", response_model=WorkingDirectoryResponse)
 async def get_terminal_working_directory(terminal_id: TerminalId) -> WorkingDirectoryResponse:
     """Get the current working directory of a terminal's pane."""
@@ -717,9 +807,8 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
     It is intended for localhost-only use. Do NOT expose the server to
     untrusted networks (e.g. --host 0.0.0.0) without adding authentication.
     """
-    # Reject connections from non-loopback clients
-    client_host = websocket.client.host if websocket.client else None
-    if client_host not in (None, "127.0.0.1", "::1", "localhost"):
+    # Reject non-loopback clients unless they came through a signed dashboard link.
+    if not _terminal_ws_authorized(websocket, terminal_id):
         await websocket.close(code=4003, reason="WebSocket access is restricted to localhost")
         return
 

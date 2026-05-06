@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Mapping, Optional, cast
 
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.presence.models import (
@@ -106,7 +106,7 @@ def _message_kind(activity: Mapping[str, Any]) -> MessageKind:
 
     value = _string_value(activity.get("type") or content.get("type"))
     if value in {"prompt", "thought", "response", "elicitation", "error", "stop"}:
-        return value
+        return cast(MessageKind, value)
     return "unknown"
 
 
@@ -226,7 +226,8 @@ class LinearPresenceProvider:
     ) -> ConversationMessage:
         self._require_linear_ref(thread_ref)
         content = {"type": kind, "body": body}
-        activity = self._client.create_agent_activity(thread_ref.id, content)
+        app_key = _app_key_from_reply_metadata(metadata)
+        activity = self._client.create_agent_activity(thread_ref.id, content, app_key=app_key)
         activity_id = _string_value(activity.get("id")) if isinstance(activity, Mapping) else None
         return ConversationMessage(
             kind=kind,
@@ -262,6 +263,42 @@ class LinearPresenceProvider:
     def _require_linear_ref(self, ref: ExternalRef) -> None:
         if ref.provider != PROVIDER:
             raise ValueError(f"Linear provider cannot handle ref for provider {ref.provider}")
+
+
+def _app_key_from_reply_metadata(metadata: Optional[Mapping[str, Any]]) -> Optional[str]:
+    if not metadata:
+        return None
+    for key in ("_cao_linear_app_key", "app_key", "linear_app_key"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    for key in ("thread_metadata", "thread_raw_snapshot", "raw_snapshot"):
+        found = _app_key_from_nested(metadata.get(key))
+        if found:
+            return found
+    return None
+
+
+def _app_key_from_nested(value: Any) -> Optional[str]:
+    if isinstance(value, Mapping):
+        direct = value.get("_cao_linear_app_key") or value.get("app_key") or value.get("appKey")
+        if direct:
+            return str(direct)
+        data = value.get("data")
+        if isinstance(data, Mapping):
+            found = _app_key_from_nested(data)
+            if found:
+                return found
+        for item in value.values():
+            found = _app_key_from_nested(item)
+            if found:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = _app_key_from_nested(item)
+            if found:
+                return found
+    return None
 
 
 def thread_from_agent_session(agent_session: Mapping[str, Any]) -> Optional[ConversationThread]:

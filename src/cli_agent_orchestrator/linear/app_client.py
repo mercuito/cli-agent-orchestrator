@@ -6,15 +6,20 @@ import hashlib
 import hmac
 import json
 import logging
+import threading
 import time
-from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
-from urllib.parse import urlsplit
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional, cast
+from urllib.parse import quote, urlsplit
 
 import requests
 
 from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+from cli_agent_orchestrator.utils.dashboard_links import (
+    create_agent_dashboard_token,
+    create_terminal_dashboard_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +27,9 @@ LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token"
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 WEBHOOK_TIMESTAMP_TOLERANCE_MS = 60_000
 APP_KEY_PATTERN = linear_provider.APP_KEY_PATTERN
+TOKEN_REFRESH_SKEW = timedelta(minutes=5)
+_refresh_locks_guard = threading.Lock()
+_refresh_locks: dict[str, threading.Lock] = {}
 
 
 class LinearAppError(Exception):
@@ -175,7 +183,127 @@ def exchange_oauth_code(code: str, *, app_key: Optional[str] = None) -> Dict[str
     if response.status_code >= 400:
         raise LinearOAuthError(f"Linear OAuth token exchange failed: {response.text}")
 
-    return response.json()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise LinearOAuthError("Linear OAuth token exchange returned a non-object response")
+    return cast(Dict[str, Any], payload)
+
+
+def _token_refresh_lock(app_key: Optional[str]) -> threading.Lock:
+    key = normalize_app_key(app_key) if app_key else "__default__"
+    with _refresh_locks_guard:
+        lock = _refresh_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _refresh_locks[key] = lock
+        return lock
+
+
+def _token_expires_soon(presence: linear_provider.LinearPresence) -> bool:
+    expires_at = linear_provider.parse_linear_token_expires_at(presence)
+    if expires_at is None:
+        return False
+    return expires_at <= datetime.now(timezone.utc) + TOKEN_REFRESH_SKEW
+
+
+def _configured_presence(
+    app_key: Optional[str],
+) -> Optional[linear_provider.LinearPresence]:
+    config = linear_provider.load_linear_provider_config(
+        allow_legacy_env=True,
+        env_reader=linear_env,
+    )
+    if config is None:
+        return None
+    if app_key:
+        return config.presence_by_app_key(app_key)
+    if len(config.presences) == 1:
+        return next(iter(config.presences.values()))
+    return None
+
+
+def _token_expires_at_from_payload(token_payload: Dict[str, Any]) -> Optional[str]:
+    if token_payload.get("expires_in") is None:
+        return None
+    return (
+        datetime.now(timezone.utc) + timedelta(seconds=int(token_payload["expires_in"]))
+    ).isoformat()
+
+
+def refresh_access_token(
+    presence: linear_provider.LinearPresence,
+) -> str:
+    """Refresh and persist a Linear app presence access token."""
+    if not presence.refresh_token:
+        raise LinearOAuthError(
+            f"Linear presence {presence.presence_id} does not have a refresh token; "
+            "reauthorize the Linear app"
+        )
+    client_id = presence.client_id or required_linear_app_env(presence.app_key, "CLIENT_ID")
+    client_secret = presence.client_secret or required_linear_app_env(
+        presence.app_key, "CLIENT_SECRET"
+    )
+
+    try:
+        response = requests.post(
+            LINEAR_TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": presence.refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise LinearOAuthError(f"Linear OAuth token refresh failed: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise LinearOAuthError(f"Linear OAuth token refresh failed: {response.text}")
+
+    token_payload = response.json()
+    access_token = token_payload.get("access_token")
+    refresh_token = token_payload.get("refresh_token")
+    if not access_token:
+        raise LinearOAuthError("Linear OAuth refresh response did not include access_token")
+    if not refresh_token:
+        raise LinearOAuthError("Linear OAuth refresh response did not include refresh_token")
+
+    linear_provider.persist_linear_oauth_install(
+        app_key=presence.app_key,
+        access_token=str(access_token),
+        refresh_token=str(refresh_token),
+        token_expires_at=_token_expires_at_from_payload(token_payload),
+    )
+    return str(access_token)
+
+
+def access_token_for_presence(
+    presence: linear_provider.LinearPresence,
+    *,
+    force_refresh: bool = False,
+) -> str:
+    """Return a usable Linear access token, refreshing when needed."""
+    if presence.access_token and not force_refresh and not _token_expires_soon(presence):
+        return presence.access_token
+
+    with _token_refresh_lock(presence.app_key):
+        current = _configured_presence(presence.app_key) or presence
+        if current.access_token and not force_refresh and not _token_expires_soon(current):
+            return current.access_token
+        return refresh_access_token(current)
+
+
+def access_token_for_app_key(
+    app_key: Optional[str],
+    *,
+    force_refresh: bool = False,
+) -> str:
+    """Return a usable Linear access token for a configured app key."""
+    presence = _configured_presence(app_key)
+    if presence is None:
+        return required_linear_app_env(app_key, "ACCESS_TOKEN")
+    return access_token_for_presence(presence, force_refresh=force_refresh)
 
 
 def fetch_viewer(access_token: str) -> Dict[str, Any]:
@@ -203,15 +331,12 @@ def fetch_viewer(access_token: str) -> Dict[str, Any]:
     return viewer
 
 
-def linear_graphql(
+def _linear_graphql_once(
     query: str,
-    variables: Optional[Dict[str, Any]] = None,
+    variables: Optional[Dict[str, Any]],
     *,
-    access_token: Optional[str] = None,
-    app_key: Optional[str] = None,
+    token: str,
 ) -> Dict[str, Any]:
-    """Call Linear GraphQL with the installed app actor token."""
-    token = access_token or required_linear_app_env(app_key, "ACCESS_TOKEN")
     try:
         response = requests.post(
             LINEAR_GRAPHQL_URL,
@@ -226,9 +351,34 @@ def linear_graphql(
         raise LinearAppError(f"Linear GraphQL request failed: {response.text}")
 
     payload = response.json()
+    if not isinstance(payload, dict):
+        raise LinearAppError("Linear GraphQL returned a non-object response")
     if payload.get("errors"):
         raise LinearAppError(f"Linear GraphQL returned errors: {payload['errors']}")
-    return payload
+    return cast(Dict[str, Any], payload)
+
+
+def _is_auth_error(exc: LinearAppError) -> bool:
+    message = str(exc).lower()
+    return "401" in message or "unauthorized" in message or "authentication required" in message
+
+
+def linear_graphql(
+    query: str,
+    variables: Optional[Dict[str, Any]] = None,
+    *,
+    access_token: Optional[str] = None,
+    app_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Call Linear GraphQL with the installed app actor token."""
+    token = access_token or access_token_for_app_key(app_key)
+    try:
+        return _linear_graphql_once(query, variables, token=token)
+    except LinearAppError as exc:
+        if access_token or not _is_auth_error(exc):
+            raise
+        refreshed = access_token_for_app_key(app_key, force_refresh=True)
+        return _linear_graphql_once(query, variables, token=refreshed)
 
 
 def install_linear_app(code: str, state: Optional[str]) -> Dict[str, Any]:
@@ -242,17 +392,11 @@ def install_linear_app(code: str, state: Optional[str]) -> Dict[str, Any]:
 
     viewer = fetch_viewer(access_token)
 
-    token_expires_at = None
-    if token_payload.get("expires_in") is not None:
-        token_expires_at = (
-            datetime.now(timezone.utc) + timedelta(seconds=int(token_payload["expires_in"]))
-        ).isoformat()
-
     linear_provider.persist_linear_oauth_install(
         app_key=app_key,
         access_token=access_token,
         refresh_token=token_payload.get("refresh_token"),
-        token_expires_at=token_expires_at,
+        token_expires_at=_token_expires_at_from_payload(token_payload),
         app_user_id=str(viewer["id"]),
         app_user_name=str(viewer["name"]) if viewer.get("name") else None,
     )
@@ -285,15 +429,42 @@ def public_cao_url() -> Optional[str]:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def public_cao_terminal_url(terminal_id: str) -> Optional[str]:
+    """Return the public dashboard URL for a CAO terminal."""
+    base_url = public_cao_url()
+    if not base_url:
+        return None
+    token = create_terminal_dashboard_token(terminal_id)
+    return (
+        f"{base_url}/?tab=agents&terminal_id={quote(terminal_id, safe='')}"
+        f"&terminal_token={quote(token, safe='')}"
+    )
+
+
+def public_cao_agent_url(agent_id: str) -> Optional[str]:
+    """Return the public dashboard URL for a durable CAO agent identity."""
+    base_url = public_cao_url()
+    if not base_url:
+        return None
+    token = create_agent_dashboard_token(agent_id)
+    return (
+        f"{base_url}/?tab=agents&agent_id={quote(agent_id, safe='')}"
+        f"&agent_token={quote(token, safe='')}"
+    )
+
+
 def update_agent_session_external_url(
     agent_session_id: str,
     terminal_id: str,
     *,
+    agent_id: Optional[str] = None,
     app_key: Optional[str] = None,
 ) -> bool:
     """Attach a CAO URL to a Linear AgentSession for smoke-test visibility."""
-    base_url = public_cao_url()
-    if not base_url:
+    terminal_url = (
+        public_cao_agent_url(agent_id) if agent_id else public_cao_terminal_url(terminal_id)
+    )
+    if not terminal_url:
         return False
 
     linear_graphql(
@@ -310,7 +481,7 @@ def update_agent_session_external_url(
                 "externalUrls": [
                     {
                         "label": "Open CAO",
-                        "url": f"{base_url}/terminals/{terminal_id}",
+                        "url": terminal_url,
                     }
                 ]
             },
@@ -595,8 +766,9 @@ def agent_session_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         return direct
 
     data = payload.get("data")
-    if isinstance(data, dict) and isinstance(data.get("agentSession"), dict):
-        return data["agentSession"]
+    agent_session = data.get("agentSession") if isinstance(data, dict) else None
+    if isinstance(agent_session, dict):
+        return cast(Dict[str, Any], agent_session)
 
     return {}
 
@@ -615,15 +787,17 @@ def agent_activity_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         return direct
 
     data = payload.get("data")
-    if isinstance(data, dict) and isinstance(data.get("agentActivity"), dict):
-        return data["agentActivity"]
+    agent_activity = data.get("agentActivity") if isinstance(data, dict) else None
+    if isinstance(agent_activity, dict):
+        return cast(Dict[str, Any], agent_activity)
 
     return {}
 
 
 def prompt_context_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     """Extract Linear prompt context from known AgentSession payload shapes."""
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    raw_data = payload.get("data")
+    data = cast(Dict[str, Any], raw_data) if isinstance(raw_data, dict) else {}
     agent_session = agent_session_from_payload(payload)
     value = (
         payload.get("promptContext")
@@ -639,6 +813,7 @@ def prompt_context_from_payload(payload: Dict[str, Any]) -> Optional[str]:
 def prompt_body_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     """Extract a user prompt body from known AgentActivity payload shapes."""
     activity = agent_activity_from_payload(payload)
-    content = activity.get("content") if isinstance(activity.get("content"), dict) else {}
+    raw_content = activity.get("content")
+    content = cast(Dict[str, Any], raw_content) if isinstance(raw_content, dict) else {}
     body = activity.get("body") or content.get("body")
     return str(body) if body else None

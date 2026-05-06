@@ -143,6 +143,10 @@ class AgentRuntimeHandle:
             agent_profile=created.agent_profile,
         )
 
+    def current_terminal(self) -> Optional[AgentRuntimeTerminal]:
+        """Return the current terminal manifestation without starting one."""
+        return self._terminal()
+
     def notify(
         self,
         message: str,
@@ -177,7 +181,57 @@ class AgentRuntimeHandle:
                 started = True
             except Exception as exc:
                 error = str(exc)
-                logger.warning("Accepted notification for offline agent %s: %s", self.identity.id, exc)
+                logger.warning(
+                    "Accepted notification for offline agent %s: %s", self.identity.id, exc
+                )
+
+        delivery = (
+            self.try_deliver_pending()
+            if attempt_delivery
+            else AgentRuntimeDeliveryResult(
+                status=self.status(),
+                terminal_id=self._terminal_id(),
+                attempted=False,
+                delivered=False,
+            )
+        )
+        return AgentRuntimeNotifyResult(
+            notification=notification,
+            status=delivery.status,
+            terminal_id=delivery.terminal_id,
+            started=started,
+            delivery=delivery,
+            error=error or delivery.error,
+        )
+
+    def accept_notification(
+        self,
+        notification: AgentRuntimeNotification,
+        *,
+        ensure_started: bool = True,
+        attempt_delivery: bool = True,
+    ) -> AgentRuntimeNotifyResult:
+        """Start or wake the runtime for an inbox notification created by another owner.
+
+        Provider integrations sometimes need a CAO-owned inbox surface to create
+        the backing message because that surface owns idempotency or reply refs.
+        This method keeps terminal lifecycle and busy/idle delivery behavior
+        behind the runtime handle for those already-durable notifications.
+        """
+        terminal = self._terminal()
+        started = False
+        error = None
+        if ensure_started and self.status() is AgentRuntimeStatus.NOT_STARTED:
+            try:
+                terminal = self.ensure_started()
+                self._move_pending_agent_notifications_to_terminal(terminal.id)
+                notification = self._refresh_notification_receiver(notification)
+                started = True
+            except Exception as exc:
+                error = str(exc)
+                logger.warning(
+                    "Accepted notification for offline agent %s: %s", self.identity.id, exc
+                )
 
         delivery = (
             self.try_deliver_pending()
@@ -307,9 +361,7 @@ class AgentRuntimeHandle:
                         inbox_message_id=inbox_message.id,
                         created_at=datetime.now(),
                     )
-                    .on_conflict_do_nothing(
-                        index_elements=["agent_id", "source_kind", "source_id"]
-                    )
+                    .on_conflict_do_nothing(index_elements=["agent_id", "source_kind", "source_id"])
                 )
                 if inserted.rowcount != 1:
                     session.query(db_module.InboxModel).filter(

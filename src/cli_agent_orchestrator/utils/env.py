@@ -1,5 +1,6 @@
 """Helpers for managing CAO environment variables."""
 
+import os
 from string import Template
 
 from dotenv import dotenv_values, set_key, unset_key
@@ -27,6 +28,7 @@ def set_env_var(key: str, value: str) -> None:
     if not CAO_ENV_FILE.exists():
         CAO_ENV_FILE.touch(mode=0o600, exist_ok=True)
     set_key(str(CAO_ENV_FILE), key, value)
+    os.environ[key] = value
 
 
 def unset_env_var(key: str) -> None:

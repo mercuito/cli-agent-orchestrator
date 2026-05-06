@@ -1,12 +1,203 @@
 """Tests for terminal-related API endpoints including working directory and exit."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityConfigError
 from cli_agent_orchestrator.api.main import app
 from cli_agent_orchestrator.models.terminal import Terminal
+
+
+class TestTerminalWebsocketAuthorization:
+    def _websocket(self, *, host: str, query_params: dict[str, str] | None = None):
+        return SimpleNamespace(client=SimpleNamespace(host=host), query_params=query_params or {})
+
+    def test_loopback_websocket_is_authorized_without_token(self):
+        from cli_agent_orchestrator.api import main
+
+        websocket = self._websocket(host="127.0.0.1")
+
+        assert main._terminal_ws_authorized(websocket, "term-1")
+
+    def test_non_loopback_websocket_requires_valid_terminal_token(self):
+        from cli_agent_orchestrator.api import main
+
+        websocket = self._websocket(host="100.81.152.85")
+
+        assert not main._terminal_ws_authorized(websocket, "term-1")
+
+    def test_non_loopback_websocket_accepts_valid_terminal_token(self, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        def validate(token: str, terminal_id: str) -> bool:
+            return token == "signed-token" and terminal_id == "term-1"
+
+        monkeypatch.setattr(main, "validate_terminal_dashboard_token", validate)
+        websocket = self._websocket(
+            host="100.81.152.85", query_params={"terminal_token": "signed-token"}
+        )
+
+        assert main._terminal_ws_authorized(websocket, "term-1")
+
+    def test_non_loopback_websocket_rejects_token_for_different_terminal(self, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        monkeypatch.setattr(
+            main, "validate_terminal_dashboard_token", lambda _token, _terminal_id: False
+        )
+        websocket = self._websocket(
+            host="100.81.152.85", query_params={"terminal_token": "signed-token"}
+        )
+
+        assert not main._terminal_ws_authorized(websocket, "term-2")
+
+
+class TestAgentRuntimeTerminalEndpoint:
+    def test_resolves_agent_identity_to_current_terminal_with_token(self, client, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        identity = AgentIdentity(
+            id="discovery_partner",
+            display_name="Discovery Partner",
+            agent_profile="developer",
+            cli_provider="codex",
+            workdir="/tmp",
+            session_name="linear-discovery-partner",
+        )
+        registry = MagicMock()
+        registry.get.return_value = identity
+        handle = MagicMock()
+        handle.current_terminal.return_value = SimpleNamespace(id="abcd1234")
+
+        monkeypatch.setattr(main, "resolve_agent_identity_for_runtime", lambda agent_id: identity)
+        monkeypatch.setattr(
+            main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
+        )
+        monkeypatch.setattr(main, "AgentRuntimeHandle", MagicMock(return_value=handle))
+        monkeypatch.setattr(
+            main, "create_terminal_dashboard_token", lambda terminal_id: "signed-token"
+        )
+        monkeypatch.setattr(
+            main.terminal_service,
+            "get_terminal",
+            lambda terminal_id: {
+                "id": terminal_id,
+                "name": "developer-1234",
+                "provider": "codex",
+                "session_name": "cao-linear-discovery-partner",
+                "agent_profile": "developer",
+                "allowed_tools": None,
+                "status": "idle",
+                "last_active": None,
+            },
+        )
+
+        response = client.get("/agents/runtime/discovery_partner/terminal?agent_token=agent-token")
+
+        assert response.status_code == 200
+        assert response.json()["terminal"]["id"] == "abcd1234"
+        assert response.json()["terminal_token"] == "signed-token"
+
+    def test_returns_404_when_agent_has_no_running_terminal(self, client, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        registry = MagicMock()
+        registry.get.return_value = MagicMock()
+        handle = MagicMock()
+        handle.current_terminal.return_value = None
+
+        monkeypatch.setattr(
+            main, "resolve_agent_identity_for_runtime", lambda agent_id: registry.get(agent_id)
+        )
+        monkeypatch.setattr(
+            main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
+        )
+        monkeypatch.setattr(main, "AgentRuntimeHandle", MagicMock(return_value=handle))
+
+        response = client.get("/agents/runtime/discovery_partner/terminal?agent_token=agent-token")
+
+        assert response.status_code == 404
+        assert "no running terminal" in response.json()["detail"]
+
+    def test_returns_404_for_unknown_agent_identity(self, client, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        monkeypatch.setattr(
+            main,
+            "validate_agent_dashboard_token",
+            lambda token, agent_id: token == "agent-token",
+        )
+        monkeypatch.setattr(
+            main,
+            "resolve_agent_identity_for_runtime",
+            MagicMock(side_effect=AgentIdentityConfigError("Unknown CAO agent identity")),
+        )
+
+        response = client.get("/agents/runtime/missing/terminal?agent_token=agent-token")
+
+        assert response.status_code == 404
+        assert "Unknown CAO agent identity" in response.json()["detail"]
+
+    def test_rejects_non_loopback_agent_resolution_without_valid_agent_token(
+        self, client, monkeypatch
+    ):
+        from cli_agent_orchestrator.api import main
+
+        resolver = MagicMock()
+        monkeypatch.setattr(main, "resolve_agent_identity_for_runtime", resolver)
+        monkeypatch.setattr(main, "validate_agent_dashboard_token", lambda token, agent_id: False)
+
+        response = client.get("/agents/runtime/discovery_partner/terminal")
+
+        assert response.status_code == 403
+        resolver.assert_not_called()
+
+    def test_resolves_agent_identity_from_workspace_provider_mapping(self, client, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        identity = AgentIdentity(
+            id="discovery_partner",
+            display_name="Discovery Partner",
+            agent_profile="developer",
+            cli_provider="codex",
+            workdir="/tmp",
+            session_name="linear-discovery-partner",
+        )
+        handle = MagicMock()
+        handle.current_terminal.return_value = SimpleNamespace(id="abcd1234")
+
+        resolver = MagicMock(return_value=identity)
+        monkeypatch.setattr(main, "resolve_agent_identity_for_runtime", resolver)
+        monkeypatch.setattr(
+            main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
+        )
+        monkeypatch.setattr(main, "AgentRuntimeHandle", MagicMock(return_value=handle))
+        monkeypatch.setattr(
+            main, "create_terminal_dashboard_token", lambda terminal_id: "signed-token"
+        )
+        monkeypatch.setattr(
+            main.terminal_service,
+            "get_terminal",
+            lambda terminal_id: {
+                "id": terminal_id,
+                "name": "developer-1234",
+                "provider": "codex",
+                "session_name": "cao-linear-discovery-partner",
+                "agent_profile": "developer",
+                "allowed_tools": None,
+                "status": "idle",
+                "last_active": None,
+            },
+        )
+
+        response = client.get("/agents/runtime/discovery_partner/terminal?agent_token=agent-token")
+
+        assert response.status_code == 200
+        assert response.json()["terminal"]["id"] == "abcd1234"
+        resolver.assert_called_once_with("discovery_partner")
 
 
 class TestWorkingDirectoryEndpoint:

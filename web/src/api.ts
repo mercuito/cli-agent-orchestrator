@@ -42,6 +42,11 @@ export interface TerminalMeta {
   last_active: string | null
 }
 
+export interface AgentRuntimeTerminalLink {
+  terminal: Terminal
+  terminal_token: string
+}
+
 export interface AgentProfileInfo {
   name: string
   description: string
@@ -137,6 +142,13 @@ export const api = {
   deleteSession: (name: string) => fetchJSON<{ success: boolean; deleted: string[]; errors: any[] }>(`/sessions/${name}`, { method: 'DELETE' }),
 
   // Terminals
+  getTerminal: (id: string) => fetchJSON<Terminal>(`/terminals/${id}`),
+  getAgentRuntimeTerminal: (agentId: string, agentToken?: string | null) => {
+    const query = agentToken ? `?agent_token=${encodeURIComponent(agentToken)}` : ''
+    return fetchJSON<AgentRuntimeTerminalLink>(
+      `/agents/runtime/${encodeURIComponent(agentId)}/terminal${query}`,
+    )
+  },
   getTerminalStatus: (id: string) =>
     fetchJSON<Terminal>(`/terminals/${id}`).then(t => t.status),
   getTerminalOutput: (id: string, mode: 'full' | 'last' = 'full') =>

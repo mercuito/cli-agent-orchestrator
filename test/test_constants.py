@@ -16,6 +16,7 @@ class TestServerConstants:
 
             env_copy = os.environ.copy()
             env_copy.pop("CAO_API_HOST", None)
+            env_copy["CAO_LOAD_ENV_FILE"] = "0"
             with patch.dict("os.environ", env_copy, clear=True):
                 import importlib
 
@@ -30,6 +31,7 @@ class TestServerConstants:
 
         env_copy = os.environ.copy()
         env_copy.pop("CAO_API_PORT", None)
+        env_copy["CAO_LOAD_ENV_FILE"] = "0"
         with patch.dict("os.environ", env_copy, clear=True):
             import importlib
 
@@ -44,6 +46,7 @@ class TestServerConstants:
 
         env_copy = os.environ.copy()
         env_copy.pop("CAO_API_HOST", None)
+        env_copy["CAO_LOAD_ENV_FILE"] = "0"
         with patch.dict("os.environ", env_copy, clear=True):
             import importlib
 
@@ -58,6 +61,7 @@ class TestServerConstants:
 
         env_copy = os.environ.copy()
         env_copy.pop("CAO_ALLOWED_HOSTS", None)
+        env_copy["CAO_LOAD_ENV_FILE"] = "0"
         with patch.dict("os.environ", env_copy, clear=True):
             import importlib
 

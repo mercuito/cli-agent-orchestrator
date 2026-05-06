@@ -93,7 +93,7 @@ def reply_to_inbox_message(
         provider_reply = provider_manager.reply_to_thread(
             thread_ref,
             body,
-            metadata=_reply_metadata(inbox_message_id, metadata),
+            metadata=_reply_metadata(inbox_message_id, thread=thread, metadata=metadata),
         )
     except Exception as exc:
         failed_message = _record_failed_reply(
@@ -140,12 +140,20 @@ def _parse_thread_source_id(inbox_message: InboxMessage) -> int:
 
 def _reply_metadata(
     inbox_message_id: int,
+    *,
+    thread: ConversationThreadRecord,
     metadata: Optional[Mapping[str, Any]],
 ) -> Dict[str, Any]:
-    return {
+    result: Dict[str, Any] = {
         "inbox_message_id": inbox_message_id,
-        **(dict(metadata) if metadata is not None else {}),
     }
+    if thread.metadata is not None:
+        result["thread_metadata"] = thread.metadata
+    if thread.raw_snapshot is not None:
+        result["thread_raw_snapshot"] = thread.raw_snapshot
+    if metadata is not None:
+        result.update(dict(metadata))
+    return result
 
 
 def _record_successful_reply(

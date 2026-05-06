@@ -157,6 +157,31 @@ describe('API wrapper', () => {
     )
   })
 
+  it('getTerminal fetches terminal metadata', async () => {
+    const terminal = {
+      id: 't1',
+      name: 't1',
+      provider: 'codex',
+      session_name: 'cao-linear-discovery-partner',
+      agent_profile: 'discovery_partner',
+    }
+    mockResponse(terminal)
+    const result = await api.getTerminal('t1')
+    expect(result).toEqual(terminal)
+    expect(mockFetch).toHaveBeenCalledWith('/terminals/t1', expect.any(Object))
+  })
+
+  it('getAgentRuntimeTerminal includes agent dashboard token when provided', async () => {
+    mockResponse({ terminal: { id: 't1' }, terminal_token: 'terminal-token' })
+
+    await api.getAgentRuntimeTerminal('discovery_partner', 'agent-token')
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/agents/runtime/discovery_partner/terminal?agent_token=agent-token',
+      expect.any(Object),
+    )
+  })
+
   it('deleteSession sends DELETE', async () => {
     mockResponse({ success: true, deleted: [], errors: [] })
     await api.deleteSession('s1')

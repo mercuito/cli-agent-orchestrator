@@ -129,6 +129,63 @@ class TestPrepareCodexHome:
         assert agents_md.exists()
         assert agents_md.read_text().strip() == profile.system_prompt
 
+    def test_prepare_codex_home_copies_codex_auth_state(self, tmp_path: Path):
+        from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
+        auth_files = {
+            "auth.json": '{"ok":true}\n',
+            "installation_id": "install-1\n",
+            "state_5.sqlite": "state-db",
+            "state_5.sqlite-wal": "state-wal",
+            "state_5.sqlite-shm": "state-shm",
+        }
+        for name, contents in auth_files.items():
+            (global_codex_home / name).write_text(contents)
+        (global_codex_home / "history.jsonl").write_text('{"not":"copied"}\n')
+        (global_codex_home / "logs_2.sqlite").write_text("logs")
+
+        profile = type(
+            "Profile",
+            (),
+            {
+                "name": "codex_developer",
+                "description": "desc",
+                "system_prompt": "x",
+                "mcpServers": None,
+                "model": None,
+                "codexConfig": None,
+                "reasoning_effort": None,
+            },
+        )()
+
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=True,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
+            codex_home = prepare_codex_home(
+                terminal_id="abcd1234",
+                agent_profile="codex_developer",
+                working_directory=str(tmp_path / "work"),
+                cao_home_dir=tmp_path / "cao",
+                global_codex_home_dir=global_codex_home,
+            )
+
+        for name, contents in auth_files.items():
+            assert (codex_home / name).read_text() == contents
+        assert not (codex_home / "history.jsonl").exists()
+        assert not (codex_home / "logs_2.sqlite").exists()
+
     def test_prepare_codex_home_merges_trust_and_mcp(self, tmp_path: Path):
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
 
@@ -385,9 +442,7 @@ class TestPrepareCodexHome:
             patch(
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
                 "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
             ),
@@ -417,9 +472,7 @@ class TestPrepareCodexHome:
         # Overridden: CAO forces features.multi_agent off even if user has it on.
         assert data["features"]["multi_agent"] is False
 
-    def test_global_plugins_section_is_dropped_from_per_terminal_config(
-        self, tmp_path: Path
-    ):
+    def test_global_plugins_section_is_dropped_from_per_terminal_config(self, tmp_path: Path):
         """User-level ``[plugins.*]`` entries must not leak into per-terminal config.
 
         Note: this is *not* a suppression mechanism — Codex rewrites
@@ -460,9 +513,7 @@ class TestPrepareCodexHome:
             patch(
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
                 "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
             ),
@@ -507,9 +558,7 @@ class TestPrepareCodexHome:
             patch(
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
                 "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
             ),
@@ -526,9 +575,7 @@ class TestPrepareCodexHome:
         assert data["model"] == "gpt-5.5-profile-override"
         assert data["model_reasoning_effort"] == "high"
 
-    def test_missing_global_config_still_produces_valid_per_terminal_config(
-        self, tmp_path: Path
-    ):
+    def test_missing_global_config_still_produces_valid_per_terminal_config(self, tmp_path: Path):
         """No ~/.codex/config.toml — the minimum CAO overrides still apply."""
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
 
@@ -555,9 +602,7 @@ class TestPrepareCodexHome:
             patch(
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
                 "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
             ),

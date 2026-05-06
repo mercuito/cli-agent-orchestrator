@@ -11,12 +11,15 @@ for agent management.
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from cli_agent_orchestrator.models.provider import ProviderType
 
 
 def _parse_csv_env(name: str) -> list[str]:
     value = os.environ.get(name, "")
     return [entry.strip() for entry in value.split(",") if entry.strip()]
+
 
 # =============================================================================
 # Session Configuration
@@ -49,6 +52,8 @@ CAO_HOME_DIR = Path.home() / ".aws" / "cli-agent-orchestrator"
 
 # Managed environment variable file
 CAO_ENV_FILE = CAO_HOME_DIR / ".env"
+if os.environ.get("CAO_LOAD_ENV_FILE", "1").strip().lower() not in {"0", "false", "no", "off"}:
+    load_dotenv(CAO_ENV_FILE, override=False)
 
 # SQLite database directory
 DB_DIR = CAO_HOME_DIR / "db"

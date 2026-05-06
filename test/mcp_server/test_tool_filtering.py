@@ -9,12 +9,15 @@ wiring that makes Phase 2's resolver actually do something.
 
 from __future__ import annotations
 
+from importlib import resources
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from cli_agent_orchestrator.mcp_server import server
+from cli_agent_orchestrator.utils.agent_profiles import parse_agent_profile_text
+from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 
 
 class TestDeferredToolRegistry:
@@ -90,6 +93,18 @@ class TestRegisterTools:
         registered = server._register_tools(pending, ["a", "typo"], mcp_instance)
 
         assert registered == ["a"]
+
+    def test_builtin_developer_allowlist_registers_provider_inbox_tools(self):
+        store = resources.files("cli_agent_orchestrator.agent_store")
+        profile_text = (store / "developer.md").read_text()
+        profile = parse_agent_profile_text(profile_text, "developer")
+        allowlist = resolve_cao_tool_allowlist(profile)
+        mcp_instance = self._mock_mcp()
+
+        registered = server._register_tools(server._PENDING_TOOLS, allowlist, mcp_instance)
+
+        assert "read_inbox_message" in registered
+        assert "reply_to_inbox_message" in registered
 
     def test_tool_kwargs_are_forwarded_to_mcp_tool_decorator(self):
         """E.g. load_skill passes description=<long string>; terminate
@@ -180,9 +195,7 @@ class TestResolveAllowlistForTerminal:
 
     @patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_unknown_profile_returns_none_permissive(
-        self, mock_get, mock_load_profile
-    ):
+    def test_unknown_profile_returns_none_permissive(self, mock_get, mock_load_profile):
         """If the profile can't be loaded (e.g. stale DB row referencing a
         deleted profile), fall back to permissive rather than leaving the
         agent with zero tools."""

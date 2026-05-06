@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -96,23 +96,26 @@ def create_notification_for_message(
                 .first()
             )
 
-        notification_body = format_presence_notification(
-            message_row=message_row,
-            thread_row=thread_row,
-            work_item_row=work_item_row,
-            preview_chars=preview_chars,
-            notification_chars=notification_chars,
-        )
         inbox_row = db_module.InboxModel(
             sender_id=PRESENCE_INBOX_SENDER_ID,
             receiver_id=receiver_id,
-            message=notification_body,
+            message="[CAO inbox notification pending]",
             source_kind=PRESENCE_INBOX_SOURCE_KIND,
             source_id=str(thread_row.id),
             status=MessageStatus.PENDING.value,
             created_at=datetime.now(),
         )
         session.add(inbox_row)
+        session.flush()
+        mutable_inbox_row = cast(Any, inbox_row)
+        mutable_inbox_row.message = format_presence_notification(
+            inbox_message_id=cast(int, inbox_row.id),
+            message_row=message_row,
+            thread_row=thread_row,
+            work_item_row=work_item_row,
+            preview_chars=preview_chars,
+            notification_chars=notification_chars,
+        )
         session.flush()
         session.refresh(inbox_row)
 
@@ -142,6 +145,7 @@ def create_notification_for_message(
 
 def format_presence_notification(
     *,
+    inbox_message_id: int,
     message_row: db_module.PresenceMessageModel,
     thread_row: db_module.PresenceThreadModel,
     work_item_row: Optional[db_module.PresenceWorkItemModel] = None,
@@ -151,18 +155,31 @@ def format_presence_notification(
     """Build a small human-readable notification body from persisted presence rows."""
 
     lines = [
-        f"Presence update from {_compact(message_row.provider)}",
+        "[CAO inbox notification]",
+        f"ID: {inbox_message_id}",
+        f"Preview: {_preview(cast(Optional[str], message_row.body), preview_chars)}",
+        f"Source: {_format_source(message_row, thread_row)}",
+        _format_author(message_row),
         _format_work_item(work_item_row),
-        f"Thread: {thread_row.kind} #{thread_row.id}",
-        f"Message: {message_row.kind}",
-        f"Preview: {_preview(message_row.body, preview_chars)}",
     ]
-    if _metadata_indicates_media(message_row.metadata_json) or _metadata_indicates_media(
-        message_row.raw_snapshot_json
+    if _metadata_indicates_media(
+        cast(Optional[str], message_row.metadata_json)
+    ) or _metadata_indicates_media(
+        cast(Optional[str], message_row.raw_snapshot_json)
     ):
         lines.append("Attachment/media metadata present.")
-
-    return _truncate("\n".join(line for line in lines if line), notification_chars)
+    guidance = "\n".join(
+        [
+            "",
+            f"Read: read_inbox_message(inbox_message_id={inbox_message_id}).",
+            f"Reply: reply_to_inbox_message(inbox_message_id={inbox_message_id}, body=...).",
+        ]
+    )
+    body = "\n".join(line for line in lines if line)
+    reserved = len(guidance) + 1
+    if len(body) + reserved > notification_chars:
+        body = _truncate(body, max(0, notification_chars - reserved))
+    return f"{body}\n{guidance}" if body else guidance.lstrip()
 
 
 def _get_existing_notification(
@@ -195,10 +212,36 @@ def _format_work_item(row: Optional[db_module.PresenceWorkItemModel]) -> Optiona
     if row is None:
         return None
 
-    parts = [_compact(value) for value in (row.identifier, row.title) if value]
+    parts = [
+        _compact(cast(Optional[str], value))
+        for value in (row.identifier, row.title)
+        if value
+    ]
     if not parts:
         return None
-    return f"Work: {_truncate(' - '.join(parts), 180)}"
+    return f"Issue: {_truncate(' - '.join(parts), 180)}"
+
+
+def _format_source(
+    message_row: db_module.PresenceMessageModel,
+    thread_row: db_module.PresenceThreadModel,
+) -> str:
+    provider = _compact(cast(Optional[str], message_row.provider))
+    if provider == "linear" and thread_row.kind == "conversation":
+        return "Linear AgentSession"
+    return provider or "provider presence"
+
+
+def _format_author(row: db_module.PresenceMessageModel) -> Optional[str]:
+    metadata = _load_json_object(cast(Optional[str], row.metadata_json)) or _load_json_object(
+        cast(Optional[str], row.raw_snapshot_json)
+    )
+    if not metadata:
+        return None
+    author = _find_author_metadata(metadata)
+    if not author:
+        return None
+    return f"From: {_truncate(author, 120)}"
 
 
 def _preview(body: Optional[str], max_chars: int) -> str:
@@ -222,13 +265,20 @@ def _truncate(value: str, max_chars: int) -> str:
 
 
 def _metadata_indicates_media(metadata_json: Optional[str]) -> bool:
-    if not metadata_json:
+    metadata = _load_json_object(metadata_json)
+    if metadata is None:
         return False
+    return _contains_media_marker(metadata)
+
+
+def _load_json_object(metadata_json: Optional[str]) -> Optional[dict[str, Any]]:
+    if not metadata_json:
+        return None
     try:
         metadata = json.loads(metadata_json)
     except Exception:
-        return False
-    return _contains_media_marker(metadata)
+        return None
+    return metadata if isinstance(metadata, dict) else None
 
 
 def _contains_media_marker(value: Any) -> bool:
@@ -245,3 +295,30 @@ def _contains_media_marker(value: Any) -> bool:
     if isinstance(value, list):
         return any(_contains_media_marker(item) for item in value)
     return False
+
+
+def _find_author_metadata(value: Any) -> Optional[str]:
+    if isinstance(value, dict):
+        for key in ("actor", "author", "user", "creator"):
+            item = value.get(key)
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("displayName") or item.get("email")
+                if name:
+                    return _compact(str(name))
+            elif isinstance(item, str) and item.strip():
+                return _compact(item)
+        data = value.get("data")
+        if isinstance(data, dict):
+            found = _find_author_metadata(data)
+            if found:
+                return found
+        for item in value.values():
+            found = _find_author_metadata(item)
+            if found:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = _find_author_metadata(item)
+            if found:
+                return found
+    return None

@@ -5,9 +5,8 @@ import { DashboardHome } from './components/DashboardHome'
 import { AgentPanel } from './components/AgentPanel'
 import { FlowsPanel } from './components/FlowsPanel'
 import { SettingsPanel } from './components/SettingsPanel'
+import { parseInitialDashboardView, type TabKey } from './dashboardLink'
 import { Bot, Home, Clock, Settings, CheckCircle, XCircle, Info, Wifi, WifiOff } from 'lucide-react'
-
-type TabKey = 'home' | 'agents' | 'flows' | 'settings'
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'home', label: 'Home', icon: <Home size={16} /> },
@@ -48,7 +47,8 @@ function Snackbar() {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<TabKey>('home')
+  const [initialView] = useState(() => parseInitialDashboardView(window.location.search))
+  const [tab, setTab] = useState<TabKey>(initialView.tab)
   const { sessions, connected, fetchSessions } = useStore()
 
   useEffect(() => {
@@ -131,7 +131,14 @@ export default function App() {
         <ErrorBoundary>
           <Suspense fallback={<div className="text-gray-500 text-sm py-12 text-center">Loading...</div>}>
             {tab === 'home' && <DashboardHome onNavigate={(t) => setTab(t as TabKey)} />}
-            {tab === 'agents' && <AgentPanel />}
+            {tab === 'agents' && (
+              <AgentPanel
+                initialTerminalId={initialView.terminalId}
+                initialTerminalToken={initialView.terminalToken}
+                initialAgentId={initialView.agentId}
+                initialAgentToken={initialView.agentToken}
+              />
+            )}
             {tab === 'flows' && <FlowsPanel />}
             {tab === 'settings' && <SettingsPanel />}
           </Suspense>

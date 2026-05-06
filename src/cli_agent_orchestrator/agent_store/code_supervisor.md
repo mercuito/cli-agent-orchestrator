@@ -13,6 +13,8 @@ caoTools:
   - block_baton
   - get_my_batons
   - get_baton
+  - read_inbox_message
+  - reply_to_inbox_message
   - terminate
   - list_agent_profiles
   - get_agent_profile

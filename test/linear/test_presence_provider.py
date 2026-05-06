@@ -240,6 +240,7 @@ def test_reply_to_thread_posts_expected_agent_activity_content():
     create_activity.assert_called_once_with(
         "session-1",
         {"type": "response", "body": "Done reading this."},
+        app_key=None,
     )
     assert reply.ref == ExternalRef(provider="linear", id="reply-1")
     assert reply.direction == "outbound"
@@ -265,6 +266,24 @@ def test_acknowledge_stop_creates_supported_acknowledgement():
     client.create_agent_activity.assert_called_once_with(
         "session-1",
         {"type": "response", "body": "CAO received the stop request."},
+        app_key=None,
+    )
+
+
+def test_reply_to_thread_uses_app_key_from_provider_reply_metadata():
+    create_activity = Mock(return_value={"id": "reply-1"})
+    provider = LinearPresenceProvider(client=Mock(create_agent_activity=create_activity))
+
+    provider.reply_to_thread(
+        ExternalRef(provider="linear", id="session-1"),
+        "Reply as mapped app.",
+        metadata={"thread_raw_snapshot": {"_cao_linear_app_key": "implementation_partner"}},
+    )
+
+    create_activity.assert_called_once_with(
+        "session-1",
+        {"type": "response", "body": "Reply as mapped app."},
+        app_key="implementation_partner",
     )
 
 

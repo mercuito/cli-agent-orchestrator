@@ -15,6 +15,17 @@ from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.presence.builtins import ensure_builtin_presence_provider
+from cli_agent_orchestrator.presence.inbox_access import (
+    InboxReadError,
+    read_inbox_message as read_provider_inbox_message,
+    read_result_to_dict,
+)
+from cli_agent_orchestrator.presence.manager import UnknownPresenceProviderError
+from cli_agent_orchestrator.presence.reply_service import (
+    PresenceReplyError,
+    reply_to_inbox_message as route_provider_inbox_reply,
+)
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
 from cli_agent_orchestrator.utils import agent_profiles as agent_profiles_utils
@@ -760,6 +771,84 @@ async def send_message(
         Dict with success status and message details
     """
     return _send_message_impl(receiver_id, message)
+
+
+def _read_inbox_message_impl(inbox_message_id: int) -> Dict[str, Any]:
+    """Implementation of read_inbox_message logic."""
+    try:
+        return read_result_to_dict(read_provider_inbox_message(inbox_message_id))
+    except InboxReadError as exc:
+        return {"success": False, "error": str(exc), "error_type": type(exc).__name__}
+    except Exception as exc:
+        logger.exception("Failed to read inbox message %s", inbox_message_id)
+        return {"success": False, "error": str(exc), "error_type": "InboxReadUnexpectedError"}
+
+
+@_deferred_tool()
+async def read_inbox_message(
+    inbox_message_id: int = Field(description="CAO inbox message ID from a notification"),
+) -> Dict[str, Any]:
+    """Read the full provider-backed content/context for an inbox notification.
+
+    Use this after receiving a compact CAO inbox notification. The terminal
+    notification is only a pointer; this tool returns the durable backing
+    message, thread/work context, raw provider snapshot, and replyability info.
+    """
+    return _read_inbox_message_impl(inbox_message_id)
+
+
+def _reply_to_inbox_message_impl(inbox_message_id: int, body: str) -> Dict[str, Any]:
+    """Implementation of reply_to_inbox_message logic."""
+    try:
+        try:
+            _ensure_mcp_presence_provider_for_inbox(inbox_message_id)
+        except (InboxReadError, UnknownPresenceProviderError):
+            pass
+        result = route_provider_inbox_reply(inbox_message_id, body)
+        return {
+            "success": True,
+            "inbox_message_id": result.inbox_message.id,
+            "provider": result.thread.provider,
+            "thread_id": result.thread.external_id,
+            "outbound_message": {
+                "id": result.outbound_message.id,
+                "external_id": result.outbound_message.external_id,
+                "state": result.outbound_message.state,
+                "kind": result.outbound_message.kind,
+                "body": result.outbound_message.body,
+            },
+        }
+    except PresenceReplyError as exc:
+        payload: Dict[str, Any] = {
+            "success": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+        }
+        failed_message = getattr(exc, "failed_message", None)
+        if failed_message is not None:
+            payload["failed_message_id"] = failed_message.id
+            payload["failed_message_state"] = failed_message.state
+        return payload
+    except Exception as exc:
+        logger.exception("Failed to reply to inbox message %s", inbox_message_id)
+        return {"success": False, "error": str(exc), "error_type": "InboxReplyUnexpectedError"}
+
+
+@_deferred_tool()
+async def reply_to_inbox_message(
+    inbox_message_id: int = Field(description="CAO inbox message ID to reply to"),
+    body: str = Field(description="Reply body to send through the owning provider"),
+) -> Dict[str, Any]:
+    """Reply to a provider-backed inbox notification through CAO's inbox path."""
+    return _reply_to_inbox_message_impl(inbox_message_id, body)
+
+
+def _ensure_mcp_presence_provider_for_inbox(inbox_message_id: int) -> None:
+    """Register the built-in provider needed by one provider-backed inbox reply."""
+    read_result = read_provider_inbox_message(inbox_message_id)
+    provider = read_result.thread.get("provider")
+    if provider:
+        ensure_builtin_presence_provider(str(provider))
 
 
 def _require_cao_terminal_id() -> str:

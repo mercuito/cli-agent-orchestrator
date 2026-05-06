@@ -9,6 +9,7 @@ from cli_agent_orchestrator.workspace_providers.registry import (
     initialize_enabled_workspace_providers,
     is_workspace_provider_enabled,
     load_enabled_workspace_providers,
+    resolve_agent_identity_for_runtime,
     workspace_provider_config_exists,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "initialize_enabled_workspace_providers",
     "is_workspace_provider_enabled",
     "load_enabled_workspace_providers",
+    "resolve_agent_identity_for_runtime",
     "workspace_provider_config_exists",
 ]

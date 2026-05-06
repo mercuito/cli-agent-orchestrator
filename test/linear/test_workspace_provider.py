@@ -56,7 +56,11 @@ app_user_id = "app-user-impl"
 app_user_name = "Implementation Partner"
 """,
     )
-    provider = LinearWorkspaceProvider(agent_registry=_agents(), config_path=config)
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        preflight_credentials=False,
+    )
     provider.initialize()
 
     resolved = provider.resolve_event({"_cao_linear_app_key": "implementation_partner"})
@@ -75,7 +79,11 @@ app_key = "implementation_partner"
 app_user_id = "app-user-impl"
 """,
     )
-    provider = LinearWorkspaceProvider(agent_registry=_agents(), config_path=config)
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        preflight_credentials=False,
+    )
     provider.initialize()
 
     resolved = provider.resolve_event({"data": {"appUserId": "app-user-impl"}})
@@ -93,7 +101,11 @@ agent_id = "implementation_partner"
 app_key = "implementation_partner"
 """,
     )
-    provider = LinearWorkspaceProvider(agent_registry=_agents(), config_path=config)
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        preflight_credentials=False,
+    )
     provider.initialize()
 
     with pytest.raises(LinearWorkspaceProviderConfigError, match="Unknown Linear app key"):
@@ -261,6 +273,90 @@ def test_enabled_linear_provider_requires_config(tmp_path):
 
     with pytest.raises(LinearWorkspaceProviderConfigError, match="no Linear config"):
         provider.initialize()
+
+
+def test_linear_provider_preflight_rejects_missing_access_token(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+app_user_id = "app-user-impl"
+""",
+    )
+    provider = LinearWorkspaceProvider(agent_registry=_agents(), config_path=config)
+
+    with pytest.raises(LinearWorkspaceProviderConfigError, match="missing access_token"):
+        provider.initialize()
+
+
+def test_linear_provider_preflight_rejects_expired_access_token(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+app_user_id = "app-user-impl"
+access_token = "access-token"
+token_expires_at = "2026-05-01T00:00:00+00:00"
+""",
+    )
+    provider = LinearWorkspaceProvider(agent_registry=_agents(), config_path=config)
+
+    with pytest.raises(LinearWorkspaceProviderConfigError, match="access token expired"):
+        provider.initialize()
+
+
+def test_linear_provider_preflight_rejects_authenticated_app_user_mismatch(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+app_user_id = "expected-app-user"
+access_token = "access-token"
+token_expires_at = "2026-05-07T00:00:00+00:00"
+""",
+    )
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        credential_checker=lambda presence: {"id": "other-app-user", "name": "Wrong App"},
+    )
+
+    with pytest.raises(LinearWorkspaceProviderConfigError, match="app_user_id does not match"):
+        provider.initialize()
+
+
+def test_linear_provider_preflight_accepts_authenticated_credentials(tmp_path):
+    checked = []
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+app_user_id = "app-user-impl"
+access_token = "access-token"
+token_expires_at = "2026-05-07T00:00:00+00:00"
+""",
+    )
+
+    def check(presence):
+        checked.append(presence.app_key)
+        return {"id": "app-user-impl", "name": "Implementation Partner"}
+
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        credential_checker=check,
+    )
+    provider.initialize()
+
+    assert checked == ["implementation_partner"]
 
 
 def test_legacy_discovery_partner_env_fallback_is_at_linear_config_edge(tmp_path):

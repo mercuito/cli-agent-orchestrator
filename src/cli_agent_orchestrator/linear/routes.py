@@ -9,7 +9,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, s
 from pydantic import BaseModel
 
 from cli_agent_orchestrator.linear import app_client
-from cli_agent_orchestrator.linear import inbox_bridge as linear_inbox_bridge
 from cli_agent_orchestrator.linear import runtime
 from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
 from cli_agent_orchestrator.linear.presence_provider import (
@@ -40,12 +39,6 @@ def _ensure_linear_presence_provider() -> None:
         _linear_presence_provider.name,
         _linear_presence_provider,
     )
-
-
-def _should_run_smoke_runtime(persisted: Optional[PersistedPresenceEvent]) -> bool:
-    if persisted is None:
-        return False
-    return persisted.thread is not None
 
 
 def _require_linear_workspace_provider_enabled() -> None:
@@ -185,12 +178,17 @@ async def agent_webhook(
         verification.verified,
     )
 
-    notification = linear_inbox_bridge.notify_receiver_for_persisted_event(persisted)
+    notification_result = runtime.notify_agent_for_persisted_event(persisted, presence_event)
 
-    routed = presence_event is not None or persisted is not None or notification is not None
-    if notification is None and presence_event is not None and _should_run_smoke_runtime(persisted):
-        background_tasks.add_task(runtime.handle_presence_event, presence_event)
-
+    duplicate_delivery = (
+        persisted is not None
+        and persisted.processed_event is not None
+        and presence_event is not None
+        and presence_event.thread is not None
+        and persisted.thread is None
+        and persisted.message is None
+    )
+    routed = notification_result is not None or duplicate_delivery
     return LinearWebhookResponse(
         ok=True,
         verified=verification.verified,

@@ -6,6 +6,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional
 
@@ -50,6 +51,9 @@ class LinearPresence:
     app_user_id: Optional[str] = None
     app_user_name: Optional[str] = None
     token_expires_at: Optional[str] = None
+
+
+LinearCredentialChecker = Callable[[LinearPresence], Mapping[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -411,6 +415,72 @@ def validate_linear_provider_config(
                 ) from exc
 
 
+def parse_linear_token_expires_at(presence: LinearPresence) -> Optional[datetime]:
+    if not presence.token_expires_at:
+        return None
+    raw = presence.token_expires_at.strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise LinearWorkspaceProviderConfigError(
+            f"Linear presence {presence.presence_id} token_expires_at is not a valid ISO datetime"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _default_check_linear_presence_credentials(presence: LinearPresence) -> Mapping[str, Any]:
+    from cli_agent_orchestrator.linear import app_client
+
+    try:
+        access_token = app_client.access_token_for_presence(presence)
+        viewer = app_client.fetch_viewer(access_token)
+    except app_client.LinearOAuthError as exc:
+        raise LinearWorkspaceProviderConfigError(
+            f"Linear presence {presence.presence_id} could not obtain a valid access token; "
+            "reauthorize the Linear app if token refresh is unavailable"
+        ) from exc
+    return viewer
+
+
+def preflight_linear_provider_credentials(
+    config: LinearProviderConfig,
+    *,
+    credential_checker: LinearCredentialChecker = _default_check_linear_presence_credentials,
+) -> None:
+    """Verify configured Linear app credentials before the provider accepts traffic."""
+    for presence in config.presences.values():
+        if not presence.access_token and not presence.refresh_token:
+            raise LinearWorkspaceProviderConfigError(
+                f"Linear presence {presence.presence_id} is missing access_token and "
+                "refresh_token; reauthorize the Linear app before starting the provider"
+            )
+        expires_at = parse_linear_token_expires_at(presence)
+        if (
+            expires_at is not None
+            and expires_at <= datetime.now(timezone.utc)
+            and not presence.refresh_token
+        ):
+            raise LinearWorkspaceProviderConfigError(
+                f"Linear presence {presence.presence_id} access token expired at "
+                f"{expires_at.isoformat()} and no refresh_token is configured; reauthorize the "
+                "Linear app before starting the provider"
+            )
+        viewer = credential_checker(presence)
+        viewer_id = viewer.get("id")
+        if not viewer_id:
+            raise LinearWorkspaceProviderConfigError(
+                f"Linear presence {presence.presence_id} credential check did not return a "
+                "viewer id"
+            )
+        if presence.app_user_id and presence.app_user_id != str(viewer_id):
+            raise LinearWorkspaceProviderConfigError(
+                f"Linear presence {presence.presence_id} app_user_id does not match the "
+                "authenticated Linear app user"
+            )
+
+
 def _format_toml_value(value: Any) -> str:
     if isinstance(value, str):
         return json.dumps(value)
@@ -612,10 +682,14 @@ class LinearWorkspaceProvider:
         agent_registry: Optional[AgentIdentityRegistry] = None,
         config_path: Optional[Path] = None,
         env_reader: Callable[[str], Optional[str]] = linear_env,
+        preflight_credentials: bool = True,
+        credential_checker: Optional[LinearCredentialChecker] = None,
     ) -> None:
         self._agent_registry = agent_registry or load_agent_identity_registry()
         self._config_path = config_path
         self._env_reader = env_reader
+        self._preflight_credentials = preflight_credentials
+        self._credential_checker = credential_checker or _default_check_linear_presence_credentials
         self._config: Optional[LinearProviderConfig] = None
 
     @property
@@ -632,6 +706,11 @@ class LinearWorkspaceProvider:
         if self._config is None:
             raise LinearWorkspaceProviderConfigError(
                 "Linear workspace provider is enabled but no Linear config was found"
+            )
+        if self._preflight_credentials:
+            preflight_linear_provider_credentials(
+                self._config,
+                credential_checker=self._credential_checker,
             )
 
     def _load_config(self) -> LinearProviderConfig:
@@ -694,6 +773,23 @@ class LinearWorkspaceProvider:
         if config.source == "legacy_env":
             return _legacy_identity_for_presence(presence, self._env_reader)
         return self._agent_registry.get(presence.agent_id)
+
+    def resolve_identity_for_agent_id(self, agent_id: str) -> AgentIdentity:
+        """Resolve a CAO agent identity through this provider's presence mapping."""
+        config = self._load_config()
+        presence = next(
+            (
+                candidate
+                for candidate in config.presences.values()
+                if candidate.agent_id == agent_id
+            ),
+            None,
+        )
+        if presence is None:
+            raise LinearWorkspaceProviderConfigError(
+                f"Linear provider has no presence for CAO agent identity: {agent_id}"
+            )
+        return self.resolve_identity_for_presence(presence)
 
     def resolve_event(self, payload: Mapping[str, Any]) -> LinearResolvedPresence:
         presence = self.resolve_presence_from_payload(payload)
