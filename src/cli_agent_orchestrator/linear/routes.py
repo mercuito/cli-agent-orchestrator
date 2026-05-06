@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear import inbox_bridge as linear_inbox_bridge
 from cli_agent_orchestrator.linear import runtime
+from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
 from cli_agent_orchestrator.linear.presence_provider import (
     LinearPresenceProvider,
     payload_with_header_event,
@@ -20,6 +21,7 @@ from cli_agent_orchestrator.presence.manager import (
     presence_provider_manager,
 )
 from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
+from cli_agent_orchestrator.workspace_providers import WorkspaceProviderConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +48,27 @@ def _should_run_smoke_runtime(persisted: Optional[PersistedPresenceEvent]) -> bo
     return persisted.thread is not None
 
 
+def _require_linear_workspace_provider_enabled() -> None:
+    """Honor explicit workspace-provider enablement while preserving no-config compatibility."""
+    try:
+        enabled = linear_workspace_provider.should_enable_linear_routes()
+    except WorkspaceProviderConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    if not enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Linear workspace provider is not enabled",
+        )
+
+
 class LinearOAuthCallbackResponse(BaseModel):
     """Response returned after a Linear app actor OAuth install."""
 
     ok: bool
+    app_key: Optional[str] = None
     viewer_id: str
     viewer_name: Optional[str] = None
     token_type: Optional[str] = None
@@ -65,6 +84,7 @@ class LinearWebhookResponse(BaseModel):
     event: Optional[str] = None
     action: Optional[str] = None
     delivery: Optional[str] = None
+    app_key: Optional[str] = None
     agent_session_id: Optional[str] = None
     routed: bool = False
 
@@ -77,6 +97,7 @@ def oauth_callback(
     error_description: Optional[str] = Query(default=None),
 ) -> LinearOAuthCallbackResponse:
     """Complete Linear app actor OAuth installation."""
+    _require_linear_workspace_provider_enabled()
     if error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -98,6 +119,7 @@ def oauth_callback(
     viewer = result["viewer"]
     return LinearOAuthCallbackResponse(
         ok=True,
+        app_key=result.get("app_key"),
         viewer_id=viewer["id"],
         viewer_name=viewer.get("name"),
         token_type=result.get("token_type"),
@@ -112,6 +134,7 @@ async def agent_webhook(
     background_tasks: BackgroundTasks,
 ) -> LinearWebhookResponse:
     """Receive Linear agent/session webhooks."""
+    _require_linear_workspace_provider_enabled()
     raw_body = await request.body()
     signature = request.headers.get("Linear-Signature")
     delivery = request.headers.get("Linear-Delivery")
@@ -119,11 +142,19 @@ async def agent_webhook(
 
     try:
         payload = app_client.parse_webhook_payload(raw_body)
-        verified = app_client.verify_webhook(raw_body, signature, payload)
+        verification = app_client.verify_webhook_source(raw_body, signature, payload)
     except app_client.LinearWebhookVerificationError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
 
     _ensure_linear_presence_provider()
+    if verification.app_key:
+        payload["_cao_linear_app_key"] = verification.app_key
+    if verification.agent_id:
+        payload["_cao_linear_agent_id"] = verification.agent_id
+    if verification.app_user_id:
+        payload["_cao_linear_app_user_id"] = verification.app_user_id
+    if verification.app_user_name:
+        payload["_cao_linear_app_user_name"] = verification.app_user_name
     provider_payload = payload_with_header_event(payload, header_event=header_event)
     presence_event = presence_provider_manager.normalize_event(
         "linear",
@@ -151,7 +182,7 @@ async def agent_webhook(
         action,
         delivery,
         agent_session_id,
-        verified,
+        verification.verified,
     )
 
     notification = linear_inbox_bridge.notify_receiver_for_persisted_event(persisted)
@@ -162,10 +193,11 @@ async def agent_webhook(
 
     return LinearWebhookResponse(
         ok=True,
-        verified=verified,
+        verified=verification.verified,
         event=event,
         action=action,
         delivery=delivery,
+        app_key=verification.app_key,
         agent_session_id=agent_session_id,
         routed=routed,
     )

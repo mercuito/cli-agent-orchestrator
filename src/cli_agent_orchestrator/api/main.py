@@ -69,6 +69,7 @@ from cli_agent_orchestrator.utils.skills import (
     validate_skill_name,
 )
 from cli_agent_orchestrator.utils.terminal import generate_session_name
+from cli_agent_orchestrator.workspace_providers import initialize_enabled_workspace_providers
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting CLI Agent Orchestrator server...")
     setup_logging()
     init_db()
+    app.state.workspace_providers = initialize_enabled_workspace_providers()
 
     # Run cleanup in background
     asyncio.create_task(asyncio.to_thread(cleanup_old_data))
@@ -1172,9 +1174,7 @@ async def list_monitoring_sessions(
     return [MonitoringSessionResponse(**r) for r in rows]
 
 
-@app.get(
-    "/monitoring/sessions/{session_id}", response_model=MonitoringSessionResponse
-)
+@app.get("/monitoring/sessions/{session_id}", response_model=MonitoringSessionResponse)
 async def get_monitoring_session(session_id: str) -> MonitoringSessionResponse:
     result = monitoring_service.get_session(session_id)
     if result is None:
@@ -1280,16 +1280,12 @@ async def get_monitoring_log(
             "peers": peer or None,
             "started_after": started_after,
             "started_before": started_before,
-    }
+        }
 
     if format == "json":
-        payload = monitoring_formatter.format_json(
-            session, messages, applied_filter=applied_filter
-        )
+        payload = monitoring_formatter.format_json(session, messages, applied_filter=applied_filter)
         return JSONResponse(content=jsonable_encoder(payload))
-    body = monitoring_formatter.format_markdown(
-        session, messages, applied_filter=applied_filter
-    )
+    body = monitoring_formatter.format_markdown(session, messages, applied_filter=applied_filter)
     return PlainTextResponse(body, media_type="text/markdown; charset=utf-8")
 
 

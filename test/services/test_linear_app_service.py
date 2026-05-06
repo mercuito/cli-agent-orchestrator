@@ -11,6 +11,16 @@ from unittest.mock import Mock
 import pytest
 
 from cli_agent_orchestrator.linear import app_client
+from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+
+
+@pytest.fixture(autouse=True)
+def _isolate_linear_provider_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        linear_provider,
+        "LINEAR_PROVIDER_CONFIG_PATH",
+        tmp_path / "workspace-providers" / "linear.toml",
+    )
 
 
 def test_validate_oauth_state_is_disabled_without_expected_state(monkeypatch):
@@ -20,13 +30,21 @@ def test_validate_oauth_state_is_disabled_without_expected_state(monkeypatch):
 
 
 def test_validate_oauth_state_accepts_matching_state(monkeypatch):
-    monkeypatch.setattr(app_client, "linear_env", lambda name: "state-123")
+    monkeypatch.setattr(
+        app_client,
+        "linear_env",
+        lambda name: "state-123" if name == "LINEAR_OAUTH_STATE" else None,
+    )
 
     assert app_client.validate_oauth_state("state-123") is True
 
 
 def test_validate_oauth_state_rejects_mismatch(monkeypatch):
-    monkeypatch.setattr(app_client, "linear_env", lambda name: "state-123")
+    monkeypatch.setattr(
+        app_client,
+        "linear_env",
+        lambda name: "state-123" if name == "LINEAR_OAUTH_STATE" else None,
+    )
 
     with pytest.raises(app_client.LinearOAuthError):
         app_client.validate_oauth_state("wrong")
@@ -57,6 +75,84 @@ def test_exchange_oauth_code_posts_expected_form(monkeypatch):
     }
 
 
+def test_exchange_oauth_code_uses_app_specific_credentials(monkeypatch):
+    env = {
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_ID": "impl-client",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_SECRET": "impl-secret",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_OAUTH_REDIRECT_URI": (
+            "https://example.test/linear/oauth/callback"
+        ),
+    }
+    monkeypatch.setattr(app_client, "linear_env", env.get)
+
+    response = Mock(status_code=200)
+    response.json.return_value = {"access_token": "impl-token"}
+    post = Mock(return_value=response)
+    monkeypatch.setattr(app_client.requests, "post", post)
+
+    assert app_client.exchange_oauth_code("code-123", app_key="implementation_partner") == {
+        "access_token": "impl-token"
+    }
+    assert post.call_args.kwargs["data"]["client_id"] == "impl-client"
+    assert post.call_args.kwargs["data"]["client_secret"] == "impl-secret"
+
+
+def test_install_linear_app_uses_structured_presence_for_plain_oauth_state(tmp_path, monkeypatch):
+    config_path = tmp_path / "workspace-providers" / "linear.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("""
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+client_id = "structured-client"
+client_secret = "structured-secret"
+oauth_redirect_uri = "https://example.test/linear/oauth/callback"
+oauth_state = "nonce-123"
+""")
+
+    def post(url, **kwargs):
+        response = Mock(status_code=200)
+        if url == app_client.LINEAR_TOKEN_URL:
+            assert kwargs["data"]["client_id"] == "structured-client"
+            assert kwargs["data"]["client_secret"] == "structured-secret"
+            assert kwargs["data"]["redirect_uri"] == "https://example.test/linear/oauth/callback"
+            response.json.return_value = {
+                "access_token": "structured-access-token",
+                "refresh_token": "structured-refresh-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+            }
+            return response
+        if url == app_client.LINEAR_GRAPHQL_URL:
+            response.json.return_value = {
+                "data": {
+                    "viewer": {
+                        "id": "app-user-impl",
+                        "name": "Implementation Partner",
+                    }
+                }
+            }
+            return response
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(app_client.requests, "post", post)
+
+    result = app_client.install_linear_app("code-123", "nonce-123")
+
+    assert result["app_key"] == "implementation_partner"
+    config = linear_provider.load_linear_provider_config(
+        config_path=config_path,
+        allow_legacy_env=False,
+    )
+    assert config is not None
+    presence = config.presence_by_app_key("implementation_partner")
+    assert presence is not None
+    assert presence.access_token == "structured-access-token"
+    assert presence.refresh_token == "structured-refresh-token"
+    assert presence.app_user_id == "app-user-impl"
+    assert presence.app_user_name == "Implementation Partner"
+
+
 def test_fetch_viewer_returns_viewer(monkeypatch):
     response = Mock(status_code=200)
     response.json.return_value = {"data": {"viewer": {"id": "app-user-1", "name": "Discovery"}}}
@@ -71,12 +167,11 @@ def test_fetch_viewer_returns_viewer(monkeypatch):
 
 
 def test_install_linear_app_persists_tokens_and_viewer(monkeypatch):
-    saved = {}
-    monkeypatch.setattr(app_client, "validate_oauth_state", lambda state: True)
+    monkeypatch.setattr(app_client, "validate_oauth_state", lambda state, **kwargs: True)
     monkeypatch.setattr(
         app_client,
         "exchange_oauth_code",
-        lambda code: {
+        lambda code, **kwargs: {
             "access_token": "access-token",
             "refresh_token": "refresh-token",
             "token_type": "Bearer",
@@ -88,17 +183,58 @@ def test_install_linear_app_persists_tokens_and_viewer(monkeypatch):
         "fetch_viewer",
         lambda token: {"id": "app-user-1", "name": "Discovery Partner"},
     )
-    monkeypatch.setattr(app_client, "set_env_var", lambda key, value: saved.update({key: value}))
+    persist_install = Mock()
+    monkeypatch.setattr(linear_provider, "persist_linear_oauth_install", persist_install)
 
     result = app_client.install_linear_app("code-123", "state-123")
 
     assert result["viewer"] == {"id": "app-user-1", "name": "Discovery Partner"}
     assert result["state_verified"] is True
-    assert saved["LINEAR_ACCESS_TOKEN"] == "access-token"
-    assert saved["LINEAR_REFRESH_TOKEN"] == "refresh-token"
-    assert saved["LINEAR_APP_USER_ID"] == "app-user-1"
-    assert saved["LINEAR_APP_USER_NAME"] == "Discovery Partner"
-    assert "LINEAR_TOKEN_EXPIRES_AT" in saved
+    persist_install.assert_called_once()
+    assert persist_install.call_args.kwargs["app_key"] is None
+    assert persist_install.call_args.kwargs["access_token"] == "access-token"
+    assert persist_install.call_args.kwargs["refresh_token"] == "refresh-token"
+    assert persist_install.call_args.kwargs["app_user_id"] == "app-user-1"
+    assert persist_install.call_args.kwargs["app_user_name"] == "Discovery Partner"
+    assert persist_install.call_args.kwargs["token_expires_at"] is not None
+
+
+def test_install_linear_app_persists_tokens_under_state_app_key(monkeypatch):
+    env = {
+        "LINEAR_APP_KEYS": "discovery_partner,implementation_partner",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_ID": "impl-client",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_SECRET": "impl-secret",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_OAUTH_REDIRECT_URI": (
+            "https://example.test/linear/oauth/callback"
+        ),
+    }
+    monkeypatch.setattr(app_client, "linear_env", env.get)
+    monkeypatch.setattr(linear_provider, "update_linear_presence_tokens", lambda *a, **kw: False)
+    monkeypatch.setattr(
+        app_client,
+        "exchange_oauth_code",
+        lambda code, *, app_key=None: {
+            "access_token": f"{app_key}-access-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+        },
+    )
+    monkeypatch.setattr(
+        app_client,
+        "fetch_viewer",
+        lambda token: {"id": "impl-user-1", "name": "Implementation Partner"},
+    )
+    persist_install = Mock()
+    monkeypatch.setattr(linear_provider, "persist_linear_oauth_install", persist_install)
+
+    result = app_client.install_linear_app("code-123", "implementation_partner")
+
+    assert result["app_key"] == "implementation_partner"
+    persist_install.assert_called_once()
+    assert persist_install.call_args.kwargs["app_key"] == "implementation_partner"
+    assert persist_install.call_args.kwargs["access_token"] == "implementation_partner-access-token"
+    assert persist_install.call_args.kwargs["app_user_id"] == "impl-user-1"
+    assert persist_install.call_args.kwargs["app_user_name"] == "Implementation Partner"
 
 
 def test_get_issue_returns_linear_issue(monkeypatch):
@@ -159,9 +295,7 @@ def test_create_agent_activity_posts_content(monkeypatch):
     )
     monkeypatch.setattr(app_client, "linear_graphql", graphql)
 
-    activity = app_client.create_agent_activity(
-        "session-1", {"type": "thought", "body": "Working"}
-    )
+    activity = app_client.create_agent_activity("session-1", {"type": "thought", "body": "Working"})
 
     assert activity["id"] == "activity-1"
     assert graphql.call_args.args[1] == {
@@ -238,6 +372,27 @@ def test_verify_linear_webhook_accepts_valid_signature(monkeypatch):
     )
 
     assert app_client.verify_webhook(raw_body, signature, payload) is True
+
+
+def test_verify_linear_webhook_source_identifies_configured_app(monkeypatch):
+    env = {
+        "LINEAR_APP_KEYS": "discovery_partner,implementation_partner",
+        "LINEAR_APP_DISCOVERY_PARTNER_WEBHOOK_SECRET": "discovery-secret",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_WEBHOOK_SECRET": "implementation-secret",
+    }
+    payload = {"webhookTimestamp": int(time.time() * 1000), "action": "created"}
+    raw_body = json.dumps(payload).encode("utf-8")
+    signature = hmac.new(
+        env["LINEAR_APP_IMPLEMENTATION_PARTNER_WEBHOOK_SECRET"].encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    monkeypatch.setattr(app_client, "linear_env", env.get)
+
+    result = app_client.verify_webhook_source(raw_body, signature, payload)
+
+    assert result.verified is True
+    assert result.app_key == "implementation_partner"
 
 
 def test_verify_linear_webhook_rejects_invalid_signature(monkeypatch):

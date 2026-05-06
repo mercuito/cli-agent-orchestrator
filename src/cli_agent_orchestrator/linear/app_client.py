@@ -6,21 +6,22 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import time
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 import requests
 
-from cli_agent_orchestrator.utils.env import load_env_vars, set_env_var
+from cli_agent_orchestrator.linear import workspace_provider as linear_provider
 
 logger = logging.getLogger(__name__)
 
 LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token"
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 WEBHOOK_TIMESTAMP_TOLERANCE_MS = 60_000
+APP_KEY_PATTERN = linear_provider.APP_KEY_PATTERN
 
 
 class LinearAppError(Exception):
@@ -39,9 +40,56 @@ class LinearWebhookVerificationError(LinearAppError):
     """Linear webhook signature or freshness verification failed."""
 
 
+@dataclass(frozen=True)
+class LinearWebhookVerification:
+    """Result of matching and verifying a Linear webhook delivery."""
+
+    verified: bool
+    app_key: Optional[str] = None
+    agent_id: Optional[str] = None
+    app_user_id: Optional[str] = None
+    app_user_name: Optional[str] = None
+
+
 def linear_env(name: str) -> Optional[str]:
     """Read Linear config from process env first, then CAO's managed env file."""
-    return os.environ.get(name) or load_env_vars().get(name)
+    return linear_provider.linear_env(name)
+
+
+def normalize_app_key(app_key: str) -> str:
+    """Return a stable CAO app key for env lookup and routing."""
+    try:
+        return linear_provider.normalize_app_key(app_key)
+    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+        raise LinearConfigError(str(exc)) from exc
+
+
+def app_env_prefix(app_key: str) -> str:
+    """Return the env prefix for a configured Linear app key."""
+    return linear_provider.app_env_prefix(app_key)
+
+
+def linear_app_env(app_key: Optional[str], name: str) -> Optional[str]:
+    """Read a Linear app-specific variable, falling back to legacy global config."""
+    try:
+        return linear_provider.linear_app_env(app_key, name, env_reader=linear_env)
+    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+        raise LinearConfigError(str(exc)) from exc
+
+
+def required_linear_app_env(app_key: Optional[str], name: str) -> str:
+    try:
+        return linear_provider.required_linear_app_env(app_key, name, env_reader=linear_env)
+    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+        raise LinearConfigError(str(exc)) from exc
+
+
+def configured_app_keys() -> list[str]:
+    """Return configured Linear app keys from structured config or legacy env."""
+    try:
+        return linear_provider.configured_app_keys(env_reader=linear_env)
+    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+        raise LinearConfigError(str(exc)) from exc
 
 
 def required_linear_env(name: str) -> str:
@@ -51,21 +99,63 @@ def required_linear_env(name: str) -> str:
     return value
 
 
-def validate_oauth_state(state: Optional[str]) -> bool:
-    """Validate OAuth state when LINEAR_OAUTH_STATE is configured."""
-    expected_state = linear_env("LINEAR_OAUTH_STATE")
+def _split_oauth_state(state: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Return ``(app_key, nonce)`` from a smoke-test OAuth state value."""
+    if not state:
+        return None, None
+
+    configured = set(configured_app_keys())
+    if ":" in state:
+        possible_key, nonce = state.split(":", 1)
+        normalized = normalize_app_key(possible_key)
+        if normalized in configured:
+            return normalized, nonce
+
+    normalized = normalize_app_key(state)
+    if normalized in configured:
+        return normalized, None
+
+    matched_key = linear_provider.configured_app_key_for_oauth_state(
+        state,
+        env_reader=linear_env,
+    )
+    if matched_key:
+        return matched_key, state
+
+    return None, state
+
+
+def app_key_from_oauth_state(state: Optional[str]) -> Optional[str]:
+    """Resolve the target Linear app key from the OAuth state value."""
+    app_key, _nonce = _split_oauth_state(state)
+    return app_key
+
+
+def validate_oauth_state(state: Optional[str], *, app_key: Optional[str] = None) -> bool:
+    """Validate OAuth state when a global or app-specific state is configured."""
+    state_app_key, nonce = _split_oauth_state(state)
+    effective_app_key = app_key or state_app_key
+    state_to_compare = nonce if state_app_key and nonce is not None else state
+    if effective_app_key:
+        expected_state = linear_app_env(effective_app_key, "OAUTH_STATE")
+    else:
+        expected_state = linear_env("LINEAR_OAUTH_STATE")
     if not expected_state:
         return False
-    if not state or not hmac.compare_digest(state, expected_state):
+    if not state_to_compare or not hmac.compare_digest(state_to_compare, expected_state):
+        if effective_app_key:
+            raise LinearOAuthError(
+                f"OAuth state did not match {app_env_prefix(effective_app_key)}_OAUTH_STATE"
+            )
         raise LinearOAuthError("OAuth state did not match LINEAR_OAUTH_STATE")
     return True
 
 
-def exchange_oauth_code(code: str) -> Dict[str, Any]:
+def exchange_oauth_code(code: str, *, app_key: Optional[str] = None) -> Dict[str, Any]:
     """Exchange a Linear OAuth authorization code for app actor tokens."""
-    client_id = required_linear_env("LINEAR_CLIENT_ID")
-    client_secret = required_linear_env("LINEAR_CLIENT_SECRET")
-    redirect_uri = required_linear_env("LINEAR_OAUTH_REDIRECT_URI")
+    client_id = required_linear_app_env(app_key, "CLIENT_ID")
+    client_secret = required_linear_app_env(app_key, "CLIENT_SECRET")
+    redirect_uri = required_linear_app_env(app_key, "OAUTH_REDIRECT_URI")
 
     try:
         response = requests.post(
@@ -118,9 +208,10 @@ def linear_graphql(
     variables: Optional[Dict[str, Any]] = None,
     *,
     access_token: Optional[str] = None,
+    app_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call Linear GraphQL with the installed app actor token."""
-    token = access_token or required_linear_env("LINEAR_ACCESS_TOKEN")
+    token = access_token or required_linear_app_env(app_key, "ACCESS_TOKEN")
     try:
         response = requests.post(
             LINEAR_GRAPHQL_URL,
@@ -142,26 +233,32 @@ def linear_graphql(
 
 def install_linear_app(code: str, state: Optional[str]) -> Dict[str, Any]:
     """Complete Linear OAuth app installation and persist the resulting identity."""
-    state_verified = validate_oauth_state(state)
-    token_payload = exchange_oauth_code(code)
+    app_key = app_key_from_oauth_state(state)
+    state_verified = validate_oauth_state(state, app_key=app_key)
+    token_payload = exchange_oauth_code(code, app_key=app_key)
     access_token = token_payload.get("access_token")
     if not access_token:
         raise LinearOAuthError("Linear OAuth token response did not include access_token")
 
     viewer = fetch_viewer(access_token)
 
-    set_env_var("LINEAR_ACCESS_TOKEN", access_token)
-    if token_payload.get("refresh_token"):
-        set_env_var("LINEAR_REFRESH_TOKEN", token_payload["refresh_token"])
+    token_expires_at = None
     if token_payload.get("expires_in") is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(token_payload["expires_in"]))
-        set_env_var("LINEAR_TOKEN_EXPIRES_AT", expires_at.isoformat())
+        token_expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=int(token_payload["expires_in"]))
+        ).isoformat()
 
-    set_env_var("LINEAR_APP_USER_ID", str(viewer["id"]))
-    if viewer.get("name"):
-        set_env_var("LINEAR_APP_USER_NAME", str(viewer["name"]))
+    linear_provider.persist_linear_oauth_install(
+        app_key=app_key,
+        access_token=access_token,
+        refresh_token=token_payload.get("refresh_token"),
+        token_expires_at=token_expires_at,
+        app_user_id=str(viewer["id"]),
+        app_user_name=str(viewer["name"]) if viewer.get("name") else None,
+    )
 
     return {
+        "app_key": app_key,
         "viewer": viewer,
         "token_type": token_payload.get("token_type"),
         "expires_in": token_payload.get("expires_in"),
@@ -171,6 +268,10 @@ def install_linear_app(code: str, state: Optional[str]) -> Dict[str, Any]:
 
 def public_cao_url() -> Optional[str]:
     """Return the public CAO URL used for Linear callbacks, if configured."""
+    config = linear_provider.load_linear_provider_config(allow_legacy_env=False)
+    if config is not None and config.public_url:
+        return config.public_url.rstrip("/")
+
     explicit_url = linear_env("LINEAR_CAO_PUBLIC_URL")
     if explicit_url:
         return explicit_url.rstrip("/")
@@ -184,7 +285,12 @@ def public_cao_url() -> Optional[str]:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def update_agent_session_external_url(agent_session_id: str, terminal_id: str) -> bool:
+def update_agent_session_external_url(
+    agent_session_id: str,
+    terminal_id: str,
+    *,
+    app_key: Optional[str] = None,
+) -> bool:
     """Attach a CAO URL to a Linear AgentSession for smoke-test visibility."""
     base_url = public_cao_url()
     if not base_url:
@@ -209,6 +315,7 @@ def update_agent_session_external_url(agent_session_id: str, terminal_id: str) -
                 ]
             },
         },
+        app_key=app_key,
     )
     return True
 
@@ -264,15 +371,18 @@ def create_agent_session_on_issue(
         """,
         {"input": input_data},
     )
-    agent_session = payload.get("data", {}).get("agentSessionCreateOnIssue", {}).get(
-        "agentSession"
-    )
+    agent_session = payload.get("data", {}).get("agentSessionCreateOnIssue", {}).get("agentSession")
     if not isinstance(agent_session, dict) or not agent_session.get("id"):
         raise LinearAppError("Linear did not return an AgentSession")
     return agent_session
 
 
-def create_agent_activity(agent_session_id: str, content: Dict[str, Any]) -> Dict[str, Any]:
+def create_agent_activity(
+    agent_session_id: str,
+    content: Dict[str, Any],
+    *,
+    app_key: Optional[str] = None,
+) -> Dict[str, Any]:
     """Emit a Linear Agent Activity for the current session."""
     payload = linear_graphql(
         """
@@ -291,6 +401,7 @@ def create_agent_activity(agent_session_id: str, content: Dict[str, Any]) -> Dic
                 "content": content,
             }
         },
+        app_key=app_key,
     )
     agent_activity = payload.get("data", {}).get("agentActivityCreate", {}).get("agentActivity")
     if not isinstance(agent_activity, dict) or not agent_activity.get("id"):
@@ -385,19 +496,18 @@ def list_agent_session_activities(agent_session_id: str) -> list[Dict[str, Any]]
     return [node for node in nodes if isinstance(node, dict)]
 
 
-def verify_webhook(raw_body: bytes, signature: Optional[str], payload: Dict[str, Any]) -> bool:
-    """Verify a Linear webhook when LINEAR_WEBHOOK_SECRET is configured."""
-    secret = linear_env("LINEAR_WEBHOOK_SECRET")
-    if not secret:
-        logger.warning("LINEAR_WEBHOOK_SECRET is not configured; accepting webhook unverified")
-        return False
-
+def _verify_webhook_with_secret(
+    raw_body: bytes,
+    signature: Optional[str],
+    payload: Dict[str, Any],
+    secret: str,
+) -> bool:
     if not signature:
         raise LinearWebhookVerificationError("Missing Linear-Signature header")
 
     expected_signature = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected_signature):
-        raise LinearWebhookVerificationError("Invalid Linear webhook signature")
+        return False
 
     timestamp = payload.get("webhookTimestamp")
     if timestamp is None:
@@ -413,6 +523,47 @@ def verify_webhook(raw_body: bytes, signature: Optional[str], payload: Dict[str,
     return True
 
 
+def verify_webhook_source(
+    raw_body: bytes,
+    signature: Optional[str],
+    payload: Dict[str, Any],
+) -> LinearWebhookVerification:
+    """Verify a Linear webhook and identify the configured app key when possible."""
+    try:
+        presences = list(linear_provider.webhook_secret_presences(env_reader=linear_env))
+    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+        raise LinearWebhookVerificationError(str(exc)) from exc
+
+    if not presences:
+        logger.warning("LINEAR_WEBHOOK_SECRET is not configured; accepting webhook unverified")
+        return LinearWebhookVerification(verified=False, app_key=None)
+
+    if not signature:
+        raise LinearWebhookVerificationError("Missing Linear-Signature header")
+
+    for presence in presences:
+        if presence.webhook_secret and _verify_webhook_with_secret(
+            raw_body,
+            signature,
+            payload,
+            presence.webhook_secret,
+        ):
+            return LinearWebhookVerification(
+                verified=True,
+                app_key=presence.app_key,
+                agent_id=presence.agent_id,
+                app_user_id=presence.app_user_id,
+                app_user_name=presence.app_user_name,
+            )
+
+    raise LinearWebhookVerificationError("Invalid Linear webhook signature")
+
+
+def verify_webhook(raw_body: bytes, signature: Optional[str], payload: Dict[str, Any]) -> bool:
+    """Verify a Linear webhook when a Linear webhook secret is configured."""
+    return verify_webhook_source(raw_body, signature, payload).verified
+
+
 def parse_webhook_payload(raw_body: bytes) -> Dict[str, Any]:
     """Parse a Linear webhook JSON payload from raw bytes."""
     try:
@@ -424,7 +575,9 @@ def parse_webhook_payload(raw_body: bytes) -> Dict[str, Any]:
     return payload
 
 
-def webhook_event_type(payload: Dict[str, Any], header_event: Optional[str] = None) -> Optional[str]:
+def webhook_event_type(
+    payload: Dict[str, Any], header_event: Optional[str] = None
+) -> Optional[str]:
     """Return the Linear webhook event type from headers or body."""
     value = header_event or payload.get("type")
     return str(value) if value else None

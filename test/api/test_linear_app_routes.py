@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base, get_inbox_messages
+from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
 from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
 from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_SOURCE_KIND
 from cli_agent_orchestrator.presence.manager import (
@@ -104,6 +105,19 @@ def _linear_headers(delivery_id: str = "delivery-1") -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def _legacy_linear_route_compatibility(tmp_path, monkeypatch):
+    config_path = tmp_path / "workspace-providers.toml"
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_providers.registry.WORKSPACE_PROVIDERS_CONFIG_PATH",
+        config_path,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider.has_legacy_linear_provider_config",
+        lambda: True,
+    )
+
+
 def test_linear_oauth_callback_requires_code(client):
     response = client.get("/linear/oauth/callback")
 
@@ -129,6 +143,7 @@ def test_linear_oauth_callback_returns_install_identity(client, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "ok": True,
+        "app_key": None,
         "viewer_id": "app-user-1",
         "viewer_name": "Discovery Partner",
         "token_type": "Bearer",
@@ -143,6 +158,45 @@ def test_linear_oauth_callback_surfaces_linear_error(client):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Nope"
+
+
+def test_linear_routes_honor_disabled_workspace_provider(client, tmp_path, monkeypatch):
+    enabled_config = tmp_path / "workspace-providers.toml"
+    enabled_config.write_text('enabled = ["github"]\n')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_providers.registry.WORKSPACE_PROVIDERS_CONFIG_PATH",
+        enabled_config,
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(),
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Linear workspace provider is not enabled"
+
+
+def test_linear_routes_require_explicit_or_legacy_provider_config(client, tmp_path, monkeypatch):
+    config_path = tmp_path / "missing-workspace-providers.toml"
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_providers.registry.WORKSPACE_PROVIDERS_CONFIG_PATH",
+        config_path,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider.has_legacy_linear_provider_config",
+        lambda: False,
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(),
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Linear workspace provider is not enabled"
 
 
 def test_linear_agent_webhook_accepts_event(client, monkeypatch):
@@ -160,8 +214,8 @@ def test_linear_agent_webhook_accepts_event(client, monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
     routed = Mock()
     monkeypatch.setattr(
@@ -186,11 +240,53 @@ def test_linear_agent_webhook_accepts_event(client, monkeypatch):
         "event": "AgentSessionEvent",
         "action": "created",
         "delivery": "delivery-1",
+        "app_key": None,
         "agent_session_id": "session-1",
         "routed": True,
     }
     routed.assert_called_once()
     assert get_processed_event("linear", "delivery-1").event_type == "AgentSessionEvent"
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_routes_verified_app_key_to_runtime(client, monkeypatch):
+    _test_session(monkeypatch)
+    _disable_linear_inbox_receiver(monkeypatch)
+    presence_provider_manager.clear_providers()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.parse_webhook_payload",
+        lambda raw: {
+            "action": "created",
+            "data": {
+                "agentSession": {"id": "session-1"},
+                "agentActivity": {"id": "activity-1", "body": "Hello"},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(
+            True,
+            app_key="implementation_partner",
+        ),
+    )
+    routed = Mock()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.handle_presence_event",
+        routed,
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json={"action": "created"},
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["app_key"] == "implementation_partner"
+    routed.assert_called_once()
+    event = routed.call_args.args[0]
+    assert event.raw_payload["_cao_linear_app_key"] == "implementation_partner"
     presence_provider_manager.clear_providers()
 
 
@@ -212,8 +308,8 @@ def test_linear_agent_webhook_duplicate_delivery_does_not_rerun_smoke_runtime(
         },
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
     routed = Mock()
     monkeypatch.setattr(
@@ -258,7 +354,7 @@ def test_linear_agent_webhook_rejects_failed_signature_verification(client, monk
     from cli_agent_orchestrator.linear.app_client import LinearWebhookVerificationError
 
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
         Mock(side_effect=LinearWebhookVerificationError("Invalid Linear webhook signature")),
     )
 
@@ -280,8 +376,8 @@ def test_linear_agent_webhook_creates_presence_records_and_inbox_notification(
     presence_provider_manager.clear_providers()
     delivery = _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
     routed = Mock()
     monkeypatch.setattr(
@@ -319,8 +415,8 @@ def test_linear_agent_webhook_duplicate_delivery_does_not_duplicate_inbox_or_ter
     presence_provider_manager.clear_providers()
     delivery = _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
 
     payload = _linear_agent_payload(body="Only notify once.")
@@ -342,8 +438,8 @@ def test_linear_agent_sessions_produce_distinct_presence_inbox_sources(
     presence_provider_manager.clear_providers()
     _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
 
     client.post(
@@ -371,8 +467,8 @@ def test_linear_text_preview_is_lightweight_and_bounded(client, monkeypatch):
     presence_provider_manager.clear_providers()
     _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
     body = "Latest Linear request. " + "older transcript line " * 80
 
@@ -395,8 +491,8 @@ def test_linear_attachment_metadata_does_not_block_text_notification(client, mon
     presence_provider_manager.clear_providers()
     _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
 
     response = client.post(
@@ -423,8 +519,8 @@ def test_linear_reply_from_inbox_notification_routes_through_provider_registry(
     presence_provider_manager.clear_providers()
     _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
     create_activity = Mock(return_value={"id": "reply-1"})
     manager = PresenceProviderManager(
@@ -458,8 +554,8 @@ def test_linear_reply_failure_from_inbox_notification_is_visible(client, monkeyp
     presence_provider_manager.clear_providers()
     _enable_linear_inbox_receiver(monkeypatch, "terminal-inbox")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook",
-        lambda raw, signature, payload: True,
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(True),
     )
     manager = PresenceProviderManager(
         {
