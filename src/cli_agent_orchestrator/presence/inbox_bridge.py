@@ -11,7 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
+from cli_agent_orchestrator.models.inbox import InboxMessage
 from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
 
 PRESENCE_INBOX_SOURCE_KIND = "presence_thread"
@@ -97,26 +97,38 @@ def create_notification_for_message(
                 .first()
             )
 
-        inbox_row = db_module.InboxModel(
-            sender_id=PRESENCE_INBOX_SENDER_ID,
-            receiver_id=receiver_id,
-            message="[CAO inbox notification pending]",
+        inbox_message = db_module.create_inbox_message(
+            PRESENCE_INBOX_SENDER_ID,
+            receiver_id,
+            "[CAO inbox notification pending]",
+            db=session,
             source_kind=PRESENCE_INBOX_SOURCE_KIND,
             source_id=str(thread_row.id),
-            status=MessageStatus.PENDING.value,
-            created_at=datetime.now(),
         )
-        session.add(inbox_row)
-        session.flush()
-        mutable_inbox_row = cast(Any, inbox_row)
-        mutable_inbox_row.message = format_presence_notification(
-            inbox_message_id=cast(int, inbox_row.id),
+        inbox_row = session.get(db_module.InboxModel, inbox_message.id)
+        if inbox_row is None:
+            raise RuntimeError(f"created inbox message {inbox_message.id} not found")
+        notification_row = (
+            session.query(db_module.InboxNotificationModel)
+            .filter(db_module.InboxNotificationModel.legacy_inbox_id == inbox_message.id)
+            .one()
+        )
+        durable_message_row = session.get(db_module.InboxMessageModel, notification_row.message_id)
+        if durable_message_row is None:
+            raise RuntimeError(f"durable inbox message {notification_row.message_id} not found")
+
+        notification_body = format_presence_notification(
+            inbox_message_id=cast(int, inbox_message.id),
             message_row=message_row,
             thread_row=thread_row,
             work_item_row=work_item_row,
             preview_chars=preview_chars,
             notification_chars=notification_chars,
         )
+        mutable_inbox_row = cast(Any, inbox_row)
+        mutable_inbox_row.message = notification_body
+        mutable_durable_message_row = cast(Any, durable_message_row)
+        mutable_durable_message_row.body = notification_body
         session.flush()
         session.refresh(inbox_row)
 
@@ -125,7 +137,7 @@ def create_notification_for_message(
             .values(
                 receiver_id=receiver_id,
                 presence_message_id=presence_message_id,
-                inbox_message_id=inbox_row.id,
+                inbox_message_id=inbox_message.id,
                 created_at=datetime.now(),
             )
             .on_conflict_do_nothing(index_elements=["receiver_id", "presence_message_id"])
@@ -135,6 +147,7 @@ def create_notification_for_message(
             session.commit()
             return PresenceInboxNotification(inbox_message=inbox_message, created=True)
 
+        session.delete(durable_message_row)
         session.delete(inbox_row)
         session.flush()
         existing = _get_existing_notification(session, receiver_id, presence_message_id)

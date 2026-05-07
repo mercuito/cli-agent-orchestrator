@@ -63,9 +63,7 @@ def _require_current_holder(row: BatonModel, actor_id: str) -> None:
 
 def _require_valid_pass_receiver(row: BatonModel, actor_id: str, receiver_id: str) -> None:
     if receiver_id == actor_id:
-        raise BatonInvalidTransition(
-            f"cannot pass baton {row.id} to yourself; you already hold it"
-        )
+        raise BatonInvalidTransition(f"cannot pass baton {row.id} to yourself; you already hold it")
 
     stack = _decode_stack(row)
     if receiver_id in stack:
@@ -182,7 +180,7 @@ def _queue_baton_message(
     guidance: str,
     artifact_paths: Optional[Sequence[str]] = None,
 ) -> None:
-    db_module.create_inbox_message(
+    db_module.create_inbox_delivery(
         sender_id,
         receiver_id,
         _baton_message(

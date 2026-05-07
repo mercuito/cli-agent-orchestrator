@@ -36,7 +36,6 @@ from cli_agent_orchestrator.presence.reply_service import (
 )
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeDeliveryResult,
-    AgentRuntimeNotification,
     AgentRuntimeNotifyResult,
     AgentRuntimeStatus,
 )
@@ -134,13 +133,8 @@ class _FakeRuntimeHandle:
 
     def accept_notification(self, notification):
         self.accepted.append(notification)
-        runtime_notification = AgentRuntimeNotification(
-            inbox_message=notification.inbox_message,
-            created=notification.created,
-            receiver_id=notification.inbox_message.receiver_id,
-        )
         return AgentRuntimeNotifyResult(
-            notification=runtime_notification,
+            notification=notification,
             status=self.status,
             terminal_id=self.terminal_id,
             started=False,

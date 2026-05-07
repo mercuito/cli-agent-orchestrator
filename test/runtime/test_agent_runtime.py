@@ -5,13 +5,14 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine, event as sa_event
+from sqlalchemy import create_engine
+from sqlalchemy import event as sa_event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_message, get_inbox_messages
+from cli_agent_orchestrator.clients.database import Base, create_inbox_message
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.runtime.agent import (
@@ -85,6 +86,24 @@ def _provider(monkeypatch, status: TerminalStatus | Exception | None) -> None:
         "cli_agent_orchestrator.runtime.agent.provider_manager.get_provider",
         lambda terminal_id: provider,
     )
+
+
+def _pending_deliveries(receiver_id: str):
+    return db_module.list_pending_inbox_notifications(receiver_id, limit=10)
+
+
+def _all_delivery_statuses(receiver_id: str) -> list[MessageStatus]:
+    with db_module.SessionLocal() as session:
+        rows = (
+            session.query(db_module.InboxNotificationModel)
+            .filter(db_module.InboxNotificationModel.receiver_id == receiver_id)
+            .order_by(
+                db_module.InboxNotificationModel.created_at.asc(),
+                db_module.InboxNotificationModel.id.asc(),
+            )
+            .all()
+        )
+    return [MessageStatus(row.status) for row in rows]
 
 
 def test_status_reports_not_started_without_terminal_metadata(test_session, handle):
@@ -184,8 +203,8 @@ def test_notify_accepts_durable_inbox_state_when_startup_fails(
     assert result.status == AgentRuntimeStatus.NOT_STARTED
     assert result.terminal_id is None
     assert "cannot start" in result.error
-    messages = get_inbox_messages(handle.inbox_receiver_id, limit=10)
-    assert [(message.message, message.status) for message in messages] == [
+    deliveries = _pending_deliveries(handle.inbox_receiver_id)
+    assert [(delivery.message.body, delivery.notification.status) for delivery in deliveries] == [
         ("Please inspect Linear session CAO-31.", MessageStatus.PENDING)
     ]
 
@@ -204,7 +223,9 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
         source_kind="linear_event",
         source_id="event-offline",
     )
-    assert get_inbox_messages(handle.inbox_receiver_id, limit=1)[0].status == MessageStatus.PENDING
+    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+        MessageStatus.PENDING
+    )
 
     _create_terminal()
     _provider(monkeypatch, TerminalStatus.IDLE)
@@ -217,8 +238,8 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
     result = handle.try_deliver_pending()
 
     assert result.delivered is True
-    assert get_inbox_messages(handle.inbox_receiver_id, limit=10) == []
-    assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.DELIVERED
+    assert _pending_deliveries(handle.inbox_receiver_id) == []
+    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
     send_input.assert_called_once_with("terminal-1", "Persist me while the agent is offline.")
 
 
@@ -244,7 +265,7 @@ def test_notify_queues_without_terminal_input_while_agent_is_busy(
     assert result.status == AgentRuntimeStatus.BUSY
     assert result.delivery.attempted is False
     send_input.assert_not_called()
-    assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.PENDING
+    assert _pending_deliveries("terminal-1")[0].notification.status == MessageStatus.PENDING
 
 
 def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_busy(
@@ -267,15 +288,16 @@ def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_bus
         source_id="1",
     )
 
-    result = handle.accept_notification(
-        AgentRuntimeNotification(inbox_message=inbox, created=True, receiver_id="terminal-1")
-    )
+    delivery = db_module.get_inbox_delivery_for_legacy_message(inbox.id)
+    assert delivery is not None
+
+    result = handle.accept_notification(AgentRuntimeNotification(delivery=delivery, created=True))
 
     assert result.status == AgentRuntimeStatus.BUSY
     assert result.delivery.attempted is False
-    assert result.notification.inbox_message.id == inbox.id
+    assert result.notification.delivery.notification.legacy_inbox_id == inbox.id
     send_input.assert_not_called()
-    assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.PENDING
+    assert _pending_deliveries("terminal-1")[0].notification.status == MessageStatus.PENDING
 
 
 def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
@@ -304,7 +326,7 @@ def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
 
     assert inbox_service.check_and_send_pending_messages("terminal-1") is True
     send_input.assert_called_once_with("terminal-1", "Deliver this after the agent becomes idle.")
-    assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.DELIVERED
+    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
 
 
 @pytest.mark.parametrize(
@@ -338,7 +360,7 @@ def test_notify_keeps_notifications_pending_when_agent_is_error_or_unreachable(
     assert result.status == runtime_status
     assert result.delivery.attempted is False
     send_input.assert_not_called()
-    assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.PENDING
+    assert _pending_deliveries("terminal-1")[0].notification.status == MessageStatus.PENDING
 
 
 def test_notify_delivers_pending_notification_when_agent_is_idle(
@@ -364,7 +386,7 @@ def test_notify_delivers_pending_notification_when_agent_is_idle(
     assert result.delivery.attempted is True
     assert result.delivery.delivered is True
     send_input.assert_called_once_with("terminal-1", "A Linear mention is ready.")
-    assert get_inbox_messages("terminal-1", limit=1)[0].status == MessageStatus.DELIVERED
+    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
 
 
 def test_duplicate_notification_source_reuses_existing_inbox_message(
@@ -388,6 +410,10 @@ def test_duplicate_notification_source_reuses_existing_inbox_message(
 
     assert first.notification.created is True
     assert second.notification.created is False
-    assert second.notification.inbox_message.id == first.notification.inbox_message.id
-    messages = get_inbox_messages("terminal-1", limit=10)
-    assert [message.message for message in messages] == ["Only one notification should be queued."]
+    assert (
+        second.notification.delivery.notification.id == first.notification.delivery.notification.id
+    )
+    deliveries = _pending_deliveries("terminal-1")
+    assert [delivery.message.body for delivery in deliveries] == [
+        "Only one notification should be queued."
+    ]

@@ -5,7 +5,7 @@ using file system monitoring to detect when agents become idle and can receive
 messages.
 
 Architecture:
-- Messages are queued in the database (inbox table) via send_message MCP tool
+- Messages are queued in semantic inbox message and notification tables
 - LogFileHandler monitors terminal log files for changes using watchdog
 - When a log file is modified and there are pending messages for that
   terminal, the accurate ``provider.get_status()`` is consulted; if the
@@ -13,7 +13,7 @@ Architecture:
   ``terminal_service.send_input()`` (types into the tmux pane)
 
 Message Flow:
-1. Agent A calls ``send_message(terminal_id, message)`` — queued in DB as PENDING
+1. Agent A calls ``send_message(terminal_id, message)`` — queued as a pending notification
 2. Agent B's pipe-pane log file is appended to (TUI redraws, output, etc.)
 3. ``LogFileHandler.on_modified()`` fires → checks the DB for pending messages
 4. If pending + terminal is idle/completed → deliver, mark DELIVERED
@@ -39,12 +39,12 @@ from typing import List
 from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 
 from cli_agent_orchestrator.clients.database import (
-    get_oldest_pending_message,
-    get_pending_messages,
-    get_pending_messages_for_effective_source,
-    update_message_statuses,
+    get_oldest_pending_inbox_delivery,
+    list_pending_inbox_deliveries_for_effective_source,
+    list_pending_inbox_notifications,
+    update_inbox_notification_statuses,
 )
-from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
+from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import terminal_service
@@ -55,10 +55,9 @@ DEFAULT_MAX_BATCH_BODY_CHARS = 2000
 DEFAULT_MAX_BATCH_TOTAL_CHARS = 12000
 
 
-def _source_label(message: InboxMessage) -> str:
-    if message.source_kind is not None and message.source_id is not None:
-        return f"{message.source_kind}:{message.source_id}"
-    return f"legacy message {message.id}"
+def _source_label(delivery: InboxDelivery) -> str:
+    message = delivery.message
+    return f"{message.source_kind}:{message.source_id}"
 
 
 def _truncate_text(text: str, max_chars: int) -> str:
@@ -69,22 +68,22 @@ def _truncate_text(text: str, max_chars: int) -> str:
 
 
 def format_message_batch(
-    messages: List[InboxMessage],
+    deliveries: List[InboxDelivery],
     *,
     max_body_chars: int = DEFAULT_MAX_BATCH_BODY_CHARS,
     max_total_chars: int = DEFAULT_MAX_BATCH_TOTAL_CHARS,
 ) -> str:
     """Format a selected inbox batch for terminal delivery with bounded output."""
-    if not messages:
+    if not deliveries:
         return ""
-    if len(messages) == 1:
-        return _truncate_text(messages[0].message, max_total_chars)
+    if len(deliveries) == 1:
+        return _truncate_text(deliveries[0].message.body, max_total_chars)
 
-    header = f"Queued {len(messages)} messages from {_source_label(messages[0])}:"
+    header = f"Queued {len(deliveries)} messages from {_source_label(deliveries[0])}:"
     lines = [header, ""]
 
-    for idx, message in enumerate(messages, start=1):
-        formatted_message = f"[{idx}] {_truncate_text(message.message, max_body_chars)}"
+    for idx, delivery in enumerate(deliveries, start=1):
+        formatted_message = f"[{idx}] {_truncate_text(delivery.message.body, max_body_chars)}"
         candidate = "\n".join([*lines, formatted_message])
         if len(candidate) > max_total_chars:
             lines.append("[batch output truncated]")
@@ -109,19 +108,19 @@ def check_and_send_pending_messages(terminal_id: str) -> bool:
     Raises:
         ValueError: If provider not found for terminal
     """
-    oldest_message = get_oldest_pending_message(terminal_id)
-    if oldest_message is None:
+    oldest_delivery = get_oldest_pending_inbox_delivery(terminal_id)
+    if oldest_delivery is None:
         return False
 
-    messages = get_pending_messages_for_effective_source(terminal_id, oldest_message)
-    if not messages:
+    deliveries = list_pending_inbox_deliveries_for_effective_source(terminal_id, oldest_delivery)
+    if not deliveries:
         logger.warning(
-            "Oldest pending message %s selected no deliverable batch for terminal %s",
-            oldest_message.id,
+            "Oldest pending notification %s selected no deliverable batch for terminal %s",
+            oldest_delivery.notification.id,
             terminal_id,
         )
         return False
-    message_ids = [message.id for message in messages]
+    notification_ids = [delivery.notification.id for delivery in deliveries]
 
     provider = provider_manager.get_provider(terminal_id)
     if provider is None:
@@ -133,17 +132,19 @@ def check_and_send_pending_messages(terminal_id: str) -> bool:
         return False
 
     try:
-        terminal_service.send_input(terminal_id, format_message_batch(messages))
-        update_message_statuses(message_ids, MessageStatus.DELIVERED)
+        terminal_service.send_input(terminal_id, format_message_batch(deliveries))
+        update_inbox_notification_statuses(notification_ids, MessageStatus.DELIVERED)
         logger.info(
-            "Delivered inbox message batch %s to terminal %s",
-            message_ids,
+            "Delivered inbox notification batch %s to terminal %s",
+            notification_ids,
             terminal_id,
         )
         return True
     except Exception as e:
-        logger.error(f"Failed to send message batch {message_ids} to {terminal_id}: {e}")
-        update_message_statuses(message_ids, MessageStatus.FAILED)
+        logger.error(f"Failed to send notification batch {notification_ids} to {terminal_id}: {e}")
+        update_inbox_notification_statuses(
+            notification_ids, MessageStatus.FAILED, error_detail=str(e)
+        )
         raise
 
 
@@ -167,7 +168,7 @@ class LogFileHandler(FileSystemEventHandler):
         truth for the idle-detection and delivery semantics.
         """
         try:
-            if not get_pending_messages(terminal_id, limit=1):
+            if not list_pending_inbox_notifications(terminal_id, limit=1):
                 logger.debug(f"No pending messages for {terminal_id}, skipping")
                 return
             check_and_send_pending_messages(terminal_id)

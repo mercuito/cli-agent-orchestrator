@@ -2,17 +2,52 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import Mock
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy import event as sa_event
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
 from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.clients.database import Base, create_inbox_message
 from cli_agent_orchestrator.linear import runtime
 from cli_agent_orchestrator.linear.workspace_provider import LinearPresence, LinearResolvedPresence
 from cli_agent_orchestrator.presence.models import (
     ConversationMessage,
+    ConversationMessageRecord,
     ConversationThread,
+    ConversationThreadRecord,
     ExternalRef,
+    PersistedPresenceEvent,
     PresenceEvent,
 )
+from cli_agent_orchestrator.runtime.agent import (
+    AgentRuntimeDeliveryResult,
+    AgentRuntimeNotifyResult,
+    AgentRuntimeStatus,
+)
+
+
+@pytest.fixture
+def test_db(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @sa_event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(bind=engine)
+    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
 
 
 def _presence_event(
@@ -167,3 +202,84 @@ def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch):
     create_activity.assert_called_once()
     assert create_activity.call_args.kwargs["app_key"] == "implementation_partner"
     assert handle.notify.call_args.kwargs["sender_id"] == "linear:implementation_partner"
+
+
+def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
+    test_db,
+    monkeypatch,
+):
+    event = _presence_event(prompt_body="Can you inspect this?")
+    persisted_event = PersistedPresenceEvent(
+        processed_event=None,
+        work_item=None,
+        thread=ConversationThreadRecord(
+            id=1,
+            provider="linear",
+            external_id="session-1",
+            external_url=None,
+            work_item_id=None,
+            kind="conversation",
+            state="active",
+            prompt_context=None,
+            raw_snapshot=None,
+            metadata=None,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        ),
+        message=ConversationMessageRecord(
+            id=1,
+            thread_id=1,
+            provider="linear",
+            external_id="activity-1",
+            direction="inbound",
+            kind="prompt",
+            body="Can you inspect this?",
+            state="received",
+            raw_snapshot=None,
+            metadata=None,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        ),
+    )
+    inbox = create_inbox_message(
+        "presence",
+        "agent:implementation_partner",
+        "[CAO inbox notification]\nID: 1",
+        source_kind="presence_thread",
+        source_id="1",
+    )
+    bridge_notification = Mock(inbox_message=inbox, created=True)
+    accepted = []
+
+    def accept_notification(notification):
+        accepted.append(notification)
+        return AgentRuntimeNotifyResult(
+            notification=notification,
+            status=AgentRuntimeStatus.BUSY,
+            terminal_id=None,
+            started=False,
+            delivery=AgentRuntimeDeliveryResult(
+                status=AgentRuntimeStatus.BUSY,
+                terminal_id=None,
+                attempted=False,
+                delivered=False,
+            ),
+        )
+
+    handle = Mock(inbox_receiver_id="agent:implementation_partner")
+    handle.accept_notification.side_effect = accept_notification
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: _resolved_presence())
+    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "create_notification_for_persisted_event",
+        Mock(return_value=bridge_notification),
+    )
+    monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
+    monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
+
+    result = runtime.notify_agent_for_persisted_event(persisted_event, event)
+
+    assert result is not None
+    assert accepted[0].delivery.notification.legacy_inbox_id == inbox.id
+    assert accepted[0].delivery.message.body == "[CAO inbox notification]\nID: 1"

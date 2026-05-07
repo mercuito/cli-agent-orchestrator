@@ -13,9 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
-from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.services import baton_service
-
 
 pytestmark = pytest.mark.integration
 
@@ -43,14 +41,15 @@ def live_db(monkeypatch):
 @pytest.fixture
 def client(live_db, monkeypatch):
     monkeypatch.setenv("CAO_BATON_ENABLED", "true")
-    from cli_agent_orchestrator.api.main import app
     from test.api.conftest import TestClientWithHost
+
+    from cli_agent_orchestrator.api.main import app
 
     return TestClientWithHost(app)
 
 
 def _pending_messages(receiver_id: str):
-    return db_module.get_inbox_messages(receiver_id, status=MessageStatus.PENDING)
+    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
 
 
 def _get_baton(client, baton_id: str):
@@ -95,8 +94,8 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     implementer_messages = _pending_messages("implementer")
     assert len(implementer_messages) == 1
-    assert implementer_messages[0].sender_id == "originator"
-    assert "Implement the task and pass to review." in implementer_messages[0].message
+    assert implementer_messages[0].message.sender_id == "originator"
+    assert "Implement the task and pass to review." in implementer_messages[0].message.body
 
     baton_service.pass_baton(
         baton_id=baton_id,
@@ -116,8 +115,8 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     reviewer_messages = _pending_messages("reviewer")
     assert len(reviewer_messages) == 1
-    assert reviewer_messages[0].sender_id == "implementer"
-    assert "Please review the implementation artifacts." in reviewer_messages[0].message
+    assert reviewer_messages[0].message.sender_id == "implementer"
+    assert "Please review the implementation artifacts." in reviewer_messages[0].message.body
 
     baton_service.return_baton(
         baton_id=baton_id,
@@ -136,8 +135,8 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     implementer_messages = _pending_messages("implementer")
     assert len(implementer_messages) == 2
-    assert implementer_messages[-1].sender_id == "reviewer"
-    assert "Changes requested before approval." in implementer_messages[-1].message
+    assert implementer_messages[-1].message.sender_id == "reviewer"
+    assert "Changes requested before approval." in implementer_messages[-1].message.body
 
     baton_service.complete_baton(
         baton_id=baton_id,
@@ -155,5 +154,5 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     originator_messages = _pending_messages("originator")
     assert len(originator_messages) == 1
-    assert originator_messages[0].sender_id == "implementer"
-    assert "Implemented, reviewed, and complete." in originator_messages[0].message
+    assert originator_messages[0].message.sender_id == "implementer"
+    assert "Implemented, reviewed, and complete." in originator_messages[0].message.body

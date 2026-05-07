@@ -12,9 +12,8 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base, BatonEventModel, BatonModel
 from cli_agent_orchestrator.models.baton import BatonStatus
-from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.services import baton_service, baton_watchdog_service
+from cli_agent_orchestrator.services import baton_service, baton_watchdog_service, inbox_service
 
 
 @pytest.fixture
@@ -57,7 +56,7 @@ def _provider(status: TerminalStatus):
 
 
 def _messages(receiver_id: str):
-    return db_module.get_inbox_messages(receiver_id, status=MessageStatus.PENDING)
+    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
 
 
 def _events(baton_id: str):
@@ -65,9 +64,7 @@ def _events(baton_id: str):
 
 
 @pytest.mark.parametrize("status", [TerminalStatus.IDLE, TerminalStatus.COMPLETED])
-def test_idle_or_completed_holder_receives_nudge_after_grace(
-    patched_db, monkeypatch, status
-):
+def test_idle_or_completed_holder_receives_nudge_after_grace(patched_db, monkeypatch, status):
     _create_terminal("impl")
     provider = _provider(status)
     monkeypatch.setattr(
@@ -97,17 +94,17 @@ def test_idle_or_completed_holder_receives_nudge_after_grace(
     assert [event.event_type for event in _events("baton-1")] == ["create", "nudge"]
     queued = _messages("impl")
     assert len(queued) == 2
-    assert queued[-1].sender_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
-    assert "Baton id: baton-1" in queued[-1].message
-    assert "Title: T05" in queued[-1].message
-    assert "Expected next action: run the review loop" in queued[-1].message
-    assert "If you are waiting on another agent to make the next move" in queued[-1].message
-    assert "pass the baton to that agent with pass_baton" in queued[-1].message
-    assert "Idle detection is advisory" in queued[-1].message
-    assert "pass_baton" in queued[-1].message
-    assert "return_baton" in queued[-1].message
-    assert "complete_baton" in queued[-1].message
-    assert "block_baton" in queued[-1].message
+    assert queued[-1].message.sender_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
+    assert "Baton id: baton-1" in queued[-1].message.body
+    assert "Title: T05" in queued[-1].message.body
+    assert "Expected next action: run the review loop" in queued[-1].message.body
+    assert "If you are waiting on another agent to make the next move" in queued[-1].message.body
+    assert "pass the baton to that agent with pass_baton" in queued[-1].message.body
+    assert "Idle detection is advisory" in queued[-1].message.body
+    assert "pass_baton" in queued[-1].message.body
+    assert "return_baton" in queued[-1].message.body
+    assert "complete_baton" in queued[-1].message.body
+    assert "block_baton" in queued[-1].message.body
 
 
 def test_processing_holder_is_not_nudged(patched_db, monkeypatch):
@@ -167,6 +164,44 @@ def test_nudges_are_rate_limited_by_last_nudged_at(patched_db, monkeypatch):
     assert len(_messages("impl")) == 2
 
 
+def test_watchdog_nudge_notification_delivers_through_semantic_inbox(
+    patched_db,
+    monkeypatch,
+):
+    _create_terminal("impl")
+    provider = _provider(TerminalStatus.IDLE)
+    monkeypatch.setattr(
+        baton_watchdog_service.provider_manager,
+        "get_provider",
+        lambda terminal_id: provider,
+    )
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T05",
+        originator_id="originator",
+        holder_id="impl",
+    )
+    baton_watchdog_service.scan_active_batons(
+        config=_config(grace_seconds=0),
+        now=datetime.now() + timedelta(seconds=5),
+    )
+    queued = _messages("impl")
+    assert queued[-1].notification.legacy_inbox_id is None
+    sent = []
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
+        lambda terminal_id, message: sent.append((terminal_id, message)),
+    )
+
+    assert inbox_service.check_and_send_pending_messages("impl") is True
+    assert inbox_service.check_and_send_pending_messages("impl") is True
+
+    delivered = db_module.get_inbox_delivery(queued[-1].notification.id)
+    assert delivered is not None
+    assert delivered.notification.status.value == "delivered"
+    assert "Gentle reminder" in sent[-1][1]
+
+
 def test_missing_holder_metadata_marks_baton_orphaned_and_notifies_originator(
     patched_db, monkeypatch
 ):
@@ -196,10 +231,10 @@ def test_missing_holder_metadata_marks_baton_orphaned_and_notifies_originator(
     assert [event.event_type for event in _events("baton-1")] == ["create", "orphan"]
     queued = _messages("originator")
     assert len(queued) == 1
-    assert queued[0].sender_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
-    assert "Baton id: baton-1" in queued[0].message
-    assert "Previous holder: missing" in queued[0].message
-    assert "marked orphaned" in queued[0].message
+    assert queued[0].message.sender_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
+    assert "Baton id: baton-1" in queued[0].message.body
+    assert "Previous holder: missing" in queued[0].message.body
+    assert "marked orphaned" in queued[0].message.body
 
 
 def test_missing_holder_provider_marks_baton_orphaned_and_notifies_originator(

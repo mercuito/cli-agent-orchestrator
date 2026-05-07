@@ -9,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.mcp_server import server
-from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.services import baton_service
 
 
@@ -30,7 +29,7 @@ def patched_db(monkeypatch):
 
 
 def _pending(receiver_id):
-    return db_module.get_inbox_messages(receiver_id, status=MessageStatus.PENDING)
+    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
 
 
 def test_create_baton_infers_originator_from_cao_terminal_id(patched_db, monkeypatch):
@@ -50,10 +49,10 @@ def test_create_baton_infers_originator_from_cao_terminal_id(patched_db, monkeyp
     assert result["status"] == "active"
     queued = _pending("impl")
     assert len(queued) == 1
-    assert queued[0].sender_id == "originator"
-    assert "Baton id:" in queued[0].message
-    assert "Implement the delivery slice" in queued[0].message
-    assert "/tmp/task.md" in queued[0].message
+    assert queued[0].message.sender_id == "originator"
+    assert "Baton id:" in queued[0].message.body
+    assert "Implement the delivery slice" in queued[0].message.body
+    assert "/tmp/task.md" in queued[0].message.body
 
 
 def test_baton_tool_requires_cao_terminal_id(patched_db, monkeypatch):

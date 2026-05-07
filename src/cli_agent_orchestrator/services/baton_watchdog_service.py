@@ -163,7 +163,7 @@ def _mark_orphaned(db, row: BatonModel, *, now: datetime) -> None:
         message=message,
         created_at=now,
     )
-    db_module.create_inbox_message(
+    db_module.create_inbox_delivery(
         WATCHDOG_ACTOR_ID,
         row.originator_id,
         message,
@@ -188,7 +188,7 @@ def _nudge_holder(db, row: BatonModel, *, now: datetime) -> None:
         message=message,
         created_at=now,
     )
-    db_module.create_inbox_message(
+    db_module.create_inbox_delivery(
         WATCHDOG_ACTOR_ID,
         holder_id,
         message,

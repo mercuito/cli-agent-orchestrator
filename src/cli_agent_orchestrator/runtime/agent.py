@@ -14,7 +14,7 @@ from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
-from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
+from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import inbox_service, terminal_service
@@ -59,9 +59,12 @@ class AgentRuntimeTerminal:
 class AgentRuntimeNotification:
     """Durable notification accepted for a CAO agent runtime."""
 
-    inbox_message: InboxMessage
+    delivery: InboxDelivery
     created: bool
-    receiver_id: str
+
+    @property
+    def receiver_id(self) -> str:
+        return self.delivery.notification.receiver_id
 
 
 @dataclass(frozen=True)
@@ -273,7 +276,7 @@ class AgentRuntimeHandle:
                 delivered=False,
             )
 
-        if db_module.get_oldest_pending_message(terminal.id) is None:
+        if db_module.get_oldest_pending_inbox_delivery(terminal.id) is None:
             return AgentRuntimeDeliveryResult(
                 status=status,
                 terminal_id=terminal.id,
@@ -338,12 +341,11 @@ class AgentRuntimeHandle:
                 )
                 if existing is not None:
                     return AgentRuntimeNotification(
-                        inbox_message=existing,
                         created=False,
-                        receiver_id=existing.receiver_id,
+                        delivery=existing,
                     )
 
-            inbox_message = db_module.create_inbox_message(
+            delivery = db_module.create_inbox_delivery(
                 sender_id=sender_id,
                 receiver_id=receiver_id,
                 message=message,
@@ -358,14 +360,14 @@ class AgentRuntimeHandle:
                         agent_id=self.identity.id,
                         source_kind=source_kind,
                         source_id=source_id,
-                        inbox_message_id=inbox_message.id,
+                        inbox_notification_id=delivery.notification.id,
                         created_at=datetime.now(),
                     )
                     .on_conflict_do_nothing(index_elements=["agent_id", "source_kind", "source_id"])
                 )
                 if inserted.rowcount != 1:
-                    session.query(db_module.InboxModel).filter(
-                        db_module.InboxModel.id == inbox_message.id
+                    session.query(db_module.InboxMessageModel).filter(
+                        db_module.InboxMessageModel.id == delivery.message.id
                     ).delete()
                     existing = self._get_existing_runtime_notification(
                         session,
@@ -378,15 +380,13 @@ class AgentRuntimeHandle:
                         )
                     session.commit()
                     return AgentRuntimeNotification(
-                        inbox_message=existing,
                         created=False,
-                        receiver_id=existing.receiver_id,
+                        delivery=existing,
                     )
             session.commit()
             return AgentRuntimeNotification(
-                inbox_message=inbox_message,
                 created=True,
-                receiver_id=receiver_id,
+                delivery=delivery,
             )
 
     def _get_existing_runtime_notification(
@@ -395,7 +395,7 @@ class AgentRuntimeHandle:
         *,
         source_kind: str,
         source_id: str,
-    ) -> Optional[InboxMessage]:
+    ) -> Optional[InboxDelivery]:
         marker = (
             session.query(db_module.AgentRuntimeNotificationModel)
             .filter(
@@ -408,39 +408,29 @@ class AgentRuntimeHandle:
         if marker is None:
             return None
 
-        inbox_row = (
-            session.query(db_module.InboxModel)
-            .filter(db_module.InboxModel.id == marker.inbox_message_id)
-            .first()
-        )
-        if inbox_row is None:
+        if marker.inbox_notification_id is None:
+            raise RuntimeError("agent runtime notification marker has no semantic notification id")
+        delivery = db_module.get_inbox_delivery(marker.inbox_notification_id, db=session)
+        if delivery is None:
             raise RuntimeError(
-                f"inbox message {marker.inbox_message_id} for agent runtime notification not found"
+                "inbox notification "
+                f"{marker.inbox_notification_id} for agent runtime notification not found"
             )
-        return db_module.inbox_message_from_model(inbox_row)
+        return delivery
 
     def _move_pending_agent_notifications_to_terminal(self, terminal_id: str) -> None:
-        with db_module.SessionLocal() as session:
-            session.query(db_module.InboxModel).filter(
-                db_module.InboxModel.receiver_id == self.inbox_receiver_id,
-                db_module.InboxModel.status == MessageStatus.PENDING.value,
-            ).update(
-                {db_module.InboxModel.receiver_id: terminal_id},
-                synchronize_session=False,
-            )
-            session.commit()
+        db_module.move_pending_inbox_notifications(self.inbox_receiver_id, terminal_id)
 
     def _refresh_notification_receiver(
         self,
         notification: AgentRuntimeNotification,
     ) -> AgentRuntimeNotification:
-        inbox_message = db_module.get_inbox_message(notification.inbox_message.id)
-        if inbox_message is None:
+        delivery = db_module.get_inbox_delivery(notification.delivery.notification.id)
+        if delivery is None:
             return notification
         return AgentRuntimeNotification(
-            inbox_message=inbox_message,
             created=notification.created,
-            receiver_id=inbox_message.receiver_id,
+            delivery=delivery,
         )
 
 

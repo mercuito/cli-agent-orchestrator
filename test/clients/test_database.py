@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
+    AgentRuntimeNotificationModel,
     Base,
     FlowModel,
     InboxMessageModel,
@@ -1098,3 +1099,65 @@ class TestInitDb:
         table_names = inspect(test_engine).get_table_names()
         assert table_names.count("inbox_messages") == 1
         assert table_names.count("inbox_notifications") == 1
+
+    def test_agent_runtime_migration_relaxes_legacy_inbox_message_not_null(
+        self, tmp_path, monkeypatch
+    ):
+        """Old runtime marker tables allow semantic-only marker inserts after migration."""
+        db_path = tmp_path / "legacy-runtime.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        TestSession = sessionmaker(bind=test_engine)
+        monkeypatch.setattr(db_module, "engine", test_engine)
+        monkeypatch.setattr(db_module, "SessionLocal", TestSession)
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+
+        InboxModel.__table__.create(bind=test_engine)
+        InboxMessageModel.__table__.create(bind=test_engine)
+        InboxNotificationModel.__table__.create(bind=test_engine)
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE agent_runtime_notifications (
+                    id INTEGER NOT NULL,
+                    agent_id VARCHAR NOT NULL,
+                    source_kind VARCHAR NOT NULL,
+                    source_id VARCHAR NOT NULL,
+                    inbox_message_id INTEGER NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    PRIMARY KEY (id),
+                    UNIQUE (agent_id, source_kind, source_id),
+                    FOREIGN KEY(inbox_message_id) REFERENCES inbox (id) ON DELETE CASCADE
+                )
+            """)
+
+        db_module._migrate_ensure_agent_runtime_tables()
+
+        with test_engine.connect() as connection:
+            columns = {
+                row[1]: row
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(agent_runtime_notifications)"
+                )
+            }
+        assert "inbox_notification_id" in columns
+        assert columns["inbox_message_id"][3] == 0
+
+        delivery = create_inbox_delivery(
+            "linear-runtime",
+            "agent-123",
+            "Runtime notification",
+            source_kind="linear_issue",
+            source_id="CAO-38",
+        )
+        with TestSession() as session:
+            marker = AgentRuntimeNotificationModel(
+                agent_id="agent-123",
+                source_kind="linear_issue",
+                source_id="CAO-38",
+                inbox_notification_id=delivery.notification.id,
+            )
+            session.add(marker)
+            session.commit()
+            session.refresh(marker)
+
+            assert marker.inbox_message_id is None
+            assert marker.inbox_notification_id == delivery.notification.id

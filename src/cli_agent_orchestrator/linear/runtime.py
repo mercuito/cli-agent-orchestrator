@@ -6,6 +6,7 @@ import hashlib
 import logging
 from typing import Any, Dict, Optional
 
+from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.linear import app_client, translator
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearResolvedPresence,
@@ -14,8 +15,7 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     normalize_app_key,
 )
 from cli_agent_orchestrator.presence.inbox_bridge import create_notification_for_persisted_event
-from cli_agent_orchestrator.presence.models import PresenceEvent
-from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
+from cli_agent_orchestrator.presence.models import PersistedPresenceEvent, PresenceEvent
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeHandle,
     AgentRuntimeNotification,
@@ -277,10 +277,14 @@ def notify_agent_for_persisted_event(
     if notification.created:
         _post_accepted_activity(thread_id=thread_id, resolved=resolved)
 
+    delivery = db_module.get_inbox_delivery_for_legacy_message(notification.inbox_message.id)
+    if delivery is None:
+        raise RuntimeError(
+            f"inbox notification for persisted event {notification.inbox_message.id} not found"
+        )
     runtime_notification = AgentRuntimeNotification(
-        inbox_message=notification.inbox_message,
+        delivery=delivery,
         created=notification.created,
-        receiver_id=notification.inbox_message.receiver_id,
     )
     result = handle.accept_notification(runtime_notification)
     if notification.created:
@@ -300,7 +304,7 @@ def notify_agent_for_persisted_event(
         "Accepted Linear AgentSession inbox notification for CAO agent %s "
         "(inbox=%s terminal=%s status=%s created=%s)",
         resolved.identity.id,
-        result.notification.inbox_message.id,
+        result.notification.delivery.notification.id,
         result.terminal_id,
         result.status.value,
         result.notification.created,

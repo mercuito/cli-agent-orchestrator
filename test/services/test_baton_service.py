@@ -9,8 +9,8 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.baton import BatonStatus
-from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.services import baton_service
+from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.services import baton_service, inbox_service
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def _event_types(baton_id):
 
 
 def _messages(receiver_id):
-    return db_module.get_inbox_messages(receiver_id, status=MessageStatus.PENDING)
+    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
 
 
 def test_create_baton_persists_active_holder_and_event(patched_db):
@@ -55,11 +55,11 @@ def test_create_baton_persists_active_holder_and_event(patched_db):
     assert _event_types("baton-1") == ["create"]
     queued = _messages("impl")
     assert len(queued) == 1
-    assert queued[0].sender_id == "originator"
-    assert "Baton id: baton-1" in queued[0].message
-    assert "Title: T01" in queued[0].message
-    assert "Current expectation: implement" in queued[0].message
-    assert "complete_baton" in queued[0].message
+    assert queued[0].message.sender_id == "originator"
+    assert "Baton id: baton-1" in queued[0].message.body
+    assert "Title: T01" in queued[0].message.body
+    assert "Current expectation: implement" in queued[0].message.body
+    assert "complete_baton" in queued[0].message.body
 
 
 def test_pass_baton_pushes_previous_holder_and_sets_receiver(patched_db):
@@ -84,11 +84,46 @@ def test_pass_baton_pushes_previous_holder_and_sets_receiver(patched_db):
     assert _event_types("baton-1") == ["create", "pass"]
     queued = _messages("reviewer")
     assert len(queued) == 1
-    assert queued[0].sender_id == "impl"
-    assert "please review" in queued[0].message
-    assert "Current expectation: review" in queued[0].message
-    assert "pass_baton" in queued[0].message
-    assert "Do not use send_message to transfer baton ownership" in queued[0].message
+    assert queued[0].message.sender_id == "impl"
+    assert "please review" in queued[0].message.body
+    assert "Current expectation: review" in queued[0].message.body
+    assert "pass_baton" in queued[0].message.body
+    assert "Do not use send_message to transfer baton ownership" in queued[0].message.body
+
+
+def test_pass_baton_notification_delivers_through_semantic_inbox(patched_db, monkeypatch):
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T01",
+        originator_id="originator",
+        holder_id="impl",
+    )
+    baton_service.pass_baton(
+        baton_id="baton-1",
+        actor_id="impl",
+        receiver_id="reviewer",
+        message="please review",
+    )
+    queued = _messages("reviewer")
+    assert queued[0].notification.legacy_inbox_id is None
+    idle_provider = type("IdleProvider", (), {"get_status": lambda self: TerminalStatus.IDLE})()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.inbox_service.provider_manager.get_provider",
+        lambda terminal_id: idle_provider,
+    )
+    sent = []
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
+        lambda terminal_id, message: sent.append((terminal_id, message)),
+    )
+
+    assert inbox_service.check_and_send_pending_messages("reviewer") is True
+
+    delivered = db_module.get_inbox_delivery(queued[0].notification.id)
+    assert delivered is not None
+    assert delivered.notification.status.value == "delivered"
+    assert sent[0][0] == "reviewer"
+    assert "please review" in sent[0][1]
 
 
 def test_pass_baton_rejects_self_pass(patched_db):
@@ -198,8 +233,8 @@ def test_return_baton_pops_previous_holder(patched_db):
     assert _event_types("baton-1") == ["create", "pass", "return"]
     queued = _messages("impl")
     assert len(queued) == 2
-    assert "changes requested" in queued[-1].message
-    assert "return_baton" in queued[-1].message
+    assert "changes requested" in queued[-1].message.body
+    assert "return_baton" in queued[-1].message.body
 
 
 def test_return_baton_with_empty_stack_returns_to_originator(patched_db):
@@ -240,9 +275,9 @@ def test_complete_baton_resolves_and_clears_current_holder(patched_db):
     assert _event_types("baton-1") == ["create", "complete"]
     queued = _messages("originator")
     assert len(queued) == 1
-    assert queued[0].sender_id == "impl"
-    assert "A baton has been completed" in queued[0].message
-    assert "get_baton" in queued[0].message
+    assert queued[0].message.sender_id == "impl"
+    assert "A baton has been completed" in queued[0].message.body
+    assert "get_baton" in queued[0].message.body
 
 
 def test_block_baton_marks_blocked_and_keeps_holder_visible(patched_db):
@@ -264,8 +299,8 @@ def test_block_baton_marks_blocked_and_keeps_holder_visible(patched_db):
     assert _event_types("baton-1") == ["create", "block"]
     queued = _messages("originator")
     assert len(queued) == 1
-    assert "contract mismatch" in queued[0].message
-    assert "A baton is blocked" in queued[0].message
+    assert "contract mismatch" in queued[0].message.body
+    assert "A baton is blocked" in queued[0].message.body
 
 
 def test_non_holder_agent_transition_fails(patched_db):
@@ -371,7 +406,7 @@ def test_create_baton_rolls_back_if_initial_message_enqueue_fails(patched_db, mo
     def fail_enqueue(*args, **kwargs):
         raise RuntimeError("inbox unavailable")
 
-    monkeypatch.setattr(db_module, "create_inbox_message", fail_enqueue)
+    monkeypatch.setattr(db_module, "create_inbox_delivery", fail_enqueue)
 
     with pytest.raises(RuntimeError, match="inbox unavailable"):
         baton_service.create_baton(
@@ -397,7 +432,7 @@ def test_pass_baton_rolls_back_state_if_transfer_message_enqueue_fails(patched_d
     def fail_enqueue(*args, **kwargs):
         raise RuntimeError("inbox unavailable")
 
-    monkeypatch.setattr(db_module, "create_inbox_message", fail_enqueue)
+    monkeypatch.setattr(db_module, "create_inbox_delivery", fail_enqueue)
 
     with pytest.raises(RuntimeError, match="inbox unavailable"):
         baton_service.pass_baton(
