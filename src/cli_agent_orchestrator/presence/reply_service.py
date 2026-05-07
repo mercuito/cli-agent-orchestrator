@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -42,6 +43,20 @@ class PresenceReplyDeliveryError(PresenceReplyError):
     def __init__(self, message: str, *, failed_message: ConversationMessageRecord) -> None:
         super().__init__(message)
         self.failed_message = failed_message
+
+
+MAX_PROVIDER_ERROR_CHARS = 240
+
+_STACK_TRACE_RE = re.compile(r"Traceback \(most recent call last\):|\n\s*File \"")
+_BEARER_TOKEN_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_SENSITIVE_QUOTED_VALUE_RE = re.compile(
+    r"(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|"
+    r"api[_-]?key|password|secret|token)\b([\"']?\s*[:=]\s*)([\"']).*?\3"
+)
+_SENSITIVE_VALUE_RE = re.compile(
+    r"(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|"
+    r"api[_-]?key|password|secret|token)\b([\"']?\s*[:=]\s*)[^,\s'\"}]+"
+)
 
 
 @dataclass(frozen=True)
@@ -96,15 +111,17 @@ def reply_to_inbox_message(
             metadata=_reply_metadata(inbox_message_id, thread=thread, metadata=metadata),
         )
     except Exception as exc:
+        safe_error = _safe_provider_error(exc)
         failed_message = _record_failed_reply(
             thread=thread,
             body=body,
             inbox_message_id=inbox_message_id,
             error=exc,
+            safe_error=safe_error,
             metadata=metadata,
         )
         raise PresenceReplyDeliveryError(
-            f"provider reply failed for inbox message {inbox_message_id}: {exc}",
+            f"provider reply failed for inbox message {inbox_message_id}: {safe_error}",
             failed_message=failed_message,
         ) from exc
 
@@ -196,13 +213,14 @@ def _record_failed_reply(
     body: str,
     inbox_message_id: int,
     error: Exception,
+    safe_error: str,
     metadata: Optional[Mapping[str, Any]],
 ) -> ConversationMessageRecord:
     record_metadata: Dict[str, Any] = {
         "inbox_message_id": inbox_message_id,
         "reply_status": "failed",
         "error_type": type(error).__name__,
-        "error": str(error),
+        "error": safe_error,
     }
     if metadata is not None:
         record_metadata["metadata"] = dict(metadata)
@@ -216,3 +234,26 @@ def _record_failed_reply(
         state="failed",
         metadata=record_metadata,
     )
+
+
+def _safe_provider_error(error: Exception) -> str:
+    """Return a concise provider-error summary safe for agent-facing failures."""
+
+    raw_message = str(error) or type(error).__name__
+    message = _STACK_TRACE_RE.split(raw_message, maxsplit=1)[0].strip()
+    if not message:
+        message = type(error).__name__
+    message = _BEARER_TOKEN_RE.sub("Bearer [redacted]", message)
+    message = _SENSITIVE_QUOTED_VALUE_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}{match.group(3)}[redacted]{match.group(3)}",
+        message,
+    )
+    message = _SENSITIVE_VALUE_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[redacted]",
+        message,
+    )
+    message = " ".join(message.split())
+    if len(message) <= MAX_PROVIDER_ERROR_CHARS:
+        return message
+    suffix = "..."
+    return message[: MAX_PROVIDER_ERROR_CHARS - len(suffix)].rstrip() + suffix

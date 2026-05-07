@@ -51,6 +51,7 @@ def _persist_message(
     message_external_id: str = "message-1",
     body: str = "Please look at the failing handoff test.",
     metadata: dict | None = None,
+    raw_snapshot: dict | None = None,
 ):
     work_item = upsert_work_item(
         provider=provider,
@@ -71,6 +72,7 @@ def _persist_message(
         direction="inbound",
         kind="comment",
         body=body,
+        raw_snapshot=raw_snapshot,
         metadata=metadata,
     )
     return work_item, thread, message
@@ -221,6 +223,22 @@ def test_attachment_metadata_does_not_block_text_notification(test_session):
     assert result.created is True
     assert "Text that should still notify." in result.inbox_message.message
     assert "Attachment/media metadata present." in result.inbox_message.message
+
+
+def test_notification_author_label_does_not_scan_large_raw_snapshot(test_session):
+    _, _, message = _persist_message(
+        body="Text that should still notify.",
+        raw_snapshot={"author": {"name": "Raw Snapshot Author Should Not Leak"}},
+        metadata=None,
+    )
+
+    result = create_notification_for_message(
+        presence_message_id=message.id,
+        receiver_id="terminal-a",
+    )
+
+    assert "Raw Snapshot Author Should Not Leak" not in result.inbox_message.message
+    assert "From:" not in result.inbox_message.message
 
 
 def test_presence_sources_use_existing_inbox_batching_behavior(test_session):

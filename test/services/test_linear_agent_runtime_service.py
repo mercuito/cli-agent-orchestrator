@@ -129,6 +129,7 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(monk
     update_url.assert_called_once_with(
         "session-1",
         "terminal-1",
+        agent_id="implementation_partner",
         app_key="implementation_partner",
     )
     create_activity.assert_called_once()
@@ -160,6 +161,7 @@ def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch):
     update_url.assert_called_once_with(
         "session-1",
         "terminal-implementation_partner",
+        agent_id="implementation_partner",
         app_key="implementation_partner",
     )
     create_activity.assert_called_once()

@@ -16,6 +16,7 @@ from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
 from cli_agent_orchestrator.presence.manager import PresenceProviderManager
+from cli_agent_orchestrator.presence.inbox_presentation import INBOX_PRESENTATION_METADATA_KEY
 from cli_agent_orchestrator.presence.models import ExternalRef
 from cli_agent_orchestrator.presence.persistence import (
     get_message,
@@ -93,6 +94,18 @@ def test_nested_agent_session_payload_normalizes_to_presence_event():
     assert event.message.ref == ExternalRef(provider="linear", id="activity-1")
     assert event.message.kind == "prompt"
     assert event.message.body == "Can you scope this?"
+    assert event.message.metadata == {
+        INBOX_PRESENTATION_METADATA_KEY: {
+            "workspace": {
+                "name": "Linear",
+                "breadcrumb": {
+                    "agent_session_id": "session-1",
+                    "issue": "CAO-13",
+                },
+            },
+            "source_label": "Linear",
+        }
+    }
 
 
 def test_payload_provider_like_fields_do_not_control_primary_ref_ownership():
@@ -285,6 +298,28 @@ def test_reply_to_thread_uses_app_key_from_provider_reply_metadata():
         {"type": "response", "body": "Reply as mapped app."},
         app_key="implementation_partner",
     )
+
+
+def test_linear_provider_authors_inbox_presentation_from_session_and_activity():
+    payload = _nested_payload()
+    payload["data"]["agentActivity"]["actor"] = {"name": "  Implementation   Partner  "}
+
+    event = LinearPresenceProvider().normalize_event(payload)
+
+    assert event is not None
+    assert event.message is not None
+    assert event.message.metadata == {
+        INBOX_PRESENTATION_METADATA_KEY: {
+            "workspace": {
+                "name": "Linear",
+                "breadcrumb": {
+                    "agent_session_id": "session-1",
+                    "issue": "CAO-13",
+                },
+            },
+            "source_label": "Implementation Partner",
+        }
+    }
 
 
 def test_fetch_thread_and_messages_translate_app_client_responses():

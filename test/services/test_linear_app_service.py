@@ -6,12 +6,17 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
 
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+
+
+def _future_token_expires_at() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
 
 @pytest.fixture(autouse=True)
@@ -258,7 +263,7 @@ def test_linear_graphql_refreshes_once_after_auth_error(monkeypatch):
         "LINEAR_APP_KEYS": "implementation_partner",
         "LINEAR_APP_IMPLEMENTATION_PARTNER_ACCESS_TOKEN": "old-access-token",
         "LINEAR_APP_IMPLEMENTATION_PARTNER_REFRESH_TOKEN": "old-refresh-token",
-        "LINEAR_APP_IMPLEMENTATION_PARTNER_TOKEN_EXPIRES_AT": "2026-05-07T00:00:00+00:00",
+        "LINEAR_APP_IMPLEMENTATION_PARTNER_TOKEN_EXPIRES_AT": _future_token_expires_at(),
         "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_ID": "client-id",
         "LINEAR_APP_IMPLEMENTATION_PARTNER_CLIENT_SECRET": "client-secret",
     }

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from cli_agent_orchestrator.linear.workspace_provider import (
@@ -12,6 +14,10 @@ from cli_agent_orchestrator.workspace_providers import (
     UnknownWorkspaceProviderError,
     initialize_enabled_workspace_providers,
 )
+
+
+def _future_token_expires_at() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
 
 def test_unknown_enabled_workspace_provider_fails_clearly(tmp_path):
@@ -41,14 +47,14 @@ session_name = "implementation-partner"
 """)
     linear_config = tmp_path / "workspace-providers" / "linear.toml"
     linear_config.parent.mkdir(parents=True)
-    linear_config.write_text("""
+    linear_config.write_text(f"""
 [presences.implementation_partner]
 agent_id = "implementation_partner"
 app_key = "implementation_partner"
 app_user_id = "app-user-impl"
 app_user_name = "Implementation Partner"
 access_token = "access-token"
-token_expires_at = "2026-05-07T00:00:00+00:00"
+token_expires_at = "{_future_token_expires_at()}"
 """)
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.workspace_provider.LINEAR_PROVIDER_CONFIG_PATH",

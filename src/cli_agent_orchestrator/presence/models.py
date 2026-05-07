@@ -50,6 +50,7 @@ class ConversationMessage:
     ref: Optional[ExternalRef] = None
     direction: MessageDirection = "inbound"
     state: MessageState = "received"
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)

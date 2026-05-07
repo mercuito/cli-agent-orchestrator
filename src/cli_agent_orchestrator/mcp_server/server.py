@@ -788,11 +788,11 @@ def _read_inbox_message_impl(inbox_message_id: int) -> Dict[str, Any]:
 async def read_inbox_message(
     inbox_message_id: int = Field(description="CAO inbox message ID from a notification"),
 ) -> Dict[str, Any]:
-    """Read the full provider-backed content/context for an inbox notification.
+    """Read a slim message-first payload for a CAO inbox notification.
 
     Use this after receiving a compact CAO inbox notification. The terminal
-    notification is only a pointer; this tool returns the durable backing
-    message, thread/work context, raw provider snapshot, and replyability info.
+    notification may only be a pointer; this tool returns the backing message
+    body and replyability without exposing provider internals by default.
     """
     return _read_inbox_message_impl(inbox_message_id)
 
@@ -846,7 +846,7 @@ async def reply_to_inbox_message(
 def _ensure_mcp_presence_provider_for_inbox(inbox_message_id: int) -> None:
     """Register the built-in provider needed by one provider-backed inbox reply."""
     read_result = read_provider_inbox_message(inbox_message_id)
-    provider = read_result.thread.get("provider")
+    provider = read_result.thread.get("provider") if read_result.thread is not None else None
     if provider:
         ensure_builtin_presence_provider(str(provider))
 

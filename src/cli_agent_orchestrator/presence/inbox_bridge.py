@@ -18,6 +18,7 @@ PRESENCE_INBOX_SOURCE_KIND = "presence_thread"
 PRESENCE_INBOX_SENDER_ID = "presence"
 DEFAULT_PREVIEW_CHARS = 240
 DEFAULT_NOTIFICATION_CHARS = 700
+MAX_NOTIFICATION_METADATA_JSON_CHARS = 4000
 
 
 @dataclass(frozen=True)
@@ -164,9 +165,7 @@ def format_presence_notification(
     ]
     if _metadata_indicates_media(
         cast(Optional[str], message_row.metadata_json)
-    ) or _metadata_indicates_media(
-        cast(Optional[str], message_row.raw_snapshot_json)
-    ):
+    ) or _metadata_indicates_media(cast(Optional[str], message_row.raw_snapshot_json)):
         lines.append("Attachment/media metadata present.")
     guidance = "\n".join(
         [
@@ -212,11 +211,7 @@ def _format_work_item(row: Optional[db_module.PresenceWorkItemModel]) -> Optiona
     if row is None:
         return None
 
-    parts = [
-        _compact(cast(Optional[str], value))
-        for value in (row.identifier, row.title)
-        if value
-    ]
+    parts = [_compact(cast(Optional[str], value)) for value in (row.identifier, row.title) if value]
     if not parts:
         return None
     return f"Issue: {_truncate(' - '.join(parts), 180)}"
@@ -233,9 +228,7 @@ def _format_source(
 
 
 def _format_author(row: db_module.PresenceMessageModel) -> Optional[str]:
-    metadata = _load_json_object(cast(Optional[str], row.metadata_json)) or _load_json_object(
-        cast(Optional[str], row.raw_snapshot_json)
-    )
+    metadata = _load_json_object(cast(Optional[str], row.metadata_json))
     if not metadata:
         return None
     author = _find_author_metadata(metadata)
@@ -272,7 +265,7 @@ def _metadata_indicates_media(metadata_json: Optional[str]) -> bool:
 
 
 def _load_json_object(metadata_json: Optional[str]) -> Optional[dict[str, Any]]:
-    if not metadata_json:
+    if not metadata_json or len(metadata_json) > MAX_NOTIFICATION_METADATA_JSON_CHARS:
         return None
     try:
         metadata = json.loads(metadata_json)

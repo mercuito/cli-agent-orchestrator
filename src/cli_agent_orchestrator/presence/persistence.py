@@ -616,6 +616,7 @@ def persist_presence_event(event: PresenceEvent) -> PersistedPresenceEvent:
                 body=event.message.body,
                 state=event.message.state,
                 raw_snapshot=event.raw_payload,
+                metadata=event.message.metadata,
                 db=session,
             )
 

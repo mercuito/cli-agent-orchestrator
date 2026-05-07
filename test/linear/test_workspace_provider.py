@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
@@ -43,6 +45,10 @@ def _linear_config(tmp_path, body: str):
     path.parent.mkdir(parents=True)
     path.write_text(body)
     return path
+
+
+def _future_token_expires_at() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
 
 def test_configured_linear_app_key_resolves_to_cao_identity(tmp_path):
@@ -312,13 +318,13 @@ token_expires_at = "2026-05-01T00:00:00+00:00"
 def test_linear_provider_preflight_rejects_authenticated_app_user_mismatch(tmp_path):
     config = _linear_config(
         tmp_path,
-        """
+        f"""
 [presences.implementation_partner]
 agent_id = "implementation_partner"
 app_key = "implementation_partner"
 app_user_id = "expected-app-user"
 access_token = "access-token"
-token_expires_at = "2026-05-07T00:00:00+00:00"
+token_expires_at = "{_future_token_expires_at()}"
 """,
     )
     provider = LinearWorkspaceProvider(
@@ -335,13 +341,13 @@ def test_linear_provider_preflight_accepts_authenticated_credentials(tmp_path):
     checked = []
     config = _linear_config(
         tmp_path,
-        """
+        f"""
 [presences.implementation_partner]
 agent_id = "implementation_partner"
 app_key = "implementation_partner"
 app_user_id = "app-user-impl"
 access_token = "access-token"
-token_expires_at = "2026-05-07T00:00:00+00:00"
+token_expires_at = "{_future_token_expires_at()}"
 """,
     )
 

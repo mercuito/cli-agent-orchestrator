@@ -14,6 +14,7 @@ from cli_agent_orchestrator.presence.models import (
     StopAcknowledgement,
     WorkItem,
 )
+from cli_agent_orchestrator.presence.inbox_presentation import inbox_presentation_metadata
 from cli_agent_orchestrator.presence.refs import ProviderRefFactory
 
 PROVIDER = "linear"
@@ -128,6 +129,7 @@ def _message_from_activity(
     *,
     direction: str = "inbound",
     state: str = "received",
+    metadata: Optional[Mapping[str, Any]] = None,
     refs: ProviderRefFactory = LINEAR_REFS,
 ) -> Optional[ConversationMessage]:
     if not activity:
@@ -138,6 +140,7 @@ def _message_from_activity(
         ref=_message_ref(activity, refs),
         direction=direction,  # type: ignore[arg-type]
         state=state,  # type: ignore[arg-type]
+        metadata=dict(metadata) if metadata is not None else None,
     )
 
 
@@ -149,6 +152,33 @@ def _activity_nodes(value: Any) -> List[Mapping[str, Any]]:
         if isinstance(nodes, list):
             return [item for item in nodes if isinstance(item, Mapping)]
     return []
+
+
+def _linear_inbox_presentation_metadata(
+    agent_session: Mapping[str, Any],
+    activity: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    return inbox_presentation_metadata(
+        workspace=_linear_workspace_hint(agent_session),
+        source_label=_linear_actor_label(activity) or "Linear",
+    )
+
+
+def _linear_workspace_hint(agent_session: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    session_id = _string_value(agent_session.get("id"))
+    if not session_id:
+        return None
+
+    breadcrumb: dict[str, str] = {"agent_session_id": session_id}
+    issue = _dict_value(agent_session.get("issue"))
+    if issue:
+        issue_identifier = _string_value(issue.get("identifier"))
+        issue_id = _string_value(issue.get("id"))
+        if issue_identifier:
+            breadcrumb["issue"] = issue_identifier
+        elif issue_id:
+            breadcrumb["issue_id"] = issue_id
+    return {"name": "Linear", "breadcrumb": breadcrumb}
 
 
 class LinearPresenceProvider:
@@ -189,7 +219,11 @@ class LinearPresenceProvider:
             event_type=_event_type(payload, effective_header_event) or "AgentSessionEvent",
             action=action,
             thread=thread,
-            message=_message_from_activity(activity, refs=self._refs),
+            message=_message_from_activity(
+                activity,
+                metadata=_linear_inbox_presentation_metadata(agent_session, activity),
+                refs=self._refs,
+            ),
             delivery_id=delivery_id,
             raw_payload=payload,
         )
@@ -299,6 +333,33 @@ def _app_key_from_nested(value: Any) -> Optional[str]:
             if found:
                 return found
     return None
+
+
+def _linear_actor_label(metadata: Optional[Mapping[str, Any]]) -> Optional[str]:
+    if not metadata:
+        return None
+    for key in ("actor", "author", "user", "creator"):
+        item = metadata.get(key)
+        if isinstance(item, Mapping):
+            name = item.get("name") or item.get("displayName") or item.get("email")
+            if name:
+                return _bounded_compact(str(name))
+        elif isinstance(item, str) and item.strip():
+            return _bounded_compact(item)
+    data = metadata.get("data")
+    if isinstance(data, Mapping):
+        found = _linear_actor_label(data)
+        if found:
+            return found
+    return None
+
+
+def _bounded_compact(value: str, max_chars: int = 120) -> str:
+    compacted = " ".join(value.split())
+    if len(compacted) <= max_chars:
+        return compacted
+    suffix = "..."
+    return compacted[: max(0, max_chars - len(suffix))].rstrip() + suffix
 
 
 def thread_from_agent_session(agent_session: Mapping[str, Any]) -> Optional[ConversationThread]:
