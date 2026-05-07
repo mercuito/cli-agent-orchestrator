@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from sqlalchemy import (
     Boolean,
@@ -22,7 +22,13 @@ from sqlalchemy.orm import DeclarativeBase, Session, declarative_base, sessionma
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonEventType, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
-from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
+from cli_agent_orchestrator.models.inbox import (
+    InboxDelivery,
+    InboxMessage,
+    InboxMessageRecord,
+    InboxNotification,
+    MessageStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +58,7 @@ class TerminalModel(Base):
 
 
 class InboxModel(Base):
-    """SQLAlchemy model for inbox messages."""
+    """Legacy SQLAlchemy model for overloaded inbox rows."""
 
     __tablename__ = "inbox"
 
@@ -64,6 +70,42 @@ class InboxModel(Base):
     source_id = Column(String, nullable=True)
     status = Column(String, nullable=False)  # MessageStatus enum value
     created_at = Column(DateTime, default=datetime.now)
+
+
+class InboxMessageModel(Base):
+    """SQLAlchemy model for durable semantic inbox messages."""
+
+    __tablename__ = "inbox_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sender_id = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    source_kind = Column(String, nullable=False)
+    source_id = Column(String, nullable=False)
+    origin_json = Column(Text, nullable=True)
+    route_kind = Column(String, nullable=True)
+    route_id = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
+class InboxNotificationModel(Base):
+    """SQLAlchemy model for per-recipient inbox delivery notifications."""
+
+    __tablename__ = "inbox_notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(
+        Integer, ForeignKey("inbox_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    receiver_id = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    delivered_at = Column(DateTime, nullable=True)
+    failed_at = Column(DateTime, nullable=True)
+    error_detail = Column(Text, nullable=True)
+    legacy_inbox_id = Column(
+        Integer, ForeignKey("inbox.id", ondelete="SET NULL"), nullable=True, unique=True
+    )
 
 
 class MonitoringSessionModel(Base):
@@ -266,12 +308,22 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """Initialize database tables and apply schema migrations."""
     Base.metadata.create_all(bind=engine)
+    _migrate_ensure_semantic_inbox_tables()
     _migrate_add_inbox_source_fields()
     _migrate_ensure_baton_tables()
     _migrate_ensure_presence_tables()
     _migrate_ensure_agent_runtime_tables()
     _migrate_add_allowed_tools()
     _migrate_drop_monitoring_session_peers()
+
+
+def _migrate_ensure_semantic_inbox_tables() -> None:
+    """Create semantic inbox message/notification tables on existing databases."""
+    try:
+        InboxMessageModel.__table__.create(bind=engine, checkfirst=True)
+        InboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for semantic inbox tables failed: {e}")
 
 
 def _migrate_add_inbox_source_fields() -> None:
@@ -494,6 +546,36 @@ def delete_terminals_by_session(tmux_session: str) -> int:
         return deleted
 
 
+def _validate_complete_identity(
+    kind: Optional[str], identity_id: Optional[str], label: str
+) -> None:
+    if (kind is None) != (identity_id is None):
+        raise ValueError(f"{label}_kind and {label}_id must be provided together")
+
+
+def _resolve_source_identity(
+    sender_id: str, source_kind: Optional[str], source_id: Optional[str]
+) -> Tuple[str, str]:
+    _validate_complete_identity(source_kind, source_id, "source")
+    if source_kind is None and source_id is None:
+        return "terminal", sender_id
+    assert source_kind is not None and source_id is not None
+    return source_kind, source_id
+
+
+def _serialize_origin(origin: Optional[Dict[str, Any]]) -> Optional[str]:
+    if origin is None:
+        return None
+    return json.dumps(origin, sort_keys=True)
+
+
+def _deserialize_origin(origin_json: Optional[str]) -> Optional[Dict[str, Any]]:
+    if origin_json is None:
+        return None
+    value = json.loads(origin_json)
+    return value if isinstance(value, dict) else None
+
+
 def inbox_message_from_model(row: InboxModel) -> InboxMessage:
     """Convert an inbox database row to its typed domain model."""
     return InboxMessage(
@@ -508,6 +590,288 @@ def inbox_message_from_model(row: InboxModel) -> InboxMessage:
     )
 
 
+def inbox_message_record_from_model(row: InboxMessageModel) -> InboxMessageRecord:
+    """Convert a durable inbox message row to its domain model."""
+    return InboxMessageRecord(
+        id=row.id,
+        sender_id=row.sender_id,
+        body=row.body,
+        source_kind=row.source_kind,
+        source_id=row.source_id,
+        origin=_deserialize_origin(row.origin_json),
+        route_kind=row.route_kind,
+        route_id=row.route_id,
+        created_at=row.created_at,
+    )
+
+
+def inbox_notification_from_model(row: InboxNotificationModel) -> InboxNotification:
+    """Convert an inbox notification row to its domain model."""
+    return InboxNotification(
+        id=row.id,
+        message_id=row.message_id,
+        receiver_id=row.receiver_id,
+        status=MessageStatus(row.status),
+        created_at=row.created_at,
+        delivered_at=row.delivered_at,
+        failed_at=row.failed_at,
+        error_detail=row.error_detail,
+        legacy_inbox_id=row.legacy_inbox_id,
+    )
+
+
+def inbox_delivery_from_models(
+    message_row: InboxMessageModel, notification_row: InboxNotificationModel
+) -> InboxDelivery:
+    """Convert joined semantic inbox rows to their domain model."""
+    return InboxDelivery(
+        message=inbox_message_record_from_model(message_row),
+        notification=inbox_notification_from_model(notification_row),
+    )
+
+
+def inbox_delivery_to_compat_message(
+    delivery: InboxDelivery,
+    *,
+    compatibility_id: Optional[int] = None,
+    legacy_row: Optional[InboxModel] = None,
+) -> InboxMessage:
+    """Render semantic message + notification as the legacy InboxMessage shape."""
+    notification = delivery.notification
+    message = delivery.message
+    receiver_id = legacy_row.receiver_id if legacy_row is not None else notification.receiver_id
+    created_at = legacy_row.created_at if legacy_row is not None else notification.created_at
+    return InboxMessage(
+        id=compatibility_id if compatibility_id is not None else notification.id,
+        sender_id=message.sender_id,
+        receiver_id=receiver_id,
+        message=message.body,
+        source_kind=message.source_kind,
+        source_id=message.source_id,
+        status=notification.status,
+        created_at=created_at,
+    )
+
+
+def create_inbox_delivery(
+    sender_id: str,
+    receiver_id: str,
+    message: str,
+    *,
+    source_kind: Optional[str] = None,
+    source_id: Optional[str] = None,
+    origin: Optional[Dict[str, Any]] = None,
+    route_kind: Optional[str] = None,
+    route_id: Optional[str] = None,
+    db: Optional[Session] = None,
+) -> InboxDelivery:
+    """Create one durable inbox message and one delivery notification.
+
+    New callers should use the returned notification id for delivery-state
+    operations. Compatibility wrappers below keep old ``InboxMessage`` callers
+    working without making the old table the authoritative message store.
+    """
+    effective_source_kind, effective_source_id = _resolve_source_identity(
+        sender_id, source_kind, source_id
+    )
+    _validate_complete_identity(route_kind, route_id, "route")
+
+    def _add_delivery(session: Session) -> InboxDelivery:
+        message_row = InboxMessageModel(
+            sender_id=sender_id,
+            body=message,
+            source_kind=effective_source_kind,
+            source_id=effective_source_id,
+            origin_json=_serialize_origin(origin),
+            route_kind=route_kind,
+            route_id=route_id,
+        )
+        session.add(message_row)
+        session.flush()
+        notification_row = InboxNotificationModel(
+            message_id=message_row.id,
+            receiver_id=receiver_id,
+            status=MessageStatus.PENDING.value,
+        )
+        session.add(notification_row)
+        session.flush()
+        session.refresh(message_row)
+        session.refresh(notification_row)
+        return inbox_delivery_from_models(message_row, notification_row)
+
+    if db is not None:
+        return _add_delivery(db)
+
+    with SessionLocal() as session:
+        delivery = _add_delivery(session)
+        session.commit()
+        return delivery
+
+
+def create_inbox_message_record(
+    sender_id: str,
+    message: str,
+    *,
+    source_kind: Optional[str] = None,
+    source_id: Optional[str] = None,
+    origin: Optional[Dict[str, Any]] = None,
+    route_kind: Optional[str] = None,
+    route_id: Optional[str] = None,
+    db: Optional[Session] = None,
+) -> InboxMessageRecord:
+    """Create a durable inbox message without creating delivery state."""
+    effective_source_kind, effective_source_id = _resolve_source_identity(
+        sender_id, source_kind, source_id
+    )
+    _validate_complete_identity(route_kind, route_id, "route")
+
+    def _add_message(session: Session) -> InboxMessageRecord:
+        message_row = InboxMessageModel(
+            sender_id=sender_id,
+            body=message,
+            source_kind=effective_source_kind,
+            source_id=effective_source_id,
+            origin_json=_serialize_origin(origin),
+            route_kind=route_kind,
+            route_id=route_id,
+        )
+        session.add(message_row)
+        session.flush()
+        session.refresh(message_row)
+        return inbox_message_record_from_model(message_row)
+
+    if db is not None:
+        return _add_message(db)
+
+    with SessionLocal() as session:
+        record = _add_message(session)
+        session.commit()
+        return record
+
+
+def create_inbox_notification(
+    message_id: int,
+    receiver_id: str,
+    *,
+    status: MessageStatus = MessageStatus.PENDING,
+    db: Optional[Session] = None,
+) -> InboxNotification:
+    """Create delivery state for an existing durable inbox message."""
+
+    def _add_notification(session: Session) -> InboxNotification:
+        if session.get(InboxMessageModel, message_id) is None:
+            raise ValueError(f"Inbox message not found: {message_id}")
+        notification_row = InboxNotificationModel(
+            message_id=message_id,
+            receiver_id=receiver_id,
+            status=status.value,
+        )
+        session.add(notification_row)
+        session.flush()
+        session.refresh(notification_row)
+        return inbox_notification_from_model(notification_row)
+
+    if db is not None:
+        return _add_notification(db)
+
+    with SessionLocal() as session:
+        notification = _add_notification(session)
+        session.commit()
+        return notification
+
+
+def _get_delivery_by_notification_id(
+    session: Session, notification_id: int
+) -> Optional[InboxDelivery]:
+    row = (
+        session.query(InboxNotificationModel, InboxMessageModel)
+        .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+        .filter(InboxNotificationModel.id == notification_id)
+        .first()
+    )
+    if row is None:
+        return None
+    notification_row, message_row = row
+    return inbox_delivery_from_models(message_row, notification_row)
+
+
+def get_inbox_delivery(notification_id: int) -> Optional[InboxDelivery]:
+    """Read one notification-backed inbox message by notification id."""
+    with SessionLocal() as db:
+        return _get_delivery_by_notification_id(db, notification_id)
+
+
+def list_pending_inbox_notifications(receiver_id: str, limit: int = 10) -> List[InboxDelivery]:
+    """List pending notification-backed messages for a receiver."""
+    with SessionLocal() as db:
+        rows = (
+            db.query(InboxNotificationModel, InboxMessageModel)
+            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+            .filter(
+                InboxNotificationModel.receiver_id == receiver_id,
+                InboxNotificationModel.status == MessageStatus.PENDING.value,
+            )
+            .order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            inbox_delivery_from_models(message_row, notification_row)
+            for notification_row, message_row in rows
+        ]
+
+
+def _apply_notification_status(
+    notification: InboxNotificationModel, status: MessageStatus, error_detail: Optional[str]
+) -> None:
+    notification.status = status.value
+    if status == MessageStatus.DELIVERED:
+        notification.delivered_at = datetime.now()
+        notification.failed_at = None
+        notification.error_detail = None
+    elif status == MessageStatus.FAILED:
+        notification.failed_at = datetime.now()
+        notification.error_detail = error_detail
+    else:
+        notification.delivered_at = None
+        notification.failed_at = None
+        notification.error_detail = None
+
+
+def update_inbox_notification_statuses(
+    notification_ids: Sequence[int],
+    status: MessageStatus,
+    *,
+    error_detail: Optional[str] = None,
+) -> int:
+    """Update delivery state for semantic inbox notifications."""
+    if not notification_ids:
+        return 0
+
+    with SessionLocal() as db:
+        rows = (
+            db.query(InboxNotificationModel)
+            .filter(InboxNotificationModel.id.in_(list(notification_ids)))
+            .all()
+        )
+        for row in rows:
+            _apply_notification_status(row, status, error_detail)
+        db.commit()
+        return len(rows)
+
+
+def update_inbox_notification_status(
+    notification_id: int,
+    status: MessageStatus,
+    *,
+    error_detail: Optional[str] = None,
+) -> bool:
+    """Update one semantic inbox notification by notification id."""
+    return (
+        update_inbox_notification_statuses([notification_id], status, error_detail=error_detail) > 0
+    )
+
+
 def create_inbox_message(
     sender_id: str,
     receiver_id: str,
@@ -516,23 +880,27 @@ def create_inbox_message(
     source_kind: Optional[str] = None,
     source_id: Optional[str] = None,
 ) -> InboxMessage:
-    """Create inbox message with status=MessageStatus.PENDING.
+    """Create an inbox message through the legacy-compatible wrapper.
 
     When ``db`` is supplied, the message participates in the caller's
     transaction and is only flushed. Callers that omit ``db`` retain the
     historical self-contained commit behavior.
     """
-    if (source_kind is None) != (source_id is None):
-        raise ValueError("source_kind and source_id must be provided together")
-
-    effective_source_kind = source_kind
-    effective_source_id = source_id
-    if effective_source_kind is None and effective_source_id is None:
-        effective_source_kind = "terminal"
-        effective_source_id = sender_id
+    effective_source_kind, effective_source_id = _resolve_source_identity(
+        sender_id, source_kind, source_id
+    )
 
     def _add_message(session: Session) -> InboxMessage:
-        inbox_msg = InboxModel(
+        message_row = InboxMessageModel(
+            sender_id=sender_id,
+            body=message,
+            source_kind=effective_source_kind,
+            source_id=effective_source_id,
+        )
+        session.add(message_row)
+        session.flush()
+
+        legacy_row = InboxModel(
             sender_id=sender_id,
             receiver_id=receiver_id,
             message=message,
@@ -540,10 +908,24 @@ def create_inbox_message(
             source_id=effective_source_id,
             status=MessageStatus.PENDING.value,
         )
-        session.add(inbox_msg)
+        session.add(legacy_row)
         session.flush()
-        session.refresh(inbox_msg)
-        return inbox_message_from_model(inbox_msg)
+
+        notification_row = InboxNotificationModel(
+            message_id=message_row.id,
+            receiver_id=receiver_id,
+            status=MessageStatus.PENDING.value,
+            legacy_inbox_id=legacy_row.id,
+        )
+        session.add(notification_row)
+        session.flush()
+        session.refresh(message_row)
+        session.refresh(notification_row)
+        session.refresh(legacy_row)
+        delivery = inbox_delivery_from_models(message_row, notification_row)
+        return inbox_delivery_to_compat_message(
+            delivery, compatibility_id=legacy_row.id, legacy_row=legacy_row
+        )
 
     if db is not None:
         return _add_message(db)
@@ -555,10 +937,27 @@ def create_inbox_message(
 
 
 def get_inbox_message(message_id: int) -> Optional[InboxMessage]:
-    """Get one inbox message by durable id."""
+    """Get one inbox message through the compatibility read path."""
     with SessionLocal() as db:
-        row = db.query(InboxModel).filter(InboxModel.id == message_id).first()
-        return inbox_message_from_model(row) if row else None
+        mapped_delivery = (
+            db.query(InboxNotificationModel, InboxMessageModel, InboxModel)
+            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+            .join(InboxModel, InboxNotificationModel.legacy_inbox_id == InboxModel.id)
+            .filter(InboxNotificationModel.legacy_inbox_id == message_id)
+            .first()
+        )
+        if mapped_delivery is not None:
+            notification_row, message_row, legacy_row = mapped_delivery
+            return inbox_delivery_to_compat_message(
+                inbox_delivery_from_models(message_row, notification_row),
+                compatibility_id=message_id,
+                legacy_row=legacy_row,
+            )
+
+        legacy_row = db.query(InboxModel).filter(InboxModel.id == message_id).first()
+        if legacy_row is not None:
+            return inbox_message_from_model(legacy_row)
+        return None
 
 
 def get_pending_messages(receiver_id: str, limit: int = 1) -> List[InboxMessage]:
@@ -579,30 +978,54 @@ def get_inbox_messages(
     Returns:
         List of inbox messages ordered by creation time (oldest first)
     """
+    return _get_inbox_messages(receiver_id, limit=limit, status=status)
+
+
+def _get_inbox_messages(
+    receiver_id: str, *, limit: Optional[int], status: Optional[MessageStatus] = None
+) -> List[InboxMessage]:
     with SessionLocal() as db:
-        query = db.query(InboxModel).filter(InboxModel.receiver_id == receiver_id)
+        notification_query = (
+            db.query(InboxNotificationModel, InboxMessageModel, InboxModel)
+            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+            .join(InboxModel, InboxNotificationModel.legacy_inbox_id == InboxModel.id)
+            .filter(InboxModel.receiver_id == receiver_id)
+        )
+        notification_rows = notification_query.all()
 
+        mapped_legacy_ids = {
+            notification_row.legacy_inbox_id
+            for notification_row, _message_row, _legacy_row in notification_rows
+            if notification_row.legacy_inbox_id is not None
+        }
+        messages = []
+        for notification_row, message_row, legacy_row in notification_rows:
+            compat_message = inbox_delivery_to_compat_message(
+                inbox_delivery_from_models(message_row, notification_row),
+                compatibility_id=notification_row.legacy_inbox_id,
+                legacy_row=legacy_row,
+            )
+            if status is None or compat_message.status == status:
+                messages.append(compat_message)
+
+        legacy_query = db.query(InboxModel).filter(InboxModel.receiver_id == receiver_id)
         if status is not None:
-            query = query.filter(InboxModel.status == status.value)
+            legacy_query = legacy_query.filter(InboxModel.status == status.value)
+        legacy_rows = legacy_query.all()
+        messages.extend(
+            inbox_message_from_model(row) for row in legacy_rows if row.id not in mapped_legacy_ids
+        )
 
-        messages = query.order_by(InboxModel.created_at.asc()).limit(limit).all()
-
-        return [inbox_message_from_model(msg) for msg in messages]
+        messages.sort(key=lambda item: (item.created_at, item.id))
+        if limit is not None:
+            return messages[:limit]
+        return messages
 
 
 def get_oldest_pending_message(receiver_id: str) -> Optional[InboxMessage]:
     """Get the oldest pending inbox message for a receiver."""
-    with SessionLocal() as db:
-        row = (
-            db.query(InboxModel)
-            .filter(
-                InboxModel.receiver_id == receiver_id,
-                InboxModel.status == MessageStatus.PENDING.value,
-            )
-            .order_by(InboxModel.created_at.asc(), InboxModel.id.asc())
-            .first()
-        )
-        return inbox_message_from_model(row) if row else None
+    rows = get_inbox_messages(receiver_id, limit=1, status=MessageStatus.PENDING)
+    return rows[0] if rows else None
 
 
 def get_effective_message_source(message: InboxMessage) -> EffectiveMessageSource:
@@ -621,49 +1044,57 @@ def get_pending_messages_for_effective_source(
 ) -> List[InboxMessage]:
     """Get pending messages for the receiver and source selected by ``source_message``."""
     source = get_effective_message_source(source_message)
-
-    with SessionLocal() as db:
-        query = db.query(InboxModel).filter(
-            InboxModel.receiver_id == receiver_id,
-            InboxModel.status == MessageStatus.PENDING.value,
-        )
-
-        if source.is_legacy_message:
-            query = query.filter(InboxModel.id == int(source.id))
-        else:
-            query = query.filter(
-                InboxModel.source_kind == source.kind,
-                InboxModel.source_id == source.id,
-            )
-
-        messages = query.order_by(InboxModel.created_at.asc(), InboxModel.id.asc()).all()
-        return [inbox_message_from_model(msg) for msg in messages]
+    pending_messages = _get_inbox_messages(receiver_id, limit=None, status=MessageStatus.PENDING)
+    if source.is_legacy_message:
+        return [message for message in pending_messages if message.id == int(source.id)]
+    return [
+        message
+        for message in pending_messages
+        if message.source_kind == source.kind and message.source_id == source.id
+    ]
 
 
 def update_message_statuses(message_ids: List[int], status: MessageStatus) -> int:
-    """Update multiple selected message statuses as one database batch."""
+    """Update selected delivery statuses through the compatibility path."""
     if not message_ids:
         return 0
 
     with SessionLocal() as db:
-        updated = (
-            db.query(InboxModel)
-            .filter(InboxModel.id.in_(message_ids))
-            .update({InboxModel.status: status.value}, synchronize_session=False)
+        unique_ids = list(dict.fromkeys(message_ids))
+        updated_requested_ids = set()
+        updated_legacy_ids = set()
+
+        mapped_notifications = (
+            db.query(InboxNotificationModel)
+            .filter(InboxNotificationModel.legacy_inbox_id.in_(unique_ids))
+            .all()
         )
+        for notification in mapped_notifications:
+            _apply_notification_status(notification, status, None)
+            if notification.legacy_inbox_id is not None:
+                updated_legacy_ids.add(notification.legacy_inbox_id)
+                updated_requested_ids.add(notification.legacy_inbox_id)
+                legacy_row = db.get(InboxModel, notification.legacy_inbox_id)
+                if legacy_row is not None:
+                    legacy_row.status = status.value
+
+        remaining_ids = [
+            message_id for message_id in unique_ids if message_id not in updated_legacy_ids
+        ]
+
+        legacy_rows = db.query(InboxModel).filter(InboxModel.id.in_(remaining_ids)).all()
+        for legacy_row in legacy_rows:
+            legacy_row.status = status.value
+            updated_legacy_ids.add(legacy_row.id)
+            updated_requested_ids.add(legacy_row.id)
+
         db.commit()
-        return updated
+        return len(updated_requested_ids)
 
 
 def update_message_status(message_id: int, status: MessageStatus) -> bool:
     """Update message status to MessageStatus.DELIVERED or MessageStatus.FAILED."""
-    with SessionLocal() as db:
-        message = db.query(InboxModel).filter(InboxModel.id == message_id).first()
-        if message:
-            message.status = status.value
-            db.commit()
-            return True
-        return False
+    return update_message_statuses([message_id], status) > 0
 
 
 # Baton database functions

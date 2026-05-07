@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -231,21 +231,14 @@ class TestDatabaseFunctionCompatibility:
         assert callable(get_pending_messages)
         assert callable(get_inbox_messages)
 
-    @patch("cli_agent_orchestrator.clients.database.SessionLocal")
-    def test_get_pending_messages_calls_get_inbox_messages(self, mock_session):
+    def test_get_pending_messages_calls_get_inbox_messages(self):
         """Test that get_pending_messages properly calls get_inbox_messages with correct parameters."""
-        from cli_agent_orchestrator.clients.database import get_pending_messages
+        from cli_agent_orchestrator.clients import database as db_module
 
-        # Mock the database session and query
-        mock_db = Mock()
-        mock_session.return_value.__enter__.return_value = mock_db
-        mock_query = Mock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.order_by.return_value = mock_query
-        mock_query.limit.return_value = mock_query
-        mock_query.all.return_value = []
+        with patch("cli_agent_orchestrator.clients.database.get_inbox_messages") as mock_get:
+            mock_get.return_value = []
 
-        # This should work without errors
-        result = get_pending_messages("test_terminal", limit=5)
-        assert isinstance(result, list)
+            result = db_module.get_pending_messages("test_terminal", limit=5)
+
+        assert result == []
+        mock_get.assert_called_once_with("test_terminal", limit=5, status=MessageStatus.PENDING)
