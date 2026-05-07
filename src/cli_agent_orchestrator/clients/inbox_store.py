@@ -17,6 +17,8 @@ from cli_agent_orchestrator.models.inbox import (
     MessageStatus,
 )
 
+MAX_NOTIFICATION_METADATA_JSON_CHARS = 4000
+
 
 class InboxMessageModel(Base):
     """SQLAlchemy model for durable semantic inbox messages."""
@@ -80,6 +82,18 @@ def _serialize_origin(origin: Optional[Dict[str, Any]]) -> Optional[str]:
     if origin is None:
         return None
     return json.dumps(origin, sort_keys=True)
+
+
+def _serialize_notification_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    if metadata is None:
+        return None
+    encoded = json.dumps(metadata, sort_keys=True)
+    if len(encoded) > MAX_NOTIFICATION_METADATA_JSON_CHARS:
+        raise ValueError(
+            "notification metadata exceeds "
+            f"{MAX_NOTIFICATION_METADATA_JSON_CHARS} JSON characters"
+        )
+    return encoded
 
 
 def _deserialize_origin(origin_json: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -170,7 +184,7 @@ def create_inbox_delivery(
             body=notification_body if notification_body is not None else message,
             source_kind=effective_source_kind,
             source_id=effective_source_id,
-            metadata_json=_serialize_origin(notification_metadata),
+            metadata_json=_serialize_notification_metadata(notification_metadata),
             status=MessageStatus.PENDING.value,
         )
         session.add(notification_row)
@@ -253,7 +267,7 @@ def create_inbox_notification(
             body=body if body is not None else message_row.body,
             source_kind=source_kind if source_kind is not None else message_row.source_kind,
             source_id=source_id if source_id is not None else message_row.source_id,
-            metadata_json=_serialize_origin(metadata),
+            metadata_json=_serialize_notification_metadata(metadata),
             status=status.value,
         )
         session.add(notification_row)
@@ -294,7 +308,7 @@ def create_inbox_notification_event(
             body=body,
             source_kind=source_kind,
             source_id=source_id,
-            metadata_json=_serialize_origin(metadata),
+            metadata_json=_serialize_notification_metadata(metadata),
             status=status.value,
         )
         session.add(notification_row)

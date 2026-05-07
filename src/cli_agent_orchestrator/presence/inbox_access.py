@@ -22,6 +22,10 @@ class InboxReadNotFoundError(InboxReadError):
     """Raised when the requested inbox notification or backing presence data is missing."""
 
 
+class InboxReadUnsupportedNotificationError(InboxReadError):
+    """Raised when a valid inbox notification has no CAO-readable backing message."""
+
+
 @dataclass(frozen=True)
 class InboxReadResult:
     """Message-first read result for one CAO inbox notification."""
@@ -51,7 +55,7 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
             raise InboxReadNotFoundError(f"inbox notification {notification_id} not found")
         message = delivery.message
         if message is None:
-            raise InboxReadNotFoundError(
+            raise InboxReadUnsupportedNotificationError(
                 f"inbox notification {notification_id} is not backed by a CAO message"
             )
 

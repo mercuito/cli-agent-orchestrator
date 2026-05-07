@@ -305,6 +305,27 @@ class TestInboxOperations:
         assert read.message is None
         assert read.notification == notification
 
+    def test_message_backed_notification_metadata_is_bounded(self, live_inbox_db):
+        """Provider/system metadata must stay bounded on message-backed notifications."""
+        with pytest.raises(ValueError, match="notification metadata exceeds"):
+            create_inbox_delivery(
+                "sender-123",
+                "receiver-456",
+                "Hello",
+                notification_metadata={"oversized": "x" * 5000},
+            )
+
+    def test_notification_only_metadata_is_bounded(self, live_inbox_db):
+        """Provider/system metadata must stay bounded without a backing message."""
+        with pytest.raises(ValueError, match="notification metadata exceeds"):
+            create_inbox_notification_event(
+                "receiver-456",
+                "CAO-123 has new comments.",
+                source_kind="linear_issue",
+                source_id="CAO-123",
+                metadata={"oversized": "x" * 5000},
+            )
+
     def test_list_inbox_deliveries_reads_semantic_notifications(self, live_inbox_db):
         """Receiver listing returns notification-backed durable messages."""
         delivery = create_inbox_delivery(
