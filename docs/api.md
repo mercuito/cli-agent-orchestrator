@@ -226,7 +226,8 @@ Send a message to another terminal's inbox.
 ```json
 {
   "success": true,
-  "message_id": "string",
+  "notification_id": 123,
+  "message_id": 456,
   "sender_id": "string",
   "receiver_id": "string",
   "created_at": "timestamp"
@@ -235,6 +236,8 @@ Send a message to another terminal's inbox.
 
 **Behavior:**
 - Messages are queued and delivered when the receiver terminal is IDLE
+- `notification_id` identifies the per-recipient delivery record; `message_id`
+  identifies the durable backing message
 - Messages are delivered in order (oldest first)
 - Delivery is automatic via watchdog file monitoring
 

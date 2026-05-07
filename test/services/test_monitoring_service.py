@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, InboxModel
+from cli_agent_orchestrator.clients.database import Base, InboxMessageModel, InboxNotificationModel
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
 
@@ -31,17 +31,27 @@ def patched_db(monkeypatch):
     return TestSession
 
 
-def _seed_inbox(session_maker, *, sender_id, receiver_id, message, created_at,
-                status=MessageStatus.DELIVERED):
+def _seed_inbox(
+    session_maker, *, sender_id, receiver_id, message, created_at, status=MessageStatus.DELIVERED
+):
     with session_maker() as s:
-        row = InboxModel(
+        message_row = InboxMessageModel(
             sender_id=sender_id,
-            receiver_id=receiver_id,
-            message=message,
-            status=status.value,
+            body=message,
+            source_kind="terminal",
+            source_id=sender_id,
             created_at=created_at,
         )
-        s.add(row)
+        s.add(message_row)
+        s.flush()
+        s.add(
+            InboxNotificationModel(
+                message_id=message_row.id,
+                receiver_id=receiver_id,
+                status=status.value,
+                created_at=created_at,
+            )
+        )
         s.commit()
 
 
@@ -258,8 +268,8 @@ class TestListSessions:
 
         # Only `target` matches all three filters simultaneously.
         target = create_session(terminal_id="A", label="t")
-        create_session(terminal_id="B", label="t")        # wrong terminal
-        create_session(terminal_id="C", label="other")    # wrong label
+        create_session(terminal_id="B", label="t")  # wrong terminal
+        create_session(terminal_id="C", label="other")  # wrong label
         ended = create_session(terminal_id="D", label="t")  # wrong status
         end_session(ended["id"])
 
@@ -269,8 +279,8 @@ class TestListSessions:
         # Sanity: flipping any single filter picks up a different row and
         # never collapses to the same one-row result by accident.
         assert len(list_sessions(label="t", status="active")) == 2  # A + B
-        assert len(list_sessions(terminal_id="A")) == 1             # just A
-        assert len(list_sessions(status="ended")) == 1              # just D
+        assert len(list_sessions(terminal_id="A")) == 1  # just A
+        assert len(list_sessions(status="ended")) == 1  # just D
 
     def test_filter_time_range(self, patched_db):
         from cli_agent_orchestrator.clients.database import MonitoringSessionModel
@@ -330,13 +340,28 @@ class TestGetSessionMessages:
 
         session = create_session(terminal_id="IMP")
         base = datetime.now()
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R1", message="to-r1",
-                    created_at=base + timedelta(seconds=1))
-        _seed_inbox(patched_db, sender_id="R2", receiver_id="IMP", message="from-r2",
-                    created_at=base + timedelta(seconds=2))
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R1",
+            message="to-r1",
+            created_at=base + timedelta(seconds=1),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="R2",
+            receiver_id="IMP",
+            message="from-r2",
+            created_at=base + timedelta(seconds=2),
+        )
         # Off-scope (doesn't involve IMP) — must be excluded
-        _seed_inbox(patched_db, sender_id="R1", receiver_id="R2", message="noise",
-                    created_at=base + timedelta(seconds=3))
+        _seed_inbox(
+            patched_db,
+            sender_id="R1",
+            receiver_id="R2",
+            message="noise",
+            created_at=base + timedelta(seconds=3),
+        )
 
         result = get_session_messages(session["id"])
         assert [m["message"] for m in result] == ["to-r1", "from-r2"]
@@ -351,12 +376,27 @@ class TestGetSessionMessages:
 
         session = create_session(terminal_id="IMP")
         base = datetime.now()
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R1", message="peer-recv",
-                    created_at=base + timedelta(seconds=1))
-        _seed_inbox(patched_db, sender_id="R1", receiver_id="IMP", message="peer-sent",
-                    created_at=base + timedelta(seconds=2))
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R2", message="other-recv",
-                    created_at=base + timedelta(seconds=3))
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R1",
+            message="peer-recv",
+            created_at=base + timedelta(seconds=1),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="R1",
+            receiver_id="IMP",
+            message="peer-sent",
+            created_at=base + timedelta(seconds=2),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R2",
+            message="other-recv",
+            created_at=base + timedelta(seconds=3),
+        )
 
         result = get_session_messages(session["id"], peers=["R1"])
         assert [m["message"] for m in result] == ["peer-recv", "peer-sent"]
@@ -369,12 +409,27 @@ class TestGetSessionMessages:
 
         session = create_session(terminal_id="IMP")
         base = datetime.now()
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R1", message="r1",
-                    created_at=base + timedelta(seconds=1))
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R2", message="r2",
-                    created_at=base + timedelta(seconds=2))
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R3", message="r3",
-                    created_at=base + timedelta(seconds=3))
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R1",
+            message="r1",
+            created_at=base + timedelta(seconds=1),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R2",
+            message="r2",
+            created_at=base + timedelta(seconds=2),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R3",
+            message="r3",
+            created_at=base + timedelta(seconds=3),
+        )
 
         result = get_session_messages(session["id"], peers=["R1", "R3"])
         assert [m["message"] for m in result] == ["r1", "r3"]
@@ -390,8 +445,9 @@ class TestGetSessionMessages:
         )
 
         session = create_session(terminal_id="IMP")
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R1", message="a",
-                    created_at=datetime.now())
+        _seed_inbox(
+            patched_db, sender_id="IMP", receiver_id="R1", message="a", created_at=datetime.now()
+        )
 
         result = get_session_messages(session["id"], peers=[])
         assert len(result) == 1
@@ -404,12 +460,27 @@ class TestGetSessionMessages:
 
         session = create_session(terminal_id="IMP")
         base = datetime.now()
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="third",
-                    created_at=base + timedelta(seconds=3))
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="first",
-                    created_at=base + timedelta(seconds=1))
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="second",
-                    created_at=base + timedelta(seconds=2))
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="third",
+            created_at=base + timedelta(seconds=3),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="first",
+            created_at=base + timedelta(seconds=1),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="second",
+            created_at=base + timedelta(seconds=2),
+        )
 
         result = get_session_messages(session["id"])
         assert [m["message"] for m in result] == ["first", "second", "third"]
@@ -429,10 +500,20 @@ class TestGetSessionMessages:
             )
             s.commit()
 
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="before",
-                    created_at=start - timedelta(minutes=5))
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="after",
-                    created_at=start + timedelta(minutes=5))
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="before",
+            created_at=start - timedelta(minutes=5),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="after",
+            created_at=start + timedelta(minutes=5),
+        )
 
         assert [m["message"] for m in get_session_messages(session["id"])] == ["after"]
 
@@ -452,10 +533,20 @@ class TestGetSessionMessages:
             )
             s.commit()
 
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="in",
-                    created_at=start + timedelta(minutes=30))
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="after",
-                    created_at=end + timedelta(minutes=5))
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="in",
+            created_at=start + timedelta(minutes=30),
+        )
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="after",
+            created_at=end + timedelta(minutes=5),
+        )
 
         assert [m["message"] for m in get_session_messages(session["id"])] == ["in"]
 
@@ -466,8 +557,13 @@ class TestGetSessionMessages:
         )
 
         session = create_session(terminal_id="IMP")
-        _seed_inbox(patched_db, sender_id="IMP", receiver_id="R", message="live",
-                    created_at=datetime.now() + timedelta(seconds=1))
+        _seed_inbox(
+            patched_db,
+            sender_id="IMP",
+            receiver_id="R",
+            message="live",
+            created_at=datetime.now() + timedelta(seconds=1),
+        )
 
         assert [m["message"] for m in get_session_messages(session["id"])] == ["live"]
 

@@ -773,20 +773,20 @@ async def send_message(
     return _send_message_impl(receiver_id, message)
 
 
-def _read_inbox_message_impl(inbox_message_id: int) -> Dict[str, Any]:
+def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:
     """Implementation of read_inbox_message logic."""
     try:
-        return read_result_to_dict(read_provider_inbox_message(inbox_message_id))
+        return read_result_to_dict(read_provider_inbox_message(notification_id))
     except InboxReadError as exc:
         return {"success": False, "error": str(exc), "error_type": type(exc).__name__}
     except Exception as exc:
-        logger.exception("Failed to read inbox message %s", inbox_message_id)
+        logger.exception("Failed to read inbox notification %s", notification_id)
         return {"success": False, "error": str(exc), "error_type": "InboxReadUnexpectedError"}
 
 
 @_deferred_tool()
 async def read_inbox_message(
-    inbox_message_id: int = Field(description="CAO inbox message ID from a notification"),
+    notification_id: int = Field(description="CAO inbox notification ID"),
 ) -> Dict[str, Any]:
     """Read a slim message-first payload for a CAO inbox notification.
 
@@ -794,20 +794,20 @@ async def read_inbox_message(
     notification may only be a pointer; this tool returns the backing message
     body and replyability without exposing provider internals by default.
     """
-    return _read_inbox_message_impl(inbox_message_id)
+    return _read_inbox_message_impl(notification_id)
 
 
-def _reply_to_inbox_message_impl(inbox_message_id: int, body: str) -> Dict[str, Any]:
+def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, Any]:
     """Implementation of reply_to_inbox_message logic."""
     try:
         try:
-            _ensure_mcp_presence_provider_for_inbox(inbox_message_id)
+            _ensure_mcp_presence_provider_for_inbox(notification_id)
         except (InboxReadError, UnknownPresenceProviderError):
             pass
-        result = route_provider_inbox_reply(inbox_message_id, body)
+        result = route_provider_inbox_reply(notification_id, body)
         return {
             "success": True,
-            "inbox_message_id": result.delivery.notification.id,
+            "notification_id": result.delivery.notification.id,
             "provider": result.thread.provider,
             "thread_id": result.thread.external_id,
             "outbound_message": {
@@ -830,22 +830,22 @@ def _reply_to_inbox_message_impl(inbox_message_id: int, body: str) -> Dict[str, 
             payload["failed_message_state"] = failed_message.state
         return payload
     except Exception as exc:
-        logger.exception("Failed to reply to inbox message %s", inbox_message_id)
+        logger.exception("Failed to reply to inbox notification %s", notification_id)
         return {"success": False, "error": str(exc), "error_type": "InboxReplyUnexpectedError"}
 
 
 @_deferred_tool()
 async def reply_to_inbox_message(
-    inbox_message_id: int = Field(description="CAO inbox message ID to reply to"),
+    notification_id: int = Field(description="CAO inbox notification ID to reply to"),
     body: str = Field(description="Reply body to send through the owning provider"),
 ) -> Dict[str, Any]:
     """Reply to a provider-backed inbox notification through CAO's inbox path."""
-    return _reply_to_inbox_message_impl(inbox_message_id, body)
+    return _reply_to_inbox_message_impl(notification_id, body)
 
 
-def _ensure_mcp_presence_provider_for_inbox(inbox_message_id: int) -> None:
+def _ensure_mcp_presence_provider_for_inbox(notification_id: int) -> None:
     """Register the built-in provider needed by one provider-backed inbox reply."""
-    read_result = read_provider_inbox_message(inbox_message_id)
+    read_result = read_provider_inbox_message(notification_id)
     provider = read_result.thread.get("provider") if read_result.thread is not None else None
     if provider:
         ensure_builtin_presence_provider(str(provider))

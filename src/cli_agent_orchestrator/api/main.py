@@ -33,13 +33,13 @@ from watchdog.observers.polling import PollingObserver
 
 from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
 from cli_agent_orchestrator.clients.database import (
-    create_inbox_message,
+    create_inbox_delivery,
     get_baton_record,
-    get_inbox_messages,
     get_terminal_metadata,
     init_db,
     list_baton_events,
     list_batons,
+    list_inbox_deliveries,
 )
 from cli_agent_orchestrator.constants import (
     ALLOWED_HOSTS,
@@ -707,7 +707,7 @@ async def create_inbox_message_endpoint(
 ) -> Dict:
     """Create inbox message and attempt immediate delivery."""
     try:
-        inbox_msg = create_inbox_message(sender_id, receiver_id, message)
+        delivery = create_inbox_delivery(sender_id, receiver_id, message)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -727,12 +727,13 @@ async def create_inbox_message_endpoint(
 
     return {
         "success": True,
-        "message_id": inbox_msg.id,
-        "sender_id": inbox_msg.sender_id,
-        "receiver_id": inbox_msg.receiver_id,
-        "source_kind": inbox_msg.source_kind,
-        "source_id": inbox_msg.source_id,
-        "created_at": inbox_msg.created_at.isoformat(),
+        "notification_id": delivery.notification.id,
+        "message_id": delivery.message.id,
+        "sender_id": delivery.message.sender_id,
+        "receiver_id": delivery.notification.receiver_id,
+        "source_kind": delivery.message.source_kind,
+        "source_id": delivery.message.source_id,
+        "created_at": delivery.notification.created_at.isoformat(),
     }
 
 
@@ -766,22 +767,25 @@ async def get_inbox_messages_endpoint(
                     detail=f"Invalid status: {status_param}. Valid values: pending, delivered, failed",
                 )
 
-        # Get messages using existing database function
-        messages = get_inbox_messages(terminal_id, limit=limit, status=status_filter)
+        deliveries = list_inbox_deliveries(terminal_id, limit=limit, status=status_filter)
 
-        # Convert to response format
         result = []
-        for msg in messages:
+        for delivery in deliveries:
             result.append(
                 {
-                    "id": msg.id,
-                    "sender_id": msg.sender_id,
-                    "receiver_id": msg.receiver_id,
-                    "message": msg.message,
-                    "source_kind": msg.source_kind,
-                    "source_id": msg.source_id,
-                    "status": msg.status.value,
-                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                    "notification_id": delivery.notification.id,
+                    "message_id": delivery.message.id,
+                    "sender_id": delivery.message.sender_id,
+                    "receiver_id": delivery.notification.receiver_id,
+                    "message": delivery.message.body,
+                    "source_kind": delivery.message.source_kind,
+                    "source_id": delivery.message.source_id,
+                    "status": delivery.notification.status.value,
+                    "created_at": (
+                        delivery.notification.created_at.isoformat()
+                        if delivery.notification.created_at
+                        else None
+                    ),
                 }
             )
 

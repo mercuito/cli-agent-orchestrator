@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import (
     Boolean,
@@ -19,12 +19,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Session, declarative_base, sessionmaker
 
+from cli_agent_orchestrator.clients import sqlite_migrations
+from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonEventType, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import (
     InboxDelivery,
-    InboxMessage,
     InboxMessageRecord,
     InboxNotification,
     MessageStatus,
@@ -33,14 +34,6 @@ from cli_agent_orchestrator.models.inbox import (
 logger = logging.getLogger(__name__)
 
 Base: Any = declarative_base()
-
-
-class EffectiveMessageSource(NamedTuple):
-    """Source identity used for inbox batch selection."""
-
-    kind: str
-    id: str
-    is_legacy_message: bool = False
 
 
 class TerminalModel(Base):
@@ -55,21 +48,6 @@ class TerminalModel(Base):
     agent_profile = Column(String)  # "developer", "reviewer" (optional)
     allowed_tools = Column(String, nullable=True)  # JSON-encoded list of CAO tool names
     last_active = Column(DateTime, default=datetime.now)
-
-
-class InboxModel(Base):
-    """Legacy SQLAlchemy model for overloaded inbox rows."""
-
-    __tablename__ = "inbox"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    sender_id = Column(String, nullable=False)
-    receiver_id = Column(String, nullable=False)
-    message = Column(String, nullable=False)
-    source_kind = Column(String, nullable=True)
-    source_id = Column(String, nullable=True)
-    status = Column(String, nullable=False)  # MessageStatus enum value
-    created_at = Column(DateTime, default=datetime.now)
 
 
 class InboxMessageModel(Base):
@@ -103,9 +81,6 @@ class InboxNotificationModel(Base):
     delivered_at = Column(DateTime, nullable=True)
     failed_at = Column(DateTime, nullable=True)
     error_detail = Column(Text, nullable=True)
-    legacy_inbox_id = Column(
-        Integer, ForeignKey("inbox.id", ondelete="SET NULL"), nullable=True, unique=True
-    )
 
 
 class MonitoringSessionModel(Base):
@@ -268,9 +243,8 @@ class PresenceInboxNotificationModel(Base):
     presence_message_id = Column(
         Integer, ForeignKey("presence_messages.id", ondelete="CASCADE"), nullable=False
     )
-    inbox_message_id = Column(Integer, ForeignKey("inbox.id", ondelete="CASCADE"), nullable=True)
     inbox_notification_id = Column(
-        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=True
+        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=False
     )
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
@@ -285,9 +259,8 @@ class AgentRuntimeNotificationModel(Base):
     agent_id = Column(String, nullable=False)
     source_kind = Column(String, nullable=False)
     source_id = Column(String, nullable=False)
-    inbox_message_id = Column(Integer, ForeignKey("inbox.id", ondelete="CASCADE"), nullable=True)
     inbox_notification_id = Column(
-        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=True
+        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=False
     )
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
@@ -315,10 +288,11 @@ def init_db() -> None:
     """Initialize database tables and apply schema migrations."""
     Base.metadata.create_all(bind=engine)
     _migrate_ensure_semantic_inbox_tables()
-    _migrate_add_inbox_source_fields()
     _migrate_ensure_baton_tables()
     _migrate_ensure_presence_tables()
     _migrate_ensure_agent_runtime_tables()
+    _migrate_drop_legacy_inbox_notification_ids()
+    _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
     _migrate_drop_monitoring_session_peers()
 
@@ -332,26 +306,35 @@ def _migrate_ensure_semantic_inbox_tables() -> None:
         logger.warning(f"Migration check for semantic inbox tables failed: {e}")
 
 
-def _migrate_add_inbox_source_fields() -> None:
-    """Add source identity columns to inbox table if missing."""
-    import sqlite3
+def _notification_id_migration_expr(
+    marker_columns: dict[str, sqlite_migrations.ColumnInfo],
+    notification_columns: set[str],
+) -> Optional[str]:
+    """Build a migration-only expression for resolving notification ids."""
 
-    from cli_agent_orchestrator.constants import DATABASE_FILE
+    notification_id_exprs = []
+    if "inbox_notification_id" in marker_columns:
+        notification_id_exprs.append("""
+            (
+                SELECT inbox_notifications.id
+                FROM inbox_notifications
+                WHERE inbox_notifications.id = old.inbox_notification_id
+            )
+            """)
+    if "inbox_message_id" in marker_columns and "legacy_inbox_id" in notification_columns:
+        notification_id_exprs.append("""
+            (
+                SELECT inbox_notifications.id
+                FROM inbox_notifications
+                WHERE inbox_notifications.legacy_inbox_id = old.inbox_message_id
+            )
+            """)
 
-    try:
-        conn = sqlite3.connect(str(DATABASE_FILE))
-        cursor = conn.execute("PRAGMA table_info(inbox)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "source_kind" not in columns:
-            conn.execute("ALTER TABLE inbox ADD COLUMN source_kind TEXT")
-            logger.info("Migration: added source_kind column to inbox table")
-        if "source_id" not in columns:
-            conn.execute("ALTER TABLE inbox ADD COLUMN source_id TEXT")
-            logger.info("Migration: added source_id column to inbox table")
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.warning(f"Migration check for inbox source fields failed: {e}")
+    if not notification_id_exprs:
+        return None
+    if len(notification_id_exprs) == 1:
+        return notification_id_exprs[0]
+    return f"COALESCE({', '.join(notification_id_exprs)})"
 
 
 def _migrate_ensure_baton_tables() -> None:
@@ -380,81 +363,65 @@ def _migrate_ensure_presence_tables() -> None:
         logger.warning(f"Migration check for presence tables failed: {e}")
         return
 
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
     try:
-        conn = sqlite3.connect(str(DATABASE_FILE))
-        columns_info = conn.execute("PRAGMA table_info(presence_inbox_notifications)").fetchall()
-        column_info = {row[1]: row for row in columns_info}
-        if not column_info:
-            conn.close()
-            return
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            column_info = sqlite_migrations.table_column_info(conn, "presence_inbox_notifications")
+            notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
+            if not column_info:
+                return
 
-        needs_rebuild = "inbox_notification_id" not in column_info or (
-            "inbox_message_id" in column_info and bool(column_info["inbox_message_id"][3])
-        )
-        if not needs_rebuild:
-            conn.close()
-            return
+            needs_rebuild = (
+                "inbox_message_id" in column_info
+                or "inbox_notification_id" not in column_info
+                or not bool(column_info["inbox_notification_id"][3])
+            )
+            if not needs_rebuild:
+                return
 
-        conn.execute("PRAGMA foreign_keys=OFF")
-        conn.execute("DROP TABLE IF EXISTS presence_inbox_notifications_old")
-        conn.execute(
-            "ALTER TABLE presence_inbox_notifications " "RENAME TO presence_inbox_notifications_old"
-        )
-        conn.execute("""
-            CREATE TABLE presence_inbox_notifications (
-                id INTEGER NOT NULL,
-                receiver_id VARCHAR NOT NULL,
-                presence_message_id INTEGER NOT NULL,
-                inbox_message_id INTEGER,
-                inbox_notification_id INTEGER,
-                created_at DATETIME NOT NULL,
-                PRIMARY KEY (id),
-                UNIQUE (receiver_id, presence_message_id),
-                FOREIGN KEY(presence_message_id)
-                    REFERENCES presence_messages (id) ON DELETE CASCADE,
-                FOREIGN KEY(inbox_message_id) REFERENCES inbox (id) ON DELETE CASCADE,
-                FOREIGN KEY(inbox_notification_id)
-                    REFERENCES inbox_notifications (id) ON DELETE CASCADE
+            notification_id_expr = _notification_id_migration_expr(
+                column_info, notification_columns
             )
-        """)
-        inbox_notification_expr = (
-            "old.inbox_notification_id"
-            if "inbox_notification_id" in column_info
-            else """
-                (
-                    SELECT inbox_notifications.id
-                    FROM inbox_notifications
-                    WHERE inbox_notifications.legacy_inbox_id = old.inbox_message_id
-                )
-            """
-        )
-        conn.execute(f"""
-            INSERT INTO presence_inbox_notifications (
-                id,
-                receiver_id,
-                presence_message_id,
-                inbox_message_id,
-                inbox_notification_id,
-                created_at
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="presence_inbox_notifications",
+                create_sql="""
+                    CREATE TABLE presence_inbox_notifications (
+                        id INTEGER NOT NULL,
+                        receiver_id VARCHAR NOT NULL,
+                        presence_message_id INTEGER NOT NULL,
+                        inbox_notification_id INTEGER NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE (receiver_id, presence_message_id),
+                        FOREIGN KEY(presence_message_id)
+                            REFERENCES presence_messages (id) ON DELETE CASCADE,
+                        FOREIGN KEY(inbox_notification_id)
+                            REFERENCES inbox_notifications (id) ON DELETE CASCADE
+                    )
+                """,
+                copy_sql=(
+                    f"""
+                    INSERT INTO presence_inbox_notifications (
+                        id,
+                        receiver_id,
+                        presence_message_id,
+                        inbox_notification_id,
+                        created_at
+                    )
+                    SELECT
+                        old.id,
+                        old.receiver_id,
+                        old.presence_message_id,
+                        {notification_id_expr},
+                        old.created_at
+                    FROM {{old_table}} AS old
+                    WHERE {notification_id_expr} IS NOT NULL
+                """
+                    if notification_id_expr is not None
+                    else None
+                ),
             )
-            SELECT
-                old.id,
-                old.receiver_id,
-                old.presence_message_id,
-                old.inbox_message_id,
-                {inbox_notification_expr},
-                old.created_at
-            FROM presence_inbox_notifications_old AS old
-        """)
-        conn.execute("DROP TABLE presence_inbox_notifications_old")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.commit()
-        conn.close()
-        logger.info("Migration: rebuilt presence_inbox_notifications with semantic ids")
+            logger.info("Migration: rebuilt presence_inbox_notifications with notification ids")
     except Exception as e:
         logger.warning(f"Migration check for presence notification ids failed: {e}")
 
@@ -467,101 +434,136 @@ def _migrate_ensure_agent_runtime_tables() -> None:
         logger.warning(f"Migration check for agent runtime tables failed: {e}")
         return
 
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
     try:
-        conn = sqlite3.connect(str(DATABASE_FILE))
-        cursor = conn.execute("PRAGMA table_info(agent_runtime_notifications)")
-        column_info = {row[1]: row for row in cursor.fetchall()}
-        columns = set(column_info)
-        inbox_message_column = column_info.get("inbox_message_id")
-        if inbox_message_column is not None and inbox_message_column[3]:
-            conn.execute("PRAGMA foreign_keys=OFF")
-            conn.execute("DROP TABLE IF EXISTS agent_runtime_notifications_old")
-            conn.execute(
-                "ALTER TABLE agent_runtime_notifications "
-                "RENAME TO agent_runtime_notifications_old"
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            column_info = sqlite_migrations.table_column_info(conn, "agent_runtime_notifications")
+            notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
+            if not column_info:
+                return
+
+            needs_rebuild = (
+                "inbox_message_id" in column_info
+                or "inbox_notification_id" not in column_info
+                or not bool(column_info["inbox_notification_id"][3])
             )
-            conn.execute("""
-                CREATE TABLE agent_runtime_notifications (
-                    id INTEGER NOT NULL,
-                    agent_id VARCHAR NOT NULL,
-                    source_kind VARCHAR NOT NULL,
-                    source_id VARCHAR NOT NULL,
-                    inbox_message_id INTEGER,
-                    inbox_notification_id INTEGER,
-                    created_at DATETIME NOT NULL,
-                    PRIMARY KEY (id),
-                    UNIQUE (agent_id, source_kind, source_id),
-                    FOREIGN KEY(inbox_message_id) REFERENCES inbox (id) ON DELETE CASCADE,
-                    FOREIGN KEY(inbox_notification_id)
-                        REFERENCES inbox_notifications (id) ON DELETE CASCADE
-                )
-            """)
-            notification_expr = (
-                "old.inbox_notification_id" if "inbox_notification_id" in columns else "NULL"
+            if not needs_rebuild:
+                return
+
+            notification_id_expr = _notification_id_migration_expr(
+                column_info, notification_columns
             )
-            conn.execute(f"""
-                INSERT INTO agent_runtime_notifications (
-                    id,
-                    agent_id,
-                    source_kind,
-                    source_id,
-                    inbox_message_id,
-                    inbox_notification_id,
-                    created_at
-                )
-                SELECT
-                    old.id,
-                    old.agent_id,
-                    old.source_kind,
-                    old.source_id,
-                    old.inbox_message_id,
-                    COALESCE(
-                        {notification_expr},
-                        (
-                            SELECT inbox_notifications.id
-                            FROM inbox_notifications
-                            WHERE inbox_notifications.legacy_inbox_id =
-                                old.inbox_message_id
-                        )
-                    ),
-                    old.created_at
-                FROM agent_runtime_notifications_old AS old
-            """)
-            conn.execute("DROP TABLE agent_runtime_notifications_old")
-            conn.execute("PRAGMA foreign_keys=ON")
-            columns = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(agent_runtime_notifications)").fetchall()
-            }
-            logger.info(
-                "Migration: rebuilt agent_runtime_notifications with nullable inbox_message_id"
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="agent_runtime_notifications",
+                create_sql="""
+                    CREATE TABLE agent_runtime_notifications (
+                        id INTEGER NOT NULL,
+                        agent_id VARCHAR NOT NULL,
+                        source_kind VARCHAR NOT NULL,
+                        source_id VARCHAR NOT NULL,
+                        inbox_notification_id INTEGER NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE (agent_id, source_kind, source_id),
+                        FOREIGN KEY(inbox_notification_id)
+                            REFERENCES inbox_notifications (id) ON DELETE CASCADE
+                    )
+                """,
+                copy_sql=(
+                    f"""
+                    INSERT INTO agent_runtime_notifications (
+                        id,
+                        agent_id,
+                        source_kind,
+                        source_id,
+                        inbox_notification_id,
+                        created_at
+                    )
+                    SELECT
+                        old.id,
+                        old.agent_id,
+                        old.source_kind,
+                        old.source_id,
+                        {notification_id_expr},
+                        old.created_at
+                    FROM {{old_table}} AS old
+                    WHERE {notification_id_expr} IS NOT NULL
+                """
+                    if notification_id_expr is not None
+                    else None
+                ),
             )
-        if "inbox_notification_id" not in columns:
-            conn.execute(
-                "ALTER TABLE agent_runtime_notifications ADD COLUMN inbox_notification_id INTEGER"
-            )
-            logger.info(
-                "Migration: added inbox_notification_id column to agent_runtime_notifications"
-            )
-        conn.execute("""
-            UPDATE agent_runtime_notifications
-            SET inbox_notification_id = (
-                SELECT inbox_notifications.id
-                FROM inbox_notifications
-                WHERE inbox_notifications.legacy_inbox_id =
-                    agent_runtime_notifications.inbox_message_id
-            )
-            WHERE inbox_notification_id IS NULL
-              AND inbox_message_id IS NOT NULL
-            """)
-        conn.commit()
-        conn.close()
+            logger.info("Migration: rebuilt agent_runtime_notifications with notification ids")
     except Exception as e:
         logger.warning(f"Migration check for agent runtime notification ids failed: {e}")
+
+
+def _migrate_drop_legacy_inbox_notification_ids() -> None:
+    """Drop migration-only legacy inbox id lookup after marker rows are translated."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
+            if "legacy_inbox_id" not in columns:
+                return
+
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="inbox_notifications",
+                create_sql="""
+                    CREATE TABLE inbox_notifications (
+                        id INTEGER NOT NULL,
+                        message_id INTEGER NOT NULL,
+                        receiver_id VARCHAR NOT NULL,
+                        status VARCHAR NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        delivered_at DATETIME,
+                        failed_at DATETIME,
+                        error_detail TEXT,
+                        PRIMARY KEY (id),
+                        FOREIGN KEY(message_id)
+                            REFERENCES inbox_messages (id) ON DELETE CASCADE
+                    )
+                """,
+                copy_sql="""
+                    INSERT INTO inbox_notifications (
+                        id,
+                        message_id,
+                        receiver_id,
+                        status,
+                        created_at,
+                        delivered_at,
+                        failed_at,
+                        error_detail
+                    )
+                    SELECT
+                        old.id,
+                        old.message_id,
+                        old.receiver_id,
+                        old.status,
+                        old.created_at,
+                        old.delivered_at,
+                        old.failed_at,
+                        old.error_detail
+                    FROM {old_table} AS old
+                    WHERE old.message_id IN (SELECT id FROM inbox_messages)
+                """,
+            )
+            logger.info("Migration: rebuilt inbox_notifications without legacy inbox ids")
+    except Exception as e:
+        logger.warning(f"Migration check for legacy inbox notification ids failed: {e}")
+
+
+def _migrate_drop_legacy_inbox_table() -> None:
+    """Drop the old overloaded inbox table after semantic migrations are in place."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            dropped = sqlite_migrations.drop_tables_if_exist(conn, ["inbox"])
+            if dropped:
+                logger.info("Migration: dropped legacy overloaded inbox table")
+    except Exception as e:
+        logger.warning(f"Migration check for legacy inbox table failed: {e}")
 
 
 def _migrate_drop_monitoring_session_peers() -> None:
@@ -572,39 +574,25 @@ def _migrate_drop_monitoring_session_peers() -> None:
     unscoped (capture all) — which is the intended behavior under the new
     model. Dropping the table keeps the schema honest.
     """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        conn = sqlite3.connect(str(DATABASE_FILE))
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='monitoring_session_peers'"
-        )
-        if cursor.fetchone():
-            conn.execute("DROP TABLE monitoring_session_peers")
-            conn.commit()
-            logger.info("Migration: dropped obsolete monitoring_session_peers table")
-        conn.close()
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            dropped = sqlite_migrations.drop_tables_if_exist(conn, ["monitoring_session_peers"])
+            if dropped:
+                logger.info("Migration: dropped obsolete monitoring_session_peers table")
     except Exception as e:
         logger.warning(f"Migration check for monitoring_session_peers failed: {e}")
 
 
 def _migrate_add_allowed_tools() -> None:
     """Add allowed_tools column to terminals table if missing (schema migration)."""
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        conn = sqlite3.connect(str(DATABASE_FILE))
-        cursor = conn.execute("PRAGMA table_info(terminals)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "allowed_tools" not in columns:
-            conn.execute("ALTER TABLE terminals ADD COLUMN allowed_tools TEXT")
-            conn.commit()
-            logger.info("Migration: added allowed_tools column to terminals table")
-        conn.close()
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            if sqlite_migrations.add_column_if_missing(
+                conn, "terminals", "allowed_tools", "allowed_tools TEXT"
+            ):
+                logger.info("Migration: added allowed_tools column to terminals table")
     except Exception as e:
         logger.warning(f"Migration check for allowed_tools failed: {e}")
 
@@ -758,20 +746,6 @@ def _deserialize_origin(origin_json: Optional[str]) -> Optional[Dict[str, Any]]:
     return value if isinstance(value, dict) else None
 
 
-def inbox_message_from_model(row: InboxModel) -> InboxMessage:
-    """Convert an inbox database row to its typed domain model."""
-    return InboxMessage(
-        id=row.id,
-        sender_id=row.sender_id,
-        receiver_id=row.receiver_id,
-        message=row.message,
-        source_kind=row.source_kind,
-        source_id=row.source_id,
-        status=MessageStatus(row.status),
-        created_at=row.created_at,
-    )
-
-
 def inbox_message_record_from_model(row: InboxMessageModel) -> InboxMessageRecord:
     """Convert a durable inbox message row to its domain model."""
     return InboxMessageRecord(
@@ -798,7 +772,6 @@ def inbox_notification_from_model(row: InboxNotificationModel) -> InboxNotificat
         delivered_at=row.delivered_at,
         failed_at=row.failed_at,
         error_detail=row.error_detail,
-        legacy_inbox_id=row.legacy_inbox_id,
     )
 
 
@@ -809,29 +782,6 @@ def inbox_delivery_from_models(
     return InboxDelivery(
         message=inbox_message_record_from_model(message_row),
         notification=inbox_notification_from_model(notification_row),
-    )
-
-
-def inbox_delivery_to_compat_message(
-    delivery: InboxDelivery,
-    *,
-    compatibility_id: Optional[int] = None,
-    legacy_row: Optional[InboxModel] = None,
-) -> InboxMessage:
-    """Render semantic message + notification as the legacy InboxMessage shape."""
-    notification = delivery.notification
-    message = delivery.message
-    receiver_id = legacy_row.receiver_id if legacy_row is not None else notification.receiver_id
-    created_at = legacy_row.created_at if legacy_row is not None else notification.created_at
-    return InboxMessage(
-        id=compatibility_id if compatibility_id is not None else notification.id,
-        sender_id=message.sender_id,
-        receiver_id=receiver_id,
-        message=message.body,
-        source_kind=message.source_kind,
-        source_id=message.source_id,
-        status=notification.status,
-        created_at=created_at,
     )
 
 
@@ -847,12 +797,7 @@ def create_inbox_delivery(
     route_id: Optional[str] = None,
     db: Optional[Session] = None,
 ) -> InboxDelivery:
-    """Create one durable inbox message and one delivery notification.
-
-    New callers should use the returned notification id for delivery-state
-    operations. Compatibility wrappers below keep old ``InboxMessage`` callers
-    working without making the old table the authoritative message store.
-    """
+    """Create one durable inbox message and one delivery notification."""
     effective_source_kind, effective_source_id = _resolve_source_identity(
         sender_id, source_kind, source_id
     )
@@ -987,40 +932,20 @@ def get_inbox_delivery(
         return _get_delivery_by_notification_id(session, notification_id)
 
 
-def get_inbox_delivery_for_legacy_message(
-    legacy_inbox_id: int, *, db: Optional[Session] = None
-) -> Optional[InboxDelivery]:
-    """Read semantic delivery state mapped to a legacy-readable inbox id."""
-
-    def _read(session: Session) -> Optional[InboxDelivery]:
-        row = (
-            session.query(InboxNotificationModel, InboxMessageModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
-            .filter(InboxNotificationModel.legacy_inbox_id == legacy_inbox_id)
-            .first()
-        )
-        if row is None:
-            return None
-        notification_row, message_row = row
-        return inbox_delivery_from_models(message_row, notification_row)
-
-    if db is not None:
-        return _read(db)
-    with SessionLocal() as session:
-        return _read(session)
-
-
-def list_pending_inbox_notifications(receiver_id: str, limit: int = 10) -> List[InboxDelivery]:
-    """List pending notification-backed messages for a receiver."""
+def list_inbox_deliveries(
+    receiver_id: str, limit: int = 10, status: Optional[MessageStatus] = None
+) -> List[InboxDelivery]:
+    """List notification-backed inbox messages for one receiver."""
     with SessionLocal() as db:
-        rows = (
+        query = (
             db.query(InboxNotificationModel, InboxMessageModel)
             .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
-            .filter(
-                InboxNotificationModel.receiver_id == receiver_id,
-                InboxNotificationModel.status == MessageStatus.PENDING.value,
-            )
-            .order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
+            .filter(InboxNotificationModel.receiver_id == receiver_id)
+        )
+        if status is not None:
+            query = query.filter(InboxNotificationModel.status == status.value)
+        rows = (
+            query.order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
             .limit(limit)
             .all()
         )
@@ -1028,6 +953,11 @@ def list_pending_inbox_notifications(receiver_id: str, limit: int = 10) -> List[
             inbox_delivery_from_models(message_row, notification_row)
             for notification_row, message_row in rows
         ]
+
+
+def list_pending_inbox_notifications(receiver_id: str, limit: int = 10) -> List[InboxDelivery]:
+    """List pending notification-backed messages for a receiver."""
+    return list_inbox_deliveries(receiver_id, limit=limit, status=MessageStatus.PENDING)
 
 
 def get_oldest_pending_inbox_delivery(receiver_id: str) -> Optional[InboxDelivery]:
@@ -1141,231 +1071,6 @@ def update_inbox_notification_status(
     return (
         update_inbox_notification_statuses([notification_id], status, error_detail=error_detail) > 0
     )
-
-
-def create_inbox_message(
-    sender_id: str,
-    receiver_id: str,
-    message: str,
-    db: Optional[Session] = None,
-    source_kind: Optional[str] = None,
-    source_id: Optional[str] = None,
-) -> InboxMessage:
-    """Create an inbox message through the legacy-compatible wrapper.
-
-    When ``db`` is supplied, the message participates in the caller's
-    transaction and is only flushed. Callers that omit ``db`` retain the
-    historical self-contained commit behavior.
-    """
-    effective_source_kind, effective_source_id = _resolve_source_identity(
-        sender_id, source_kind, source_id
-    )
-
-    def _add_message(session: Session) -> InboxMessage:
-        message_row = InboxMessageModel(
-            sender_id=sender_id,
-            body=message,
-            source_kind=effective_source_kind,
-            source_id=effective_source_id,
-        )
-        session.add(message_row)
-        session.flush()
-
-        legacy_row = InboxModel(
-            sender_id=sender_id,
-            receiver_id=receiver_id,
-            message=message,
-            source_kind=effective_source_kind,
-            source_id=effective_source_id,
-            status=MessageStatus.PENDING.value,
-        )
-        session.add(legacy_row)
-        session.flush()
-
-        notification_row = InboxNotificationModel(
-            message_id=message_row.id,
-            receiver_id=receiver_id,
-            status=MessageStatus.PENDING.value,
-            legacy_inbox_id=legacy_row.id,
-        )
-        session.add(notification_row)
-        session.flush()
-        session.refresh(message_row)
-        session.refresh(notification_row)
-        session.refresh(legacy_row)
-        delivery = inbox_delivery_from_models(message_row, notification_row)
-        return inbox_delivery_to_compat_message(
-            delivery, compatibility_id=legacy_row.id, legacy_row=legacy_row
-        )
-
-    if db is not None:
-        return _add_message(db)
-
-    with SessionLocal() as session:
-        inbox_message = _add_message(session)
-        session.commit()
-        return inbox_message
-
-
-def get_inbox_message(message_id: int) -> Optional[InboxMessage]:
-    """Get one inbox message through the compatibility read path."""
-    with SessionLocal() as db:
-        mapped_delivery = (
-            db.query(InboxNotificationModel, InboxMessageModel, InboxModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
-            .join(InboxModel, InboxNotificationModel.legacy_inbox_id == InboxModel.id)
-            .filter(InboxNotificationModel.legacy_inbox_id == message_id)
-            .first()
-        )
-        if mapped_delivery is not None:
-            notification_row, message_row, legacy_row = mapped_delivery
-            return inbox_delivery_to_compat_message(
-                inbox_delivery_from_models(message_row, notification_row),
-                compatibility_id=message_id,
-                legacy_row=legacy_row,
-            )
-
-        legacy_row = db.query(InboxModel).filter(InboxModel.id == message_id).first()
-        if legacy_row is not None:
-            return inbox_message_from_model(legacy_row)
-        return None
-
-
-def get_pending_messages(receiver_id: str, limit: int = 1) -> List[InboxMessage]:
-    """Get pending messages ordered by created_at ASC (oldest first)."""
-    return get_inbox_messages(receiver_id, limit=limit, status=MessageStatus.PENDING)
-
-
-def get_inbox_messages(
-    receiver_id: str, limit: int = 10, status: Optional[MessageStatus] = None
-) -> List[InboxMessage]:
-    """Get inbox messages with optional status filter ordered by created_at ASC (oldest first).
-
-    Args:
-        receiver_id: Terminal ID to get messages for
-        limit: Maximum number of messages to return (default: 10)
-        status: Optional filter by message status (None = all statuses)
-
-    Returns:
-        List of inbox messages ordered by creation time (oldest first)
-    """
-    return _get_inbox_messages(receiver_id, limit=limit, status=status)
-
-
-def _get_inbox_messages(
-    receiver_id: str, *, limit: Optional[int], status: Optional[MessageStatus] = None
-) -> List[InboxMessage]:
-    with SessionLocal() as db:
-        notification_query = (
-            db.query(InboxNotificationModel, InboxMessageModel, InboxModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
-            .join(InboxModel, InboxNotificationModel.legacy_inbox_id == InboxModel.id)
-            .filter(InboxModel.receiver_id == receiver_id)
-        )
-        notification_rows = notification_query.all()
-
-        mapped_legacy_ids = {
-            notification_row.legacy_inbox_id
-            for notification_row, _message_row, _legacy_row in notification_rows
-            if notification_row.legacy_inbox_id is not None
-        }
-        messages = []
-        for notification_row, message_row, legacy_row in notification_rows:
-            compat_message = inbox_delivery_to_compat_message(
-                inbox_delivery_from_models(message_row, notification_row),
-                compatibility_id=notification_row.legacy_inbox_id,
-                legacy_row=legacy_row,
-            )
-            if status is None or compat_message.status == status:
-                messages.append(compat_message)
-
-        legacy_query = db.query(InboxModel).filter(InboxModel.receiver_id == receiver_id)
-        if status is not None:
-            legacy_query = legacy_query.filter(InboxModel.status == status.value)
-        legacy_rows = legacy_query.all()
-        messages.extend(
-            inbox_message_from_model(row) for row in legacy_rows if row.id not in mapped_legacy_ids
-        )
-
-        messages.sort(key=lambda item: (item.created_at, item.id))
-        if limit is not None:
-            return messages[:limit]
-        return messages
-
-
-def get_oldest_pending_message(receiver_id: str) -> Optional[InboxMessage]:
-    """Get the oldest pending inbox message for a receiver."""
-    rows = get_inbox_messages(receiver_id, limit=1, status=MessageStatus.PENDING)
-    return rows[0] if rows else None
-
-
-def get_effective_message_source(message: InboxMessage) -> EffectiveMessageSource:
-    """Return the batching source for a message.
-
-    Rows without a complete explicit source are treated as a unique per-message
-    source so legacy messages remain deliverable without unexpected grouping.
-    """
-    if message.source_kind is not None and message.source_id is not None:
-        return EffectiveMessageSource(message.source_kind, message.source_id)
-    return EffectiveMessageSource("legacy_message", str(message.id), is_legacy_message=True)
-
-
-def get_pending_messages_for_effective_source(
-    receiver_id: str, source_message: InboxMessage
-) -> List[InboxMessage]:
-    """Get pending messages for the receiver and source selected by ``source_message``."""
-    source = get_effective_message_source(source_message)
-    pending_messages = _get_inbox_messages(receiver_id, limit=None, status=MessageStatus.PENDING)
-    if source.is_legacy_message:
-        return [message for message in pending_messages if message.id == int(source.id)]
-    return [
-        message
-        for message in pending_messages
-        if message.source_kind == source.kind and message.source_id == source.id
-    ]
-
-
-def update_message_statuses(message_ids: List[int], status: MessageStatus) -> int:
-    """Update selected delivery statuses through the compatibility path."""
-    if not message_ids:
-        return 0
-
-    with SessionLocal() as db:
-        unique_ids = list(dict.fromkeys(message_ids))
-        updated_requested_ids = set()
-        updated_legacy_ids = set()
-
-        mapped_notifications = (
-            db.query(InboxNotificationModel)
-            .filter(InboxNotificationModel.legacy_inbox_id.in_(unique_ids))
-            .all()
-        )
-        for notification in mapped_notifications:
-            _apply_notification_status(notification, status, None)
-            if notification.legacy_inbox_id is not None:
-                updated_legacy_ids.add(notification.legacy_inbox_id)
-                updated_requested_ids.add(notification.legacy_inbox_id)
-                legacy_row = db.get(InboxModel, notification.legacy_inbox_id)
-                if legacy_row is not None:
-                    legacy_row.status = status.value
-
-        remaining_ids = [
-            message_id for message_id in unique_ids if message_id not in updated_legacy_ids
-        ]
-
-        legacy_rows = db.query(InboxModel).filter(InboxModel.id.in_(remaining_ids)).all()
-        for legacy_row in legacy_rows:
-            legacy_row.status = status.value
-            updated_legacy_ids.add(legacy_row.id)
-            updated_requested_ids.add(legacy_row.id)
-
-        db.commit()
-        return len(updated_requested_ids)
-
-
-def update_message_status(message_id: int, status: MessageStatus) -> bool:
-    """Update message status to MessageStatus.DELIVERED or MessageStatus.FAILED."""
-    return update_message_statuses([message_id], status) > 0
 
 
 # Baton database functions

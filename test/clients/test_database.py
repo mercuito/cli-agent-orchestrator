@@ -11,41 +11,33 @@ from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
-    AgentRuntimeNotificationModel,
     Base,
     FlowModel,
     InboxMessageModel,
-    InboxModel,
     InboxNotificationModel,
+    PresenceMessageModel,
+    PresenceThreadModel,
     TerminalModel,
     create_flow,
     create_inbox_delivery,
-    create_inbox_message,
     create_inbox_message_record,
     create_inbox_notification,
     create_terminal,
     delete_flow,
     delete_terminal,
     delete_terminals_by_session,
-    get_effective_message_source,
     get_flow,
     get_inbox_delivery,
-    get_inbox_message,
-    get_inbox_messages,
-    get_oldest_pending_message,
-    get_pending_messages,
-    get_pending_messages_for_effective_source,
     get_terminal_metadata,
     init_db,
     list_flows,
+    list_inbox_deliveries,
     list_pending_inbox_notifications,
     list_terminals_by_session,
     update_flow_enabled,
     update_flow_run_times,
     update_inbox_notification_status,
     update_last_active,
-    update_message_status,
-    update_message_statuses,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
@@ -223,13 +215,6 @@ class TestTerminalOperations:
 class TestInboxOperations:
     """Tests for inbox database operations."""
 
-    def test_inbox_model_has_source_columns(self):
-        """Inbox rows support provider-neutral source identity columns."""
-        columns = {column.name for column in Base.metadata.tables["inbox"].columns}
-
-        assert "source_kind" in columns
-        assert "source_id" in columns
-
     def test_semantic_inbox_tables_are_declared(self):
         """The schema has separate durable message and notification tables."""
         message_columns = {column.name for column in Base.metadata.tables["inbox_messages"].columns}
@@ -240,7 +225,9 @@ class TestInboxOperations:
         assert {"body", "source_kind", "source_id", "origin_json", "route_kind", "route_id"} <= (
             message_columns
         )
-        assert {"message_id", "receiver_id", "status", "legacy_inbox_id"} <= (notification_columns)
+        assert {"message_id", "receiver_id", "status"} <= notification_columns
+        assert "legacy_inbox_id" not in notification_columns
+        assert "inbox" not in Base.metadata.tables
 
     def test_create_inbox_delivery_creates_one_message_and_one_notification(self, live_inbox_db):
         """New owner creation persists durable body separately from delivery state."""
@@ -261,12 +248,10 @@ class TestInboxOperations:
         assert delivery.message.route_kind == "presence_thread"
         assert delivery.notification.receiver_id == "receiver-456"
         assert delivery.notification.status == MessageStatus.PENDING
-        assert delivery.notification.legacy_inbox_id is None
 
         with live_inbox_db() as session:
             assert session.query(InboxMessageModel).count() == 1
             assert session.query(InboxNotificationModel).count() == 1
-            assert session.query(InboxModel).count() == 0
 
     def test_message_and_notification_can_be_created_as_separate_owner_steps(self, live_inbox_db):
         """The owner surface supports explicit durable message then notification creation."""
@@ -288,30 +273,8 @@ class TestInboxOperations:
         with pytest.raises(ValueError, match="Inbox message not found"):
             create_inbox_notification(999, "receiver-456")
 
-    def test_create_inbox_message_wrapper_returns_compatible_shape(self, live_inbox_db):
-        """Old creation returns InboxMessage while semantic rows own new data."""
-        result = create_inbox_message("sender-123", "receiver-456", "Hello")
-
-        assert result.sender_id == "sender-123"
-        assert result.receiver_id == "receiver-456"
-        assert result.message == "Hello"
-        assert result.source_kind == "terminal"
-        assert result.source_id == "sender-123"
-        assert result.status == MessageStatus.PENDING
-
-        assert get_inbox_message(result.id) == result
-        assert get_inbox_messages("receiver-456") == [result]
-
-        with live_inbox_db() as session:
-            notification = session.query(InboxNotificationModel).one()
-            durable_message = session.query(InboxMessageModel).one()
-            legacy_row = session.query(InboxModel).one()
-
-        assert notification.message_id == durable_message.id
-        assert notification.legacy_inbox_id == legacy_row.id == result.id
-
-    def test_semantic_only_delivery_uses_semantic_helpers(self, live_inbox_db):
-        """Semantic-only deliveries stay out of legacy compatibility helpers."""
+    def test_list_inbox_deliveries_reads_semantic_notifications(self, live_inbox_db):
+        """Receiver listing returns notification-backed durable messages."""
         delivery = create_inbox_delivery(
             "agent:linear",
             "agent:implementation_partner",
@@ -323,58 +286,38 @@ class TestInboxOperations:
             route_id="comment-1",
         )
 
-        listed = get_inbox_messages("agent:implementation_partner")
+        listed = list_inbox_deliveries("agent:implementation_partner")
         pending = list_pending_inbox_notifications("agent:implementation_partner")
         read = get_inbox_delivery(delivery.notification.id)
 
-        assert listed == []
-        assert get_inbox_message(delivery.notification.id) is None
+        assert listed == [delivery]
         assert pending[0].message.body == "Please inspect the failing job."
         assert "comment-1" not in pending[0].message.body
         assert pending == [delivery]
         assert read == delivery
 
-    @patch("cli_agent_orchestrator.clients.database.SessionLocal")
-    def test_update_message_status(self, mock_session_class):
-        """Test updating message status."""
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-
-        mock_message = MagicMock()
-        mock_query = MagicMock()
-        mock_query.filter.return_value.first.return_value = mock_message
-        mock_session.query.return_value = mock_query
-        mock_session_class.return_value = mock_session
-
-        update_message_status(1, MessageStatus.DELIVERED)
-
-        mock_session.commit.assert_called_once()
-
-    def test_create_inbox_message_defaults_source_to_sender_terminal(self, live_inbox_db):
+    def test_create_inbox_delivery_defaults_source_to_sender_terminal(self, live_inbox_db):
         """New agent-to-agent messages default to terminal:<sender_id>."""
-        result = create_inbox_message("sender-123", "receiver-456", "Hello")
+        delivery = create_inbox_delivery("sender-123", "receiver-456", "Hello")
 
-        assert result.source_kind == "terminal"
-        assert result.source_id == "sender-123"
+        assert delivery.message.source_kind == "terminal"
+        assert delivery.message.source_id == "sender-123"
 
-        persisted = get_inbox_messages("receiver-456")[0]
-        assert persisted.source_kind == "terminal"
-        assert persisted.source_id == "sender-123"
+        persisted = list_inbox_deliveries("receiver-456")[0]
+        assert persisted.message.source_kind == "terminal"
+        assert persisted.message.source_id == "sender-123"
 
-    def test_get_inbox_message_reads_one_message_by_id(self, live_inbox_db):
-        result = create_inbox_message("sender-123", "receiver-456", "Hello")
+    def test_get_inbox_delivery_reads_one_notification_by_id(self, live_inbox_db):
+        delivery = create_inbox_delivery("sender-123", "receiver-456", "Hello")
 
-        persisted = get_inbox_message(result.id)
+        persisted = get_inbox_delivery(delivery.notification.id)
 
-        assert persisted is not None
-        assert persisted.id == result.id
-        assert persisted.message == "Hello"
-        assert get_inbox_message(999) is None
+        assert persisted == delivery
+        assert get_inbox_delivery(999) is None
 
-    def test_create_inbox_message_persists_explicit_source(self, live_inbox_db):
+    def test_create_inbox_delivery_persists_explicit_source(self, live_inbox_db):
         """Callers can provide a non-terminal provider-neutral source."""
-        result = create_inbox_message(
+        delivery = create_inbox_delivery(
             "sender-123",
             "receiver-456",
             "Hello",
@@ -382,16 +325,13 @@ class TestInboxOperations:
             source_id="thread-9",
         )
 
-        assert result.source_kind == "external"
-        assert result.source_id == "thread-9"
-        assert get_effective_message_source(result).kind == "external"
-        assert get_effective_message_source(result).id == "thread-9"
-        assert get_effective_message_source(result).is_legacy_message is False
+        assert delivery.message.source_kind == "external"
+        assert delivery.message.source_id == "thread-9"
 
-    def test_create_inbox_message_rejects_partial_source(self, live_inbox_db):
+    def test_create_inbox_delivery_rejects_partial_source(self, live_inbox_db):
         """Source identity must be complete so incomplete rows do not masquerade as legacy."""
         with pytest.raises(ValueError, match="source_kind and source_id"):
-            create_inbox_message(
+            create_inbox_delivery(
                 "sender-123",
                 "receiver-456",
                 "Hello",
@@ -399,7 +339,7 @@ class TestInboxOperations:
             )
 
         with pytest.raises(ValueError, match="source_kind and source_id"):
-            create_inbox_message(
+            create_inbox_delivery(
                 "sender-123",
                 "receiver-456",
                 "Hello",
@@ -424,58 +364,9 @@ class TestInboxOperations:
                 route_kind="presence_thread",
             )
 
-    def test_legacy_no_source_messages_remain_deliverable(self, live_inbox_db):
-        """No-source rows are selected as a unique per-message source."""
-        with live_inbox_db() as session:
-            row = InboxModel(
-                sender_id="old-sender",
-                receiver_id="receiver-456",
-                message="legacy",
-                status=MessageStatus.PENDING.value,
-                created_at=datetime(2026, 1, 1, 9, 0, 0),
-            )
-            session.add(row)
-            session.commit()
-
-        oldest = get_oldest_pending_message("receiver-456")
-        assert oldest is not None
-        assert oldest.source_kind is None
-        assert oldest.source_id is None
-
-        batch = get_pending_messages_for_effective_source("receiver-456", oldest)
-        assert [message.message for message in batch] == ["legacy"]
-        source = get_effective_message_source(oldest)
-        assert source.kind == "legacy_message"
-        assert source.id == str(oldest.id)
-        assert source.is_legacy_message is True
-
-    def test_legacy_old_table_rows_remain_readable_listable_and_deliverable(self, live_inbox_db):
-        """Rows with no semantic notification keep the old compatibility behavior."""
-        with live_inbox_db() as session:
-            row = InboxModel(
-                sender_id="old-sender",
-                receiver_id="receiver-456",
-                message="legacy only",
-                status=MessageStatus.PENDING.value,
-                created_at=datetime(2026, 1, 1, 9, 0, 0),
-            )
-            session.add(row)
-            session.commit()
-            legacy_id = row.id
-
-        assert get_inbox_message(legacy_id).message == "legacy only"
-        assert [message.id for message in get_inbox_messages("receiver-456")] == [legacy_id]
-
-        oldest = get_oldest_pending_message("receiver-456")
-        batch = get_pending_messages_for_effective_source("receiver-456", oldest)
-        assert [message.message for message in batch] == ["legacy only"]
-
-        assert update_message_status(legacy_id, MessageStatus.DELIVERED) is True
-        assert get_inbox_message(legacy_id).status == MessageStatus.DELIVERED
-
     def test_status_updates_mutate_notification_not_durable_message(self, live_inbox_db):
         """Delivery status changes stay on notification rows."""
-        result = create_inbox_message(
+        delivery = create_inbox_delivery(
             "sender-123",
             "receiver-456",
             "Original body",
@@ -483,33 +374,16 @@ class TestInboxOperations:
             source_id="thread-9",
         )
 
-        assert update_message_statuses([result.id], MessageStatus.DELIVERED) == 1
+        assert update_inbox_notification_status(delivery.notification.id, MessageStatus.DELIVERED)
 
         with live_inbox_db() as session:
             durable_message = session.query(InboxMessageModel).one()
             notification = session.query(InboxNotificationModel).one()
-            legacy_row = session.query(InboxModel).one()
 
         assert durable_message.body == "Original body"
         assert durable_message.source_kind == "external"
         assert notification.status == MessageStatus.DELIVERED.value
         assert notification.delivered_at is not None
-        assert legacy_row.status == MessageStatus.DELIVERED.value
-
-    def test_compatibility_list_honors_legacy_receiver_moves(self, live_inbox_db):
-        """Old callers that move legacy rows still see the compatibility delivery move."""
-        result = create_inbox_message("sender-123", "agent:worker", "Offline hello")
-
-        with live_inbox_db() as session:
-            legacy_row = session.get(InboxModel, result.id)
-            legacy_row.receiver_id = "terminal-1"
-            session.commit()
-
-        assert get_inbox_messages("agent:worker", limit=10) == []
-        moved = get_inbox_messages("terminal-1", limit=10)
-        assert len(moved) == 1
-        assert moved[0].receiver_id == "terminal-1"
-        assert moved[0].message == "Offline hello"
 
     def test_semantic_notification_status_update_uses_notification_id(self, live_inbox_db):
         """New delivery-state helper updates notification ids directly."""
@@ -524,107 +398,38 @@ class TestInboxOperations:
         assert updated.notification.failed_at is not None
         assert updated.notification.error_detail == "send failed"
 
-    def test_compatibility_reads_use_notification_status_for_mapped_rows(self, live_inbox_db):
-        """Legacy-shaped reads still treat notification status as delivery state."""
-        result = create_inbox_message("sender-123", "receiver-456", "Hello")
-        with live_inbox_db() as session:
-            notification = session.query(InboxNotificationModel).one()
-            notification_id = notification.id
-
-        assert update_inbox_notification_status(notification_id, MessageStatus.FAILED)
-
-        assert get_inbox_message(result.id).status == MessageStatus.FAILED
-        assert get_inbox_messages("receiver-456", status=MessageStatus.PENDING) == []
-        failed_messages = get_inbox_messages("receiver-456", status=MessageStatus.FAILED)
-        assert [message.id for message in failed_messages] == [result.id]
-
-    def test_legacy_id_collision_does_not_make_old_reads_return_semantic_delivery(
-        self, live_inbox_db
-    ):
-        """Old get helpers stay in legacy inbox.id space when notification ids collide."""
-        semantic_delivery = create_inbox_delivery(
-            "semantic-sender", "semantic-receiver", "Semantic"
-        )
-        legacy_result = create_inbox_message("legacy-sender", "legacy-receiver", "Legacy")
-
-        assert semantic_delivery.notification.id == legacy_result.id
-
-        legacy_read = get_inbox_message(legacy_result.id)
-
-        assert legacy_read.message == "Legacy"
-        assert legacy_read.receiver_id == "legacy-receiver"
-        assert get_inbox_messages("semantic-receiver") == []
-        assert [message.message for message in get_inbox_messages("legacy-receiver")] == ["Legacy"]
-        assert get_inbox_delivery(semantic_delivery.notification.id) == semantic_delivery
-
-    def test_legacy_id_collision_status_update_does_not_touch_semantic_notification(
-        self, live_inbox_db
-    ):
-        """Old status helpers update legacy/mirrored rows, not raw notification ids."""
-        semantic_delivery = create_inbox_delivery(
-            "semantic-sender", "semantic-receiver", "Semantic"
-        )
-        legacy_result = create_inbox_message("legacy-sender", "legacy-receiver", "Legacy")
-
-        assert semantic_delivery.notification.id == legacy_result.id
-        assert update_message_statuses([legacy_result.id], MessageStatus.DELIVERED) == 1
-
-        semantic_after_update = get_inbox_delivery(semantic_delivery.notification.id)
-        legacy_after_update = get_inbox_message(legacy_result.id)
-
-        assert semantic_after_update.notification.status == MessageStatus.PENDING
-        assert legacy_after_update.status == MessageStatus.DELIVERED
-
     def test_same_source_pending_messages_are_batched_in_created_order(self, live_inbox_db):
         """Messages sharing an explicit source are selected together."""
-        with live_inbox_db() as session:
-            session.add_all(
-                [
-                    InboxModel(
-                        sender_id="worker-a",
-                        receiver_id="supervisor",
-                        message="first",
-                        source_kind="terminal",
-                        source_id="worker-a",
-                        status=MessageStatus.PENDING.value,
-                        created_at=datetime(2026, 1, 1, 9, 0, 0),
-                    ),
-                    InboxModel(
-                        sender_id="worker-a",
-                        receiver_id="supervisor",
-                        message="second",
-                        source_kind="terminal",
-                        source_id="worker-a",
-                        status=MessageStatus.PENDING.value,
-                        created_at=datetime(2026, 1, 1, 9, 2, 0),
-                    ),
-                ]
-            )
-            session.commit()
+        first = create_inbox_delivery("worker-a", "supervisor", "first")
+        second = create_inbox_delivery("worker-a", "supervisor", "second")
 
-        oldest = get_oldest_pending_message("supervisor")
+        oldest = db_module.get_oldest_pending_inbox_delivery("supervisor")
         assert oldest is not None
-        batch = get_pending_messages_for_effective_source("supervisor", oldest)
+        batch = db_module.list_pending_inbox_deliveries_for_effective_source("supervisor", oldest)
 
-        assert [message.message for message in batch] == ["first", "second"]
+        assert [delivery.message.body for delivery in batch] == ["first", "second"]
+        assert [delivery.notification.id for delivery in batch] == [
+            first.notification.id,
+            second.notification.id,
+        ]
 
     def test_effective_source_batching_distinguishes_semantic_provider_sources(self, live_inbox_db):
-        """Compatibility batching separates terminal and provider-backed source refs."""
-        create_inbox_message(
+        """Batching separates terminal and provider-backed source refs."""
+        create_inbox_delivery(
             "terminal-a",
             "supervisor",
             "terminal message",
             source_kind="terminal",
             source_id="terminal-a",
         )
-        create_inbox_message(
+        create_inbox_delivery(
             "linear",
             "supervisor",
             "provider first",
             source_kind="presence_message",
             source_id="linear-thread-1",
         )
-        create_inbox_message(
+        create_inbox_delivery(
             "linear",
             "supervisor",
             "provider second",
@@ -632,140 +437,52 @@ class TestInboxOperations:
             source_id="linear-thread-1",
         )
 
-        messages = get_inbox_messages("supervisor", limit=10)
-        terminal_message = messages[0]
-        provider_message = messages[1]
+        deliveries = list_inbox_deliveries("supervisor", limit=10)
+        terminal_delivery = deliveries[0]
+        provider_delivery = deliveries[1]
 
-        terminal_batch = get_pending_messages_for_effective_source("supervisor", terminal_message)
-        provider_batch = get_pending_messages_for_effective_source("supervisor", provider_message)
+        terminal_batch = db_module.list_pending_inbox_deliveries_for_effective_source(
+            "supervisor", terminal_delivery
+        )
+        provider_batch = db_module.list_pending_inbox_deliveries_for_effective_source(
+            "supervisor", provider_delivery
+        )
 
-        assert [message.message for message in terminal_batch] == ["terminal message"]
-        assert [message.message for message in provider_batch] == [
+        assert [delivery.message.body for delivery in terminal_batch] == ["terminal message"]
+        assert [delivery.message.body for delivery in provider_batch] == [
             "provider first",
             "provider second",
         ]
 
-    def test_explicit_source_kind_cannot_collide_with_legacy_marker(self, live_inbox_db):
-        """Provider-neutral source strings are not reserved for internal sentinels."""
-        with live_inbox_db() as session:
-            session.add_all(
-                [
-                    InboxModel(
-                        sender_id="external-a",
-                        receiver_id="supervisor",
-                        message="first",
-                        source_kind="legacy_message",
-                        source_id="external-1",
-                        status=MessageStatus.PENDING.value,
-                        created_at=datetime(2026, 1, 1, 9, 0, 0),
-                    ),
-                    InboxModel(
-                        sender_id="external-a",
-                        receiver_id="supervisor",
-                        message="second",
-                        source_kind="legacy_message",
-                        source_id="external-1",
-                        status=MessageStatus.PENDING.value,
-                        created_at=datetime(2026, 1, 1, 9, 1, 0),
-                    ),
-                ]
-            )
-            session.commit()
-
-        oldest = get_oldest_pending_message("supervisor")
-        assert oldest is not None
-        source = get_effective_message_source(oldest)
-        assert source.kind == "legacy_message"
-        assert source.id == "external-1"
-        assert source.is_legacy_message is False
-
-        batch = get_pending_messages_for_effective_source("supervisor", oldest)
-        assert [message.message for message in batch] == ["first", "second"]
-
     def test_different_sources_are_not_batched_with_oldest_source(self, live_inbox_db):
         """A later pending message from another source stays out of the selected batch."""
-        with live_inbox_db() as session:
-            session.add_all(
-                [
-                    InboxModel(
-                        sender_id="worker-a",
-                        receiver_id="supervisor",
-                        message="oldest source",
-                        source_kind="terminal",
-                        source_id="worker-a",
-                        status=MessageStatus.PENDING.value,
-                        created_at=datetime(2026, 1, 1, 9, 0, 0),
-                    ),
-                    InboxModel(
-                        sender_id="worker-b",
-                        receiver_id="supervisor",
-                        message="other source",
-                        source_kind="terminal",
-                        source_id="worker-b",
-                        status=MessageStatus.PENDING.value,
-                        created_at=datetime(2026, 1, 1, 9, 1, 0),
-                    ),
-                    InboxModel(
-                        sender_id="worker-a",
-                        receiver_id="supervisor",
-                        message="same source later",
-                        source_kind="terminal",
-                        source_id="worker-a",
-                        status=MessageStatus.PENDING.value,
-                        created_at=datetime(2026, 1, 1, 9, 2, 0),
-                    ),
-                ]
-            )
-            session.commit()
+        create_inbox_delivery("worker-a", "supervisor", "oldest source")
+        create_inbox_delivery("worker-b", "supervisor", "other source")
+        create_inbox_delivery("worker-a", "supervisor", "same source later")
 
-        oldest = get_oldest_pending_message("supervisor")
+        oldest = db_module.get_oldest_pending_inbox_delivery("supervisor")
         assert oldest is not None
-        batch = get_pending_messages_for_effective_source("supervisor", oldest)
+        batch = db_module.list_pending_inbox_deliveries_for_effective_source("supervisor", oldest)
 
-        assert [message.message for message in batch] == ["oldest source", "same source later"]
+        assert [delivery.message.body for delivery in batch] == [
+            "oldest source",
+            "same source later",
+        ]
 
     def test_batch_status_update_marks_only_selected_messages(self, live_inbox_db):
         """Batch status updates leave unselected later messages pending."""
-        selected = []
-        with live_inbox_db() as session:
-            rows = [
-                InboxModel(
-                    sender_id="worker-a",
-                    receiver_id="supervisor",
-                    message="selected one",
-                    source_kind="terminal",
-                    source_id="worker-a",
-                    status=MessageStatus.PENDING.value,
-                    created_at=datetime(2026, 1, 1, 9, 0, 0),
-                ),
-                InboxModel(
-                    sender_id="worker-a",
-                    receiver_id="supervisor",
-                    message="selected two",
-                    source_kind="terminal",
-                    source_id="worker-a",
-                    status=MessageStatus.PENDING.value,
-                    created_at=datetime(2026, 1, 1, 9, 1, 0),
-                ),
-                InboxModel(
-                    sender_id="worker-b",
-                    receiver_id="supervisor",
-                    message="still pending",
-                    source_kind="terminal",
-                    source_id="worker-b",
-                    status=MessageStatus.PENDING.value,
-                    created_at=datetime(2026, 1, 1, 9, 2, 0),
-                ),
-            ]
-            session.add_all(rows)
-            session.commit()
-            selected = [rows[0].id, rows[1].id]
+        selected_one = create_inbox_delivery("worker-a", "supervisor", "selected one")
+        selected_two = create_inbox_delivery("worker-a", "supervisor", "selected two")
+        create_inbox_delivery("worker-b", "supervisor", "still pending")
 
-        updated = update_message_statuses(selected, MessageStatus.DELIVERED)
+        updated = db_module.update_inbox_notification_statuses(
+            [selected_one.notification.id, selected_two.notification.id],
+            MessageStatus.DELIVERED,
+        )
         assert updated == 2
 
-        messages = get_inbox_messages("supervisor", limit=10)
-        assert [message.status for message in messages] == [
+        deliveries = list_inbox_deliveries("supervisor", limit=10)
+        assert [delivery.notification.status for delivery in deliveries] == [
             MessageStatus.DELIVERED,
             MessageStatus.DELIVERED,
             MessageStatus.PENDING,
@@ -1051,31 +768,6 @@ class TestFlowOperations:
 
         assert result is False
 
-    @patch("cli_agent_orchestrator.clients.database.SessionLocal")
-    def test_update_message_status_not_found(self, mock_session_class):
-        """Test updating message status when message doesn't exist."""
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-
-        mock_query = MagicMock()
-        mock_query.filter.return_value.first.return_value = None
-        mock_session.query.return_value = mock_query
-        mock_session_class.return_value = mock_session
-
-        result = update_message_status(999, MessageStatus.DELIVERED)
-
-        assert result is False
-
-    def test_create_inbox_message(self, live_inbox_db):
-        """Test creating an inbox message."""
-        result = create_inbox_message("sender-123", "receiver-456", "Hello")
-
-        assert result.sender_id == "sender-123"
-        assert result.receiver_id == "receiver-456"
-        assert result.message == "Hello"
-        assert get_inbox_message(result.id) == result
-
 
 class TestInitDb:
     """Tests for init_db function."""
@@ -1100,21 +792,127 @@ class TestInitDb:
         assert table_names.count("inbox_messages") == 1
         assert table_names.count("inbox_notifications") == 1
 
-    def test_agent_runtime_migration_relaxes_legacy_inbox_message_not_null(
-        self, tmp_path, monkeypatch
-    ):
-        """Old runtime marker tables allow semantic-only marker inserts after migration."""
-        db_path = tmp_path / "legacy-runtime.db"
+    def test_notification_marker_migrations_translate_legacy_inbox_ids(self, tmp_path, monkeypatch):
+        """Old marker tables are rebuilt around notification ids before legacy ids drop."""
+        db_path = tmp_path / "legacy-markers.db"
         test_engine = create_engine(f"sqlite:///{db_path}")
-        TestSession = sessionmaker(bind=test_engine)
         monkeypatch.setattr(db_module, "engine", test_engine)
-        monkeypatch.setattr(db_module, "SessionLocal", TestSession)
         monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
 
-        InboxModel.__table__.create(bind=test_engine)
         InboxMessageModel.__table__.create(bind=test_engine)
-        InboxNotificationModel.__table__.create(bind=test_engine)
+        PresenceThreadModel.__table__.create(bind=test_engine)
+        PresenceMessageModel.__table__.create(bind=test_engine)
         with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE inbox_notifications (
+                    id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    receiver_id VARCHAR NOT NULL,
+                    status VARCHAR NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    delivered_at DATETIME,
+                    failed_at DATETIME,
+                    error_detail TEXT,
+                    legacy_inbox_id INTEGER UNIQUE,
+                    PRIMARY KEY (id)
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO inbox_messages (
+                    id,
+                    sender_id,
+                    body,
+                    source_kind,
+                    source_id,
+                    created_at
+                )
+                VALUES (
+                    201,
+                    'linear-runtime',
+                    'Runtime notification',
+                    'linear_issue',
+                    'CAO-38',
+                    '2026-05-07 12:00:00'
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO inbox_notifications (
+                    id,
+                    message_id,
+                    receiver_id,
+                    status,
+                    created_at,
+                    legacy_inbox_id
+                )
+                VALUES (301, 201, 'agent-123', 'pending', '2026-05-07 12:00:00', 101)
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO presence_threads (
+                    id,
+                    provider,
+                    external_id,
+                    kind,
+                    state,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    501,
+                    'linear',
+                    'thread-1',
+                    'conversation',
+                    'active',
+                    '2026-05-07 12:00:00',
+                    '2026-05-07 12:00:00'
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO presence_messages (
+                    id,
+                    thread_id,
+                    provider,
+                    external_id,
+                    direction,
+                    kind,
+                    body,
+                    state,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    601,
+                    501,
+                    'linear',
+                    'message-1',
+                    'inbound',
+                    'comment',
+                    'Please handle CAO-38',
+                    'received',
+                    '2026-05-07 12:00:00',
+                    '2026-05-07 12:00:00'
+                )
+            """)
+            connection.exec_driver_sql("""
+                CREATE TABLE presence_inbox_notifications (
+                    id INTEGER NOT NULL,
+                    receiver_id VARCHAR NOT NULL,
+                    presence_message_id INTEGER NOT NULL,
+                    inbox_message_id INTEGER NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    PRIMARY KEY (id),
+                    UNIQUE (receiver_id, presence_message_id)
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO presence_inbox_notifications (
+                    id,
+                    receiver_id,
+                    presence_message_id,
+                    inbox_message_id,
+                    created_at
+                )
+                VALUES (401, 'agent-123', 601, 101, '2026-05-07 12:00:00')
+            """)
             connection.exec_driver_sql("""
                 CREATE TABLE agent_runtime_notifications (
                     id INTEGER NOT NULL,
@@ -1124,40 +922,62 @@ class TestInitDb:
                     inbox_message_id INTEGER NOT NULL,
                     created_at DATETIME NOT NULL,
                     PRIMARY KEY (id),
-                    UNIQUE (agent_id, source_kind, source_id),
-                    FOREIGN KEY(inbox_message_id) REFERENCES inbox (id) ON DELETE CASCADE
+                    UNIQUE (agent_id, source_kind, source_id)
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO agent_runtime_notifications (
+                    id,
+                    agent_id,
+                    source_kind,
+                    source_id,
+                    inbox_message_id,
+                    created_at
+                )
+                VALUES (
+                    701,
+                    'agent-123',
+                    'linear_issue',
+                    'CAO-38',
+                    101,
+                    '2026-05-07 12:00:00'
                 )
             """)
 
+        db_module._migrate_ensure_presence_tables()
         db_module._migrate_ensure_agent_runtime_tables()
+        db_module._migrate_drop_legacy_inbox_notification_ids()
 
         with test_engine.connect() as connection:
-            columns = {
+            presence_columns = {
+                row[1]: row
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(presence_inbox_notifications)"
+                )
+            }
+            runtime_columns = {
                 row[1]: row
                 for row in connection.exec_driver_sql(
                     "PRAGMA table_info(agent_runtime_notifications)"
                 )
             }
-        assert "inbox_notification_id" in columns
-        assert columns["inbox_message_id"][3] == 0
+            notification_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(inbox_notifications)")
+            }
+            presence_notification_id = connection.exec_driver_sql(
+                "SELECT inbox_notification_id FROM presence_inbox_notifications"
+            ).scalar_one()
+            runtime_notification_id = connection.exec_driver_sql(
+                "SELECT inbox_notification_id FROM agent_runtime_notifications"
+            ).scalar_one()
 
-        delivery = create_inbox_delivery(
-            "linear-runtime",
-            "agent-123",
-            "Runtime notification",
-            source_kind="linear_issue",
-            source_id="CAO-38",
-        )
-        with TestSession() as session:
-            marker = AgentRuntimeNotificationModel(
-                agent_id="agent-123",
-                source_kind="linear_issue",
-                source_id="CAO-38",
-                inbox_notification_id=delivery.notification.id,
-            )
-            session.add(marker)
-            session.commit()
-            session.refresh(marker)
-
-            assert marker.inbox_message_id is None
-            assert marker.inbox_notification_id == delivery.notification.id
+        assert "inbox_notification_id" in presence_columns
+        assert "inbox_message_id" not in presence_columns
+        assert presence_columns["inbox_notification_id"][3] == 1
+        assert "inbox_notification_id" in runtime_columns
+        assert "inbox_message_id" not in runtime_columns
+        assert runtime_columns["inbox_notification_id"][3] == 1
+        assert presence_notification_id == 301
+        assert runtime_notification_id == 301
+        assert "legacy_inbox_id" not in notification_columns

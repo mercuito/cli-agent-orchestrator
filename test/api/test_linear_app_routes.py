@@ -779,9 +779,11 @@ def test_linear_reply_from_inbox_notification_routes_through_provider_registry(
         json=_linear_agent_payload(),
         headers=_linear_headers(),
     )
-    inbox = _pending_linear_notifications()[0].notification
+    notification = _pending_linear_notifications()[0].notification
 
-    result = reply_to_inbox_message(inbox.id, "Reply through Linear", provider_manager=manager)
+    result = reply_to_inbox_message(
+        notification.id, "Reply through Linear", provider_manager=manager
+    )
 
     create_activity.assert_called_once_with(
         "session-1",
@@ -814,10 +816,12 @@ def test_linear_reply_failure_from_inbox_notification_is_visible(client, monkeyp
         json=_linear_agent_payload(),
         headers=_linear_headers(),
     )
-    inbox = _pending_linear_notifications()[0].notification
+    notification = _pending_linear_notifications()[0].notification
 
     with pytest.raises(PresenceReplyDeliveryError, match="provider reply failed"):
-        reply_to_inbox_message(inbox.id, "This should surface failure", provider_manager=manager)
+        reply_to_inbox_message(
+            notification.id, "This should surface failure", provider_manager=manager
+        )
 
     thread = get_thread("linear", "session-1")
     failed = list_messages(thread.id)[-1]

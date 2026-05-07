@@ -129,19 +129,19 @@ def _presence_inbox_message() -> tuple[int, int]:
 
 
 def test_successful_reply_resolves_inbox_thread_and_provider_registry(test_session):
-    inbox_id, _ = _presence_inbox_message()
+    notification_id, _ = _presence_inbox_message()
     provider = FakePresenceProvider()
     manager = PresenceProviderManager({"example": provider})
 
-    result = reply_to_inbox_message(inbox_id, "I am on it", provider_manager=manager)
+    result = reply_to_inbox_message(notification_id, "I am on it", provider_manager=manager)
 
-    assert result.delivery.notification.id == inbox_id
+    assert result.delivery.notification.id == notification_id
     assert result.thread.external_id == "thread-1"
     assert result.outbound_message.direction == "outbound"
     assert result.outbound_message.state == "delivered"
     assert result.outbound_message.external_id == "reply-1"
     assert result.outbound_message.metadata == {
-        "inbox_notification_id": inbox_id,
+        "inbox_notification_id": notification_id,
         "provider_reply_ref": {
             "provider": "example",
             "id": "reply-1",
@@ -152,11 +152,11 @@ def test_successful_reply_resolves_inbox_thread_and_provider_registry(test_sessi
 
 
 def test_provider_receives_thread_external_ref_and_body_not_message_ref(test_session):
-    inbox_id, inbound_id = _presence_inbox_message()
+    notification_id, inbound_id = _presence_inbox_message()
     provider = FakePresenceProvider()
     manager = PresenceProviderManager({"example": provider})
 
-    reply_to_inbox_message(inbox_id, "Thread-level reply", provider_manager=manager)
+    reply_to_inbox_message(notification_id, "Thread-level reply", provider_manager=manager)
 
     assert provider.replies == [
         {
@@ -167,7 +167,7 @@ def test_provider_receives_thread_external_ref_and_body_not_message_ref(test_ses
             ),
             "body": "Thread-level reply",
             "kind": "response",
-            "metadata": {"inbox_notification_id": inbox_id},
+            "metadata": {"inbox_notification_id": notification_id},
         }
     ]
     inbound = list_messages(1)[0]
@@ -176,11 +176,11 @@ def test_provider_receives_thread_external_ref_and_body_not_message_ref(test_ses
 
 
 def test_successful_provider_response_is_recorded_durably(test_session):
-    inbox_id, _ = _presence_inbox_message()
+    notification_id, _ = _presence_inbox_message()
     provider = FakePresenceProvider()
     manager = PresenceProviderManager({"example": provider})
 
-    result = reply_to_inbox_message(inbox_id, "Persist me", provider_manager=manager)
+    result = reply_to_inbox_message(notification_id, "Persist me", provider_manager=manager)
 
     messages = list_messages(result.thread.id)
     assert [message.direction for message in messages] == ["inbound", "outbound"]
@@ -190,13 +190,13 @@ def test_successful_provider_response_is_recorded_durably(test_session):
 
 
 def test_provider_error_records_visible_failed_state(test_session):
-    inbox_id, _ = _presence_inbox_message()
+    notification_id, _ = _presence_inbox_message()
     provider = FakePresenceProvider()
     provider.fail_with = RuntimeError("provider is down")
     manager = PresenceProviderManager({"example": provider})
 
     with pytest.raises(PresenceReplyDeliveryError, match="provider reply failed"):
-        reply_to_inbox_message(inbox_id, "This will fail", provider_manager=manager)
+        reply_to_inbox_message(notification_id, "This will fail", provider_manager=manager)
 
     failed = list_messages(1)[-1]
     assert failed.direction == "outbound"
@@ -205,17 +205,17 @@ def test_provider_error_records_visible_failed_state(test_session):
     assert failed.metadata == {
         "error": "provider is down",
         "error_type": "RuntimeError",
-        "inbox_notification_id": inbox_id,
+        "inbox_notification_id": notification_id,
         "reply_status": "failed",
     }
 
 
 def test_unknown_provider_records_visible_failed_state(test_session):
-    inbox_id, _ = _presence_inbox_message()
+    notification_id, _ = _presence_inbox_message()
     manager = PresenceProviderManager()
 
     with pytest.raises(PresenceReplyDeliveryError, match="Unknown presence provider: example"):
-        reply_to_inbox_message(inbox_id, "No registered provider", provider_manager=manager)
+        reply_to_inbox_message(notification_id, "No registered provider", provider_manager=manager)
 
     failed = list_messages(1)[-1]
     assert failed.direction == "outbound"
@@ -224,7 +224,7 @@ def test_unknown_provider_records_visible_failed_state(test_session):
     assert failed.metadata["error"] == "Unknown presence provider: example"
 
 
-def test_missing_inbox_id_fails_clearly(test_session):
+def test_missing_notification_id_fails_clearly(test_session):
     with pytest.raises(PresenceReplyNotFoundError, match="inbox notification 999 not found"):
         reply_to_inbox_message(999, "No inbox")
 

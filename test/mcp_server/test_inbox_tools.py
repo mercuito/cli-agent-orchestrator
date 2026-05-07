@@ -16,7 +16,6 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
     create_inbox_delivery,
-    create_inbox_message,
     create_terminal,
 )
 from cli_agent_orchestrator.mcp_server.server import (
@@ -259,17 +258,18 @@ async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_work
         "codex",
         agent_profile="implementation_partner",
     )
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "terminal-sender",
         "terminal-receiver",
         "I finished the patch. Can you review it?",
     )
 
-    result = await read_inbox_message(inbox.id)
+    result = await read_inbox_message(delivery.notification.id)
 
     assert result == {
         "success": True,
-        "id": inbox.id,
+        "notification_id": delivery.notification.id,
+        "message_id": delivery.message.id,
         "from": "Implementation Partner",
         "body": "I finished the patch. Can you review it?",
         "replyable": False,
@@ -279,31 +279,34 @@ async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_work
 
 
 def test_provider_backed_read_returns_slim_payload_without_raw_context(test_session):
-    inbox_id = _presence_notification()
+    notification_id = _presence_notification()
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
 
     assert result == {
         "success": True,
-        "id": inbox_id,
+        "notification_id": notification_id,
+        "message_id": result["message_id"],
         "from": "Example",
         "body": "Full provider body",
         "replyable": True,
         "workspace": None,
     }
+    assert "id" not in result
     assert "provider_context" not in result
     assert "inbox_message" not in result
     assert "reply" not in result
 
 
 def test_linear_backed_read_returns_provider_owned_workspace_breadcrumb(test_session):
-    inbox_id = _linear_presence_notification_with_work_item_and_metadata()
+    notification_id = _linear_presence_notification_with_work_item_and_metadata()
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
 
     assert result == {
         "success": True,
-        "id": inbox_id,
+        "notification_id": notification_id,
+        "message_id": result["message_id"],
         "from": "Implementation Partner",
         "body": "Please implement the breadcrumb.",
         "replyable": True,
@@ -318,9 +321,9 @@ def test_linear_backed_read_returns_provider_owned_workspace_breadcrumb(test_ses
 
 
 def test_provider_backed_read_body_is_backing_message_not_notification_wrapper(test_session):
-    inbox_id = _presence_notification()
+    notification_id = _presence_notification()
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
 
     assert result["body"] == "Full provider body"
     assert "[CAO inbox notification]" not in result["body"]
@@ -328,14 +331,14 @@ def test_provider_backed_read_body_is_backing_message_not_notification_wrapper(t
 
 
 def test_provider_backed_read_missing_backing_message_fails_clearly(test_session):
-    inbox_id = _presence_notification()
+    notification_id = _presence_notification()
 
     with db_module.SessionLocal() as session:
         session.execute(text("PRAGMA foreign_keys=OFF"))
         session.query(db_module.PresenceMessageModel).delete()
         session.commit()
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
 
     assert result["success"] is False
     assert result["error_type"] == "InboxReadNotFoundError"
@@ -344,14 +347,14 @@ def test_provider_backed_read_missing_backing_message_fails_clearly(test_session
 
 
 def test_provider_backed_read_missing_backing_thread_fails_clearly(test_session):
-    inbox_id = _presence_notification()
+    notification_id = _presence_notification()
 
     with db_module.SessionLocal() as session:
         session.execute(text("PRAGMA foreign_keys=OFF"))
         session.query(db_module.PresenceThreadModel).delete()
         session.commit()
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
 
     assert result["success"] is False
     assert result["error_type"] == "InboxReadNotFoundError"
@@ -360,22 +363,22 @@ def test_provider_backed_read_missing_backing_thread_fails_clearly(test_session)
 
 
 def test_read_inbox_message_uses_bounded_sender_fallback_without_internal_ids(test_session):
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "missing-terminal-id",
         "terminal-receiver",
         "Plain terminal message",
     )
 
-    result = _read_inbox_message_impl(inbox.id)
+    result = _read_inbox_message_impl(delivery.notification.id)
 
     assert result["from"] == "Terminal sender"
     assert "missing-terminal-id" not in json.dumps(result)
 
 
 def test_large_raw_snapshots_do_not_inflate_default_read_response(test_session):
-    inbox_id = _presence_notification_with_large_raw_snapshot()
+    notification_id = _presence_notification_with_large_raw_snapshot()
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
     encoded = json.dumps(result)
 
     assert result["body"] == "Small provider body"
@@ -385,9 +388,9 @@ def test_large_raw_snapshots_do_not_inflate_default_read_response(test_session):
 
 
 def test_large_linear_raw_snapshots_do_not_leak_through_breadcrumb_or_sender_label(test_session):
-    inbox_id = _linear_presence_notification_with_work_item_and_metadata()
+    notification_id = _linear_presence_notification_with_work_item_and_metadata()
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
     encoded = json.dumps(result)
 
     assert result["from"] == "Implementation Partner"
@@ -413,12 +416,12 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
             workspace={"name": "Example", "breadcrumb": ["not", "a", "mapping"]}
         ),
     )
-    inbox_id = create_notification_for_message(
+    notification_id = create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
 
     assert result["success"] is True
     assert result["workspace"] is None
@@ -441,12 +444,12 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
             }
         ),
     )
-    inbox_id = create_notification_for_message(
+    notification_id = create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
 
-    result = _read_inbox_message_impl(inbox_id)
+    result = _read_inbox_message_impl(notification_id)
     encoded = json.dumps(result)
 
     assert result["success"] is True
@@ -495,11 +498,11 @@ def test_provider_backed_read_without_marker_fails_clearly(test_session):
 
 
 def test_reply_to_inbox_message_routes_through_provider_presence_registry(test_session):
-    inbox_id = _presence_notification()
+    notification_id = _presence_notification()
     provider = FakePresenceProvider()
     presence_provider_manager.register_provider("example", provider)
 
-    result = _reply_to_inbox_message_impl(inbox_id, "Reply through CAO")
+    result = _reply_to_inbox_message_impl(notification_id, "Reply through CAO")
 
     assert result["success"] is True
     assert result["provider"] == "example"
@@ -510,7 +513,7 @@ def test_reply_to_inbox_message_routes_through_provider_presence_registry(test_s
         id="thread-1",
         url="https://presence.example/thread-1",
     )
-    assert provider.replies[0]["metadata"]["inbox_notification_id"] == inbox_id
+    assert provider.replies[0]["metadata"]["inbox_notification_id"] == notification_id
 
 
 def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(test_session):
@@ -545,14 +548,14 @@ def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(tes
             source_label="Example Workspace",
         ),
     )
-    inbox_id = create_notification_for_message(
+    notification_id = create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
     provider = FakePresenceProvider()
     presence_provider_manager.register_provider("example", provider)
 
-    result = _reply_to_inbox_message_impl(inbox_id, "Routed reply")
+    result = _reply_to_inbox_message_impl(notification_id, "Routed reply")
 
     assert result["success"] is True
     assert provider.replies[0]["thread_ref"] == ExternalRef(
@@ -567,15 +570,15 @@ def test_reply_to_inbox_message_registers_linear_provider_in_mcp_process(
     test_session,
     monkeypatch,
 ):
-    inbox_id = _linear_presence_notification()
+    notification_id = _linear_presence_notification()
     create_activity = Mock(return_value={"id": "reply-1"})
     monkeypatch.setattr(
         "cli_agent_orchestrator.presence.builtins._create_linear_presence_provider",
         lambda: LinearPresenceProvider(client=Mock(create_agent_activity=create_activity)),
     )
 
-    read_result = _read_inbox_message_impl(inbox_id)
-    result = _reply_to_inbox_message_impl(inbox_id, "Reply through default Linear provider")
+    read_result = _read_inbox_message_impl(notification_id)
+    result = _reply_to_inbox_message_impl(notification_id, "Reply through default Linear provider")
 
     assert "implementation_partner" not in json.dumps(read_result)
     assert "provider_context" not in read_result
@@ -588,14 +591,15 @@ def test_reply_to_inbox_message_registers_linear_provider_in_mcp_process(
 
 
 def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_session):
-    inbox = create_inbox_message("terminal-a", "terminal-b", "Plain terminal message")
+    delivery = create_inbox_delivery("terminal-a", "terminal-b", "Plain terminal message")
 
-    read_result = _read_inbox_message_impl(inbox.id)
-    reply_result = _reply_to_inbox_message_impl(inbox.id, "No provider target")
+    read_result = _read_inbox_message_impl(delivery.notification.id)
+    reply_result = _reply_to_inbox_message_impl(delivery.notification.id, "No provider target")
 
     assert read_result == {
         "success": True,
-        "id": inbox.id,
+        "notification_id": delivery.notification.id,
+        "message_id": delivery.message.id,
         "from": "Terminal sender",
         "body": "Plain terminal message",
         "replyable": False,
@@ -607,7 +611,7 @@ def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_sessio
 
 
 def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "linear-runtime",
         "agent:implementation_partner",
         "Agent runtime accepted a Linear event.",
@@ -615,12 +619,13 @@ def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):
         source_id="event-1",
     )
 
-    read_result = _read_inbox_message_impl(inbox.id)
-    reply_result = _reply_to_inbox_message_impl(inbox.id, "Reply to runtime event")
+    read_result = _read_inbox_message_impl(delivery.notification.id)
+    reply_result = _reply_to_inbox_message_impl(delivery.notification.id, "Reply to runtime event")
 
     assert read_result == {
         "success": True,
-        "id": inbox.id,
+        "notification_id": delivery.notification.id,
+        "message_id": delivery.message.id,
         "from": "Linear Event",
         "body": "Agent runtime accepted a Linear event.",
         "replyable": False,
@@ -633,9 +638,9 @@ def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):
 
 
 def test_reply_to_inbox_message_surfaces_provider_failure(test_session):
-    inbox_id = _presence_notification()
+    notification_id = _presence_notification()
 
-    result = _reply_to_inbox_message_impl(inbox_id, "No registered provider")
+    result = _reply_to_inbox_message_impl(notification_id, "No registered provider")
 
     assert result["success"] is False
     assert result["error_type"] == "PresenceReplyDeliveryError"
@@ -645,10 +650,10 @@ def test_reply_to_inbox_message_surfaces_provider_failure(test_session):
 def test_provider_reply_failure_response_and_record_do_not_leak_provider_context(
     test_session,
 ):
-    inbox_id = _presence_notification()
+    notification_id = _presence_notification()
     presence_provider_manager.register_provider("example", LeakyFailurePresenceProvider())
 
-    result = _reply_to_inbox_message_impl(inbox_id, "Reply that fails")
+    result = _reply_to_inbox_message_impl(notification_id, "Reply that fails")
 
     thread = get_thread("example", "thread-1")
     assert thread is not None

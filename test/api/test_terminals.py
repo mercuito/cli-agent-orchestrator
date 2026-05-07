@@ -509,19 +509,20 @@ class TestCreateInboxMessageEndpoint:
 
     def test_create_inbox_message_success(self, client):
         """POST creates an inbox message and returns success."""
-        mock_msg = MagicMock()
-        mock_msg.id = 1
-        mock_msg.sender_id = "sender1"
-        mock_msg.receiver_id = "abcd1234"
-        mock_msg.source_kind = "terminal"
-        mock_msg.source_id = "sender1"
-        mock_msg.created_at.isoformat.return_value = "2026-03-13T12:00:00"
+        mock_delivery = MagicMock()
+        mock_delivery.notification.id = 1
+        mock_delivery.notification.receiver_id = "abcd1234"
+        mock_delivery.notification.created_at.isoformat.return_value = "2026-03-13T12:00:00"
+        mock_delivery.message.id = 10
+        mock_delivery.message.sender_id = "sender1"
+        mock_delivery.message.source_kind = "terminal"
+        mock_delivery.message.source_id = "sender1"
 
         with (
-            patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create,
+            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
             patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
         ):
-            mock_create.return_value = mock_msg
+            mock_create.return_value = mock_delivery
 
             response = client.post(
                 "/terminals/abcd1234/inbox/messages",
@@ -531,26 +532,28 @@ class TestCreateInboxMessageEndpoint:
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
-            assert data["message_id"] == 1
+            assert data["notification_id"] == 1
+            assert data["message_id"] == 10
             assert data["sender_id"] == "sender1"
             assert data["source_kind"] == "terminal"
             assert data["source_id"] == "sender1"
 
     def test_create_inbox_message_delivery_failure_still_succeeds(self, client):
         """Immediate delivery failure should not fail the API response."""
-        mock_msg = MagicMock()
-        mock_msg.id = 2
-        mock_msg.sender_id = "sender1"
-        mock_msg.receiver_id = "abcd1234"
-        mock_msg.source_kind = "terminal"
-        mock_msg.source_id = "sender1"
-        mock_msg.created_at.isoformat.return_value = "2026-03-13T12:00:00"
+        mock_delivery = MagicMock()
+        mock_delivery.notification.id = 2
+        mock_delivery.notification.receiver_id = "abcd1234"
+        mock_delivery.notification.created_at.isoformat.return_value = "2026-03-13T12:00:00"
+        mock_delivery.message.id = 20
+        mock_delivery.message.sender_id = "sender1"
+        mock_delivery.message.source_kind = "terminal"
+        mock_delivery.message.source_id = "sender1"
 
         with (
-            patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create,
+            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
             patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
         ):
-            mock_create.return_value = mock_msg
+            mock_create.return_value = mock_delivery
             mock_inbox.check_and_send_pending_messages.side_effect = Exception("TMux busy")
 
             response = client.post(
@@ -563,7 +566,7 @@ class TestCreateInboxMessageEndpoint:
 
     def test_create_inbox_message_not_found(self, client):
         """POST returns 404 when terminal not found."""
-        with patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create:
+        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
             mock_create.side_effect = ValueError("Terminal not found")
 
             response = client.post(
@@ -575,7 +578,7 @@ class TestCreateInboxMessageEndpoint:
 
     def test_create_inbox_message_server_error(self, client):
         """POST returns 500 on internal error."""
-        with patch("cli_agent_orchestrator.api.main.create_inbox_message") as mock_create:
+        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
             mock_create.side_effect = Exception("DB error")
 
             response = client.post(

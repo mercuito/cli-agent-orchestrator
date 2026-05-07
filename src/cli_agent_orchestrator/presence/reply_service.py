@@ -70,7 +70,7 @@ class PresenceReplyResult:
 
 
 def reply_to_inbox_message(
-    inbox_message_id: int,
+    notification_id: int,
     body: str,
     *,
     provider_manager: PresenceProviderManager = presence_provider_manager,
@@ -81,14 +81,14 @@ def reply_to_inbox_message(
     if not body:
         raise PresenceReplyError("reply body is required")
 
-    delivery = _read_delivery(inbox_message_id)
+    delivery = _read_delivery(notification_id)
     if delivery is None:
-        raise PresenceReplyNotFoundError(f"inbox notification {inbox_message_id} not found")
+        raise PresenceReplyNotFoundError(f"inbox notification {notification_id} not found")
     message = delivery.message
 
     if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
         raise PresenceReplyUnsupportedSourceError(
-            f"inbox notification {inbox_message_id} route_kind "
+            f"inbox notification {notification_id} route_kind "
             f"{message.route_kind!r} is not supported for presence replies"
         )
 
@@ -96,7 +96,7 @@ def reply_to_inbox_message(
     thread = get_thread_by_id(thread_id)
     if thread is None:
         raise PresenceReplyNotFoundError(
-            f"presence thread {thread_id} for inbox notification {inbox_message_id} not found"
+            f"presence thread {thread_id} for inbox notification {notification_id} not found"
         )
 
     thread_ref = ExternalRef(
@@ -122,7 +122,7 @@ def reply_to_inbox_message(
             metadata=metadata,
         )
         raise PresenceReplyDeliveryError(
-            f"provider reply failed for inbox notification {inbox_message_id}: {safe_error}",
+            f"provider reply failed for inbox notification {notification_id}: {safe_error}",
             failed_message=failed_message,
         ) from exc
 
@@ -141,11 +141,8 @@ def reply_to_inbox_message(
     )
 
 
-def _read_delivery(inbox_message_id: int) -> Optional[InboxDelivery]:
-    delivery = db_module.get_inbox_delivery(inbox_message_id)
-    if delivery is not None:
-        return delivery
-    return db_module.get_inbox_delivery_for_legacy_message(inbox_message_id)
+def _read_delivery(notification_id: int) -> Optional[InboxDelivery]:
+    return db_module.get_inbox_delivery(notification_id)
 
 
 def _parse_thread_route_id(delivery: InboxDelivery) -> int:

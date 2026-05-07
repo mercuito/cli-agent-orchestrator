@@ -16,7 +16,6 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
     create_inbox_delivery,
-    create_inbox_message,
 )
 from cli_agent_orchestrator.linear import runtime
 from cli_agent_orchestrator.linear.workspace_provider import LinearPresence, LinearResolvedPresence
@@ -287,5 +286,4 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
     result = runtime.notify_agent_for_persisted_event(persisted_event, event)
 
     assert result is not None
-    assert accepted[0].delivery.notification.legacy_inbox_id is None
     assert accepted[0].delivery.message.body == "Can you inspect this?"

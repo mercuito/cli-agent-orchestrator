@@ -19,7 +19,7 @@ class InboxReadError(ValueError):
 
 
 class InboxReadNotFoundError(InboxReadError):
-    """Raised when the requested inbox message or backing presence data is missing."""
+    """Raised when the requested inbox notification or backing presence data is missing."""
 
 
 @dataclass(frozen=True)
@@ -39,13 +39,13 @@ MAX_WORKSPACE_JSON_CHARS = 1000
 MAX_METADATA_JSON_CHARS = 4000
 
 
-def read_inbox_message(inbox_message_id: int) -> InboxReadResult:
+def read_inbox_message(notification_id: int) -> InboxReadResult:
     """Read one CAO inbox notification through the slim shared inbox surface."""
 
     with db_module.SessionLocal() as session:
-        delivery = _read_delivery(session, inbox_message_id)
+        delivery = _read_delivery(session, notification_id)
         if delivery is None:
-            raise InboxReadNotFoundError(f"inbox notification {inbox_message_id} not found")
+            raise InboxReadNotFoundError(f"inbox notification {notification_id} not found")
         message = delivery.message
 
         if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
@@ -60,13 +60,13 @@ def read_inbox_message(inbox_message_id: int) -> InboxReadResult:
 
         if message.route_id is None:
             raise InboxReadNotFoundError(
-                f"inbox notification {inbox_message_id} does not include a presence thread route id"
+                f"inbox notification {notification_id} does not include a presence thread route id"
             )
         try:
             thread_id = int(message.route_id)
         except ValueError as exc:
             raise InboxReadNotFoundError(
-                f"inbox notification {inbox_message_id} has invalid presence thread route id "
+                f"inbox notification {notification_id} has invalid presence thread route id "
                 f"{message.route_id!r}"
             ) from exc
 
@@ -77,7 +77,7 @@ def read_inbox_message(inbox_message_id: int) -> InboxReadResult:
         )
         if thread_row is None:
             raise InboxReadNotFoundError(
-                f"presence thread {thread_id} for inbox notification {inbox_message_id} not found"
+                f"presence thread {thread_id} for inbox notification {notification_id} not found"
             )
 
         message_row = _selected_presence_message_row(
@@ -109,7 +109,8 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
 
     payload: Dict[str, Any] = {
         "success": True,
-        "id": result.delivery.notification.id,
+        "notification_id": result.delivery.notification.id,
+        "message_id": result.delivery.message.id,
         "from": result.from_label,
         "body": result.body,
         "replyable": result.replyable,
@@ -120,11 +121,8 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
     return payload
 
 
-def _read_delivery(session: Any, inbox_message_id: int) -> Optional[InboxDelivery]:
-    delivery = db_module.get_inbox_delivery(inbox_message_id, db=session)
-    if delivery is not None:
-        return delivery
-    return db_module.get_inbox_delivery_for_legacy_message(inbox_message_id, db=session)
+def _read_delivery(session: Any, notification_id: int) -> Optional[InboxDelivery]:
+    return db_module.get_inbox_delivery(notification_id, db=session)
 
 
 def _selected_presence_message_row(
@@ -148,29 +146,6 @@ def _selected_presence_message_row(
         if message_row is None:
             raise InboxReadNotFoundError(
                 f"presence message {marker.presence_message_id} for inbox notification "
-                f"{inbox_notification_id} not found"
-            )
-        return cast(Optional[db_module.PresenceMessageModel], message_row)
-
-    legacy_marker = (
-        session.query(db_module.PresenceInboxNotificationModel)
-        .join(
-            db_module.InboxNotificationModel,
-            db_module.PresenceInboxNotificationModel.inbox_message_id
-            == db_module.InboxNotificationModel.legacy_inbox_id,
-        )
-        .filter(db_module.InboxNotificationModel.id == inbox_notification_id)
-        .first()
-    )
-    if legacy_marker is not None:
-        message_row = (
-            session.query(db_module.PresenceMessageModel)
-            .filter(db_module.PresenceMessageModel.id == legacy_marker.presence_message_id)
-            .first()
-        )
-        if message_row is None:
-            raise InboxReadNotFoundError(
-                f"presence message {legacy_marker.presence_message_id} for inbox notification "
                 f"{inbox_notification_id} not found"
             )
         return cast(Optional[db_module.PresenceMessageModel], message_row)

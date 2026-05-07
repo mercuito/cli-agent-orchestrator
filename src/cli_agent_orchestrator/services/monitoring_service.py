@@ -26,7 +26,8 @@ from sqlalchemy import or_
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
-    InboxModel,
+    InboxMessageModel,
+    InboxNotificationModel,
     MonitoringSessionModel,
 )
 
@@ -105,9 +106,7 @@ def create_session(
 def get_session(session_id: str) -> Optional[Dict[str, Any]]:
     with db_module.SessionLocal() as db:
         row = (
-            db.query(MonitoringSessionModel)
-            .filter(MonitoringSessionModel.id == session_id)
-            .first()
+            db.query(MonitoringSessionModel).filter(MonitoringSessionModel.id == session_id).first()
         )
         if row is None:
             return None
@@ -118,9 +117,7 @@ def end_session(session_id: str) -> Dict[str, Any]:
     """Stamp ``ended_at=now`` on an active session. Raises if already ended."""
     with db_module.SessionLocal() as db:
         row = (
-            db.query(MonitoringSessionModel)
-            .filter(MonitoringSessionModel.id == session_id)
-            .first()
+            db.query(MonitoringSessionModel).filter(MonitoringSessionModel.id == session_id).first()
         )
         if row is None:
             raise SessionNotFound(session_id)
@@ -137,9 +134,7 @@ def delete_session(session_id: str) -> None:
     are only recording windows, not owners of the captured data."""
     with db_module.SessionLocal() as db:
         row = (
-            db.query(MonitoringSessionModel)
-            .filter(MonitoringSessionModel.id == session_id)
-            .first()
+            db.query(MonitoringSessionModel).filter(MonitoringSessionModel.id == session_id).first()
         )
         if row is None:
             raise SessionNotFound(session_id)
@@ -215,48 +210,52 @@ def get_session_messages(
     """
     with db_module.SessionLocal() as db:
         session_row = (
-            db.query(MonitoringSessionModel)
-            .filter(MonitoringSessionModel.id == session_id)
-            .first()
+            db.query(MonitoringSessionModel).filter(MonitoringSessionModel.id == session_id).first()
         )
         if session_row is None:
             raise SessionNotFound(session_id)
 
-        q = db.query(InboxModel).filter(
-            or_(
-                InboxModel.sender_id == session_row.terminal_id,
-                InboxModel.receiver_id == session_row.terminal_id,
+        q = (
+            db.query(InboxNotificationModel, InboxMessageModel)
+            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+            .filter(
+                or_(
+                    InboxMessageModel.sender_id == session_row.terminal_id,
+                    InboxNotificationModel.receiver_id == session_row.terminal_id,
+                )
             )
         )
 
         if peers:
             q = q.filter(
                 or_(
-                    InboxModel.sender_id.in_(peers),
-                    InboxModel.receiver_id.in_(peers),
+                    InboxMessageModel.sender_id.in_(peers),
+                    InboxNotificationModel.receiver_id.in_(peers),
                 )
             )
 
-        q = q.filter(InboxModel.created_at >= session_row.started_at)
+        q = q.filter(InboxMessageModel.created_at >= session_row.started_at)
         if session_row.ended_at is not None:
-            q = q.filter(InboxModel.created_at <= session_row.ended_at)
+            q = q.filter(InboxMessageModel.created_at <= session_row.ended_at)
 
         # Apply caller-provided sub-window on top of the session window
         if started_after is not None:
-            q = q.filter(InboxModel.created_at >= started_after)
+            q = q.filter(InboxMessageModel.created_at >= started_after)
         if started_before is not None:
-            q = q.filter(InboxModel.created_at <= started_before)
+            q = q.filter(InboxMessageModel.created_at <= started_before)
 
-        q = q.order_by(InboxModel.created_at.asc())
+        q = q.order_by(InboxMessageModel.created_at.asc(), InboxNotificationModel.id.asc())
 
         return [
             {
-                "id": m.id,
-                "sender_id": m.sender_id,
-                "receiver_id": m.receiver_id,
-                "message": m.message,
-                "status": m.status,
-                "created_at": m.created_at,
+                "id": notification.id,
+                "notification_id": notification.id,
+                "message_id": message.id,
+                "sender_id": message.sender_id,
+                "receiver_id": notification.receiver_id,
+                "message": message.body,
+                "status": notification.status,
+                "created_at": message.created_at,
             }
-            for m in q.all()
+            for notification, message in q.all()
         ]

@@ -178,9 +178,8 @@ def format_presence_notification(
     guidance = "\n".join(
         [
             "",
-            f"Read: read_inbox_message(inbox_message_id={inbox_notification_id}).",
-            "Reply: "
-            f"reply_to_inbox_message(inbox_message_id={inbox_notification_id}, body=...).",
+            f"Read: read_inbox_message(notification_id={inbox_notification_id}).",
+            "Reply: " f"reply_to_inbox_message(notification_id={inbox_notification_id}, body=...).",
         ]
     )
     body = "\n".join(line for line in lines if line)
@@ -204,28 +203,12 @@ def _get_existing_notification(
     if row is None:
         return None
 
-    if row.inbox_notification_id is not None:
-        delivery = db_module.get_inbox_delivery(cast(int, row.inbox_notification_id), db=session)
-        if delivery is not None:
-            return delivery
-        raise RuntimeError(
-            "inbox notification "
-            f"{row.inbox_notification_id} for presence message {presence_message_id} not found"
-        )
-
-    if row.inbox_message_id is not None:
-        delivery = db_module.get_inbox_delivery_for_legacy_message(
-            cast(int, row.inbox_message_id), db=session
-        )
-        if delivery is not None:
-            return delivery
-        raise RuntimeError(
-            f"inbox delivery for legacy message {row.inbox_message_id} and presence message "
-            f"{presence_message_id} not found"
-        )
-
+    delivery = db_module.get_inbox_delivery(cast(int, row.inbox_notification_id), db=session)
+    if delivery is not None:
+        return delivery
     raise RuntimeError(
-        f"presence message {presence_message_id} notification marker has no inbox id"
+        "inbox notification "
+        f"{row.inbox_notification_id} for presence message {presence_message_id} not found"
     )
 
 

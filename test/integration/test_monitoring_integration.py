@@ -21,9 +21,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, InboxModel
+from cli_agent_orchestrator.clients.database import Base, InboxMessageModel, InboxNotificationModel
 from cli_agent_orchestrator.models.inbox import MessageStatus
-
 
 pytestmark = pytest.mark.integration
 
@@ -56,17 +55,27 @@ def client(live_db):
     return TestClientWithHost(app)
 
 
-def _seed_inbox(session_maker, *, sender_id, receiver_id, message, created_at,
-                status=MessageStatus.DELIVERED):
+def _seed_inbox(
+    session_maker, *, sender_id, receiver_id, message, created_at, status=MessageStatus.DELIVERED
+):
     with session_maker() as s:
-        row = InboxModel(
+        message_row = InboxMessageModel(
             sender_id=sender_id,
-            receiver_id=receiver_id,
-            message=message,
-            status=status.value,
+            body=message,
+            source_kind="terminal",
+            source_id=sender_id,
             created_at=created_at,
         )
-        s.add(row)
+        s.add(message_row)
+        s.flush()
+        s.add(
+            InboxNotificationModel(
+                message_id=message_row.id,
+                receiver_id=receiver_id,
+                status=status.value,
+                created_at=created_at,
+            )
+        )
         s.commit()
 
 
@@ -143,13 +152,9 @@ class TestIdempotentCreate:
         assert b["label"] == "first"
 
     def test_create_after_ending_yields_new_session(self, client, live_db):
-        first_id = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T"}
-        ).json()["id"]
+        first_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
         client.post(f"/monitoring/sessions/{first_id}/end").raise_for_status()
-        second_id = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T"}
-        ).json()["id"]
+        second_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
         assert first_id != second_id
 
 
@@ -158,17 +163,13 @@ class TestTimeWindowFilter:
         """Extract a sub-window (e.g. 'step 3' of a long recording)."""
         from cli_agent_orchestrator.clients.database import MonitoringSessionModel
 
-        resp = client.post(
-            "/monitoring/sessions", json={"terminal_id": "IMP"}
-        )
+        resp = client.post("/monitoring/sessions", json={"terminal_id": "IMP"})
         session_id = resp.json()["id"]
 
         # Pin the session start to a known timestamp so we can seed deterministically
         start = datetime(2026, 4, 18, 10, 0, 0)
         with live_db() as s:
-            s.query(MonitoringSessionModel).filter_by(id=session_id).update(
-                {"started_at": start}
-            )
+            s.query(MonitoringSessionModel).filter_by(id=session_id).update({"started_at": start})
             s.commit()
 
         for i in range(5):
@@ -196,13 +197,16 @@ class TestResponseModelShapes:
     until HTTP→service→DB run together. Catches Pydantic shape drift."""
 
     def test_create_and_get_shapes_pydantic_accepts(self, client, live_db):
-        body = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T", "label": "hi"}
-        )
+        body = client.post("/monitoring/sessions", json={"terminal_id": "T", "label": "hi"})
         assert body.status_code == 201
         payload = body.json()
         assert set(payload.keys()) == {
-            "id", "terminal_id", "label", "started_at", "ended_at", "status"
+            "id",
+            "terminal_id",
+            "label",
+            "started_at",
+            "ended_at",
+            "status",
         }
 
         fetched = client.get(f"/monitoring/sessions/{payload['id']}")
@@ -222,9 +226,7 @@ class TestResponseModelShapes:
 
 class TestPeerEndpointsGone:
     def test_add_peer_endpoint_removed(self, client, live_db):
-        session_id = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T"}
-        ).json()["id"]
+        session_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
         resp = client.post(
             f"/monitoring/sessions/{session_id}/peers",
             json={"peer_terminal_ids": ["P"]},
@@ -232,18 +234,14 @@ class TestPeerEndpointsGone:
         assert resp.status_code in (404, 405)
 
     def test_remove_peer_endpoint_removed(self, client, live_db):
-        session_id = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T"}
-        ).json()["id"]
+        session_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
         resp = client.delete(f"/monitoring/sessions/{session_id}/peers/P")
         assert resp.status_code in (404, 405)
 
 
 class TestEndedSessionImmutability:
     def test_end_twice_returns_409(self, client, live_db):
-        session_id = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T"}
-        ).json()["id"]
+        session_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
         client.post(f"/monitoring/sessions/{session_id}/end").raise_for_status()
 
         resp = client.post(f"/monitoring/sessions/{session_id}/end")
@@ -252,14 +250,10 @@ class TestEndedSessionImmutability:
     def test_create_after_ending_on_same_terminal_is_fine(self, client, live_db):
         """Ending doesn't block future sessions — the idempotency contract
         is 'while active' not 'ever'."""
-        sid = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T"}
-        ).json()["id"]
+        sid = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
         client.post(f"/monitoring/sessions/{sid}/end").raise_for_status()
 
-        resp = client.post(
-            "/monitoring/sessions", json={"terminal_id": "T"}
-        )
+        resp = client.post("/monitoring/sessions", json={"terminal_id": "T"})
         assert resp.status_code == 201
         assert resp.json()["id"] != sid
         assert resp.json()["status"] == "active"

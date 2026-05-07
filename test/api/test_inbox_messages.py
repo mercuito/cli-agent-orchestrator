@@ -1,244 +1,177 @@
-"""Tests for the new inbox messages GET endpoint."""
+"""Tests for terminal inbox HTTP endpoints."""
 
-import json
 from datetime import datetime
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
-from cli_agent_orchestrator.api.main import app
-from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
+from cli_agent_orchestrator.models.inbox import (
+    InboxDelivery,
+    InboxMessageRecord,
+    InboxNotification,
+    MessageStatus,
+)
 
 
 @pytest.fixture
-def sample_inbox_messages():
-    """Create sample inbox messages for testing."""
+def sample_inbox_deliveries():
+    """Create sample notification-backed inbox deliveries for endpoint tests."""
     return [
-        InboxMessage(
-            id=1,
-            sender_id="sender1",
-            receiver_id="abcdef12",
-            message="Hello world",
-            source_kind="terminal",
-            source_id="sender1",
-            status=MessageStatus.PENDING,
-            created_at=datetime(2025, 12, 6, 12, 0, 0),
+        InboxDelivery(
+            message=InboxMessageRecord(
+                id=11,
+                sender_id="sender1",
+                body="Hello world",
+                source_kind="terminal",
+                source_id="sender1",
+                origin=None,
+                route_kind=None,
+                route_id=None,
+                created_at=datetime(2026, 5, 7, 12, 0, 0),
+            ),
+            notification=InboxNotification(
+                id=1,
+                message_id=11,
+                receiver_id="abcdef12",
+                status=MessageStatus.PENDING,
+                created_at=datetime(2026, 5, 7, 12, 0, 0),
+            ),
         ),
-        InboxMessage(
-            id=2,
-            sender_id="sender2",
-            receiver_id="abcdef12",
-            message="Another message",
-            source_kind="terminal",
-            source_id="sender2",
-            status=MessageStatus.DELIVERED,
-            created_at=datetime(2025, 12, 6, 12, 5, 0),
-        ),
-        InboxMessage(
-            id=3,
-            sender_id="sender3",
-            receiver_id="abcdef12",
-            message="Failed message",
-            source_kind=None,
-            source_id=None,
-            status=MessageStatus.FAILED,
-            created_at=datetime(2025, 12, 6, 12, 10, 0),
+        InboxDelivery(
+            message=InboxMessageRecord(
+                id=12,
+                sender_id="sender2",
+                body="Another message",
+                source_kind="terminal",
+                source_id="sender2",
+                origin=None,
+                route_kind=None,
+                route_id=None,
+                created_at=datetime(2026, 5, 7, 12, 5, 0),
+            ),
+            notification=InboxNotification(
+                id=2,
+                message_id=12,
+                receiver_id="abcdef12",
+                status=MessageStatus.DELIVERED,
+                created_at=datetime(2026, 5, 7, 12, 5, 0),
+            ),
         ),
     ]
 
 
 class TestGetInboxMessagesEndpoint:
-    """Test cases for GET /terminals/{terminal_id}/inbox/messages endpoint."""
+    """GET /terminals/{terminal_id}/inbox/messages."""
 
-    def test_get_all_messages_success(self, client, sample_inbox_messages):
-        """Test getting all messages without status filter."""
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.return_value = sample_inbox_messages
+    def test_get_all_messages_uses_semantic_deliveries(self, client, sample_inbox_deliveries):
+        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
+            mock_list.return_value = sample_inbox_deliveries
 
             response = client.get("/terminals/abcdef12/inbox/messages")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 3
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0] == {
+            "notification_id": 1,
+            "message_id": 11,
+            "sender_id": "sender1",
+            "receiver_id": "abcdef12",
+            "message": "Hello world",
+            "source_kind": "terminal",
+            "source_id": "sender1",
+            "status": "pending",
+            "created_at": "2026-05-07T12:00:00",
+        }
+        mock_list.assert_called_once_with("abcdef12", limit=10, status=None)
 
-            # Check response format
-            for msg_data in data:
-                assert "id" in msg_data
-                assert "sender_id" in msg_data
-                assert "receiver_id" in msg_data
-                assert "message" in msg_data
-                assert "source_kind" in msg_data
-                assert "source_id" in msg_data
-                assert "status" in msg_data
-                assert "created_at" in msg_data
-
-            assert data[0]["source_kind"] == "terminal"
-            assert data[0]["source_id"] == "sender1"
-            assert data[2]["source_kind"] is None
-            assert data[2]["source_id"] is None
-
-    def test_get_messages_with_status_filter(self, client, sample_inbox_messages):
-        """Test getting messages with status filter."""
-        pending_messages = [
-            msg for msg in sample_inbox_messages if msg.status == MessageStatus.PENDING
-        ]
-
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.return_value = pending_messages
-
-            response = client.get("/terminals/abcdef12/inbox/messages?status=pending")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 1
-            assert data[0]["status"] == "pending"
-            assert data[0]["sender_id"] == "sender1"
-
-    def test_get_messages_with_limit(self, client, sample_inbox_messages):
-        """Test getting messages with limit parameter."""
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.return_value = sample_inbox_messages[:2]
-
-            response = client.get("/terminals/abcdef12/inbox/messages?limit=2")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 2
-            mock_get.assert_called_once_with("abcdef12", limit=2, status=None)
-
-    def test_get_messages_with_status_and_limit(self, client, sample_inbox_messages):
-        """Test getting messages with both status and limit parameters."""
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.return_value = sample_inbox_messages[:1]
+    def test_get_messages_with_status_and_limit(self, client, sample_inbox_deliveries):
+        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
+            mock_list.return_value = sample_inbox_deliveries[:1]
 
             response = client.get("/terminals/abcdef12/inbox/messages?status=pending&limit=5")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 1
-            mock_get.assert_called_once_with("abcdef12", limit=5, status=MessageStatus.PENDING)
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+        mock_list.assert_called_once_with("abcdef12", limit=5, status=MessageStatus.PENDING)
 
     def test_invalid_status_parameter(self, client):
-        """Test error handling for invalid status parameter."""
         response = client.get("/terminals/abcdef12/inbox/messages?status=invalid_status")
 
         assert response.status_code == 400
-        data = response.json()
-        assert "detail" in data
-        assert "Invalid status" in data["detail"]
-        assert "pending, delivered, failed" in data["detail"]
+        assert "Invalid status" in response.json()["detail"]
 
     def test_limit_exceeds_maximum(self, client):
-        """Test that limit parameter is properly validated."""
-        # FastAPI Query with le=100 should handle this automatically
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.return_value = []
+        response = client.get("/terminals/abcdef12/inbox/messages?limit=150")
 
-            response = client.get("/terminals/abcdef12/inbox/messages?limit=150")
-
-            # FastAPI should return 422 for query parameter validation error
-            assert response.status_code == 422
+        assert response.status_code == 422
 
     def test_database_error_handling(self, client):
-        """Test error handling for database errors."""
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.side_effect = Exception("Database connection failed")
+        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
+            mock_list.side_effect = Exception("Database connection failed")
 
             response = client.get("/terminals/abcdef12/inbox/messages")
 
-            assert response.status_code == 500
-            data = response.json()
-            assert "detail" in data
-            assert "Failed to retrieve inbox messages" in data["detail"]
+        assert response.status_code == 500
+        assert "Failed to retrieve inbox messages" in response.json()["detail"]
 
     def test_terminal_not_found_error(self, client):
-        """Test error handling when terminal is not found."""
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.side_effect = ValueError("Terminal not found")
+        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
+            mock_list.side_effect = ValueError("Terminal not found")
 
             response = client.get("/terminals/deadbeef/inbox/messages")
 
-            assert response.status_code == 404
-            data = response.json()
-            assert "detail" in data
-            assert "Terminal not found" in data["detail"]
+        assert response.status_code == 404
+        assert "Terminal not found" in response.json()["detail"]
 
     def test_empty_message_list(self, client):
-        """Test getting messages when no messages exist."""
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.return_value = []
+        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
+            mock_list.return_value = []
 
             response = client.get("/terminals/abcdef12/inbox/messages")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert isinstance(data, list)
-            assert len(data) == 0
-
-    def test_message_datetime_formatting(self, client, sample_inbox_messages):
-        """Test that datetime is properly formatted in response."""
-        with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-            mock_get.return_value = sample_inbox_messages[:1]
-
-            response = client.get("/terminals/abcdef12/inbox/messages")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 1
-
-            # Check ISO format datetime
-            created_at = data[0]["created_at"]
-            assert isinstance(created_at, str)
-            # Should be able to parse as ISO datetime
-            parsed_datetime = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            assert isinstance(parsed_datetime, datetime)
-
-    def test_all_status_values(self, client, sample_inbox_messages):
-        """Test filtering by each possible status value."""
-        for status_value in ["pending", "delivered", "failed"]:
-            filtered_messages = [
-                msg for msg in sample_inbox_messages if msg.status.value == status_value
-            ]
-
-            with patch("cli_agent_orchestrator.api.main.get_inbox_messages") as mock_get:
-                mock_get.return_value = filtered_messages
-
-                response = client.get(f"/terminals/abcdef12/inbox/messages?status={status_value}")
-
-                assert response.status_code == 200
-                data = response.json()
-                assert len(data) == len(filtered_messages)
-
-                for msg_data in data:
-                    assert msg_data["status"] == status_value
+        assert response.status_code == 200
+        assert response.json() == []
 
 
-class TestDatabaseFunctionCompatibility:
-    """Test compatibility with enhanced database functions."""
+class TestCreateInboxMessageEndpoint:
+    """POST /terminals/{receiver_id}/inbox/messages."""
 
-    def test_get_inbox_messages_function_exists(self):
-        """Test that the new get_inbox_messages function is properly imported."""
-        from cli_agent_orchestrator.clients.database import get_inbox_messages
+    def test_create_message_returns_notification_and_durable_message_ids(self, client):
+        delivery = InboxDelivery(
+            message=InboxMessageRecord(
+                id=41,
+                sender_id="sender1",
+                body="Hello world",
+                source_kind="terminal",
+                source_id="sender1",
+                origin=None,
+                route_kind=None,
+                route_id=None,
+                created_at=datetime(2026, 5, 7, 12, 0, 0),
+            ),
+            notification=InboxNotification(
+                id=7,
+                message_id=41,
+                receiver_id="abcdef12",
+                status=MessageStatus.PENDING,
+                created_at=datetime(2026, 5, 7, 12, 0, 0),
+            ),
+        )
+        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
+            with patch(
+                "cli_agent_orchestrator.api.main.inbox_service.check_and_send_pending_messages"
+            ) as mock_deliver:
+                mock_create.return_value = delivery
 
-        assert callable(get_inbox_messages)
+                response = client.post(
+                    "/terminals/abcdef12/inbox/messages",
+                    params={"sender_id": "sender1", "message": "Hello world"},
+                )
 
-    def test_get_pending_messages_backward_compatibility(self):
-        """Test that get_pending_messages still works as before."""
-        from cli_agent_orchestrator.clients.database import get_inbox_messages, get_pending_messages
-
-        # Both functions should be callable
-        assert callable(get_pending_messages)
-        assert callable(get_inbox_messages)
-
-    def test_get_pending_messages_calls_get_inbox_messages(self):
-        """Test that get_pending_messages properly calls get_inbox_messages with correct parameters."""
-        from cli_agent_orchestrator.clients import database as db_module
-
-        with patch("cli_agent_orchestrator.clients.database.get_inbox_messages") as mock_get:
-            mock_get.return_value = []
-
-            result = db_module.get_pending_messages("test_terminal", limit=5)
-
-        assert result == []
-        mock_get.assert_called_once_with("test_terminal", limit=5, status=MessageStatus.PENDING)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["notification_id"] == 7
+        assert body["message_id"] == 41
+        assert "id" not in body
+        mock_create.assert_called_once_with("sender1", "abcdef12", "Hello world")
+        mock_deliver.assert_called_once_with("abcdef12")

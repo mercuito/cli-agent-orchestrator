@@ -95,7 +95,6 @@ def test_presence_notification_uses_presence_thread_source_and_internal_thread_i
     assert result.delivery.message.route_id == str(thread.id)
     assert result.delivery.notification.receiver_id == "terminal-a"
     assert result.delivery.notification.status == MessageStatus.PENDING
-    assert result.delivery.notification.legacy_inbox_id is None
 
 
 def test_semantic_message_body_is_compact_notification_with_read_and_reply_ids(test_session):
@@ -114,9 +113,9 @@ def test_semantic_message_body_is_compact_notification_with_read_and_reply_ids(t
     assert f"ID: {result.delivery.notification.id}" in body
     assert "Source: generic-chat" in body
     assert "Issue: WORK-123 - Bridge durable presence into inbox" in body
-    assert f"Read: read_inbox_message(inbox_message_id={result.delivery.notification.id})" in body
+    assert f"Read: read_inbox_message(notification_id={result.delivery.notification.id})" in body
     assert (
-        f"Reply: reply_to_inbox_message(inbox_message_id={result.delivery.notification.id}" in body
+        f"Reply: reply_to_inbox_message(notification_id={result.delivery.notification.id}" in body
     )
     assert "missing migration test" in body
 
@@ -159,7 +158,6 @@ def test_duplicate_notification_for_same_receiver_and_presence_message_is_idempo
     assert len(db_module.list_pending_inbox_notifications("terminal-a", limit=10)) == 1
     with db_module.SessionLocal() as session:
         assert session.query(db_module.InboxNotificationModel).count() == 1
-        assert session.query(db_module.InboxModel).count() == 0
 
 
 def test_persisted_event_wrapper_bridges_its_message(test_session):

@@ -186,7 +186,6 @@ def test_watchdog_nudge_notification_delivers_through_semantic_inbox(
         now=datetime.now() + timedelta(seconds=5),
     )
     queued = _messages("impl")
-    assert queued[-1].notification.legacy_inbox_id is None
     sent = []
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",

@@ -105,7 +105,6 @@ def test_pass_baton_notification_delivers_through_semantic_inbox(patched_db, mon
         message="please review",
     )
     queued = _messages("reviewer")
-    assert queued[0].notification.legacy_inbox_id is None
     idle_provider = type("IdleProvider", (), {"get_status": lambda self: TerminalStatus.IDLE})()
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.inbox_service.provider_manager.get_provider",

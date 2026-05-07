@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_message
+from cli_agent_orchestrator.clients.database import Base, create_inbox_delivery
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.runtime.agent import (
@@ -280,7 +280,7 @@ def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_bus
         "cli_agent_orchestrator.runtime.agent.terminal_service.send_input",
         send_input,
     )
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "presence",
         "terminal-1",
         "[CAO inbox notification]\nID: 1",
@@ -288,14 +288,11 @@ def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_bus
         source_id="1",
     )
 
-    delivery = db_module.get_inbox_delivery_for_legacy_message(inbox.id)
-    assert delivery is not None
-
     result = handle.accept_notification(AgentRuntimeNotification(delivery=delivery, created=True))
 
     assert result.status == AgentRuntimeStatus.BUSY
     assert result.delivery.attempted is False
-    assert result.notification.delivery.notification.legacy_inbox_id == inbox.id
+    assert result.notification.delivery.notification.id == delivery.notification.id
     send_input.assert_not_called()
     assert _pending_deliveries("terminal-1")[0].notification.status == MessageStatus.PENDING
 
