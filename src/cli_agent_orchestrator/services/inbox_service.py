@@ -56,8 +56,8 @@ DEFAULT_MAX_BATCH_TOTAL_CHARS = 12000
 
 
 def _source_label(delivery: InboxDelivery) -> str:
-    message = delivery.message
-    return f"{message.source_kind}:{message.source_id}"
+    notification = delivery.notification
+    return f"{notification.source_kind}:{notification.source_id}"
 
 
 def _truncate_text(text: str, max_chars: int) -> str:
@@ -77,13 +77,13 @@ def format_message_batch(
     if not deliveries:
         return ""
     if len(deliveries) == 1:
-        return _truncate_text(deliveries[0].message.body, max_total_chars)
+        return _truncate_text(deliveries[0].notification.body, max_total_chars)
 
     header = f"Queued {len(deliveries)} messages from {_source_label(deliveries[0])}:"
     lines = [header, ""]
 
     for idx, delivery in enumerate(deliveries, start=1):
-        formatted_message = f"[{idx}] {_truncate_text(delivery.message.body, max_body_chars)}"
+        formatted_message = f"[{idx}] {_truncate_text(delivery.notification.body, max_body_chars)}"
         candidate = "\n".join([*lines, formatted_message])
         if len(candidate) > max_total_chars:
             lines.append("[batch output truncated]")

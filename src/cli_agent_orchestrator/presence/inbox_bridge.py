@@ -108,12 +108,20 @@ def create_notification_for_message(
             origin=_presence_message_origin(message_row),
             route_kind=PRESENCE_INBOX_ROUTE_KIND,
             route_id=str(thread_row.id),
+            notification_body=format_presence_notification(
+                inbox_notification_id=0,
+                message_row=message_row,
+                thread_row=thread_row,
+                work_item_row=work_item_row,
+                preview_chars=preview_chars,
+                notification_chars=notification_chars,
+            ),
         )
-        durable_message_row = session.get(db_module.InboxMessageModel, delivery.message.id)
-        if durable_message_row is None:
-            raise RuntimeError(f"durable inbox message {delivery.message.id} not found")
-        mutable_durable_message_row = cast(Any, durable_message_row)
-        mutable_durable_message_row.body = format_presence_notification(
+        notification_row = session.get(db_module.InboxNotificationModel, delivery.notification.id)
+        if notification_row is None:
+            raise RuntimeError(f"inbox notification {delivery.notification.id} not found")
+        mutable_notification_row = cast(Any, notification_row)
+        mutable_notification_row.body = format_presence_notification(
             inbox_notification_id=cast(int, delivery.notification.id),
             message_row=message_row,
             thread_row=thread_row,
@@ -143,7 +151,11 @@ def create_notification_for_message(
             session.commit()
             return PresenceInboxNotification(delivery=refreshed, created=True)
 
-        session.delete(durable_message_row)
+        if delivery.message is None:
+            raise RuntimeError("message-backed presence notification lost its durable message")
+        durable_message_row = session.get(db_module.InboxMessageModel, delivery.message.id)
+        if durable_message_row is not None:
+            session.delete(durable_message_row)
         session.flush()
         existing = _get_existing_notification(session, receiver_id, presence_message_id)
         if existing is None:

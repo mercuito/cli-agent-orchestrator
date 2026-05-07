@@ -50,6 +50,7 @@ def live_db(monkeypatch):
 @pytest.fixture
 def client(live_db):
     from test.api.conftest import TestClientWithHost
+
     from cli_agent_orchestrator.api.main import app
 
     return TestClientWithHost(app)
@@ -72,6 +73,9 @@ def _seed_inbox(
             InboxNotificationModel(
                 message_id=message_row.id,
                 receiver_id=receiver_id,
+                body=message,
+                source_kind="terminal",
+                source_id=sender_id,
                 status=status.value,
                 created_at=created_at,
             )

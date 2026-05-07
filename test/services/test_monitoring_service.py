@@ -48,6 +48,9 @@ def _seed_inbox(
             InboxNotificationModel(
                 message_id=message_row.id,
                 receiver_id=receiver_id,
+                body=message,
+                source_kind="terminal",
+                source_id=sender_id,
                 status=status.value,
                 created_at=created_at,
             )

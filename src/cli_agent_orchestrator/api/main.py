@@ -68,10 +68,10 @@ from cli_agent_orchestrator.services import (
     terminal_service,
 )
 from cli_agent_orchestrator.services.baton_feature import is_baton_enabled
-from cli_agent_orchestrator.utils import monitoring_formatter
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
+from cli_agent_orchestrator.utils import monitoring_formatter
 from cli_agent_orchestrator.utils.agent_profiles import resolve_provider
 from cli_agent_orchestrator.utils.dashboard_links import (
     create_terminal_dashboard_token,
@@ -728,11 +728,11 @@ async def create_inbox_message_endpoint(
     return {
         "success": True,
         "notification_id": delivery.notification.id,
-        "message_id": delivery.message.id,
-        "sender_id": delivery.message.sender_id,
+        "message_id": delivery.message.id if delivery.message is not None else None,
+        "sender_id": delivery.message.sender_id if delivery.message is not None else None,
         "receiver_id": delivery.notification.receiver_id,
-        "source_kind": delivery.message.source_kind,
-        "source_id": delivery.message.source_id,
+        "source_kind": delivery.notification.source_kind,
+        "source_id": delivery.notification.source_id,
         "created_at": delivery.notification.created_at.isoformat(),
     }
 
@@ -774,12 +774,14 @@ async def get_inbox_messages_endpoint(
             result.append(
                 {
                     "notification_id": delivery.notification.id,
-                    "message_id": delivery.message.id,
-                    "sender_id": delivery.message.sender_id,
+                    "message_id": delivery.message.id if delivery.message is not None else None,
+                    "sender_id": (
+                        delivery.message.sender_id if delivery.message is not None else None
+                    ),
                     "receiver_id": delivery.notification.receiver_id,
-                    "message": delivery.message.body,
-                    "source_kind": delivery.message.source_kind,
-                    "source_id": delivery.message.source_id,
+                    "message": delivery.notification.body,
+                    "source_kind": delivery.notification.source_kind,
+                    "source_id": delivery.notification.source_id,
                     "status": delivery.notification.status.value,
                     "created_at": (
                         delivery.notification.created_at.isoformat()

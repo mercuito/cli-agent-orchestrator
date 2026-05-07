@@ -49,6 +49,135 @@ def _migrate_ensure_semantic_inbox_tables() -> None:
         InboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for semantic inbox tables failed: {e}")
+        return
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            columns = sqlite_migrations.table_column_info(conn, "inbox_notifications")
+            if not columns:
+                return
+
+            needs_rebuild = (
+                "body" not in columns
+                or "source_kind" not in columns
+                or "source_id" not in columns
+                or "metadata_json" not in columns
+                or bool(columns["message_id"][3])
+            )
+            if not needs_rebuild:
+                return
+
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="inbox_notifications",
+                create_sql=_inbox_notifications_create_sql(
+                    include_legacy="legacy_inbox_id" in columns
+                ),
+                copy_sql=_inbox_notifications_copy_sql(
+                    columns,
+                    include_legacy="legacy_inbox_id" in columns,
+                ),
+            )
+            logger.info("Migration: rebuilt inbox_notifications for notification contract")
+    except Exception as e:
+        logger.warning(f"Migration check for inbox notification contract failed: {e}")
+
+
+def _inbox_notifications_create_sql(*, include_legacy: bool = False) -> str:
+    legacy_column = "legacy_inbox_id INTEGER UNIQUE," if include_legacy else ""
+    return f"""
+        CREATE TABLE inbox_notifications (
+            id INTEGER NOT NULL,
+            message_id INTEGER,
+            receiver_id VARCHAR NOT NULL,
+            body TEXT NOT NULL,
+            source_kind VARCHAR NOT NULL,
+            source_id VARCHAR NOT NULL,
+            metadata_json TEXT,
+            status VARCHAR NOT NULL,
+            created_at DATETIME NOT NULL,
+            delivered_at DATETIME,
+            failed_at DATETIME,
+            error_detail TEXT,
+            {legacy_column}
+            PRIMARY KEY (id),
+            FOREIGN KEY(message_id)
+                REFERENCES inbox_messages (id) ON DELETE CASCADE
+        )
+    """
+
+
+def _column_or_expr(
+    columns: dict[str, sqlite_migrations.ColumnInfo], name: str, fallback: str
+) -> str:
+    return f"old.{name}" if name in columns else fallback
+
+
+def _inbox_notifications_copy_sql(
+    columns: dict[str, sqlite_migrations.ColumnInfo], *, include_legacy: bool = False
+) -> str:
+    target_columns = [
+        "id",
+        "message_id",
+        "receiver_id",
+        "body",
+        "source_kind",
+        "source_id",
+        "metadata_json",
+        "status",
+        "created_at",
+        "delivered_at",
+        "failed_at",
+        "error_detail",
+    ]
+    source_exprs = [
+        "old.id",
+        "old.message_id",
+        "old.receiver_id",
+    ]
+    body_expr = _column_or_expr(
+        columns,
+        "body",
+        "COALESCE((SELECT inbox_messages.body FROM inbox_messages WHERE inbox_messages.id = old.message_id), '')",
+    )
+    source_kind_expr = _column_or_expr(
+        columns,
+        "source_kind",
+        "COALESCE((SELECT inbox_messages.source_kind FROM inbox_messages WHERE inbox_messages.id = old.message_id), 'system')",
+    )
+    source_id_expr = _column_or_expr(
+        columns,
+        "source_id",
+        "COALESCE((SELECT inbox_messages.source_id FROM inbox_messages WHERE inbox_messages.id = old.message_id), 'unknown')",
+    )
+    metadata_expr = _column_or_expr(columns, "metadata_json", "NULL")
+    source_exprs.extend(
+        [
+            body_expr,
+            source_kind_expr,
+            source_id_expr,
+            metadata_expr,
+            "old.status",
+            "old.created_at",
+            "old.delivered_at",
+            "old.failed_at",
+            "old.error_detail",
+        ]
+    )
+    if include_legacy:
+        target_columns.append("legacy_inbox_id")
+        source_exprs.append("old.legacy_inbox_id")
+    target_sql = ",\n            ".join(target_columns)
+    source_sql = ",\n            ".join(source_exprs)
+    return f"""
+        INSERT INTO inbox_notifications (
+            {target_sql}
+        )
+        SELECT
+            {source_sql}
+        FROM {{old_table}} AS old
+        WHERE old.message_id IS NULL OR old.message_id IN (SELECT id FROM inbox_messages)
+    """
 
 
 def _notification_id_migration_expr(
@@ -247,51 +376,15 @@ def _migrate_drop_legacy_inbox_notification_ids() -> None:
 
     try:
         with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
+            columns = sqlite_migrations.table_column_info(conn, "inbox_notifications")
             if "legacy_inbox_id" not in columns:
                 return
 
             sqlite_migrations.rebuild_table(
                 conn,
                 table_name="inbox_notifications",
-                create_sql="""
-                    CREATE TABLE inbox_notifications (
-                        id INTEGER NOT NULL,
-                        message_id INTEGER NOT NULL,
-                        receiver_id VARCHAR NOT NULL,
-                        status VARCHAR NOT NULL,
-                        created_at DATETIME NOT NULL,
-                        delivered_at DATETIME,
-                        failed_at DATETIME,
-                        error_detail TEXT,
-                        PRIMARY KEY (id),
-                        FOREIGN KEY(message_id)
-                            REFERENCES inbox_messages (id) ON DELETE CASCADE
-                    )
-                """,
-                copy_sql="""
-                    INSERT INTO inbox_notifications (
-                        id,
-                        message_id,
-                        receiver_id,
-                        status,
-                        created_at,
-                        delivered_at,
-                        failed_at,
-                        error_detail
-                    )
-                    SELECT
-                        old.id,
-                        old.message_id,
-                        old.receiver_id,
-                        old.status,
-                        old.created_at,
-                        old.delivered_at,
-                        old.failed_at,
-                        old.error_detail
-                    FROM {old_table} AS old
-                    WHERE old.message_id IN (SELECT id FROM inbox_messages)
-                """,
+                create_sql=_inbox_notifications_create_sql(),
+                copy_sql=_inbox_notifications_copy_sql(columns),
             )
             logger.info("Migration: rebuilt inbox_notifications without legacy inbox ids")
     except Exception as e:

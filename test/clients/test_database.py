@@ -22,6 +22,7 @@ from cli_agent_orchestrator.clients.database import (
     create_inbox_delivery,
     create_inbox_message_record,
     create_inbox_notification,
+    create_inbox_notification_event,
     create_terminal,
     delete_flow,
     delete_terminal,
@@ -225,7 +226,15 @@ class TestInboxOperations:
         assert {"body", "source_kind", "source_id", "origin_json", "route_kind", "route_id"} <= (
             message_columns
         )
-        assert {"message_id", "receiver_id", "status"} <= notification_columns
+        assert {
+            "message_id",
+            "receiver_id",
+            "body",
+            "source_kind",
+            "source_id",
+            "metadata_json",
+            "status",
+        } <= notification_columns
         assert "legacy_inbox_id" not in notification_columns
         assert "inbox" not in Base.metadata.tables
 
@@ -246,6 +255,9 @@ class TestInboxOperations:
         assert delivery.message.source_kind == "linear_thread"
         assert delivery.message.origin == {"identifier": "CAO-37"}
         assert delivery.message.route_kind == "presence_thread"
+        assert delivery.notification.body == "Hello"
+        assert delivery.notification.source_kind == "linear_thread"
+        assert delivery.notification.source_id == "thread-9"
         assert delivery.notification.receiver_id == "receiver-456"
         assert delivery.notification.status == MessageStatus.PENDING
 
@@ -269,9 +281,29 @@ class TestInboxOperations:
         assert delivery.notification == notification
 
     def test_create_notification_rejects_missing_message(self, live_inbox_db):
-        """Notifications must point at an existing durable message."""
+        """Message-backed notifications must point at an existing durable message."""
         with pytest.raises(ValueError, match="Inbox message not found"):
             create_inbox_notification(999, "receiver-456")
+
+    def test_notification_event_can_exist_without_durable_message(self, live_inbox_db):
+        """Notification-only events are first-class attention records."""
+        notification = create_inbox_notification_event(
+            "agent:implementation_partner",
+            "CAO-123 has new comments.",
+            source_kind="linear_issue",
+            source_id="CAO-123",
+            metadata={"workspace": "Linear"},
+        )
+
+        deliveries = list_pending_inbox_notifications("agent:implementation_partner")
+        read = get_inbox_delivery(notification.id)
+
+        assert notification.message_id is None
+        assert notification.body == "CAO-123 has new comments."
+        assert notification.metadata == {"workspace": "Linear"}
+        assert deliveries == [read]
+        assert read.message is None
+        assert read.notification == notification
 
     def test_list_inbox_deliveries_reads_semantic_notifications(self, live_inbox_db):
         """Receiver listing returns notification-backed durable messages."""
@@ -292,6 +324,7 @@ class TestInboxOperations:
 
         assert listed == [delivery]
         assert pending[0].message.body == "Please inspect the failing job."
+        assert pending[0].notification.body == "Please inspect the failing job."
         assert "comment-1" not in pending[0].message.body
         assert pending == [delivery]
         assert read == delivery
@@ -302,6 +335,8 @@ class TestInboxOperations:
 
         assert delivery.message.source_kind == "terminal"
         assert delivery.message.source_id == "sender-123"
+        assert delivery.notification.source_kind == "terminal"
+        assert delivery.notification.source_id == "sender-123"
 
         persisted = list_inbox_deliveries("receiver-456")[0]
         assert persisted.message.source_kind == "terminal"
@@ -382,6 +417,8 @@ class TestInboxOperations:
 
         assert durable_message.body == "Original body"
         assert durable_message.source_kind == "external"
+        assert notification.body == "Original body"
+        assert notification.source_kind == "external"
         assert notification.status == MessageStatus.DELIVERED.value
         assert notification.delivered_at is not None
 
@@ -408,6 +445,7 @@ class TestInboxOperations:
         batch = db_module.list_pending_inbox_deliveries_for_effective_source("supervisor", oldest)
 
         assert [delivery.message.body for delivery in batch] == ["first", "second"]
+        assert [delivery.notification.body for delivery in batch] == ["first", "second"]
         assert [delivery.notification.id for delivery in batch] == [
             first.notification.id,
             second.notification.id,
@@ -452,6 +490,37 @@ class TestInboxOperations:
         assert [delivery.message.body for delivery in provider_batch] == [
             "provider first",
             "provider second",
+        ]
+
+    def test_effective_source_batching_supports_notification_only_events(self, live_inbox_db):
+        """Notification-only events batch by notification source without a message join."""
+        first = create_inbox_notification_event(
+            "supervisor",
+            "CAO-123 assigned.",
+            source_kind="linear_issue",
+            source_id="CAO-123",
+        )
+        create_inbox_notification_event(
+            "supervisor",
+            "CAO-456 assigned.",
+            source_kind="linear_issue",
+            source_id="CAO-456",
+        )
+        create_inbox_notification_event(
+            "supervisor",
+            "CAO-123 commented.",
+            source_kind="linear_issue",
+            source_id="CAO-123",
+        )
+
+        oldest = get_inbox_delivery(first.id)
+        assert oldest is not None
+        batch = db_module.list_pending_inbox_deliveries_for_effective_source("supervisor", oldest)
+
+        assert [delivery.message for delivery in batch] == [None, None]
+        assert [delivery.notification.body for delivery in batch] == [
+            "CAO-123 assigned.",
+            "CAO-123 commented.",
         ]
 
     def test_different_sources_are_not_batched_with_oldest_source(self, live_inbox_db):

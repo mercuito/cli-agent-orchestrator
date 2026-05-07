@@ -50,6 +50,10 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
         if delivery is None:
             raise InboxReadNotFoundError(f"inbox notification {notification_id} not found")
         message = delivery.message
+        if message is None:
+            raise InboxReadNotFoundError(
+                f"inbox notification {notification_id} is not backed by a CAO message"
+            )
 
         if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
             return InboxReadResult(
@@ -114,7 +118,7 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "success": True,
         "notification_id": result.delivery.notification.id,
-        "message_id": result.delivery.message.id,
+        "message_id": result.delivery.message.id if result.delivery.message is not None else None,
         "from": result.from_label,
         "body": result.body,
         "replyable": result.replyable,
@@ -207,6 +211,10 @@ def _load_bounded_json_object(metadata_json: Optional[str]) -> Optional[Dict[str
 
 def _plain_source_label(session: Any, delivery: InboxDelivery) -> str:
     message = delivery.message
+    if message is None:
+        if delivery.notification.source_kind:
+            return _display_from_token(str(delivery.notification.source_kind))
+        return "Inbox sender"
     terminal = (
         session.query(db_module.TerminalModel)
         .filter(db_module.TerminalModel.id == message.sender_id)

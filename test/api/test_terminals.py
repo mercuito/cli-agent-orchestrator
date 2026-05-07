@@ -512,6 +512,8 @@ class TestCreateInboxMessageEndpoint:
         mock_delivery = MagicMock()
         mock_delivery.notification.id = 1
         mock_delivery.notification.receiver_id = "abcd1234"
+        mock_delivery.notification.source_kind = "terminal"
+        mock_delivery.notification.source_id = "sender1"
         mock_delivery.notification.created_at.isoformat.return_value = "2026-03-13T12:00:00"
         mock_delivery.message.id = 10
         mock_delivery.message.sender_id = "sender1"
@@ -543,6 +545,8 @@ class TestCreateInboxMessageEndpoint:
         mock_delivery = MagicMock()
         mock_delivery.notification.id = 2
         mock_delivery.notification.receiver_id = "abcd1234"
+        mock_delivery.notification.source_kind = "terminal"
+        mock_delivery.notification.source_id = "sender1"
         mock_delivery.notification.created_at.isoformat.return_value = "2026-03-13T12:00:00"
         mock_delivery.message.id = 20
         mock_delivery.message.sender_id = "sender1"

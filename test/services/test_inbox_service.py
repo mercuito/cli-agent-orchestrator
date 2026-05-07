@@ -10,7 +10,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_delivery, get_inbox_delivery
+from cli_agent_orchestrator.clients.database import (
+    Base,
+    create_inbox_delivery,
+    create_inbox_notification_event,
+    get_inbox_delivery,
+)
 from cli_agent_orchestrator.models.inbox import (
     InboxDelivery,
     InboxMessageRecord,
@@ -50,6 +55,10 @@ def _delivery(
             id=notification_id,
             message_id=notification_id,
             receiver_id=receiver_id,
+            body=message,
+            source_kind=source_kind,
+            source_id=source_id,
+            metadata=None,
             status=MessageStatus.PENDING,
             created_at=datetime(2026, 1, 1, 9, notification_id, 0),
         ),
@@ -425,6 +434,33 @@ def test_idle_or_completed_terminal_delivers_semantic_notification(
     persisted = get_inbox_delivery(delivery.notification.id)
     assert persisted.notification.status == MessageStatus.DELIVERED
     assert persisted.notification.delivered_at is not None
+
+
+def test_idle_terminal_delivers_non_message_backed_notification_body(
+    live_inbox_db,
+    monkeypatch,
+):
+    notification = create_inbox_notification_event(
+        "terminal-1",
+        "CAO-123 has new comments.",
+        source_kind="linear_issue",
+        source_id="CAO-123",
+    )
+    _provider_with_status(monkeypatch, TerminalStatus.IDLE)
+    send_input = MagicMock()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
+        send_input,
+    )
+
+    result = check_and_send_pending_messages("terminal-1")
+
+    assert result is True
+    send_input.assert_called_once_with("terminal-1", "CAO-123 has new comments.")
+    persisted = get_inbox_delivery(notification.id)
+    assert persisted.message is None
+    assert persisted.notification.message_id is None
+    assert persisted.notification.status == MessageStatus.DELIVERED
 
 
 def test_delivery_failure_marks_notification_failed_without_mutating_durable_message(

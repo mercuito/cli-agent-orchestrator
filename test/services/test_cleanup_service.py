@@ -263,12 +263,18 @@ class TestCleanupOldData:
                     InboxNotificationModel(
                         message_id=message.id,
                         receiver_id="receiver-a",
+                        body="still referenced",
+                        source_kind="terminal",
+                        source_id="sender",
                         status=MessageStatus.DELIVERED.value,
                         created_at=old,
                     ),
                     InboxNotificationModel(
                         message_id=message.id,
                         receiver_id="receiver-b",
+                        body="still referenced",
+                        source_kind="terminal",
+                        source_id="sender",
                         status=MessageStatus.PENDING.value,
                         created_at=old,
                     ),
@@ -307,6 +313,9 @@ class TestCleanupOldData:
                 InboxNotificationModel(
                     message_id=message.id,
                     receiver_id="receiver",
+                    body="old delivered",
+                    source_kind="terminal",
+                    source_id="sender",
                     status=MessageStatus.DELIVERED.value,
                     created_at=old,
                 )
@@ -361,6 +370,9 @@ class TestCleanupOldData:
             notification = InboxNotificationModel(
                 message_id=durable_message.id,
                 receiver_id="receiver",
+                body="old delivered",
+                source_kind="presence_message",
+                source_id="thread-1",
                 status=MessageStatus.DELIVERED.value,
                 created_at=old,
             )

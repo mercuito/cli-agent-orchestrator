@@ -594,7 +594,9 @@ def test_linear_agent_webhook_routes_created_session_with_prompt_context_only(
     assert len(messages) == 1
     assert messages[0].external_id == "agent-session:session-context-only:prompt-context"
     assert messages[0].body == "Linear started an AgentSession with prompt context."
-    notification = _pending_linear_notifications()[0].message.body
+    delivery = _pending_linear_notifications()[0]
+    notification = delivery.notification.body
+    assert delivery.message.body == "Linear started an AgentSession with prompt context."
     assert "Linear started an AgentSession with prompt context." in notification
     assert '<issue identifier="CAO-29">' not in notification
     assert "read_inbox_message" in notification
@@ -766,10 +768,12 @@ def test_linear_agent_sessions_produce_distinct_presence_inbox_sources(
 
     messages = _pending_linear_notifications()
     assert len(messages) == 2
-    assert {delivery.message.source_kind for delivery in messages} == {PRESENCE_INBOX_SOURCE_KIND}
-    assert messages[0].message.source_id != messages[1].message.source_id
-    assert messages[0].message.source_id == str(get_thread("linear", "session-1").id)
-    assert messages[1].message.source_id == str(get_thread("linear", "session-2").id)
+    assert {delivery.notification.source_kind for delivery in messages} == {
+        PRESENCE_INBOX_SOURCE_KIND
+    }
+    assert messages[0].notification.source_id != messages[1].notification.source_id
+    assert messages[0].notification.source_id == str(get_thread("linear", "session-1").id)
+    assert messages[1].notification.source_id == str(get_thread("linear", "session-2").id)
     presence_provider_manager.clear_providers()
 
 
@@ -825,7 +829,7 @@ def test_linear_text_preview_is_lightweight_and_bounded(client, monkeypatch):
     )
 
     assert response.status_code == 200
-    notification = _pending_linear_notifications()[0].message.body
+    notification = _pending_linear_notifications()[0].notification.body
     assert len(notification) <= 700
     assert "Latest Linear request." in notification
     assert notification.count("older transcript line") < 20
@@ -851,7 +855,7 @@ def test_linear_attachment_metadata_does_not_block_text_notification(client, mon
     )
 
     assert response.status_code == 200
-    notification = _pending_linear_notifications()[0].message.body
+    notification = _pending_linear_notifications()[0].notification.body
     assert "Text should still notify." in notification
     presence_provider_manager.clear_providers()
 

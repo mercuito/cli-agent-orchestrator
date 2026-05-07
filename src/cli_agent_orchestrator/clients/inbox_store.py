@@ -35,15 +35,17 @@ class InboxMessageModel(Base):
 
 
 class InboxNotificationModel(Base):
-    """SQLAlchemy model for per-recipient inbox delivery notifications."""
+    """SQLAlchemy model for per-recipient inbox attention notifications."""
 
     __tablename__ = "inbox_notifications"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    message_id = Column(
-        Integer, ForeignKey("inbox_messages.id", ondelete="CASCADE"), nullable=False
-    )
+    message_id = Column(Integer, ForeignKey("inbox_messages.id", ondelete="CASCADE"), nullable=True)
     receiver_id = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    source_kind = Column(String, nullable=False)
+    source_id = Column(String, nullable=False)
+    metadata_json = Column(Text, nullable=True)
     status = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     delivered_at = Column(DateTime, nullable=True)
@@ -108,6 +110,10 @@ def inbox_notification_from_model(row: InboxNotificationModel) -> InboxNotificat
         id=row.id,
         message_id=row.message_id,
         receiver_id=row.receiver_id,
+        body=row.body,
+        source_kind=row.source_kind,
+        source_id=row.source_id,
+        metadata=_deserialize_origin(row.metadata_json),
         status=MessageStatus(row.status),
         created_at=row.created_at,
         delivered_at=row.delivered_at,
@@ -117,11 +123,11 @@ def inbox_notification_from_model(row: InboxNotificationModel) -> InboxNotificat
 
 
 def inbox_delivery_from_models(
-    message_row: InboxMessageModel, notification_row: InboxNotificationModel
+    message_row: Optional[InboxMessageModel], notification_row: InboxNotificationModel
 ) -> InboxDelivery:
     """Convert joined semantic inbox rows to their domain model."""
     return InboxDelivery(
-        message=inbox_message_record_from_model(message_row),
+        message=inbox_message_record_from_model(message_row) if message_row is not None else None,
         notification=inbox_notification_from_model(notification_row),
     )
 
@@ -136,9 +142,11 @@ def create_inbox_delivery(
     origin: Optional[Dict[str, Any]] = None,
     route_kind: Optional[str] = None,
     route_id: Optional[str] = None,
+    notification_body: Optional[str] = None,
+    notification_metadata: Optional[Dict[str, Any]] = None,
     db: Optional[Session] = None,
 ) -> InboxDelivery:
-    """Create one durable inbox message and one delivery notification."""
+    """Create one durable inbox message and one attention notification."""
     effective_source_kind, effective_source_id = _resolve_source_identity(
         sender_id, source_kind, source_id
     )
@@ -159,6 +167,10 @@ def create_inbox_delivery(
         notification_row = InboxNotificationModel(
             message_id=message_row.id,
             receiver_id=receiver_id,
+            body=notification_body if notification_body is not None else message,
+            source_kind=effective_source_kind,
+            source_id=effective_source_id,
+            metadata_json=_serialize_origin(notification_metadata),
             status=MessageStatus.PENDING.value,
         )
         session.add(notification_row)
@@ -221,17 +233,68 @@ def create_inbox_notification(
     message_id: int,
     receiver_id: str,
     *,
+    body: Optional[str] = None,
+    source_kind: Optional[str] = None,
+    source_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     status: MessageStatus = MessageStatus.PENDING,
     db: Optional[Session] = None,
 ) -> InboxNotification:
-    """Create delivery state for an existing durable inbox message."""
+    """Create an attention notification for an existing durable inbox message."""
+    _validate_complete_identity(source_kind, source_id, "source")
 
     def _add_notification(session: Session) -> InboxNotification:
-        if session.get(InboxMessageModel, message_id) is None:
+        message_row = session.get(InboxMessageModel, message_id)
+        if message_row is None:
             raise ValueError(f"Inbox message not found: {message_id}")
         notification_row = InboxNotificationModel(
             message_id=message_id,
             receiver_id=receiver_id,
+            body=body if body is not None else message_row.body,
+            source_kind=source_kind if source_kind is not None else message_row.source_kind,
+            source_id=source_id if source_id is not None else message_row.source_id,
+            metadata_json=_serialize_origin(metadata),
+            status=status.value,
+        )
+        session.add(notification_row)
+        session.flush()
+        session.refresh(notification_row)
+        return inbox_notification_from_model(notification_row)
+
+    if db is not None:
+        return _add_notification(db)
+
+    with _session_local()() as session:
+        notification = _add_notification(session)
+        session.commit()
+        return notification
+
+
+def create_inbox_notification_event(
+    receiver_id: str,
+    body: str,
+    *,
+    source_kind: str,
+    source_id: str,
+    metadata: Optional[Dict[str, Any]] = None,
+    status: MessageStatus = MessageStatus.PENDING,
+    db: Optional[Session] = None,
+) -> InboxNotification:
+    """Create an attention notification that is not backed by a CAO message."""
+    if not body:
+        raise ValueError("notification body is required")
+    if not receiver_id:
+        raise ValueError("receiver_id is required")
+    _validate_complete_identity(source_kind, source_id, "source")
+
+    def _add_notification(session: Session) -> InboxNotification:
+        notification_row = InboxNotificationModel(
+            message_id=None,
+            receiver_id=receiver_id,
+            body=body,
+            source_kind=source_kind,
+            source_id=source_id,
+            metadata_json=_serialize_origin(metadata),
             status=status.value,
         )
         session.add(notification_row)
@@ -253,7 +316,7 @@ def _get_delivery_by_notification_id(
 ) -> Optional[InboxDelivery]:
     row = (
         session.query(InboxNotificationModel, InboxMessageModel)
-        .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+        .outerjoin(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
         .filter(InboxNotificationModel.id == notification_id)
         .first()
     )
@@ -280,7 +343,7 @@ def list_inbox_deliveries(
     with _session_local()() as db:
         query = (
             db.query(InboxNotificationModel, InboxMessageModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+            .outerjoin(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
             .filter(InboxNotificationModel.receiver_id == receiver_id)
         )
         if status is not None:
@@ -310,17 +373,17 @@ def get_oldest_pending_inbox_delivery(receiver_id: str) -> Optional[InboxDeliver
 def list_pending_inbox_deliveries_for_effective_source(
     receiver_id: str, source_delivery: InboxDelivery
 ) -> List[InboxDelivery]:
-    """List pending deliveries for the same durable source as ``source_delivery``."""
-    source_message = source_delivery.message
+    """List pending notifications for the same attention source as ``source_delivery``."""
+    source_notification = source_delivery.notification
     with _session_local()() as db:
         rows = (
             db.query(InboxNotificationModel, InboxMessageModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+            .outerjoin(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
             .filter(
                 InboxNotificationModel.receiver_id == receiver_id,
                 InboxNotificationModel.status == MessageStatus.PENDING.value,
-                InboxMessageModel.source_kind == source_message.source_kind,
-                InboxMessageModel.source_id == source_message.source_id,
+                InboxNotificationModel.source_kind == source_notification.source_kind,
+                InboxNotificationModel.source_id == source_notification.source_id,
             )
             .order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
             .all()

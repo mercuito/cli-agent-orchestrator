@@ -85,6 +85,10 @@ def reply_to_inbox_message(
     if delivery is None:
         raise PresenceReplyNotFoundError(f"inbox notification {notification_id} not found")
     message = delivery.message
+    if message is None:
+        raise PresenceReplyUnsupportedSourceError(
+            f"inbox notification {notification_id} is not backed by a CAO message"
+        )
 
     if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
         raise PresenceReplyUnsupportedSourceError(
@@ -147,6 +151,10 @@ def _read_delivery(notification_id: int) -> Optional[InboxDelivery]:
 
 def _parse_thread_route_id(delivery: InboxDelivery) -> int:
     message = delivery.message
+    if message is None:
+        raise PresenceReplyUnsupportedSourceError(
+            f"inbox notification {delivery.notification.id} is not backed by a CAO message"
+        )
     if message.route_id is None:
         raise PresenceReplyNotFoundError(
             f"inbox notification {delivery.notification.id} does not include a presence thread route id"
