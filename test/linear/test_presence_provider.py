@@ -16,7 +16,9 @@ from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
 from cli_agent_orchestrator.presence.manager import PresenceProviderManager
-from cli_agent_orchestrator.presence.inbox_presentation import INBOX_PRESENTATION_METADATA_KEY
+from cli_agent_orchestrator.presence.inbox_read_presentation import (
+    INBOX_READ_PRESENTATION_METADATA_KEY,
+)
 from cli_agent_orchestrator.presence.models import ExternalRef
 from cli_agent_orchestrator.presence.persistence import (
     get_message,
@@ -95,7 +97,7 @@ def test_nested_agent_session_payload_normalizes_to_presence_event():
     assert event.message.kind == "prompt"
     assert event.message.body == "Can you scope this?"
     assert event.message.metadata == {
-        INBOX_PRESENTATION_METADATA_KEY: {
+        INBOX_READ_PRESENTATION_METADATA_KEY: {
             "workspace": {
                 "name": "Linear",
                 "breadcrumb": {
@@ -104,6 +106,7 @@ def test_nested_agent_session_payload_normalizes_to_presence_event():
                 },
             },
             "source_label": "Linear",
+            "context": {"linear_prompt_context": '<issue identifier="CAO-13"/>'},
         }
     }
 
@@ -168,6 +171,62 @@ def test_missing_session_id_does_not_invent_thread_id():
     assert event.thread is None
     assert event.message is not None
     assert event.message.ref == ExternalRef(provider="linear", id="activity-1")
+
+
+def test_created_payload_with_prompt_context_but_no_activity_creates_replyable_message():
+    payload = {
+        "type": "AgentSessionEvent",
+        "action": "created",
+        "data": {
+            "promptContext": '<issue identifier="CAO-29"><title>Route me</title></issue>',
+            "agentSession": {
+                "id": "session-context-only",
+                "issue": {"id": "issue-29", "identifier": "CAO-29"},
+            },
+        },
+    }
+
+    event = LinearPresenceProvider().normalize_event(payload, delivery_id="delivery-context")
+
+    assert event is not None
+    assert event.thread is not None
+    assert event.thread.prompt_context == (
+        '<issue identifier="CAO-29"><title>Route me</title></issue>'
+    )
+    assert event.message is not None
+    assert event.message.ref == ExternalRef(
+        provider="linear",
+        id="agent-session:session-context-only:prompt-context",
+    )
+    assert event.message.body == "Linear started an AgentSession with prompt context."
+    assert event.message.metadata[INBOX_READ_PRESENTATION_METADATA_KEY]["context"] == {
+        "linear_prompt_context": '<issue identifier="CAO-29"><title>Route me</title></issue>'
+    }
+
+
+def test_linear_prompt_context_metadata_is_bounded_while_thread_keeps_full_context():
+    prompt_context = "<issue>Current scope</issue>\n" + ("prior comment " * 800)
+    payload = {
+        "type": "AgentSessionEvent",
+        "action": "created",
+        "data": {
+            "promptContext": prompt_context,
+            "agentSession": {"id": "session-long-context"},
+        },
+    }
+
+    event = LinearPresenceProvider().normalize_event(payload)
+
+    assert event is not None
+    assert event.thread is not None
+    assert event.thread.prompt_context == prompt_context
+    assert event.message is not None
+    assert event.message.body == "Linear started an AgentSession with prompt context."
+    assert "prior comment" not in event.message.body
+    context = event.message.metadata[INBOX_READ_PRESENTATION_METADATA_KEY]["context"]
+    assert context["linear_prompt_context"].startswith("<issue>Current scope</issue>")
+    assert len(context["linear_prompt_context"]) <= 3500
+    assert context["linear_prompt_context"].endswith("...")
 
 
 def test_activity_body_extraction_supports_top_level_and_nested_content():
@@ -300,7 +359,7 @@ def test_reply_to_thread_uses_app_key_from_provider_reply_metadata():
     )
 
 
-def test_linear_provider_authors_inbox_presentation_from_session_and_activity():
+def test_linear_provider_authors_inbox_read_presentation_from_session_and_activity():
     payload = _nested_payload()
     payload["data"]["agentActivity"]["actor"] = {"name": "  Implementation   Partner  "}
 
@@ -309,7 +368,7 @@ def test_linear_provider_authors_inbox_presentation_from_session_and_activity():
     assert event is not None
     assert event.message is not None
     assert event.message.metadata == {
-        INBOX_PRESENTATION_METADATA_KEY: {
+        INBOX_READ_PRESENTATION_METADATA_KEY: {
             "workspace": {
                 "name": "Linear",
                 "breadcrumb": {
@@ -318,6 +377,7 @@ def test_linear_provider_authors_inbox_presentation_from_session_and_activity():
                 },
             },
             "source_label": "Implementation Partner",
+            "context": {"linear_prompt_context": '<issue identifier="CAO-13"/>'},
         }
     }
 

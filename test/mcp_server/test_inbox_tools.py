@@ -37,7 +37,7 @@ from cli_agent_orchestrator.presence.models import (
     PresenceEvent,
     StopAcknowledgement,
 )
-from cli_agent_orchestrator.presence.inbox_presentation import inbox_presentation_metadata
+from cli_agent_orchestrator.presence.inbox_read_presentation import inbox_read_presentation_metadata
 from cli_agent_orchestrator.presence.persistence import (
     get_thread,
     list_messages,
@@ -226,7 +226,7 @@ def _linear_presence_notification_with_work_item_and_metadata() -> int:
         direction="inbound",
         kind="prompt",
         body="Please implement the breadcrumb.",
-        metadata=inbox_presentation_metadata(
+        metadata=inbox_read_presentation_metadata(
             workspace={
                 "name": "Linear",
                 "breadcrumb": {
@@ -240,6 +240,32 @@ def _linear_presence_notification_with_work_item_and_metadata() -> int:
             "actor": {"name": "Raw Snapshot Author Should Not Leak"},
             "large": "message-raw-" * 5000,
         },
+    )
+    return create_notification_for_message(
+        presence_message_id=message.id,
+        receiver_id="agent:implementation_partner",
+    ).delivery.notification.id
+
+
+def _linear_presence_notification_with_prompt_context(prompt_context: str) -> int:
+    thread = upsert_thread(
+        provider="linear",
+        external_id="session-context",
+        kind="conversation",
+        prompt_context=prompt_context,
+        raw_snapshot={"data": {"promptContext": prompt_context, "token": "raw-secret"}},
+    )
+    message = upsert_message(
+        thread_id=thread.id,
+        provider="linear",
+        external_id="activity-context",
+        direction="inbound",
+        kind="prompt",
+        body="Please use the bounded context.",
+        metadata=inbox_read_presentation_metadata(
+            context={"linear_prompt_context": prompt_context[:3500]},
+            source_label="Linear",
+        ),
     )
     return create_notification_for_message(
         presence_message_id=message.id,
@@ -318,6 +344,26 @@ def test_linear_backed_read_returns_provider_owned_workspace_breadcrumb(test_ses
             },
         },
     }
+
+
+def test_linear_backed_read_returns_bounded_named_prompt_context(test_session):
+    # Shape sources:
+    # https://linear.app/developers/agent-interaction/
+    # https://linear.app/developers/agents
+    # https://hexdocs.pm/linear_sdk/LinearSDK.Objects.AgentSessionEventWebhookPayload.html
+    prompt_context = "<issue>Current scope</issue>\n" + ("prior comment " * 800)
+    notification_id = _linear_presence_notification_with_prompt_context(prompt_context)
+
+    result = _read_inbox_message_impl(notification_id)
+    encoded = json.dumps(result)
+
+    assert result["success"] is True
+    assert result["body"] == "Please use the bounded context."
+    assert result["context"]["linear_prompt_context"].startswith("<issue>Current scope</issue>")
+    assert len(result["context"]["linear_prompt_context"]) <= 4000
+    assert "token" not in encoded
+    assert "raw-secret" not in encoded
+    assert "prior comment " * 500 not in encoded
 
 
 def test_provider_backed_read_body_is_backing_message_not_notification_wrapper(test_session):
@@ -412,7 +458,7 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
         direction="inbound",
         kind="prompt",
         body="Full provider body",
-        metadata=inbox_presentation_metadata(
+        metadata=inbox_read_presentation_metadata(
             workspace={"name": "Example", "breadcrumb": ["not", "a", "mapping"]}
         ),
     )
@@ -437,7 +483,7 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
         direction="inbound",
         kind="prompt",
         body="Full provider body",
-        metadata=inbox_presentation_metadata(
+        metadata=inbox_read_presentation_metadata(
             workspace={
                 "name": "Example",
                 "breadcrumb": {"thread_id": "thread-oversized-workspace", "snapshot": "x" * 2000},
@@ -537,7 +583,7 @@ def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(tes
         direction="inbound",
         kind="prompt",
         body="Reply using hidden route data.",
-        metadata=inbox_presentation_metadata(
+        metadata=inbox_read_presentation_metadata(
             workspace={
                 "name": "Example",
                 "breadcrumb": {

@@ -14,13 +14,15 @@ from cli_agent_orchestrator.presence.models import (
     StopAcknowledgement,
     WorkItem,
 )
-from cli_agent_orchestrator.presence.inbox_presentation import inbox_presentation_metadata
+from cli_agent_orchestrator.presence.inbox_read_presentation import inbox_read_presentation_metadata
 from cli_agent_orchestrator.presence.refs import ProviderRefFactory
 
 PROVIDER = "linear"
 LINEAR_REFS = ProviderRefFactory(PROVIDER)
 HEADER_EVENT_PAYLOAD_KEY = "_linear_header_event"
 STOP_ACK_BODY = "CAO received the stop request."
+LINEAR_INBOX_CONTEXT_CHARS = 3500
+CONTEXT_ONLY_MESSAGE_BODY = "Linear started an AgentSession with prompt context."
 
 
 def _string_value(value: Any) -> Optional[str]:
@@ -154,13 +156,22 @@ def _activity_nodes(value: Any) -> List[Mapping[str, Any]]:
     return []
 
 
-def _linear_inbox_presentation_metadata(
+def _linear_message_read_presentation_metadata(
     agent_session: Mapping[str, Any],
     activity: Mapping[str, Any],
+    *,
+    prompt_context: Optional[str] = None,
 ) -> Mapping[str, Any]:
-    return inbox_presentation_metadata(
+    """Build provider-authored metadata for read_inbox_message presentation."""
+
+    return inbox_read_presentation_metadata(
         workspace=_linear_workspace_hint(agent_session),
         source_label=_linear_actor_label(activity) or "Linear",
+        context=(
+            {"linear_prompt_context": _bounded_prompt_context(prompt_context)}
+            if prompt_context
+            else None
+        ),
     )
 
 
@@ -179,6 +190,26 @@ def _linear_workspace_hint(agent_session: Mapping[str, Any]) -> Optional[Mapping
         elif issue_id:
             breadcrumb["issue_id"] = issue_id
     return {"name": "Linear", "breadcrumb": breadcrumb}
+
+
+def _message_from_prompt_context(
+    agent_session: Mapping[str, Any],
+    *,
+    prompt_context: str,
+    metadata: Optional[Mapping[str, Any]] = None,
+    refs: ProviderRefFactory = LINEAR_REFS,
+) -> Optional[ConversationMessage]:
+    session_id = _string_value(agent_session.get("id"))
+    if not session_id:
+        return None
+    return ConversationMessage(
+        kind="prompt",
+        body=CONTEXT_ONLY_MESSAGE_BODY,
+        ref=refs.ref(f"agent-session:{session_id}:prompt-context"),
+        direction="inbound",
+        state="received",
+        metadata=dict(metadata) if metadata is not None else None,
+    )
 
 
 class LinearPresenceProvider:
@@ -205,25 +236,42 @@ class LinearPresenceProvider:
             return None
 
         agent_session = self._client.agent_session_from_payload(payload)
+        prompt_context = self._client.prompt_context_from_payload(payload)
         thread = _thread_from_session(
             agent_session,
-            prompt_context=self._client.prompt_context_from_payload(payload),
+            prompt_context=prompt_context,
             refs=self._refs,
         )
         activity = self._client.agent_activity_from_payload(payload)
         data = _dict_value(payload.get("data"))
         action = _string_value(payload.get("action") or data.get("action"))
+        message = _message_from_activity(
+            activity,
+            metadata=_linear_message_read_presentation_metadata(
+                agent_session,
+                activity,
+                prompt_context=prompt_context,
+            ),
+            refs=self._refs,
+        )
+        if (message is None or (message.kind == "prompt" and not message.body)) and prompt_context:
+            message = _message_from_prompt_context(
+                agent_session,
+                prompt_context=prompt_context,
+                metadata=_linear_message_read_presentation_metadata(
+                    agent_session,
+                    activity,
+                    prompt_context=prompt_context,
+                ),
+                refs=self._refs,
+            )
 
         return PresenceEvent(
             provider=PROVIDER,
             event_type=_event_type(payload, effective_header_event) or "AgentSessionEvent",
             action=action,
             thread=thread,
-            message=_message_from_activity(
-                activity,
-                metadata=_linear_inbox_presentation_metadata(agent_session, activity),
-                refs=self._refs,
-            ),
+            message=message,
             delivery_id=delivery_id,
             raw_payload=payload,
         )
@@ -360,6 +408,13 @@ def _bounded_compact(value: str, max_chars: int = 120) -> str:
         return compacted
     suffix = "..."
     return compacted[: max(0, max_chars - len(suffix))].rstrip() + suffix
+
+
+def _bounded_prompt_context(value: str) -> str:
+    if len(value) <= LINEAR_INBOX_CONTEXT_CHARS:
+        return value
+    suffix = "..."
+    return value[: max(0, LINEAR_INBOX_CONTEXT_CHARS - len(suffix))].rstrip() + suffix
 
 
 def thread_from_agent_session(agent_session: Mapping[str, Any]) -> Optional[ConversationThread]:

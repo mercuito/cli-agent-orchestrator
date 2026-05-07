@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import re
 from typing import Any, Dict, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
@@ -16,6 +18,7 @@ from cli_agent_orchestrator.linear.workspace_provider import (
 )
 from cli_agent_orchestrator.presence.inbox_bridge import create_notification_for_persisted_event
 from cli_agent_orchestrator.presence.models import PersistedPresenceEvent, PresenceEvent
+from cli_agent_orchestrator.presence.persistence import get_message, get_thread
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeHandle,
     AgentRuntimeNotification,
@@ -27,6 +30,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_TEAM_MEMBER_ID = "cao-discovery-partner"
 LINEAR_RUNTIME_SOURCE_KIND = "linear_agent_session_event"
 LIFECYCLE_ACTIVITY_BODY_CHARS = 220
+LIFECYCLE_ERROR_CHARS = 240
+LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY = "linear_external_url_published"
+
+_STACK_TRACE_RE = re.compile(r"Traceback \(most recent call last\):|\n\s*File \"")
+_BEARER_TOKEN_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_SENSITIVE_QUOTED_VALUE_RE = re.compile(
+    r"(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|"
+    r"api[_-]?key|password|secret|token)\b([\"']?\s*[:=]\s*)([\"']).*?\3"
+)
+_SENSITIVE_VALUE_RE = re.compile(
+    r"(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|"
+    r"api[_-]?key|password|secret|token)\b([\"']?\s*[:=]\s*)[^,\s'\"}]+"
+)
 
 
 def _compact(value: str) -> str:
@@ -41,6 +57,28 @@ def _bounded_activity_body(value: str) -> str:
     return compact[: LIFECYCLE_ACTIVITY_BODY_CHARS - len(suffix)].rstrip() + suffix
 
 
+def _safe_lifecycle_error(error: Exception) -> str:
+    """Return a concise lifecycle/API failure safe for logs."""
+    raw_message = str(error) or type(error).__name__
+    message = _STACK_TRACE_RE.split(raw_message, maxsplit=1)[0].strip()
+    if not message:
+        message = type(error).__name__
+    message = _BEARER_TOKEN_RE.sub("Bearer [redacted]", message)
+    message = _SENSITIVE_QUOTED_VALUE_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}{match.group(3)}[redacted]{match.group(3)}",
+        message,
+    )
+    message = _SENSITIVE_VALUE_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[redacted]",
+        message,
+    )
+    message = _compact(message)
+    if len(message) <= LIFECYCLE_ERROR_CHARS:
+        return message
+    suffix = "..."
+    return message[: LIFECYCLE_ERROR_CHARS - len(suffix)].rstrip() + suffix
+
+
 def _post_lifecycle_activity(
     thread_id: Optional[str],
     content: Dict[str, Any],
@@ -53,7 +91,11 @@ def _post_lifecycle_activity(
     try:
         app_client.create_agent_activity(thread_id, content, app_key=app_key)
     except Exception as exc:
-        logger.warning("Failed to create Linear %s AgentActivity: %s", description, exc)
+        logger.warning(
+            "Failed to create Linear %s AgentActivity: %s",
+            description,
+            _safe_lifecycle_error(exc),
+        )
 
 
 def _post_accepted_activity(
@@ -100,15 +142,99 @@ def _update_external_url_once(
     terminal_id: Optional[str],
     agent_id: Optional[str],
     app_key: Optional[str],
-) -> None:
+) -> bool:
     if not thread_id or not terminal_id:
-        return
+        return False
     try:
-        app_client.update_agent_session_external_url(
+        return app_client.update_agent_session_external_url(
             thread_id, terminal_id, agent_id=agent_id, app_key=app_key
         )
     except Exception as exc:
-        logger.warning("Failed to update Linear AgentSession external URL: %s", exc)
+        logger.warning(
+            "Failed to update Linear AgentSession external URL: %s",
+            _safe_lifecycle_error(exc),
+        )
+        return False
+
+
+def _json_object(value: Optional[str]) -> Dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        loaded = json.loads(value)
+    except Exception:
+        return {}
+    return dict(loaded) if isinstance(loaded, dict) else {}
+
+
+def _publish_persisted_external_url_once(
+    *,
+    thread_id: Optional[str],
+    terminal_id: Optional[str],
+    agent_id: Optional[str],
+    app_key: Optional[str],
+) -> bool:
+    """Publish Linear's Open CAO URL once per durable Linear presence thread."""
+    if not thread_id or not terminal_id:
+        return False
+
+    with db_module.SessionLocal() as session:
+        thread_row = (
+            session.query(db_module.PresenceThreadModel)
+            .filter(
+                db_module.PresenceThreadModel.provider == "linear",
+                db_module.PresenceThreadModel.external_id == thread_id,
+            )
+            .first()
+        )
+        if thread_row is not None:
+            metadata = _json_object(thread_row.metadata_json)
+            if metadata.get(LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY):
+                return False
+
+    if not _update_external_url_once(
+        thread_id=thread_id,
+        terminal_id=terminal_id,
+        agent_id=agent_id,
+        app_key=app_key,
+    ):
+        return False
+
+    with db_module.SessionLocal() as session:
+        thread_row = (
+            session.query(db_module.PresenceThreadModel)
+            .filter(
+                db_module.PresenceThreadModel.provider == "linear",
+                db_module.PresenceThreadModel.external_id == thread_id,
+            )
+            .first()
+        )
+        if thread_row is None:
+            return True
+        metadata = _json_object(thread_row.metadata_json)
+        metadata[LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY] = True
+        metadata["linear_external_url_terminal_id"] = terminal_id
+        if agent_id:
+            metadata["linear_external_url_agent_id"] = agent_id
+        thread_row.metadata_json = json.dumps(metadata, sort_keys=True)
+        session.commit()
+    return True
+
+
+def _persisted_external_url_was_published(thread_id: str) -> bool:
+    with db_module.SessionLocal() as session:
+        thread_row = (
+            session.query(db_module.PresenceThreadModel)
+            .filter(
+                db_module.PresenceThreadModel.provider == "linear",
+                db_module.PresenceThreadModel.external_id == thread_id,
+            )
+            .first()
+        )
+        if thread_row is None:
+            return False
+        metadata = _json_object(thread_row.metadata_json)
+        return bool(metadata.get(LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY))
 
 
 def _event_app_key(event: PresenceEvent) -> Optional[str]:
@@ -282,13 +408,14 @@ def notify_agent_for_persisted_event(
         created=notification.created,
     )
     result = handle.accept_notification(runtime_notification)
-    if notification.created:
-        _update_external_url_once(
+    if result.terminal_id:
+        _publish_persisted_external_url_once(
             thread_id=thread_id,
             terminal_id=result.terminal_id,
             agent_id=resolved.identity.id,
             app_key=resolved.presence.app_key,
         )
+    if notification.created:
         if result.error and result.terminal_id is None:
             _post_startup_failed_activity(
                 thread_id=thread_id,
@@ -305,6 +432,32 @@ def notify_agent_for_persisted_event(
         result.notification.created,
     )
     return result
+
+
+def retry_agent_for_presence_event(
+    event: Optional[PresenceEvent],
+) -> Optional[AgentRuntimeNotifyResult]:
+    """Retry delivery/lifecycle for an already persisted Linear AgentSession event."""
+    if event is None or event.thread is None or event.message is None:
+        return None
+    if event.message.ref is None:
+        return None
+    if _persisted_external_url_was_published(event.thread.ref.id):
+        return None
+
+    thread = get_thread("linear", event.thread.ref.id)
+    message = get_message("linear", event.message.ref.id)
+    if thread is None or message is None:
+        return None
+    return notify_agent_for_persisted_event(
+        PersistedPresenceEvent(
+            processed_event=None,
+            work_item=None,
+            thread=thread,
+            message=message,
+        ),
+        event,
+    )
 
 
 def handle_agent_session_event(payload: Dict[str, Any]) -> Optional[str]:

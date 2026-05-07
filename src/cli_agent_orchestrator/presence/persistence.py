@@ -248,7 +248,8 @@ def upsert_thread(
         row.state = state
         row.prompt_context = prompt_context
         row.raw_snapshot_json = _dumps(raw_snapshot)
-        row.metadata_json = _dumps(metadata)
+        if metadata is not None:
+            row.metadata_json = _dumps(metadata)
         row.updated_at = now
         session.flush()
         session.refresh(row)

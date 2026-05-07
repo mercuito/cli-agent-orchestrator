@@ -57,6 +57,11 @@ def _require_linear_workspace_provider_enabled() -> None:
         )
 
 
+def _has_trusted_routing_source(verification: app_client.LinearWebhookVerification) -> bool:
+    """Require a trusted Linear source before production webhook routing."""
+    return bool(verification.verified and (verification.app_key or verification.app_user_id))
+
+
 class LinearOAuthCallbackResponse(BaseModel):
     """Response returned after a Linear app actor OAuth install."""
 
@@ -148,6 +153,32 @@ async def agent_webhook(
         payload["_cao_linear_app_user_id"] = verification.app_user_id
     if verification.app_user_name:
         payload["_cao_linear_app_user_name"] = verification.app_user_name
+
+    event = app_client.webhook_event_type(
+        payload,
+        header_event=header_event,
+    )
+    action = payload.get("action")
+    if not _has_trusted_routing_source(verification):
+        logger.warning(
+            "Ignoring Linear webhook without trusted app/source metadata "
+            "event=%s action=%s delivery=%s verified=%s",
+            event,
+            action,
+            delivery,
+            verification.verified,
+        )
+        return LinearWebhookResponse(
+            ok=True,
+            verified=verification.verified,
+            event=event,
+            action=action,
+            delivery=delivery,
+            app_key=verification.app_key,
+            agent_session_id=app_client.agent_session_id_from_payload(payload),
+            routed=False,
+        )
+
     provider_payload = payload_with_header_event(payload, header_event=header_event)
     presence_event = presence_provider_manager.normalize_event(
         "linear",
@@ -160,14 +191,9 @@ async def agent_webhook(
         delivery_id=delivery,
     )
     presence_event = presence_event if presence_event is not None else None
-    event = app_client.webhook_event_type(
-        payload,
-        header_event=header_event,
-    )
     agent_session_id = (
         presence_event.thread.ref.id if presence_event and presence_event.thread else None
     )
-    action = payload.get("action")
 
     logger.info(
         "Received Linear webhook event=%s action=%s delivery=%s agent_session_id=%s verified=%s",
@@ -179,7 +205,6 @@ async def agent_webhook(
     )
 
     notification_result = runtime.notify_agent_for_persisted_event(persisted, presence_event)
-
     duplicate_delivery = (
         persisted is not None
         and persisted.processed_event is not None
@@ -188,7 +213,12 @@ async def agent_webhook(
         and persisted.thread is None
         and persisted.message is None
     )
-    routed = notification_result is not None or duplicate_delivery
+    retry_result = (
+        runtime.retry_agent_for_presence_event(presence_event)
+        if notification_result is None and duplicate_delivery
+        else None
+    )
+    routed = notification_result is not None or retry_result is not None or duplicate_delivery
     return LinearWebhookResponse(
         ok=True,
         verified=verification.verified,

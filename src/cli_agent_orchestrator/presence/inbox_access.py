@@ -9,8 +9,8 @@ from typing import Any, Dict, Mapping, Optional, cast
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_ROUTE_KIND
-from cli_agent_orchestrator.presence.inbox_presentation import (
-    INBOX_PRESENTATION_METADATA_KEY,
+from cli_agent_orchestrator.presence.inbox_read_presentation import (
+    INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 
 
@@ -33,10 +33,13 @@ class InboxReadResult:
     workspace: Optional[Dict[str, Any]] = None
     reply_error: Optional[str] = None
     thread: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None
 
 
 MAX_WORKSPACE_JSON_CHARS = 1000
 MAX_METADATA_JSON_CHARS = 4000
+MAX_CONTEXT_JSON_CHARS = 4000
+MAX_CONTEXT_VALUE_CHARS = 3500
 
 
 def read_inbox_message(notification_id: int) -> InboxReadResult:
@@ -101,6 +104,7 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
             reply_error=reply_error,
             workspace=_presence_workspace(origin) or _presence_workspace(message_metadata),
             thread={"provider": cast(Optional[str], thread_row.provider)},
+            context=_presence_context(origin) or _presence_context(message_metadata),
         )
 
 
@@ -118,6 +122,8 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
     }
     if result.reply_error:
         payload["reply_error"] = result.reply_error
+    if result.context:
+        payload["context"] = result.context
     return payload
 
 
@@ -246,6 +252,34 @@ def _presence_body(
     return str(cast(Optional[str], thread_row.prompt_context) or "")
 
 
+def _presence_context(metadata: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    presentation = _presentation(metadata)
+    if presentation is None:
+        return None
+    context = presentation.get("context")
+    return _bounded_context(context) if isinstance(context, Mapping) else None
+
+
+def _bounded_context(value: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    context: Dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            return None
+        if isinstance(item, str):
+            context[key] = _truncate_text(item, max_chars=MAX_CONTEXT_VALUE_CHARS)
+        elif item is None or isinstance(item, (int, float, bool)):
+            context[key] = item
+        else:
+            return None
+    try:
+        encoded = json.dumps(context, sort_keys=True)
+    except (TypeError, ValueError):
+        return None
+    if len(encoded) > MAX_CONTEXT_JSON_CHARS:
+        return None
+    return context
+
+
 def _provider_label(provider: Optional[str]) -> str:
     if provider:
         return _display_from_token(provider)
@@ -260,7 +294,7 @@ def _display_from_token(value: str) -> str:
 def _presentation(metadata: Optional[Mapping[str, Any]]) -> Optional[Mapping[str, Any]]:
     if metadata is None:
         return None
-    presentation = metadata.get(INBOX_PRESENTATION_METADATA_KEY)
+    presentation = metadata.get(INBOX_READ_PRESENTATION_METADATA_KEY)
     return presentation if isinstance(presentation, Mapping) else None
 
 
@@ -270,3 +304,10 @@ def _bounded_label(value: str, max_chars: int = 120) -> str:
         return label
     suffix = "..."
     return label[: max(0, max_chars - len(suffix))].rstrip() + suffix
+
+
+def _truncate_text(value: str, *, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    suffix = "..."
+    return value[: max(0, max_chars - len(suffix))].rstrip() + suffix
