@@ -13,7 +13,11 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_message
+from cli_agent_orchestrator.clients.database import (
+    Base,
+    create_inbox_delivery,
+    create_inbox_message,
+)
 from cli_agent_orchestrator.linear import runtime
 from cli_agent_orchestrator.linear.workspace_provider import LinearPresence, LinearResolvedPresence
 from cli_agent_orchestrator.presence.models import (
@@ -241,14 +245,16 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
             updated_at=datetime.now(),
         ),
     )
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "presence",
         "agent:implementation_partner",
-        "[CAO inbox notification]\nID: 1",
+        "Can you inspect this?",
         source_kind="presence_thread",
         source_id="1",
+        route_kind="presence_thread",
+        route_id="1",
     )
-    bridge_notification = Mock(inbox_message=inbox, created=True)
+    bridge_notification = Mock(delivery=delivery, created=True)
     accepted = []
 
     def accept_notification(notification):
@@ -281,5 +287,5 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
     result = runtime.notify_agent_for_persisted_event(persisted_event, event)
 
     assert result is not None
-    assert accepted[0].delivery.notification.legacy_inbox_id == inbox.id
-    assert accepted[0].delivery.message.body == "[CAO inbox notification]\nID: 1"
+    assert accepted[0].delivery.notification.legacy_inbox_id is None
+    assert accepted[0].delivery.message.body == "Can you inspect this?"

@@ -9,9 +9,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, get_inbox_messages
+from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.presence.inbox_bridge import (
+    PRESENCE_INBOX_ROUTE_KIND,
     PRESENCE_INBOX_SOURCE_KIND,
     create_notification_for_persisted_event,
     create_notification_for_message,
@@ -87,14 +88,17 @@ def test_presence_notification_uses_presence_thread_source_and_internal_thread_i
     )
 
     assert result.created is True
-    assert result.inbox_message.source_kind == PRESENCE_INBOX_SOURCE_KIND
-    assert result.inbox_message.source_id == str(thread.id)
-    assert result.inbox_message.source_id != thread.external_id
-    assert result.inbox_message.receiver_id == "terminal-a"
-    assert result.inbox_message.status == MessageStatus.PENDING
+    assert result.delivery.message.source_kind == PRESENCE_INBOX_SOURCE_KIND
+    assert result.delivery.message.source_id == str(thread.id)
+    assert result.delivery.message.source_id != thread.external_id
+    assert result.delivery.message.route_kind == PRESENCE_INBOX_ROUTE_KIND
+    assert result.delivery.message.route_id == str(thread.id)
+    assert result.delivery.notification.receiver_id == "terminal-a"
+    assert result.delivery.notification.status == MessageStatus.PENDING
+    assert result.delivery.notification.legacy_inbox_id is None
 
 
-def test_notification_body_includes_preview_and_work_context(test_session):
+def test_semantic_message_body_is_compact_notification_with_read_and_reply_ids(test_session):
     _, _, message = _persist_message(
         provider="generic-chat",
         body="The worker is blocked on a missing migration test.",
@@ -105,16 +109,19 @@ def test_notification_body_includes_preview_and_work_context(test_session):
         receiver_id="terminal-a",
     )
 
-    assert "[CAO inbox notification]" in result.inbox_message.message
-    assert "ID: 1" in result.inbox_message.message
-    assert "Source: generic-chat" in result.inbox_message.message
-    assert "Issue: WORK-123 - Bridge durable presence into inbox" in result.inbox_message.message
-    assert "Read: read_inbox_message(inbox_message_id=1)" in result.inbox_message.message
-    assert "Reply: reply_to_inbox_message(inbox_message_id=1" in result.inbox_message.message
-    assert "missing migration test" in result.inbox_message.message
+    body = result.delivery.message.body
+    assert "[CAO inbox notification]" in body
+    assert f"ID: {result.delivery.notification.id}" in body
+    assert "Source: generic-chat" in body
+    assert "Issue: WORK-123 - Bridge durable presence into inbox" in body
+    assert f"Read: read_inbox_message(inbox_message_id={result.delivery.notification.id})" in body
+    assert (
+        f"Reply: reply_to_inbox_message(inbox_message_id={result.delivery.notification.id}" in body
+    )
+    assert "missing migration test" in body
 
 
-def test_notification_body_is_bounded_and_does_not_include_transcript_history(test_session):
+def test_semantic_notification_body_is_bounded(test_session):
     _, _, message = _persist_message(
         body="Latest actionable line. "
         + "older transcript line that should not be copied wholesale " * 20,
@@ -127,9 +134,9 @@ def test_notification_body_is_bounded_and_does_not_include_transcript_history(te
         notification_chars=180,
     )
 
-    assert len(result.inbox_message.message) <= 180
-    assert "Latest actionable line" in result.inbox_message.message
-    assert result.inbox_message.message.count("older transcript line") <= 1
+    assert len(result.delivery.message.body) <= 180
+    assert "Latest actionable line" in result.delivery.message.body
+    assert result.delivery.message.body.count("older transcript line") <= 1
 
 
 def test_duplicate_notification_for_same_receiver_and_presence_message_is_idempotent(
@@ -148,8 +155,11 @@ def test_duplicate_notification_for_same_receiver_and_presence_message_is_idempo
 
     assert first.created is True
     assert second.created is False
-    assert second.inbox_message.id == first.inbox_message.id
-    assert len(get_inbox_messages("terminal-a", limit=10)) == 1
+    assert second.delivery.notification.id == first.delivery.notification.id
+    assert len(db_module.list_pending_inbox_notifications("terminal-a", limit=10)) == 1
+    with db_module.SessionLocal() as session:
+        assert session.query(db_module.InboxNotificationModel).count() == 1
+        assert session.query(db_module.InboxModel).count() == 0
 
 
 def test_persisted_event_wrapper_bridges_its_message(test_session):
@@ -161,8 +171,8 @@ def test_persisted_event_wrapper_bridges_its_message(test_session):
     )
 
     assert result.created is True
-    assert result.inbox_message.source_kind == PRESENCE_INBOX_SOURCE_KIND
-    assert result.inbox_message.source_id == str(thread.id)
+    assert result.delivery.message.source_kind == PRESENCE_INBOX_SOURCE_KIND
+    assert result.delivery.message.source_id == str(thread.id)
 
 
 def test_different_presence_threads_do_not_coalesce_into_same_source(test_session):
@@ -184,9 +194,9 @@ def test_different_presence_threads_do_not_coalesce_into_same_source(test_sessio
         receiver_id="terminal-a",
     )
 
-    assert first.inbox_message.source_id == str(first_thread.id)
-    assert second.inbox_message.source_id == str(second_thread.id)
-    assert first.inbox_message.source_id != second.inbox_message.source_id
+    assert first.delivery.message.source_id == str(first_thread.id)
+    assert second.delivery.message.source_id == str(second_thread.id)
+    assert first.delivery.message.source_id != second.delivery.message.source_id
 
 
 def test_missing_presence_thread_or_message_fails_clearly(test_session):
@@ -209,7 +219,7 @@ def test_missing_presence_thread_or_message_fails_clearly(test_session):
         )
 
 
-def test_attachment_metadata_does_not_block_text_notification(test_session):
+def test_attachment_metadata_does_not_block_semantic_message(test_session):
     _, _, message = _persist_message(
         body="Text that should still notify.",
         metadata={"attachments": [{"content_type": "image/png", "name": "trace.png"}]},
@@ -221,11 +231,14 @@ def test_attachment_metadata_does_not_block_text_notification(test_session):
     )
 
     assert result.created is True
-    assert "Text that should still notify." in result.inbox_message.message
-    assert "Attachment/media metadata present." in result.inbox_message.message
+    assert "Text that should still notify." in result.delivery.message.body
+    assert "Attachment/media metadata present." in result.delivery.message.body
+    assert result.delivery.message.origin == {
+        "attachments": [{"content_type": "image/png", "name": "trace.png"}]
+    }
 
 
-def test_notification_author_label_does_not_scan_large_raw_snapshot(test_session):
+def test_semantic_message_origin_does_not_copy_raw_snapshot(test_session):
     _, _, message = _persist_message(
         body="Text that should still notify.",
         raw_snapshot={"author": {"name": "Raw Snapshot Author Should Not Leak"}},
@@ -237,8 +250,7 @@ def test_notification_author_label_does_not_scan_large_raw_snapshot(test_session
         receiver_id="terminal-a",
     )
 
-    assert "Raw Snapshot Author Should Not Leak" not in result.inbox_message.message
-    assert "From:" not in result.inbox_message.message
+    assert result.delivery.message.origin is None
 
 
 def test_presence_sources_use_existing_inbox_batching_behavior(test_session):
@@ -263,11 +275,13 @@ def test_presence_sources_use_existing_inbox_batching_behavior(test_session):
         receiver_id="terminal-a",
     )
 
-    batch = db_module.get_pending_messages_for_effective_source("terminal-a", first.inbox_message)
+    batch = db_module.list_pending_inbox_deliveries_for_effective_source(
+        "terminal-a", first.delivery
+    )
 
-    assert [message.source_kind for message in batch] == [
+    assert [delivery.message.source_kind for delivery in batch] == [
         PRESENCE_INBOX_SOURCE_KIND,
         PRESENCE_INBOX_SOURCE_KIND,
     ]
-    assert [message.source_id for message in batch] == [str(thread.id), str(thread.id)]
-    assert [message.id for message in batch] == [1, 2]
+    assert [delivery.message.source_id for delivery in batch] == [str(thread.id), str(thread.id)]
+    assert [delivery.notification.id for delivery in batch] == [1, 2]

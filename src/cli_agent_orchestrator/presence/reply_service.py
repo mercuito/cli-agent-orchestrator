@@ -6,9 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
-from cli_agent_orchestrator.clients.database import get_inbox_message
-from cli_agent_orchestrator.models.inbox import InboxMessage
-from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_SOURCE_KIND
+from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_ROUTE_KIND
 from cli_agent_orchestrator.presence.manager import (
     PresenceProviderManager,
     presence_provider_manager,
@@ -63,7 +63,7 @@ _SENSITIVE_VALUE_RE = re.compile(
 class PresenceReplyResult:
     """Durable result of replying to a provider-backed presence thread."""
 
-    inbox_message: InboxMessage
+    delivery: InboxDelivery
     thread: ConversationThreadRecord
     provider_reply: ConversationMessage
     outbound_message: ConversationMessageRecord
@@ -81,21 +81,22 @@ def reply_to_inbox_message(
     if not body:
         raise PresenceReplyError("reply body is required")
 
-    inbox_message = get_inbox_message(inbox_message_id)
-    if inbox_message is None:
-        raise PresenceReplyNotFoundError(f"inbox message {inbox_message_id} not found")
+    delivery = _read_delivery(inbox_message_id)
+    if delivery is None:
+        raise PresenceReplyNotFoundError(f"inbox notification {inbox_message_id} not found")
+    message = delivery.message
 
-    if inbox_message.source_kind != PRESENCE_INBOX_SOURCE_KIND:
+    if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
         raise PresenceReplyUnsupportedSourceError(
-            f"inbox message {inbox_message_id} source_kind "
-            f"{inbox_message.source_kind!r} is not supported for presence replies"
+            f"inbox notification {inbox_message_id} route_kind "
+            f"{message.route_kind!r} is not supported for presence replies"
         )
 
-    thread_id = _parse_thread_source_id(inbox_message)
+    thread_id = _parse_thread_route_id(delivery)
     thread = get_thread_by_id(thread_id)
     if thread is None:
         raise PresenceReplyNotFoundError(
-            f"presence thread {thread_id} for inbox message {inbox_message_id} not found"
+            f"presence thread {thread_id} for inbox notification {inbox_message_id} not found"
         )
 
     thread_ref = ExternalRef(
@@ -108,61 +109,69 @@ def reply_to_inbox_message(
         provider_reply = provider_manager.reply_to_thread(
             thread_ref,
             body,
-            metadata=_reply_metadata(inbox_message_id, thread=thread, metadata=metadata),
+            metadata=_reply_metadata(delivery.notification.id, thread=thread, metadata=metadata),
         )
     except Exception as exc:
         safe_error = _safe_provider_error(exc)
         failed_message = _record_failed_reply(
             thread=thread,
             body=body,
-            inbox_message_id=inbox_message_id,
+            inbox_notification_id=delivery.notification.id,
             error=exc,
             safe_error=safe_error,
             metadata=metadata,
         )
         raise PresenceReplyDeliveryError(
-            f"provider reply failed for inbox message {inbox_message_id}: {safe_error}",
+            f"provider reply failed for inbox notification {inbox_message_id}: {safe_error}",
             failed_message=failed_message,
         ) from exc
 
     outbound_message = _record_successful_reply(
         thread=thread,
         body=body,
-        inbox_message_id=inbox_message_id,
+        inbox_notification_id=delivery.notification.id,
         provider_reply=provider_reply,
         metadata=metadata,
     )
     return PresenceReplyResult(
-        inbox_message=inbox_message,
+        delivery=delivery,
         thread=thread,
         provider_reply=provider_reply,
         outbound_message=outbound_message,
     )
 
 
-def _parse_thread_source_id(inbox_message: InboxMessage) -> int:
-    if inbox_message.source_id is None:
+def _read_delivery(inbox_message_id: int) -> Optional[InboxDelivery]:
+    delivery = db_module.get_inbox_delivery(inbox_message_id)
+    if delivery is not None:
+        return delivery
+    return db_module.get_inbox_delivery_for_legacy_message(inbox_message_id)
+
+
+def _parse_thread_route_id(delivery: InboxDelivery) -> int:
+    message = delivery.message
+    if message.route_id is None:
         raise PresenceReplyNotFoundError(
-            f"inbox message {inbox_message.id} does not include a presence thread source id"
+            f"inbox notification {delivery.notification.id} does not include a presence thread route id"
         )
 
     try:
-        return int(inbox_message.source_id)
+        return int(message.route_id)
     except ValueError as exc:
         raise PresenceReplyNotFoundError(
-            f"inbox message {inbox_message.id} has invalid presence thread source id "
-            f"{inbox_message.source_id!r}"
+            f"inbox notification {delivery.notification.id} has invalid presence thread route id "
+            f"{message.route_id!r}"
         ) from exc
 
 
 def _reply_metadata(
-    inbox_message_id: int,
+    inbox_notification_id: int,
     *,
     thread: ConversationThreadRecord,
     metadata: Optional[Mapping[str, Any]],
 ) -> Dict[str, Any]:
     result: Dict[str, Any] = {
-        "inbox_message_id": inbox_message_id,
+        "inbox_notification_id": inbox_notification_id,
     }
     if thread.metadata is not None:
         result["thread_metadata"] = thread.metadata
@@ -177,13 +186,13 @@ def _record_successful_reply(
     *,
     thread: ConversationThreadRecord,
     body: str,
-    inbox_message_id: int,
+    inbox_notification_id: int,
     provider_reply: ConversationMessage,
     metadata: Optional[Mapping[str, Any]],
 ) -> ConversationMessageRecord:
     reply_ref = provider_reply.ref
     record_metadata: Dict[str, Any] = {
-        "inbox_message_id": inbox_message_id,
+        "inbox_notification_id": inbox_notification_id,
         "reply_status": "delivered",
     }
     if reply_ref is not None:
@@ -211,13 +220,13 @@ def _record_failed_reply(
     *,
     thread: ConversationThreadRecord,
     body: str,
-    inbox_message_id: int,
+    inbox_notification_id: int,
     error: Exception,
     safe_error: str,
     metadata: Optional[Mapping[str, Any]],
 ) -> ConversationMessageRecord:
     record_metadata: Dict[str, Any] = {
-        "inbox_message_id": inbox_message_id,
+        "inbox_notification_id": inbox_notification_id,
         "reply_status": "failed",
         "error_type": type(error).__name__,
         "error": safe_error,

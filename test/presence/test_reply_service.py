@@ -10,8 +10,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_message
-from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_SOURCE_KIND
+from cli_agent_orchestrator.clients.database import Base, create_inbox_delivery
+from cli_agent_orchestrator.presence.inbox_bridge import (
+    PRESENCE_INBOX_SOURCE_KIND,
+    create_notification_for_message,
+)
 from cli_agent_orchestrator.presence.manager import PresenceProviderManager
 from cli_agent_orchestrator.presence.models import (
     ConversationMessage,
@@ -118,14 +121,11 @@ def _presence_inbox_message() -> tuple[int, int]:
         kind="prompt",
         body="Can you reply?",
     )
-    inbox = create_inbox_message(
-        "presence",
-        "terminal-a",
-        "Presence update",
-        source_kind=PRESENCE_INBOX_SOURCE_KIND,
-        source_id=str(thread.id),
+    notification = create_notification_for_message(
+        presence_message_id=inbound.id,
+        receiver_id="terminal-a",
     )
-    return inbox.id, inbound.id
+    return notification.delivery.notification.id, inbound.id
 
 
 def test_successful_reply_resolves_inbox_thread_and_provider_registry(test_session):
@@ -135,13 +135,13 @@ def test_successful_reply_resolves_inbox_thread_and_provider_registry(test_sessi
 
     result = reply_to_inbox_message(inbox_id, "I am on it", provider_manager=manager)
 
-    assert result.inbox_message.id == inbox_id
+    assert result.delivery.notification.id == inbox_id
     assert result.thread.external_id == "thread-1"
     assert result.outbound_message.direction == "outbound"
     assert result.outbound_message.state == "delivered"
     assert result.outbound_message.external_id == "reply-1"
     assert result.outbound_message.metadata == {
-        "inbox_message_id": inbox_id,
+        "inbox_notification_id": inbox_id,
         "provider_reply_ref": {
             "provider": "example",
             "id": "reply-1",
@@ -167,7 +167,7 @@ def test_provider_receives_thread_external_ref_and_body_not_message_ref(test_ses
             ),
             "body": "Thread-level reply",
             "kind": "response",
-            "metadata": {"inbox_message_id": inbox_id},
+            "metadata": {"inbox_notification_id": inbox_id},
         }
     ]
     inbound = list_messages(1)[0]
@@ -205,7 +205,7 @@ def test_provider_error_records_visible_failed_state(test_session):
     assert failed.metadata == {
         "error": "provider is down",
         "error_type": "RuntimeError",
-        "inbox_message_id": inbox_id,
+        "inbox_notification_id": inbox_id,
         "reply_status": "failed",
     }
 
@@ -225,12 +225,12 @@ def test_unknown_provider_records_visible_failed_state(test_session):
 
 
 def test_missing_inbox_id_fails_clearly(test_session):
-    with pytest.raises(PresenceReplyNotFoundError, match="inbox message 999 not found"):
+    with pytest.raises(PresenceReplyNotFoundError, match="inbox notification 999 not found"):
         reply_to_inbox_message(999, "No inbox")
 
 
 def test_non_presence_source_fails_as_unsupported(test_session):
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "worker-a",
         "terminal-a",
         "Plain terminal message",
@@ -240,22 +240,24 @@ def test_non_presence_source_fails_as_unsupported(test_session):
 
     with pytest.raises(
         PresenceReplyUnsupportedSourceError,
-        match="source_kind 'terminal' is not supported",
+        match="route_kind None is not supported",
     ):
-        reply_to_inbox_message(inbox.id, "No presence target")
+        reply_to_inbox_message(delivery.notification.id, "No presence target")
 
 
 def test_missing_presence_thread_source_fails_clearly(test_session):
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "presence",
         "terminal-a",
         "Presence update",
         source_kind=PRESENCE_INBOX_SOURCE_KIND,
         source_id="999",
+        route_kind=PRESENCE_INBOX_SOURCE_KIND,
+        route_id="999",
     )
 
     with pytest.raises(
         PresenceReplyNotFoundError,
-        match=f"presence thread 999 for inbox message {inbox.id} not found",
+        match=f"presence thread 999 for inbox notification {delivery.notification.id} not found",
     ):
-        reply_to_inbox_message(inbox.id, "No durable thread")
+        reply_to_inbox_message(delivery.notification.id, "No durable thread")

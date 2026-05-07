@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, get_inbox_messages
+from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
 from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
 from cli_agent_orchestrator.linear.workspace_provider import (
@@ -56,6 +56,10 @@ def _test_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+
+
+def _pending_linear_notifications():
+    return db_module.list_pending_inbox_notifications("agent:implementation_partner", limit=10)
 
 
 def _disable_linear_inbox_receiver(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -366,9 +370,7 @@ def test_linear_agent_webhook_routes_verified_app_key_to_runtime(client, monkeyp
     assert response.status_code == 200
     assert response.json()["app_key"] == "implementation_partner"
     assert len(handle.accepted) == 1
-    assert get_inbox_messages("agent:implementation_partner", limit=10)[0].source_kind == (
-        PRESENCE_INBOX_SOURCE_KIND
-    )
+    assert _pending_linear_notifications()[0].message.source_kind == PRESENCE_INBOX_SOURCE_KIND
     presence_provider_manager.clear_providers()
 
 
@@ -407,7 +409,7 @@ def test_linear_agent_webhook_duplicate_delivery_does_not_duplicate_mapped_runti
     assert first.json()["routed"] is True
     assert second.json()["routed"] is True
     assert len(handle.accepted) == 1
-    assert len(get_inbox_messages("agent:implementation_partner", limit=10)) == 1
+    assert len(_pending_linear_notifications()) == 1
     presence_provider_manager.clear_providers()
 
 
@@ -437,7 +439,7 @@ def test_linear_agent_webhook_unknown_mapping_is_not_routed(client, monkeypatch)
     assert response.status_code == 200
     assert response.json()["routed"] is False
     assert get_thread("linear", "session-1") is not None
-    assert get_inbox_messages("agent:implementation_partner", limit=10) == []
+    assert _pending_linear_notifications() == []
     handle_factory.assert_not_called()
     presence_provider_manager.clear_providers()
 
@@ -500,12 +502,13 @@ def test_linear_agent_webhook_creates_presence_records_and_inbox_notification(
     assert len(handle.accepted) == 1
     thread = get_thread("linear", "session-1")
     assert thread is not None
-    messages = get_inbox_messages("agent:implementation_partner", limit=10)
+    messages = _pending_linear_notifications()
     assert len(messages) == 1
-    assert messages[0].sender_id == "presence"
-    assert messages[0].source_kind == PRESENCE_INBOX_SOURCE_KIND
-    assert messages[0].source_id == str(thread.id)
-    assert "Please wire this into the inbox." in messages[0].message
+    assert messages[0].message.sender_id == "presence"
+    assert messages[0].message.source_kind == PRESENCE_INBOX_SOURCE_KIND
+    assert messages[0].message.source_id == str(thread.id)
+    assert messages[0].message.route_id == str(thread.id)
+    assert "Please wire this into the inbox." in messages[0].message.body
     assert get_processed_event("linear", "delivery-1").event_type == "AgentSessionEvent"
     presence_provider_manager.clear_providers()
 
@@ -568,7 +571,7 @@ def test_linear_agent_webhook_duplicate_delivery_does_not_duplicate_inbox_or_ter
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert len(get_inbox_messages("agent:implementation_partner", limit=10)) == 1
+    assert len(_pending_linear_notifications()) == 1
     assert len(handle.accepted) == 1
     handle.create_activity.assert_called_once()
     handle.update_external_url.assert_called_once()
@@ -597,7 +600,7 @@ def test_linear_agent_webhook_duplicate_activity_does_not_duplicate_lifecycle_ef
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert len(get_inbox_messages("agent:implementation_partner", limit=10)) == 1
+    assert len(_pending_linear_notifications()) == 1
     handle.create_activity.assert_called_once()
     handle.update_external_url.assert_called_once()
     presence_provider_manager.clear_providers()
@@ -626,12 +629,12 @@ def test_linear_agent_sessions_produce_distinct_presence_inbox_sources(
         headers=_linear_headers("delivery-2"),
     )
 
-    messages = get_inbox_messages("agent:implementation_partner", limit=10)
+    messages = _pending_linear_notifications()
     assert len(messages) == 2
-    assert {message.source_kind for message in messages} == {PRESENCE_INBOX_SOURCE_KIND}
-    assert messages[0].source_id != messages[1].source_id
-    assert messages[0].source_id == str(get_thread("linear", "session-1").id)
-    assert messages[1].source_id == str(get_thread("linear", "session-2").id)
+    assert {delivery.message.source_kind for delivery in messages} == {PRESENCE_INBOX_SOURCE_KIND}
+    assert messages[0].message.source_id != messages[1].message.source_id
+    assert messages[0].message.source_id == str(get_thread("linear", "session-1").id)
+    assert messages[1].message.source_id == str(get_thread("linear", "session-2").id)
     presence_provider_manager.clear_providers()
 
 
@@ -652,7 +655,7 @@ def test_linear_text_preview_is_lightweight_and_bounded(client, monkeypatch):
     )
 
     assert response.status_code == 200
-    notification = get_inbox_messages("agent:implementation_partner", limit=10)[0].message
+    notification = _pending_linear_notifications()[0].message.body
     assert len(notification) <= 700
     assert "Latest Linear request." in notification
     assert notification.count("older transcript line") < 20
@@ -678,9 +681,8 @@ def test_linear_attachment_metadata_does_not_block_text_notification(client, mon
     )
 
     assert response.status_code == 200
-    notification = get_inbox_messages("agent:implementation_partner", limit=10)[0].message
+    notification = _pending_linear_notifications()[0].message.body
     assert "Text should still notify." in notification
-    assert "Attachment/media metadata present." in notification
     presence_provider_manager.clear_providers()
 
 
@@ -777,7 +779,7 @@ def test_linear_reply_from_inbox_notification_routes_through_provider_registry(
         json=_linear_agent_payload(),
         headers=_linear_headers(),
     )
-    inbox = get_inbox_messages("agent:implementation_partner", limit=10)[0]
+    inbox = _pending_linear_notifications()[0].notification
 
     result = reply_to_inbox_message(inbox.id, "Reply through Linear", provider_manager=manager)
 
@@ -812,7 +814,7 @@ def test_linear_reply_failure_from_inbox_notification_is_visible(client, monkeyp
         json=_linear_agent_payload(),
         headers=_linear_headers(),
     )
-    inbox = get_inbox_messages("agent:implementation_partner", limit=10)[0]
+    inbox = _pending_linear_notifications()[0].notification
 
     with pytest.raises(PresenceReplyDeliveryError, match="provider reply failed"):
         reply_to_inbox_message(inbox.id, "This should surface failure", provider_manager=manager)

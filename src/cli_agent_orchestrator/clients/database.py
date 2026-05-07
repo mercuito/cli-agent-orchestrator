@@ -268,7 +268,10 @@ class PresenceInboxNotificationModel(Base):
     presence_message_id = Column(
         Integer, ForeignKey("presence_messages.id", ondelete="CASCADE"), nullable=False
     )
-    inbox_message_id = Column(Integer, ForeignKey("inbox.id", ondelete="CASCADE"), nullable=False)
+    inbox_message_id = Column(Integer, ForeignKey("inbox.id", ondelete="CASCADE"), nullable=True)
+    inbox_notification_id = Column(
+        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=True
+    )
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
 
@@ -375,6 +378,85 @@ def _migrate_ensure_presence_tables() -> None:
         PresenceInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for presence tables failed: {e}")
+        return
+
+    import sqlite3
+
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    try:
+        conn = sqlite3.connect(str(DATABASE_FILE))
+        columns_info = conn.execute("PRAGMA table_info(presence_inbox_notifications)").fetchall()
+        column_info = {row[1]: row for row in columns_info}
+        if not column_info:
+            conn.close()
+            return
+
+        needs_rebuild = "inbox_notification_id" not in column_info or (
+            "inbox_message_id" in column_info and bool(column_info["inbox_message_id"][3])
+        )
+        if not needs_rebuild:
+            conn.close()
+            return
+
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DROP TABLE IF EXISTS presence_inbox_notifications_old")
+        conn.execute(
+            "ALTER TABLE presence_inbox_notifications " "RENAME TO presence_inbox_notifications_old"
+        )
+        conn.execute("""
+            CREATE TABLE presence_inbox_notifications (
+                id INTEGER NOT NULL,
+                receiver_id VARCHAR NOT NULL,
+                presence_message_id INTEGER NOT NULL,
+                inbox_message_id INTEGER,
+                inbox_notification_id INTEGER,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE (receiver_id, presence_message_id),
+                FOREIGN KEY(presence_message_id)
+                    REFERENCES presence_messages (id) ON DELETE CASCADE,
+                FOREIGN KEY(inbox_message_id) REFERENCES inbox (id) ON DELETE CASCADE,
+                FOREIGN KEY(inbox_notification_id)
+                    REFERENCES inbox_notifications (id) ON DELETE CASCADE
+            )
+        """)
+        inbox_notification_expr = (
+            "old.inbox_notification_id"
+            if "inbox_notification_id" in column_info
+            else """
+                (
+                    SELECT inbox_notifications.id
+                    FROM inbox_notifications
+                    WHERE inbox_notifications.legacy_inbox_id = old.inbox_message_id
+                )
+            """
+        )
+        conn.execute(f"""
+            INSERT INTO presence_inbox_notifications (
+                id,
+                receiver_id,
+                presence_message_id,
+                inbox_message_id,
+                inbox_notification_id,
+                created_at
+            )
+            SELECT
+                old.id,
+                old.receiver_id,
+                old.presence_message_id,
+                old.inbox_message_id,
+                {inbox_notification_expr},
+                old.created_at
+            FROM presence_inbox_notifications_old AS old
+        """)
+        conn.execute("DROP TABLE presence_inbox_notifications_old")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.commit()
+        conn.close()
+        logger.info("Migration: rebuilt presence_inbox_notifications with semantic ids")
+    except Exception as e:
+        logger.warning(f"Migration check for presence notification ids failed: {e}")
 
 
 def _migrate_ensure_agent_runtime_tables() -> None:

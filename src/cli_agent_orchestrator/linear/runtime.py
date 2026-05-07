@@ -277,13 +277,8 @@ def notify_agent_for_persisted_event(
     if notification.created:
         _post_accepted_activity(thread_id=thread_id, resolved=resolved)
 
-    delivery = db_module.get_inbox_delivery_for_legacy_message(notification.inbox_message.id)
-    if delivery is None:
-        raise RuntimeError(
-            f"inbox notification for persisted event {notification.inbox_message.id} not found"
-        )
     runtime_notification = AgentRuntimeNotification(
-        delivery=delivery,
+        delivery=notification.delivery,
         created=notification.created,
     )
     result = handle.accept_notification(runtime_notification)

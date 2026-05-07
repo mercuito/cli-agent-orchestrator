@@ -807,7 +807,7 @@ def _reply_to_inbox_message_impl(inbox_message_id: int, body: str) -> Dict[str, 
         result = route_provider_inbox_reply(inbox_message_id, body)
         return {
             "success": True,
-            "inbox_message_id": result.inbox_message.id,
+            "inbox_message_id": result.delivery.notification.id,
             "provider": result.thread.provider,
             "thread_id": result.thread.external_id,
             "outbound_message": {

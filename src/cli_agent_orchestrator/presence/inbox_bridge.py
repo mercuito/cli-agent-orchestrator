@@ -11,10 +11,11 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxMessage
+from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
 
 PRESENCE_INBOX_SOURCE_KIND = "presence_thread"
+PRESENCE_INBOX_ROUTE_KIND = "presence_thread"
 PRESENCE_INBOX_SENDER_ID = "presence"
 DEFAULT_PREVIEW_CHARS = 240
 DEFAULT_NOTIFICATION_CHARS = 700
@@ -25,7 +26,7 @@ MAX_NOTIFICATION_METADATA_JSON_CHARS = 4000
 class PresenceInboxNotification:
     """Result of bridging one persisted presence message into the inbox."""
 
-    inbox_message: InboxMessage
+    delivery: InboxDelivery
     created: bool
 
 
@@ -69,7 +70,7 @@ def create_notification_for_message(
     with db_module.SessionLocal() as session:
         existing = _get_existing_notification(session, receiver_id, presence_message_id)
         if existing is not None:
-            return PresenceInboxNotification(inbox_message=existing, created=False)
+            return PresenceInboxNotification(delivery=existing, created=False)
 
         message_row = (
             session.query(db_module.PresenceMessageModel)
@@ -97,80 +98,74 @@ def create_notification_for_message(
                 .first()
             )
 
-        inbox_message = db_module.create_inbox_message(
+        delivery = db_module.create_inbox_delivery(
             PRESENCE_INBOX_SENDER_ID,
             receiver_id,
-            "[CAO inbox notification pending]",
+            _presence_message_body(message_row, thread_row),
             db=session,
             source_kind=PRESENCE_INBOX_SOURCE_KIND,
             source_id=str(thread_row.id),
+            origin=_presence_message_origin(message_row),
+            route_kind=PRESENCE_INBOX_ROUTE_KIND,
+            route_id=str(thread_row.id),
         )
-        inbox_row = session.get(db_module.InboxModel, inbox_message.id)
-        if inbox_row is None:
-            raise RuntimeError(f"created inbox message {inbox_message.id} not found")
-        notification_row = (
-            session.query(db_module.InboxNotificationModel)
-            .filter(db_module.InboxNotificationModel.legacy_inbox_id == inbox_message.id)
-            .one()
-        )
-        durable_message_row = session.get(db_module.InboxMessageModel, notification_row.message_id)
+        durable_message_row = session.get(db_module.InboxMessageModel, delivery.message.id)
         if durable_message_row is None:
-            raise RuntimeError(f"durable inbox message {notification_row.message_id} not found")
-
-        notification_body = format_presence_notification(
-            inbox_message_id=cast(int, inbox_message.id),
+            raise RuntimeError(f"durable inbox message {delivery.message.id} not found")
+        mutable_durable_message_row = cast(Any, durable_message_row)
+        mutable_durable_message_row.body = format_presence_notification(
+            inbox_notification_id=cast(int, delivery.notification.id),
             message_row=message_row,
             thread_row=thread_row,
             work_item_row=work_item_row,
             preview_chars=preview_chars,
             notification_chars=notification_chars,
         )
-        mutable_inbox_row = cast(Any, inbox_row)
-        mutable_inbox_row.message = notification_body
-        mutable_durable_message_row = cast(Any, durable_message_row)
-        mutable_durable_message_row.body = notification_body
         session.flush()
-        session.refresh(inbox_row)
 
         inserted = session.execute(
             sqlite_insert(db_module.PresenceInboxNotificationModel)
             .values(
                 receiver_id=receiver_id,
                 presence_message_id=presence_message_id,
-                inbox_message_id=inbox_message.id,
+                inbox_notification_id=delivery.notification.id,
                 created_at=datetime.now(),
             )
             .on_conflict_do_nothing(index_elements=["receiver_id", "presence_message_id"])
         )
         if inserted.rowcount == 1:
-            inbox_message = db_module.inbox_message_from_model(inbox_row)
+            refreshed = db_module.get_inbox_delivery(delivery.notification.id, db=session)
+            if refreshed is None:
+                raise RuntimeError(
+                    f"inbox notification {delivery.notification.id} for presence message "
+                    f"{presence_message_id} not found"
+                )
             session.commit()
-            return PresenceInboxNotification(inbox_message=inbox_message, created=True)
+            return PresenceInboxNotification(delivery=refreshed, created=True)
 
         session.delete(durable_message_row)
-        session.delete(inbox_row)
         session.flush()
         existing = _get_existing_notification(session, receiver_id, presence_message_id)
         if existing is None:
             raise RuntimeError("presence inbox notification insert conflicted without existing row")
         session.commit()
-        return PresenceInboxNotification(inbox_message=existing, created=False)
+        return PresenceInboxNotification(delivery=existing, created=False)
 
 
 def format_presence_notification(
     *,
-    inbox_message_id: int,
+    inbox_notification_id: int,
     message_row: db_module.PresenceMessageModel,
     thread_row: db_module.PresenceThreadModel,
     work_item_row: Optional[db_module.PresenceWorkItemModel] = None,
     preview_chars: int = DEFAULT_PREVIEW_CHARS,
     notification_chars: int = DEFAULT_NOTIFICATION_CHARS,
 ) -> str:
-    """Build a small human-readable notification body from persisted presence rows."""
+    """Build the compact agent-visible notification sent through the inbox."""
 
     lines = [
         "[CAO inbox notification]",
-        f"ID: {inbox_message_id}",
+        f"ID: {inbox_notification_id}",
         f"Preview: {_preview(cast(Optional[str], message_row.body), preview_chars)}",
         f"Source: {_format_source(message_row, thread_row)}",
         _format_author(message_row),
@@ -183,8 +178,9 @@ def format_presence_notification(
     guidance = "\n".join(
         [
             "",
-            f"Read: read_inbox_message(inbox_message_id={inbox_message_id}).",
-            f"Reply: reply_to_inbox_message(inbox_message_id={inbox_message_id}, body=...).",
+            f"Read: read_inbox_message(inbox_message_id={inbox_notification_id}).",
+            "Reply: "
+            f"reply_to_inbox_message(inbox_message_id={inbox_notification_id}, body=...).",
         ]
     )
     body = "\n".join(line for line in lines if line)
@@ -196,7 +192,7 @@ def format_presence_notification(
 
 def _get_existing_notification(
     session: Session, receiver_id: str, presence_message_id: int
-) -> Optional[InboxMessage]:
+) -> Optional[InboxDelivery]:
     row = (
         session.query(db_module.PresenceInboxNotificationModel)
         .filter(
@@ -208,16 +204,46 @@ def _get_existing_notification(
     if row is None:
         return None
 
-    inbox_row = (
-        session.query(db_module.InboxModel)
-        .filter(db_module.InboxModel.id == row.inbox_message_id)
-        .first()
-    )
-    if inbox_row is None:
+    if row.inbox_notification_id is not None:
+        delivery = db_module.get_inbox_delivery(cast(int, row.inbox_notification_id), db=session)
+        if delivery is not None:
+            return delivery
         raise RuntimeError(
-            f"inbox message {row.inbox_message_id} for presence message {presence_message_id} not found"
+            "inbox notification "
+            f"{row.inbox_notification_id} for presence message {presence_message_id} not found"
         )
-    return db_module.inbox_message_from_model(inbox_row)
+
+    if row.inbox_message_id is not None:
+        delivery = db_module.get_inbox_delivery_for_legacy_message(
+            cast(int, row.inbox_message_id), db=session
+        )
+        if delivery is not None:
+            return delivery
+        raise RuntimeError(
+            f"inbox delivery for legacy message {row.inbox_message_id} and presence message "
+            f"{presence_message_id} not found"
+        )
+
+    raise RuntimeError(
+        f"presence message {presence_message_id} notification marker has no inbox id"
+    )
+
+
+def _presence_message_body(
+    message_row: db_module.PresenceMessageModel,
+    thread_row: db_module.PresenceThreadModel,
+) -> str:
+    body = _compact(cast(Optional[str], message_row.body))
+    if body:
+        return body
+    return _compact(cast(Optional[str], thread_row.prompt_context)) or "(no text body)"
+
+
+def _presence_message_origin(
+    message_row: db_module.PresenceMessageModel,
+) -> Optional[dict[str, Any]]:
+    metadata = _load_json_object(cast(Optional[str], message_row.metadata_json))
+    return dict(metadata) if metadata is not None else None
 
 
 def _format_work_item(row: Optional[db_module.PresenceWorkItemModel]) -> Optional[str]:
@@ -270,13 +296,6 @@ def _truncate(value: str, max_chars: int) -> str:
     return value[: max(0, max_chars - len(suffix))].rstrip() + suffix
 
 
-def _metadata_indicates_media(metadata_json: Optional[str]) -> bool:
-    metadata = _load_json_object(metadata_json)
-    if metadata is None:
-        return False
-    return _contains_media_marker(metadata)
-
-
 def _load_json_object(metadata_json: Optional[str]) -> Optional[dict[str, Any]]:
     if not metadata_json or len(metadata_json) > MAX_NOTIFICATION_METADATA_JSON_CHARS:
         return None
@@ -285,6 +304,13 @@ def _load_json_object(metadata_json: Optional[str]) -> Optional[dict[str, Any]]:
     except Exception:
         return None
     return metadata if isinstance(metadata, dict) else None
+
+
+def _metadata_indicates_media(metadata_json: Optional[str]) -> bool:
+    metadata = _load_json_object(metadata_json)
+    if metadata is None:
+        return False
+    return _contains_media_marker(metadata)
 
 
 def _contains_media_marker(value: Any) -> bool:

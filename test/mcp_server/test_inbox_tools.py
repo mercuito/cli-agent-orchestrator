@@ -8,11 +8,17 @@ from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import create_engine, event as sa_event
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_message, create_terminal
+from cli_agent_orchestrator.clients.database import (
+    Base,
+    create_inbox_delivery,
+    create_inbox_message,
+    create_terminal,
+)
 from cli_agent_orchestrator.mcp_server.server import (
     _read_inbox_message_impl,
     _reply_to_inbox_message_impl,
@@ -152,7 +158,7 @@ def _presence_notification() -> int:
     return create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:example",
-    ).inbox_message.id
+    ).delivery.notification.id
 
 
 def _presence_notification_with_large_raw_snapshot() -> int:
@@ -175,7 +181,7 @@ def _presence_notification_with_large_raw_snapshot() -> int:
     return create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:example",
-    ).inbox_message.id
+    ).delivery.notification.id
 
 
 def _linear_presence_notification() -> int:
@@ -196,7 +202,7 @@ def _linear_presence_notification() -> int:
     return create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:implementation_partner",
-    ).inbox_message.id
+    ).delivery.notification.id
 
 
 def _linear_presence_notification_with_work_item_and_metadata() -> int:
@@ -239,7 +245,7 @@ def _linear_presence_notification_with_work_item_and_metadata() -> int:
     return create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:implementation_partner",
-    ).inbox_message.id
+    ).delivery.notification.id
 
 
 @pytest.mark.asyncio
@@ -321,6 +327,38 @@ def test_provider_backed_read_body_is_backing_message_not_notification_wrapper(t
     assert "read_inbox_message" not in result["body"]
 
 
+def test_provider_backed_read_missing_backing_message_fails_clearly(test_session):
+    inbox_id = _presence_notification()
+
+    with db_module.SessionLocal() as session:
+        session.execute(text("PRAGMA foreign_keys=OFF"))
+        session.query(db_module.PresenceMessageModel).delete()
+        session.commit()
+
+    result = _read_inbox_message_impl(inbox_id)
+
+    assert result["success"] is False
+    assert result["error_type"] == "InboxReadNotFoundError"
+    assert "presence message" in result["error"]
+    assert "not found" in result["error"]
+
+
+def test_provider_backed_read_missing_backing_thread_fails_clearly(test_session):
+    inbox_id = _presence_notification()
+
+    with db_module.SessionLocal() as session:
+        session.execute(text("PRAGMA foreign_keys=OFF"))
+        session.query(db_module.PresenceThreadModel).delete()
+        session.commit()
+
+    result = _read_inbox_message_impl(inbox_id)
+
+    assert result["success"] is False
+    assert result["error_type"] == "InboxReadNotFoundError"
+    assert "presence thread" in result["error"]
+    assert "not found" in result["error"]
+
+
 def test_read_inbox_message_uses_bounded_sender_fallback_without_internal_ids(test_session):
     inbox = create_inbox_message(
         "missing-terminal-id",
@@ -378,7 +416,7 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
     inbox_id = create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:example",
-    ).inbox_message.id
+    ).delivery.notification.id
 
     result = _read_inbox_message_impl(inbox_id)
 
@@ -406,7 +444,7 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
     inbox_id = create_notification_for_message(
         presence_message_id=message.id,
         receiver_id="agent:example",
-    ).inbox_message.id
+    ).delivery.notification.id
 
     result = _read_inbox_message_impl(inbox_id)
     encoded = json.dumps(result)
@@ -416,7 +454,7 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
     assert "x" * 1000 not in encoded
 
 
-def test_provider_backed_read_without_marker_uses_inbound_message_body(test_session):
+def test_provider_backed_read_without_marker_fails_clearly(test_session):
     thread = upsert_thread(
         provider="example",
         external_id="thread-with-reply",
@@ -439,18 +477,21 @@ def test_provider_backed_read_without_marker_uses_inbound_message_body(test_sess
         kind="response",
         body="Previous CAO reply",
     )
-    inbox = create_inbox_message(
+    delivery = create_inbox_delivery(
         "presence",
         "agent:example",
         "Presence update",
         source_kind=PRESENCE_INBOX_SOURCE_KIND,
         source_id=str(thread.id),
+        route_kind=PRESENCE_INBOX_SOURCE_KIND,
+        route_id=str(thread.id),
     )
 
-    result = _read_inbox_message_impl(inbox.id)
+    result = _read_inbox_message_impl(delivery.notification.id)
 
-    assert result["body"] == "Original provider prompt"
-    assert "Previous CAO reply" not in json.dumps(result)
+    assert result["success"] is False
+    assert result["error_type"] == "InboxReadNotFoundError"
+    assert "presence notification marker" in result["error"]
 
 
 def test_reply_to_inbox_message_routes_through_provider_presence_registry(test_session):
@@ -469,6 +510,57 @@ def test_reply_to_inbox_message_routes_through_provider_presence_registry(test_s
         id="thread-1",
         url="https://presence.example/thread-1",
     )
+    assert provider.replies[0]["metadata"]["inbox_notification_id"] == inbox_id
+
+
+def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(test_session):
+    work_item = upsert_work_item(
+        provider="example",
+        external_id="work-breadcrumb",
+        identifier="CAO-39",
+        title="Breadcrumb is presentation only",
+    )
+    thread = upsert_thread(
+        provider="example",
+        external_id="thread-route",
+        external_url="https://presence.example/thread-route",
+        work_item_id=work_item.id,
+        kind="conversation",
+    )
+    message = upsert_message(
+        thread_id=thread.id,
+        provider="example",
+        external_id="message-route",
+        direction="inbound",
+        kind="prompt",
+        body="Reply using hidden route data.",
+        metadata=inbox_presentation_metadata(
+            workspace={
+                "name": "Example",
+                "breadcrumb": {
+                    "thread_id": "misleading-agent-visible-thread",
+                    "issue": "CAO-39",
+                },
+            },
+            source_label="Example Workspace",
+        ),
+    )
+    inbox_id = create_notification_for_message(
+        presence_message_id=message.id,
+        receiver_id="agent:example",
+    ).delivery.notification.id
+    provider = FakePresenceProvider()
+    presence_provider_manager.register_provider("example", provider)
+
+    result = _reply_to_inbox_message_impl(inbox_id, "Routed reply")
+
+    assert result["success"] is True
+    assert provider.replies[0]["thread_ref"] == ExternalRef(
+        provider="example",
+        id="thread-route",
+        url="https://presence.example/thread-route",
+    )
+    assert "misleading-agent-visible-thread" not in json.dumps(provider.replies[0]["metadata"])
 
 
 def test_reply_to_inbox_message_registers_linear_provider_in_mcp_process(

@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxMessage
-from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_SOURCE_KIND
+from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_ROUTE_KIND
 from cli_agent_orchestrator.presence.inbox_presentation import (
     INBOX_PRESENTATION_METADATA_KEY,
 )
@@ -26,7 +26,7 @@ class InboxReadNotFoundError(InboxReadError):
 class InboxReadResult:
     """Message-first read result for one CAO inbox notification."""
 
-    inbox_message: InboxMessage
+    delivery: InboxDelivery
     from_label: str
     body: str
     replyable: bool
@@ -40,37 +40,34 @@ MAX_METADATA_JSON_CHARS = 4000
 
 
 def read_inbox_message(inbox_message_id: int) -> InboxReadResult:
-    """Read one CAO inbox message through the slim shared inbox surface."""
+    """Read one CAO inbox notification through the slim shared inbox surface."""
 
     with db_module.SessionLocal() as session:
-        inbox_row = (
-            session.query(db_module.InboxModel)
-            .filter(db_module.InboxModel.id == inbox_message_id)
-            .first()
-        )
-        if inbox_row is None:
-            raise InboxReadNotFoundError(f"inbox message {inbox_message_id} not found")
-        inbox_message = db_module.inbox_message_from_model(inbox_row)
+        delivery = _read_delivery(session, inbox_message_id)
+        if delivery is None:
+            raise InboxReadNotFoundError(f"inbox notification {inbox_message_id} not found")
+        message = delivery.message
 
-        if inbox_row.source_kind != PRESENCE_INBOX_SOURCE_KIND:
+        if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
             return InboxReadResult(
-                inbox_message=inbox_message,
-                from_label=_plain_source_label(session, inbox_row),
-                body=inbox_message.message,
+                delivery=delivery,
+                from_label=_plain_source_label(session, delivery),
+                body=message.body,
                 replyable=False,
                 reply_error="no provider reply route",
                 workspace=None,
             )
-        if inbox_row.source_id is None:
+
+        if message.route_id is None:
             raise InboxReadNotFoundError(
-                f"inbox message {inbox_message_id} does not include a presence thread source id"
+                f"inbox notification {inbox_message_id} does not include a presence thread route id"
             )
         try:
-            thread_id = int(inbox_row.source_id)
+            thread_id = int(message.route_id)
         except ValueError as exc:
             raise InboxReadNotFoundError(
-                f"inbox message {inbox_message_id} has invalid presence thread source id "
-                f"{inbox_row.source_id!r}"
+                f"inbox notification {inbox_message_id} has invalid presence thread route id "
+                f"{message.route_id!r}"
             ) from exc
 
         thread_row = (
@@ -80,15 +77,15 @@ def read_inbox_message(inbox_message_id: int) -> InboxReadResult:
         )
         if thread_row is None:
             raise InboxReadNotFoundError(
-                f"presence thread {thread_id} for inbox message {inbox_message_id} not found"
+                f"presence thread {thread_id} for inbox notification {inbox_message_id} not found"
             )
 
         message_row = _selected_presence_message_row(
             session,
-            inbox_message_id=inbox_message_id,
-            thread_id=cast(int, thread_row.id),
+            inbox_notification_id=delivery.notification.id,
         )
         message_metadata = _message_metadata(message_row)
+        origin = message.origin if isinstance(message.origin, Mapping) else None
 
         reply_error = None
         replyable = True
@@ -97,12 +94,12 @@ def read_inbox_message(inbox_message_id: int) -> InboxReadResult:
             reply_error = "backing provider thread ref is missing"
 
         return InboxReadResult(
-            inbox_message=inbox_message,
-            from_label=_presence_source_label(message_metadata, message_row, thread_row),
+            delivery=delivery,
+            from_label=_presence_source_label(origin, message_metadata, message_row, thread_row),
             body=_presence_body(message_row, thread_row),
             replyable=replyable,
             reply_error=reply_error,
-            workspace=_presence_workspace(message_metadata),
+            workspace=_presence_workspace(origin) or _presence_workspace(message_metadata),
             thread={"provider": cast(Optional[str], thread_row.provider)},
         )
 
@@ -112,7 +109,7 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
 
     payload: Dict[str, Any] = {
         "success": True,
-        "id": result.inbox_message.id,
+        "id": result.delivery.notification.id,
         "from": result.from_label,
         "body": result.body,
         "replyable": result.replyable,
@@ -123,15 +120,23 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
     return payload
 
 
+def _read_delivery(session: Any, inbox_message_id: int) -> Optional[InboxDelivery]:
+    delivery = db_module.get_inbox_delivery(inbox_message_id, db=session)
+    if delivery is not None:
+        return delivery
+    return db_module.get_inbox_delivery_for_legacy_message(inbox_message_id, db=session)
+
+
 def _selected_presence_message_row(
     session: Any,
     *,
-    inbox_message_id: int,
-    thread_id: int,
+    inbox_notification_id: int,
 ) -> Optional[db_module.PresenceMessageModel]:
     marker = (
         session.query(db_module.PresenceInboxNotificationModel)
-        .filter(db_module.PresenceInboxNotificationModel.inbox_message_id == inbox_message_id)
+        .filter(
+            db_module.PresenceInboxNotificationModel.inbox_notification_id == inbox_notification_id
+        )
         .first()
     )
     if marker is not None:
@@ -142,23 +147,36 @@ def _selected_presence_message_row(
         )
         if message_row is None:
             raise InboxReadNotFoundError(
-                f"presence message {marker.presence_message_id} for inbox message "
-                f"{inbox_message_id} not found"
+                f"presence message {marker.presence_message_id} for inbox notification "
+                f"{inbox_notification_id} not found"
             )
         return cast(Optional[db_module.PresenceMessageModel], message_row)
 
-    return cast(
-        Optional[db_module.PresenceMessageModel],
-        session.query(db_module.PresenceMessageModel)
-        .filter(
-            db_module.PresenceMessageModel.thread_id == thread_id,
-            db_module.PresenceMessageModel.direction == "inbound",
+    legacy_marker = (
+        session.query(db_module.PresenceInboxNotificationModel)
+        .join(
+            db_module.InboxNotificationModel,
+            db_module.PresenceInboxNotificationModel.inbox_message_id
+            == db_module.InboxNotificationModel.legacy_inbox_id,
         )
-        .order_by(
-            db_module.PresenceMessageModel.created_at.desc(),
-            db_module.PresenceMessageModel.id.desc(),
+        .filter(db_module.InboxNotificationModel.id == inbox_notification_id)
+        .first()
+    )
+    if legacy_marker is not None:
+        message_row = (
+            session.query(db_module.PresenceMessageModel)
+            .filter(db_module.PresenceMessageModel.id == legacy_marker.presence_message_id)
+            .first()
         )
-        .first(),
+        if message_row is None:
+            raise InboxReadNotFoundError(
+                f"presence message {legacy_marker.presence_message_id} for inbox notification "
+                f"{inbox_notification_id} not found"
+            )
+        return cast(Optional[db_module.PresenceMessageModel], message_row)
+
+    raise InboxReadNotFoundError(
+        f"presence notification marker for inbox notification {inbox_notification_id} not found"
     )
 
 
@@ -206,32 +224,34 @@ def _load_bounded_json_object(metadata_json: Optional[str]) -> Optional[Dict[str
     return metadata if isinstance(metadata, dict) else None
 
 
-def _plain_source_label(session: Any, row: db_module.InboxModel) -> str:
+def _plain_source_label(session: Any, delivery: InboxDelivery) -> str:
+    message = delivery.message
     terminal = (
         session.query(db_module.TerminalModel)
-        .filter(db_module.TerminalModel.id == row.sender_id)
+        .filter(db_module.TerminalModel.id == message.sender_id)
         .first()
     )
     if terminal is not None and terminal.agent_profile:
         return _display_from_token(cast(str, terminal.agent_profile))
 
-    sender_id = str(cast(str, row.sender_id) or "")
+    sender_id = str(cast(str, message.sender_id) or "")
     if sender_id.startswith("agent:"):
         return _display_from_token(sender_id.split(":", 1)[1])
 
-    if row.source_kind and row.source_kind != "terminal":
-        return _display_from_token(str(row.source_kind))
-    if row.source_kind == "terminal":
+    if message.source_kind and message.source_kind != "terminal":
+        return _display_from_token(str(message.source_kind))
+    if message.source_kind == "terminal":
         return "Terminal sender"
     return "Inbox sender"
 
 
 def _presence_source_label(
+    origin: Optional[Mapping[str, Any]],
     metadata: Optional[Mapping[str, Any]],
     message_row: Optional[db_module.PresenceMessageModel],
     thread_row: db_module.PresenceThreadModel,
 ) -> str:
-    presentation = _presentation(metadata)
+    presentation = _presentation(origin) or _presentation(metadata)
     if presentation is not None:
         label = presentation.get("source_label")
         if label:
