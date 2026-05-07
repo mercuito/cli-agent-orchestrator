@@ -1,0 +1,335 @@
+"""CAO database schema migration decisions."""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.clients import sqlite_migrations
+from cli_agent_orchestrator.clients.baton_store import BatonEventModel, BatonModel
+from cli_agent_orchestrator.clients.inbox_store import InboxMessageModel, InboxNotificationModel
+from cli_agent_orchestrator.clients.presence_store import (
+    AgentRuntimeNotificationModel,
+    PresenceInboxNotificationModel,
+    PresenceMessageModel,
+    PresenceThreadModel,
+    PresenceWorkItemModel,
+    ProcessedProviderEventModel,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _database_module():
+    from cli_agent_orchestrator.clients import database as db_module
+
+    return db_module
+
+
+def init_db() -> None:
+    """Initialize database tables and apply schema migrations."""
+    db_module = _database_module()
+    db_module.Base.metadata.create_all(bind=db_module.engine)
+    _migrate_ensure_semantic_inbox_tables()
+    _migrate_ensure_baton_tables()
+    _migrate_ensure_presence_tables()
+    _migrate_ensure_agent_runtime_tables()
+    _migrate_drop_legacy_inbox_notification_ids()
+    _migrate_drop_legacy_inbox_table()
+    _migrate_add_allowed_tools()
+    _migrate_drop_monitoring_session_peers()
+
+
+def _migrate_ensure_semantic_inbox_tables() -> None:
+    """Create semantic inbox message/notification tables on existing databases."""
+    try:
+        engine = _database_module().engine
+        InboxMessageModel.__table__.create(bind=engine, checkfirst=True)
+        InboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for semantic inbox tables failed: {e}")
+
+
+def _notification_id_migration_expr(
+    marker_columns: dict[str, sqlite_migrations.ColumnInfo],
+    notification_columns: set[str],
+) -> Optional[str]:
+    """Build a migration-only expression for resolving notification ids."""
+
+    notification_id_exprs = []
+    if "inbox_notification_id" in marker_columns:
+        notification_id_exprs.append("""
+            (
+                SELECT inbox_notifications.id
+                FROM inbox_notifications
+                WHERE inbox_notifications.id = old.inbox_notification_id
+            )
+            """)
+    if "inbox_message_id" in marker_columns and "legacy_inbox_id" in notification_columns:
+        notification_id_exprs.append("""
+            (
+                SELECT inbox_notifications.id
+                FROM inbox_notifications
+                WHERE inbox_notifications.legacy_inbox_id = old.inbox_message_id
+            )
+            """)
+
+    if not notification_id_exprs:
+        return None
+    if len(notification_id_exprs) == 1:
+        return notification_id_exprs[0]
+    return f"COALESCE({', '.join(notification_id_exprs)})"
+
+
+def _migrate_ensure_baton_tables() -> None:
+    """Create baton tables on existing databases."""
+    try:
+        engine = _database_module().engine
+        BatonModel.__table__.create(bind=engine, checkfirst=True)
+        BatonEventModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for baton tables failed: {e}")
+
+
+def _migrate_ensure_presence_tables() -> None:
+    """Create provider-neutral presence tables on existing databases."""
+    try:
+        engine = _database_module().engine
+        PresenceWorkItemModel.__table__.create(bind=engine, checkfirst=True)
+        PresenceThreadModel.__table__.create(bind=engine, checkfirst=True)
+        PresenceMessageModel.__table__.create(bind=engine, checkfirst=True)
+        ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
+        PresenceInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for presence tables failed: {e}")
+        return
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            column_info = sqlite_migrations.table_column_info(conn, "presence_inbox_notifications")
+            notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
+            if not column_info:
+                return
+
+            needs_rebuild = (
+                "inbox_message_id" in column_info
+                or "inbox_notification_id" not in column_info
+                or not bool(column_info["inbox_notification_id"][3])
+            )
+            if not needs_rebuild:
+                return
+
+            notification_id_expr = _notification_id_migration_expr(
+                column_info, notification_columns
+            )
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="presence_inbox_notifications",
+                create_sql="""
+                    CREATE TABLE presence_inbox_notifications (
+                        id INTEGER NOT NULL,
+                        receiver_id VARCHAR NOT NULL,
+                        presence_message_id INTEGER NOT NULL,
+                        inbox_notification_id INTEGER NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE (receiver_id, presence_message_id),
+                        FOREIGN KEY(presence_message_id)
+                            REFERENCES presence_messages (id) ON DELETE CASCADE,
+                        FOREIGN KEY(inbox_notification_id)
+                            REFERENCES inbox_notifications (id) ON DELETE CASCADE
+                    )
+                """,
+                copy_sql=(
+                    f"""
+                    INSERT INTO presence_inbox_notifications (
+                        id,
+                        receiver_id,
+                        presence_message_id,
+                        inbox_notification_id,
+                        created_at
+                    )
+                    SELECT
+                        old.id,
+                        old.receiver_id,
+                        old.presence_message_id,
+                        {notification_id_expr},
+                        old.created_at
+                    FROM {{old_table}} AS old
+                    WHERE {notification_id_expr} IS NOT NULL
+                """
+                    if notification_id_expr is not None
+                    else None
+                ),
+            )
+            logger.info("Migration: rebuilt presence_inbox_notifications with notification ids")
+    except Exception as e:
+        logger.warning(f"Migration check for presence notification ids failed: {e}")
+
+
+def _migrate_ensure_agent_runtime_tables() -> None:
+    """Create CAO agent runtime contract tables on existing databases."""
+    try:
+        AgentRuntimeNotificationModel.__table__.create(
+            bind=_database_module().engine, checkfirst=True
+        )
+    except Exception as e:
+        logger.warning(f"Migration check for agent runtime tables failed: {e}")
+        return
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            column_info = sqlite_migrations.table_column_info(conn, "agent_runtime_notifications")
+            notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
+            if not column_info:
+                return
+
+            needs_rebuild = (
+                "inbox_message_id" in column_info
+                or "inbox_notification_id" not in column_info
+                or not bool(column_info["inbox_notification_id"][3])
+            )
+            if not needs_rebuild:
+                return
+
+            notification_id_expr = _notification_id_migration_expr(
+                column_info, notification_columns
+            )
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="agent_runtime_notifications",
+                create_sql="""
+                    CREATE TABLE agent_runtime_notifications (
+                        id INTEGER NOT NULL,
+                        agent_id VARCHAR NOT NULL,
+                        source_kind VARCHAR NOT NULL,
+                        source_id VARCHAR NOT NULL,
+                        inbox_notification_id INTEGER NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE (agent_id, source_kind, source_id),
+                        FOREIGN KEY(inbox_notification_id)
+                            REFERENCES inbox_notifications (id) ON DELETE CASCADE
+                    )
+                """,
+                copy_sql=(
+                    f"""
+                    INSERT INTO agent_runtime_notifications (
+                        id,
+                        agent_id,
+                        source_kind,
+                        source_id,
+                        inbox_notification_id,
+                        created_at
+                    )
+                    SELECT
+                        old.id,
+                        old.agent_id,
+                        old.source_kind,
+                        old.source_id,
+                        {notification_id_expr},
+                        old.created_at
+                    FROM {{old_table}} AS old
+                    WHERE {notification_id_expr} IS NOT NULL
+                """
+                    if notification_id_expr is not None
+                    else None
+                ),
+            )
+            logger.info("Migration: rebuilt agent_runtime_notifications with notification ids")
+    except Exception as e:
+        logger.warning(f"Migration check for agent runtime notification ids failed: {e}")
+
+
+def _migrate_drop_legacy_inbox_notification_ids() -> None:
+    """Drop migration-only legacy inbox id lookup after marker rows are translated."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
+            if "legacy_inbox_id" not in columns:
+                return
+
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="inbox_notifications",
+                create_sql="""
+                    CREATE TABLE inbox_notifications (
+                        id INTEGER NOT NULL,
+                        message_id INTEGER NOT NULL,
+                        receiver_id VARCHAR NOT NULL,
+                        status VARCHAR NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        delivered_at DATETIME,
+                        failed_at DATETIME,
+                        error_detail TEXT,
+                        PRIMARY KEY (id),
+                        FOREIGN KEY(message_id)
+                            REFERENCES inbox_messages (id) ON DELETE CASCADE
+                    )
+                """,
+                copy_sql="""
+                    INSERT INTO inbox_notifications (
+                        id,
+                        message_id,
+                        receiver_id,
+                        status,
+                        created_at,
+                        delivered_at,
+                        failed_at,
+                        error_detail
+                    )
+                    SELECT
+                        old.id,
+                        old.message_id,
+                        old.receiver_id,
+                        old.status,
+                        old.created_at,
+                        old.delivered_at,
+                        old.failed_at,
+                        old.error_detail
+                    FROM {old_table} AS old
+                    WHERE old.message_id IN (SELECT id FROM inbox_messages)
+                """,
+            )
+            logger.info("Migration: rebuilt inbox_notifications without legacy inbox ids")
+    except Exception as e:
+        logger.warning(f"Migration check for legacy inbox notification ids failed: {e}")
+
+
+def _migrate_drop_legacy_inbox_table() -> None:
+    """Drop the old overloaded inbox table after semantic migrations are in place."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            dropped = sqlite_migrations.drop_tables_if_exist(conn, ["inbox"])
+            if dropped:
+                logger.info("Migration: dropped legacy overloaded inbox table")
+    except Exception as e:
+        logger.warning(f"Migration check for legacy inbox table failed: {e}")
+
+
+def _migrate_drop_monitoring_session_peers() -> None:
+    """Drop the obsolete ``monitoring_session_peers`` table."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            dropped = sqlite_migrations.drop_tables_if_exist(conn, ["monitoring_session_peers"])
+            if dropped:
+                logger.info("Migration: dropped obsolete monitoring_session_peers table")
+    except Exception as e:
+        logger.warning(f"Migration check for monitoring_session_peers failed: {e}")
+
+
+def _migrate_add_allowed_tools() -> None:
+    """Add allowed_tools column to terminals table if missing (schema migration)."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            if sqlite_migrations.add_column_if_missing(
+                conn, "terminals", "allowed_tools", "allowed_tools TEXT"
+            ):
+                logger.info("Migration: added allowed_tools column to terminals table")
+    except Exception as e:
+        logger.warning(f"Migration check for allowed_tools failed: {e}")

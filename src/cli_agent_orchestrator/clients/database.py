@@ -1,1299 +1,145 @@
-"""Minimal database client with terminal, inbox, monitoring, flow, and baton metadata."""
+"""Database infrastructure facade.
 
-import json
-import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+This module owns shared SQLAlchemy setup and preserves the historic
+``cli_agent_orchestrator.clients.database`` import surface. Domain-specific
+persistence lives in focused owner modules such as ``terminal_store``,
+``inbox_store``, ``baton_store``, and ``flow_store``.
+"""
 
-from sqlalchemy import (
-    Boolean,
-    Column,
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    create_engine,
-    event,
+from __future__ import annotations
+
+from cli_agent_orchestrator.clients.database_core import Base, SessionLocal, engine
+
+# Import domain owner surfaces after Base exists so models register metadata.
+from cli_agent_orchestrator.clients.terminal_store import (  # noqa: E402
+    TerminalModel,
+    create_terminal,
+    delete_terminal,
+    delete_terminals_by_session,
+    get_terminal_metadata,
+    list_all_terminals,
+    list_terminals_by_session,
+    update_last_active,
 )
-from sqlalchemy.orm import DeclarativeBase, Session, declarative_base, sessionmaker
-
-from cli_agent_orchestrator.clients import sqlite_migrations
-from cli_agent_orchestrator import constants
-from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
-from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonEventType, BatonStatus
-from cli_agent_orchestrator.models.flow import Flow
-from cli_agent_orchestrator.models.inbox import (
-    InboxDelivery,
-    InboxMessageRecord,
-    InboxNotification,
-    MessageStatus,
+from cli_agent_orchestrator.clients.inbox_store import (  # noqa: E402
+    InboxMessageModel,
+    InboxNotificationModel,
+    create_inbox_delivery,
+    create_inbox_message_record,
+    create_inbox_notification,
+    get_inbox_delivery,
+    get_oldest_pending_inbox_delivery,
+    inbox_delivery_from_models,
+    inbox_message_record_from_model,
+    inbox_notification_from_model,
+    list_inbox_deliveries,
+    list_pending_inbox_deliveries_for_effective_source,
+    list_pending_inbox_notifications,
+    move_pending_inbox_notifications,
+    update_inbox_notification_receiver,
+    update_inbox_notification_status,
+    update_inbox_notification_statuses,
+)
+from cli_agent_orchestrator.clients.presence_store import (  # noqa: E402
+    AgentRuntimeNotificationModel,
+    MonitoringSessionModel,
+    PresenceInboxNotificationModel,
+    PresenceMessageModel,
+    PresenceThreadModel,
+    PresenceWorkItemModel,
+    ProcessedProviderEventModel,
+)
+from cli_agent_orchestrator.clients.baton_store import (  # noqa: E402
+    BatonEventModel,
+    BatonModel,
+    baton_event_from_model,
+    baton_from_model,
+    get_baton_record,
+    list_baton_events,
+    list_batons,
+    list_batons_held_by,
+)
+from cli_agent_orchestrator.clients.flow_store import (  # noqa: E402
+    FlowModel,
+    create_flow,
+    delete_flow,
+    flow_from_model,
+    get_flow,
+    get_flows_to_run,
+    list_flows,
+    update_flow_enabled,
+    update_flow_run_times,
+)
+from cli_agent_orchestrator.clients.database_migrations import (  # noqa: E402
+    _migrate_drop_legacy_inbox_notification_ids,
+    _migrate_drop_legacy_inbox_table,
+    _migrate_drop_monitoring_session_peers,
+    _migrate_ensure_agent_runtime_tables,
+    _migrate_ensure_baton_tables,
+    _migrate_ensure_presence_tables,
+    _migrate_ensure_semantic_inbox_tables,
+    init_db,
 )
 
-logger = logging.getLogger(__name__)
-
-Base: Any = declarative_base()
-
-
-class TerminalModel(Base):
-    """SQLAlchemy model for terminal metadata only."""
-
-    __tablename__ = "terminals"
-
-    id = Column(String, primary_key=True)  # "abc123ef"
-    tmux_session = Column(String, nullable=False)  # "cao-session-name"
-    tmux_window = Column(String, nullable=False)  # "window-name"
-    provider = Column(String, nullable=False)  # "q_cli", "claude_code"
-    agent_profile = Column(String)  # "developer", "reviewer" (optional)
-    allowed_tools = Column(String, nullable=True)  # JSON-encoded list of CAO tool names
-    last_active = Column(DateTime, default=datetime.now)
-
-
-class InboxMessageModel(Base):
-    """SQLAlchemy model for durable semantic inbox messages."""
-
-    __tablename__ = "inbox_messages"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    sender_id = Column(String, nullable=False)
-    body = Column(Text, nullable=False)
-    source_kind = Column(String, nullable=False)
-    source_id = Column(String, nullable=False)
-    origin_json = Column(Text, nullable=True)
-    route_kind = Column(String, nullable=True)
-    route_id = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
-class InboxNotificationModel(Base):
-    """SQLAlchemy model for per-recipient inbox delivery notifications."""
-
-    __tablename__ = "inbox_notifications"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    message_id = Column(
-        Integer, ForeignKey("inbox_messages.id", ondelete="CASCADE"), nullable=False
-    )
-    receiver_id = Column(String, nullable=False)
-    status = Column(String, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-    delivered_at = Column(DateTime, nullable=True)
-    failed_at = Column(DateTime, nullable=True)
-    error_detail = Column(Text, nullable=True)
-
-
-class MonitoringSessionModel(Base):
-    """A monitoring session is a recording window over the inbox table.
-
-    Captures all inbox activity involving ``terminal_id`` within
-    ``[started_at, ended_at]`` (or ``[started_at, now]`` while active). Peer
-    and time-range filtering happens at query time on reads (see
-    ``monitoring_service.get_session_messages``), not baked into the session
-    record — one recording, many possible views.
-
-    There is at most one active session per terminal at any given time (see
-    ``create_session`` idempotency). Ended sessions remain in the table so
-    their artifacts stay fetchable.
-    """
-
-    __tablename__ = "monitoring_sessions"
-
-    id = Column(String, primary_key=True)
-    terminal_id = Column(String, nullable=False)
-    label = Column(String, nullable=True)
-    started_at = Column(DateTime, nullable=False)
-    ended_at = Column(DateTime, nullable=True)
-
-
-class BatonModel(Base):
-    """SQLAlchemy model for baton state."""
-
-    __tablename__ = "batons"
-
-    id = Column(String, primary_key=True)
-    title = Column(String, nullable=False)
-    status = Column(String, nullable=False)
-    originator_id = Column(String, nullable=False)
-    current_holder_id = Column(String, nullable=True)
-    return_stack_json = Column(String, nullable=False, default="[]")
-    expected_next_action = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-    updated_at = Column(DateTime, nullable=False, default=datetime.now)
-    last_nudged_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
-
-
-class BatonEventModel(Base):
-    """SQLAlchemy model for baton audit events."""
-
-    __tablename__ = "baton_events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    baton_id = Column(String, ForeignKey("batons.id", ondelete="CASCADE"), nullable=False)
-    event_type = Column(String, nullable=False)
-    actor_id = Column(String, nullable=False)
-    from_holder_id = Column(String, nullable=True)
-    to_holder_id = Column(String, nullable=True)
-    message = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
-class FlowModel(Base):
-    """SQLAlchemy model for flow metadata."""
-
-    __tablename__ = "flows"
-
-    name = Column(String, primary_key=True)
-    file_path = Column(String, nullable=False)
-    schedule = Column(String, nullable=False)
-    agent_profile = Column(String, nullable=False)
-    provider = Column(String, nullable=False)
-    script = Column(String, nullable=True)
-    last_run = Column(DateTime, nullable=True)
-    next_run = Column(DateTime, nullable=True)
-    enabled = Column(Boolean, default=True)
-
-
-class PresenceWorkItemModel(Base):
-    """Provider-neutral work item reference owned by an external presence system."""
-
-    __tablename__ = "presence_work_items"
-    __table_args__ = (UniqueConstraint("provider", "external_id"),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    provider = Column(String, nullable=False)
-    external_id = Column(String, nullable=False)
-    external_url = Column(String, nullable=True)
-    identifier = Column(String, nullable=True)
-    title = Column(String, nullable=True)
-    state = Column(String, nullable=True)
-    raw_snapshot_json = Column(Text, nullable=True)
-    metadata_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-    updated_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
-class PresenceThreadModel(Base):
-    """Provider-neutral conversation surface owned by an external presence system."""
-
-    __tablename__ = "presence_threads"
-    __table_args__ = (UniqueConstraint("provider", "external_id"),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    provider = Column(String, nullable=False)
-    external_id = Column(String, nullable=False)
-    external_url = Column(String, nullable=True)
-    work_item_id = Column(
-        Integer, ForeignKey("presence_work_items.id", ondelete="SET NULL"), nullable=True
-    )
-    kind = Column(String, nullable=False, default="conversation")
-    state = Column(String, nullable=False, default="active")
-    prompt_context = Column(Text, nullable=True)
-    raw_snapshot_json = Column(Text, nullable=True)
-    metadata_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-    updated_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
-class PresenceMessageModel(Base):
-    """Provider-neutral message/activity inside an external conversation surface."""
-
-    __tablename__ = "presence_messages"
-    __table_args__ = (UniqueConstraint("provider", "external_id"),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    thread_id = Column(
-        Integer, ForeignKey("presence_threads.id", ondelete="CASCADE"), nullable=False
-    )
-    provider = Column(String, nullable=False)
-    external_id = Column(String, nullable=True)
-    direction = Column(String, nullable=False, default="inbound")
-    kind = Column(String, nullable=False, default="unknown")
-    body = Column(Text, nullable=True)
-    state = Column(String, nullable=False, default="received")
-    raw_snapshot_json = Column(Text, nullable=True)
-    metadata_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-    updated_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
-class ProcessedProviderEventModel(Base):
-    """Provider event idempotency marker shared by webhook and polling paths."""
-
-    __tablename__ = "processed_provider_events"
-    __table_args__ = (UniqueConstraint("provider", "external_event_id"),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    provider = Column(String, nullable=False)
-    external_event_id = Column(String, nullable=False)
-    event_type = Column(String, nullable=True)
-    processed_at = Column(DateTime, nullable=False, default=datetime.now)
-    metadata_json = Column(Text, nullable=True)
-
-
-class PresenceInboxNotificationModel(Base):
-    """Idempotency marker for bridged presence messages sent to terminal inboxes."""
-
-    __tablename__ = "presence_inbox_notifications"
-    __table_args__ = (UniqueConstraint("receiver_id", "presence_message_id"),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    receiver_id = Column(String, nullable=False)
-    presence_message_id = Column(
-        Integer, ForeignKey("presence_messages.id", ondelete="CASCADE"), nullable=False
-    )
-    inbox_notification_id = Column(
-        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=False
-    )
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
-class AgentRuntimeNotificationModel(Base):
-    """Idempotency marker for provider notifications accepted by agent runtime handles."""
-
-    __tablename__ = "agent_runtime_notifications"
-    __table_args__ = (UniqueConstraint("agent_id", "source_kind", "source_id"),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    agent_id = Column(String, nullable=False)
-    source_kind = Column(String, nullable=False)
-    source_id = Column(String, nullable=False)
-    inbox_notification_id = Column(
-        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=False
-    )
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
-# Module-level singletons
-DB_DIR.mkdir(parents=True, exist_ok=True)
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-
-
-@event.listens_for(engine, "connect")
-def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
-    """SQLite does not enforce foreign keys by default. Enable them
-    per-connection so any FK constraints (current or future) actually
-    fire. Leaving this disabled would be a silent regression the moment
-    the schema grows a CASCADE relationship."""
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
-
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-def init_db() -> None:
-    """Initialize database tables and apply schema migrations."""
-    Base.metadata.create_all(bind=engine)
-    _migrate_ensure_semantic_inbox_tables()
-    _migrate_ensure_baton_tables()
-    _migrate_ensure_presence_tables()
-    _migrate_ensure_agent_runtime_tables()
-    _migrate_drop_legacy_inbox_notification_ids()
-    _migrate_drop_legacy_inbox_table()
-    _migrate_add_allowed_tools()
-    _migrate_drop_monitoring_session_peers()
-
-
-def _migrate_ensure_semantic_inbox_tables() -> None:
-    """Create semantic inbox message/notification tables on existing databases."""
-    try:
-        InboxMessageModel.__table__.create(bind=engine, checkfirst=True)
-        InboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
-    except Exception as e:
-        logger.warning(f"Migration check for semantic inbox tables failed: {e}")
-
-
-def _notification_id_migration_expr(
-    marker_columns: dict[str, sqlite_migrations.ColumnInfo],
-    notification_columns: set[str],
-) -> Optional[str]:
-    """Build a migration-only expression for resolving notification ids."""
-
-    notification_id_exprs = []
-    if "inbox_notification_id" in marker_columns:
-        notification_id_exprs.append("""
-            (
-                SELECT inbox_notifications.id
-                FROM inbox_notifications
-                WHERE inbox_notifications.id = old.inbox_notification_id
-            )
-            """)
-    if "inbox_message_id" in marker_columns and "legacy_inbox_id" in notification_columns:
-        notification_id_exprs.append("""
-            (
-                SELECT inbox_notifications.id
-                FROM inbox_notifications
-                WHERE inbox_notifications.legacy_inbox_id = old.inbox_message_id
-            )
-            """)
-
-    if not notification_id_exprs:
-        return None
-    if len(notification_id_exprs) == 1:
-        return notification_id_exprs[0]
-    return f"COALESCE({', '.join(notification_id_exprs)})"
-
-
-def _migrate_ensure_baton_tables() -> None:
-    """Create baton tables on existing databases.
-
-    ``Base.metadata.create_all`` covers normal startup, but keeping this
-    checkfirst migration hook makes the baton schema explicit and safely
-    repeatable for databases initialized before batons existed.
-    """
-    try:
-        BatonModel.__table__.create(bind=engine, checkfirst=True)
-        BatonEventModel.__table__.create(bind=engine, checkfirst=True)
-    except Exception as e:
-        logger.warning(f"Migration check for baton tables failed: {e}")
-
-
-def _migrate_ensure_presence_tables() -> None:
-    """Create provider-neutral presence tables on existing databases."""
-    try:
-        PresenceWorkItemModel.__table__.create(bind=engine, checkfirst=True)
-        PresenceThreadModel.__table__.create(bind=engine, checkfirst=True)
-        PresenceMessageModel.__table__.create(bind=engine, checkfirst=True)
-        ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
-        PresenceInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
-    except Exception as e:
-        logger.warning(f"Migration check for presence tables failed: {e}")
-        return
-
-    try:
-        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            column_info = sqlite_migrations.table_column_info(conn, "presence_inbox_notifications")
-            notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
-            if not column_info:
-                return
-
-            needs_rebuild = (
-                "inbox_message_id" in column_info
-                or "inbox_notification_id" not in column_info
-                or not bool(column_info["inbox_notification_id"][3])
-            )
-            if not needs_rebuild:
-                return
-
-            notification_id_expr = _notification_id_migration_expr(
-                column_info, notification_columns
-            )
-            sqlite_migrations.rebuild_table(
-                conn,
-                table_name="presence_inbox_notifications",
-                create_sql="""
-                    CREATE TABLE presence_inbox_notifications (
-                        id INTEGER NOT NULL,
-                        receiver_id VARCHAR NOT NULL,
-                        presence_message_id INTEGER NOT NULL,
-                        inbox_notification_id INTEGER NOT NULL,
-                        created_at DATETIME NOT NULL,
-                        PRIMARY KEY (id),
-                        UNIQUE (receiver_id, presence_message_id),
-                        FOREIGN KEY(presence_message_id)
-                            REFERENCES presence_messages (id) ON DELETE CASCADE,
-                        FOREIGN KEY(inbox_notification_id)
-                            REFERENCES inbox_notifications (id) ON DELETE CASCADE
-                    )
-                """,
-                copy_sql=(
-                    f"""
-                    INSERT INTO presence_inbox_notifications (
-                        id,
-                        receiver_id,
-                        presence_message_id,
-                        inbox_notification_id,
-                        created_at
-                    )
-                    SELECT
-                        old.id,
-                        old.receiver_id,
-                        old.presence_message_id,
-                        {notification_id_expr},
-                        old.created_at
-                    FROM {{old_table}} AS old
-                    WHERE {notification_id_expr} IS NOT NULL
-                """
-                    if notification_id_expr is not None
-                    else None
-                ),
-            )
-            logger.info("Migration: rebuilt presence_inbox_notifications with notification ids")
-    except Exception as e:
-        logger.warning(f"Migration check for presence notification ids failed: {e}")
-
-
-def _migrate_ensure_agent_runtime_tables() -> None:
-    """Create CAO agent runtime contract tables on existing databases."""
-    try:
-        AgentRuntimeNotificationModel.__table__.create(bind=engine, checkfirst=True)
-    except Exception as e:
-        logger.warning(f"Migration check for agent runtime tables failed: {e}")
-        return
-
-    try:
-        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            column_info = sqlite_migrations.table_column_info(conn, "agent_runtime_notifications")
-            notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
-            if not column_info:
-                return
-
-            needs_rebuild = (
-                "inbox_message_id" in column_info
-                or "inbox_notification_id" not in column_info
-                or not bool(column_info["inbox_notification_id"][3])
-            )
-            if not needs_rebuild:
-                return
-
-            notification_id_expr = _notification_id_migration_expr(
-                column_info, notification_columns
-            )
-            sqlite_migrations.rebuild_table(
-                conn,
-                table_name="agent_runtime_notifications",
-                create_sql="""
-                    CREATE TABLE agent_runtime_notifications (
-                        id INTEGER NOT NULL,
-                        agent_id VARCHAR NOT NULL,
-                        source_kind VARCHAR NOT NULL,
-                        source_id VARCHAR NOT NULL,
-                        inbox_notification_id INTEGER NOT NULL,
-                        created_at DATETIME NOT NULL,
-                        PRIMARY KEY (id),
-                        UNIQUE (agent_id, source_kind, source_id),
-                        FOREIGN KEY(inbox_notification_id)
-                            REFERENCES inbox_notifications (id) ON DELETE CASCADE
-                    )
-                """,
-                copy_sql=(
-                    f"""
-                    INSERT INTO agent_runtime_notifications (
-                        id,
-                        agent_id,
-                        source_kind,
-                        source_id,
-                        inbox_notification_id,
-                        created_at
-                    )
-                    SELECT
-                        old.id,
-                        old.agent_id,
-                        old.source_kind,
-                        old.source_id,
-                        {notification_id_expr},
-                        old.created_at
-                    FROM {{old_table}} AS old
-                    WHERE {notification_id_expr} IS NOT NULL
-                """
-                    if notification_id_expr is not None
-                    else None
-                ),
-            )
-            logger.info("Migration: rebuilt agent_runtime_notifications with notification ids")
-    except Exception as e:
-        logger.warning(f"Migration check for agent runtime notification ids failed: {e}")
-
-
-def _migrate_drop_legacy_inbox_notification_ids() -> None:
-    """Drop migration-only legacy inbox id lookup after marker rows are translated."""
-
-    try:
-        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
-            if "legacy_inbox_id" not in columns:
-                return
-
-            sqlite_migrations.rebuild_table(
-                conn,
-                table_name="inbox_notifications",
-                create_sql="""
-                    CREATE TABLE inbox_notifications (
-                        id INTEGER NOT NULL,
-                        message_id INTEGER NOT NULL,
-                        receiver_id VARCHAR NOT NULL,
-                        status VARCHAR NOT NULL,
-                        created_at DATETIME NOT NULL,
-                        delivered_at DATETIME,
-                        failed_at DATETIME,
-                        error_detail TEXT,
-                        PRIMARY KEY (id),
-                        FOREIGN KEY(message_id)
-                            REFERENCES inbox_messages (id) ON DELETE CASCADE
-                    )
-                """,
-                copy_sql="""
-                    INSERT INTO inbox_notifications (
-                        id,
-                        message_id,
-                        receiver_id,
-                        status,
-                        created_at,
-                        delivered_at,
-                        failed_at,
-                        error_detail
-                    )
-                    SELECT
-                        old.id,
-                        old.message_id,
-                        old.receiver_id,
-                        old.status,
-                        old.created_at,
-                        old.delivered_at,
-                        old.failed_at,
-                        old.error_detail
-                    FROM {old_table} AS old
-                    WHERE old.message_id IN (SELECT id FROM inbox_messages)
-                """,
-            )
-            logger.info("Migration: rebuilt inbox_notifications without legacy inbox ids")
-    except Exception as e:
-        logger.warning(f"Migration check for legacy inbox notification ids failed: {e}")
-
-
-def _migrate_drop_legacy_inbox_table() -> None:
-    """Drop the old overloaded inbox table after semantic migrations are in place."""
-
-    try:
-        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            dropped = sqlite_migrations.drop_tables_if_exist(conn, ["inbox"])
-            if dropped:
-                logger.info("Migration: dropped legacy overloaded inbox table")
-    except Exception as e:
-        logger.warning(f"Migration check for legacy inbox table failed: {e}")
-
-
-def _migrate_drop_monitoring_session_peers() -> None:
-    """Drop the obsolete ``monitoring_session_peers`` table.
-
-    Session-level peer scoping was removed in favor of query-time peer
-    filtering. Existing active sessions that had peer rows simply become
-    unscoped (capture all) — which is the intended behavior under the new
-    model. Dropping the table keeps the schema honest.
-    """
-
-    try:
-        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            dropped = sqlite_migrations.drop_tables_if_exist(conn, ["monitoring_session_peers"])
-            if dropped:
-                logger.info("Migration: dropped obsolete monitoring_session_peers table")
-    except Exception as e:
-        logger.warning(f"Migration check for monitoring_session_peers failed: {e}")
-
-
-def _migrate_add_allowed_tools() -> None:
-    """Add allowed_tools column to terminals table if missing (schema migration)."""
-
-    try:
-        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            if sqlite_migrations.add_column_if_missing(
-                conn, "terminals", "allowed_tools", "allowed_tools TEXT"
-            ):
-                logger.info("Migration: added allowed_tools column to terminals table")
-    except Exception as e:
-        logger.warning(f"Migration check for allowed_tools failed: {e}")
-
-
-def create_terminal(
-    terminal_id: str,
-    tmux_session: str,
-    tmux_window: str,
-    provider: str,
-    agent_profile: Optional[str] = None,
-    allowed_tools: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """Create terminal metadata record."""
-    import json as _json
-
-    with SessionLocal() as db:
-        terminal = TerminalModel(
-            id=terminal_id,
-            tmux_session=tmux_session,
-            tmux_window=tmux_window,
-            provider=provider,
-            agent_profile=agent_profile,
-            allowed_tools=_json.dumps(allowed_tools) if allowed_tools else None,
-        )
-        db.add(terminal)
-        db.commit()
-        return {
-            "id": terminal.id,
-            "tmux_session": terminal.tmux_session,
-            "tmux_window": terminal.tmux_window,
-            "provider": terminal.provider,
-            "agent_profile": terminal.agent_profile,
-            "allowed_tools": allowed_tools,
-        }
-
-
-def get_terminal_metadata(terminal_id: str) -> Optional[Dict[str, Any]]:
-    """Get terminal metadata by ID."""
-    import json as _json
-
-    with SessionLocal() as db:
-        terminal = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).first()
-        if not terminal:
-            logger.warning(f"Terminal metadata not found for terminal_id: {terminal_id}")
-            return None
-        logger.debug(
-            f"Retrieved terminal metadata for {terminal_id}: provider={terminal.provider}, session={terminal.tmux_session}"
-        )
-        allowed_tools = _json.loads(terminal.allowed_tools) if terminal.allowed_tools else None
-        return {
-            "id": terminal.id,
-            "tmux_session": terminal.tmux_session,
-            "tmux_window": terminal.tmux_window,
-            "provider": terminal.provider,
-            "agent_profile": terminal.agent_profile,
-            "allowed_tools": allowed_tools,
-            "last_active": terminal.last_active,
-        }
-
-
-def list_terminals_by_session(tmux_session: str) -> List[Dict[str, Any]]:
-    """List all terminals in a tmux session."""
-    with SessionLocal() as db:
-        terminals = db.query(TerminalModel).filter(TerminalModel.tmux_session == tmux_session).all()
-        return [
-            {
-                "id": t.id,
-                "tmux_session": t.tmux_session,
-                "tmux_window": t.tmux_window,
-                "provider": t.provider,
-                "agent_profile": t.agent_profile,
-                "last_active": t.last_active,
-            }
-            for t in terminals
-        ]
-
-
-def update_last_active(terminal_id: str) -> bool:
-    """Update last active timestamp."""
-    with SessionLocal() as db:
-        terminal = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).first()
-        if terminal:
-            terminal.last_active = datetime.now()
-            db.commit()
-            return True
-        return False
-
-
-def list_all_terminals() -> List[Dict[str, Any]]:
-    """List all terminals."""
-    with SessionLocal() as db:
-        terminals = db.query(TerminalModel).all()
-        return [
-            {
-                "id": t.id,
-                "tmux_session": t.tmux_session,
-                "tmux_window": t.tmux_window,
-                "provider": t.provider,
-                "agent_profile": t.agent_profile,
-                "last_active": t.last_active,
-            }
-            for t in terminals
-        ]
-
-
-def delete_terminal(terminal_id: str) -> bool:
-    """Delete terminal metadata."""
-    with SessionLocal() as db:
-        deleted = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).delete()
-        db.commit()
-        return deleted > 0
-
-
-def delete_terminals_by_session(tmux_session: str) -> int:
-    """Delete all terminals in a session."""
-    with SessionLocal() as db:
-        deleted = (
-            db.query(TerminalModel).filter(TerminalModel.tmux_session == tmux_session).delete()
-        )
-        db.commit()
-        return deleted
-
-
-def _validate_complete_identity(
-    kind: Optional[str], identity_id: Optional[str], label: str
-) -> None:
-    if (kind is None) != (identity_id is None):
-        raise ValueError(f"{label}_kind and {label}_id must be provided together")
-
-
-def _resolve_source_identity(
-    sender_id: str, source_kind: Optional[str], source_id: Optional[str]
-) -> Tuple[str, str]:
-    _validate_complete_identity(source_kind, source_id, "source")
-    if source_kind is None and source_id is None:
-        return "terminal", sender_id
-    assert source_kind is not None and source_id is not None
-    return source_kind, source_id
-
-
-def _serialize_origin(origin: Optional[Dict[str, Any]]) -> Optional[str]:
-    if origin is None:
-        return None
-    return json.dumps(origin, sort_keys=True)
-
-
-def _deserialize_origin(origin_json: Optional[str]) -> Optional[Dict[str, Any]]:
-    if origin_json is None:
-        return None
-    value = json.loads(origin_json)
-    return value if isinstance(value, dict) else None
-
-
-def inbox_message_record_from_model(row: InboxMessageModel) -> InboxMessageRecord:
-    """Convert a durable inbox message row to its domain model."""
-    return InboxMessageRecord(
-        id=row.id,
-        sender_id=row.sender_id,
-        body=row.body,
-        source_kind=row.source_kind,
-        source_id=row.source_id,
-        origin=_deserialize_origin(row.origin_json),
-        route_kind=row.route_kind,
-        route_id=row.route_id,
-        created_at=row.created_at,
-    )
-
-
-def inbox_notification_from_model(row: InboxNotificationModel) -> InboxNotification:
-    """Convert an inbox notification row to its domain model."""
-    return InboxNotification(
-        id=row.id,
-        message_id=row.message_id,
-        receiver_id=row.receiver_id,
-        status=MessageStatus(row.status),
-        created_at=row.created_at,
-        delivered_at=row.delivered_at,
-        failed_at=row.failed_at,
-        error_detail=row.error_detail,
-    )
-
-
-def inbox_delivery_from_models(
-    message_row: InboxMessageModel, notification_row: InboxNotificationModel
-) -> InboxDelivery:
-    """Convert joined semantic inbox rows to their domain model."""
-    return InboxDelivery(
-        message=inbox_message_record_from_model(message_row),
-        notification=inbox_notification_from_model(notification_row),
-    )
-
-
-def create_inbox_delivery(
-    sender_id: str,
-    receiver_id: str,
-    message: str,
-    *,
-    source_kind: Optional[str] = None,
-    source_id: Optional[str] = None,
-    origin: Optional[Dict[str, Any]] = None,
-    route_kind: Optional[str] = None,
-    route_id: Optional[str] = None,
-    db: Optional[Session] = None,
-) -> InboxDelivery:
-    """Create one durable inbox message and one delivery notification."""
-    effective_source_kind, effective_source_id = _resolve_source_identity(
-        sender_id, source_kind, source_id
-    )
-    _validate_complete_identity(route_kind, route_id, "route")
-
-    def _add_delivery(session: Session) -> InboxDelivery:
-        message_row = InboxMessageModel(
-            sender_id=sender_id,
-            body=message,
-            source_kind=effective_source_kind,
-            source_id=effective_source_id,
-            origin_json=_serialize_origin(origin),
-            route_kind=route_kind,
-            route_id=route_id,
-        )
-        session.add(message_row)
-        session.flush()
-        notification_row = InboxNotificationModel(
-            message_id=message_row.id,
-            receiver_id=receiver_id,
-            status=MessageStatus.PENDING.value,
-        )
-        session.add(notification_row)
-        session.flush()
-        session.refresh(message_row)
-        session.refresh(notification_row)
-        return inbox_delivery_from_models(message_row, notification_row)
-
-    if db is not None:
-        return _add_delivery(db)
-
-    with SessionLocal() as session:
-        delivery = _add_delivery(session)
-        session.commit()
-        return delivery
-
-
-def create_inbox_message_record(
-    sender_id: str,
-    message: str,
-    *,
-    source_kind: Optional[str] = None,
-    source_id: Optional[str] = None,
-    origin: Optional[Dict[str, Any]] = None,
-    route_kind: Optional[str] = None,
-    route_id: Optional[str] = None,
-    db: Optional[Session] = None,
-) -> InboxMessageRecord:
-    """Create a durable inbox message without creating delivery state."""
-    effective_source_kind, effective_source_id = _resolve_source_identity(
-        sender_id, source_kind, source_id
-    )
-    _validate_complete_identity(route_kind, route_id, "route")
-
-    def _add_message(session: Session) -> InboxMessageRecord:
-        message_row = InboxMessageModel(
-            sender_id=sender_id,
-            body=message,
-            source_kind=effective_source_kind,
-            source_id=effective_source_id,
-            origin_json=_serialize_origin(origin),
-            route_kind=route_kind,
-            route_id=route_id,
-        )
-        session.add(message_row)
-        session.flush()
-        session.refresh(message_row)
-        return inbox_message_record_from_model(message_row)
-
-    if db is not None:
-        return _add_message(db)
-
-    with SessionLocal() as session:
-        record = _add_message(session)
-        session.commit()
-        return record
-
-
-def create_inbox_notification(
-    message_id: int,
-    receiver_id: str,
-    *,
-    status: MessageStatus = MessageStatus.PENDING,
-    db: Optional[Session] = None,
-) -> InboxNotification:
-    """Create delivery state for an existing durable inbox message."""
-
-    def _add_notification(session: Session) -> InboxNotification:
-        if session.get(InboxMessageModel, message_id) is None:
-            raise ValueError(f"Inbox message not found: {message_id}")
-        notification_row = InboxNotificationModel(
-            message_id=message_id,
-            receiver_id=receiver_id,
-            status=status.value,
-        )
-        session.add(notification_row)
-        session.flush()
-        session.refresh(notification_row)
-        return inbox_notification_from_model(notification_row)
-
-    if db is not None:
-        return _add_notification(db)
-
-    with SessionLocal() as session:
-        notification = _add_notification(session)
-        session.commit()
-        return notification
-
-
-def _get_delivery_by_notification_id(
-    session: Session, notification_id: int
-) -> Optional[InboxDelivery]:
-    row = (
-        session.query(InboxNotificationModel, InboxMessageModel)
-        .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
-        .filter(InboxNotificationModel.id == notification_id)
-        .first()
-    )
-    if row is None:
-        return None
-    notification_row, message_row = row
-    return inbox_delivery_from_models(message_row, notification_row)
-
-
-def get_inbox_delivery(
-    notification_id: int, *, db: Optional[Session] = None
-) -> Optional[InboxDelivery]:
-    """Read one notification-backed inbox message by notification id."""
-    if db is not None:
-        return _get_delivery_by_notification_id(db, notification_id)
-    with SessionLocal() as session:
-        return _get_delivery_by_notification_id(session, notification_id)
-
-
-def list_inbox_deliveries(
-    receiver_id: str, limit: int = 10, status: Optional[MessageStatus] = None
-) -> List[InboxDelivery]:
-    """List notification-backed inbox messages for one receiver."""
-    with SessionLocal() as db:
-        query = (
-            db.query(InboxNotificationModel, InboxMessageModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
-            .filter(InboxNotificationModel.receiver_id == receiver_id)
-        )
-        if status is not None:
-            query = query.filter(InboxNotificationModel.status == status.value)
-        rows = (
-            query.order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
-            .limit(limit)
-            .all()
-        )
-        return [
-            inbox_delivery_from_models(message_row, notification_row)
-            for notification_row, message_row in rows
-        ]
-
-
-def list_pending_inbox_notifications(receiver_id: str, limit: int = 10) -> List[InboxDelivery]:
-    """List pending notification-backed messages for a receiver."""
-    return list_inbox_deliveries(receiver_id, limit=limit, status=MessageStatus.PENDING)
-
-
-def get_oldest_pending_inbox_delivery(receiver_id: str) -> Optional[InboxDelivery]:
-    """Get the oldest pending semantic delivery notification for a receiver."""
-    deliveries = list_pending_inbox_notifications(receiver_id, limit=1)
-    return deliveries[0] if deliveries else None
-
-
-def list_pending_inbox_deliveries_for_effective_source(
-    receiver_id: str, source_delivery: InboxDelivery
-) -> List[InboxDelivery]:
-    """List pending deliveries for the same durable source as ``source_delivery``."""
-    source_message = source_delivery.message
-    with SessionLocal() as db:
-        rows = (
-            db.query(InboxNotificationModel, InboxMessageModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
-            .filter(
-                InboxNotificationModel.receiver_id == receiver_id,
-                InboxNotificationModel.status == MessageStatus.PENDING.value,
-                InboxMessageModel.source_kind == source_message.source_kind,
-                InboxMessageModel.source_id == source_message.source_id,
-            )
-            .order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
-            .all()
-        )
-        return [
-            inbox_delivery_from_models(message_row, notification_row)
-            for notification_row, message_row in rows
-        ]
-
-
-def move_pending_inbox_notifications(
-    current_receiver_id: str,
-    new_receiver_id: str,
-) -> int:
-    """Move pending semantic delivery notifications to a new receiver id."""
-    with SessionLocal() as db:
-        updated = (
-            db.query(InboxNotificationModel)
-            .filter(
-                InboxNotificationModel.receiver_id == current_receiver_id,
-                InboxNotificationModel.status == MessageStatus.PENDING.value,
-            )
-            .update(
-                {InboxNotificationModel.receiver_id: new_receiver_id},
-                synchronize_session=False,
-            )
-        )
-        db.commit()
-        return int(updated or 0)
-
-
-def update_inbox_notification_receiver(notification_id: int, receiver_id: str) -> bool:
-    """Update one semantic notification recipient."""
-    with SessionLocal() as db:
-        row = db.get(InboxNotificationModel, notification_id)
-        if row is None:
-            return False
-        row.receiver_id = receiver_id
-        db.commit()
-        return True
-
-
-def _apply_notification_status(
-    notification: InboxNotificationModel, status: MessageStatus, error_detail: Optional[str]
-) -> None:
-    notification.status = status.value
-    if status == MessageStatus.DELIVERED:
-        notification.delivered_at = datetime.now()
-        notification.failed_at = None
-        notification.error_detail = None
-    elif status == MessageStatus.FAILED:
-        notification.failed_at = datetime.now()
-        notification.error_detail = error_detail
-    else:
-        notification.delivered_at = None
-        notification.failed_at = None
-        notification.error_detail = None
-
-
-def update_inbox_notification_statuses(
-    notification_ids: Sequence[int],
-    status: MessageStatus,
-    *,
-    error_detail: Optional[str] = None,
-) -> int:
-    """Update delivery state for semantic inbox notifications."""
-    if not notification_ids:
-        return 0
-
-    with SessionLocal() as db:
-        rows = (
-            db.query(InboxNotificationModel)
-            .filter(InboxNotificationModel.id.in_(list(notification_ids)))
-            .all()
-        )
-        for row in rows:
-            _apply_notification_status(row, status, error_detail)
-        db.commit()
-        return len(rows)
-
-
-def update_inbox_notification_status(
-    notification_id: int,
-    status: MessageStatus,
-    *,
-    error_detail: Optional[str] = None,
-) -> bool:
-    """Update one semantic inbox notification by notification id."""
-    return (
-        update_inbox_notification_statuses([notification_id], status, error_detail=error_detail) > 0
-    )
-
-
-# Baton database functions
-
-
-def baton_from_model(row: BatonModel) -> Baton:
-    """Convert a SQLAlchemy baton row to its typed domain model."""
-    return Baton(
-        id=row.id,
-        title=row.title,
-        status=BatonStatus(row.status),
-        originator_id=row.originator_id,
-        current_holder_id=row.current_holder_id,
-        return_stack=json.loads(row.return_stack_json or "[]"),
-        expected_next_action=row.expected_next_action,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        last_nudged_at=row.last_nudged_at,
-        completed_at=row.completed_at,
-    )
-
-
-def baton_event_from_model(row: BatonEventModel) -> BatonEvent:
-    """Convert a SQLAlchemy baton event row to its typed domain model."""
-    return BatonEvent(
-        id=row.id,
-        baton_id=row.baton_id,
-        event_type=BatonEventType(row.event_type),
-        actor_id=row.actor_id,
-        from_holder_id=row.from_holder_id,
-        to_holder_id=row.to_holder_id,
-        message=row.message,
-        created_at=row.created_at,
-    )
-
-
-def get_baton_record(baton_id: str) -> Optional[Baton]:
-    """Get a baton by ID."""
-    with SessionLocal() as db:
-        row = db.query(BatonModel).filter(BatonModel.id == baton_id).first()
-        if row is None:
-            return None
-        return baton_from_model(row)
-
-
-def list_batons(
-    *,
-    status: Optional[BatonStatus] = None,
-    holder_id: Optional[str] = None,
-    originator_id: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> List[Baton]:
-    """List batons with operator-facing filters, newest update first."""
-    with SessionLocal() as db:
-        query = db.query(BatonModel)
-        if status is not None:
-            query = query.filter(BatonModel.status == status.value)
-        if holder_id is not None:
-            query = query.filter(BatonModel.current_holder_id == holder_id)
-        if originator_id is not None:
-            query = query.filter(BatonModel.originator_id == originator_id)
-
-        rows = (
-            query.order_by(BatonModel.updated_at.desc(), BatonModel.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-            .all()
-        )
-        return [baton_from_model(row) for row in rows]
-
-
-def list_batons_held_by(holder_id: str, status: Optional[BatonStatus] = None) -> List[Baton]:
-    """List batons currently held by ``holder_id``, newest update first."""
-    with SessionLocal() as db:
-        query = db.query(BatonModel).filter(BatonModel.current_holder_id == holder_id)
-        if status is not None:
-            query = query.filter(BatonModel.status == status.value)
-        rows = query.order_by(BatonModel.updated_at.desc(), BatonModel.created_at.desc()).all()
-        return [baton_from_model(row) for row in rows]
-
-
-def list_baton_events(baton_id: str) -> List[BatonEvent]:
-    """List baton audit events ordered oldest first."""
-    with SessionLocal() as db:
-        rows = (
-            db.query(BatonEventModel)
-            .filter(BatonEventModel.baton_id == baton_id)
-            .order_by(BatonEventModel.created_at.asc(), BatonEventModel.id.asc())
-            .all()
-        )
-        return [baton_event_from_model(row) for row in rows]
-
-
-# Flow database functions
-
-
-def create_flow(
-    name: str,
-    file_path: str,
-    schedule: str,
-    agent_profile: str,
-    provider: str,
-    script: str,
-    next_run: datetime,
-) -> Flow:
-    """Create flow record."""
-    with SessionLocal() as db:
-        flow = FlowModel(
-            name=name,
-            file_path=file_path,
-            schedule=schedule,
-            agent_profile=agent_profile,
-            provider=provider,
-            script=script,
-            next_run=next_run,
-        )
-        db.add(flow)
-        db.commit()
-        db.refresh(flow)
-        return Flow(
-            name=flow.name,
-            file_path=flow.file_path,
-            schedule=flow.schedule,
-            agent_profile=flow.agent_profile,
-            provider=flow.provider,
-            script=flow.script,
-            last_run=flow.last_run,
-            next_run=flow.next_run,
-            enabled=flow.enabled,
-        )
-
-
-def get_flow(name: str) -> Optional[Flow]:
-    """Get flow by name."""
-    with SessionLocal() as db:
-        flow = db.query(FlowModel).filter(FlowModel.name == name).first()
-        if not flow:
-            return None
-        return Flow(
-            name=flow.name,
-            file_path=flow.file_path,
-            schedule=flow.schedule,
-            agent_profile=flow.agent_profile,
-            provider=flow.provider,
-            script=flow.script,
-            last_run=flow.last_run,
-            next_run=flow.next_run,
-            enabled=flow.enabled,
-        )
-
-
-def list_flows() -> List[Flow]:
-    """List all flows."""
-    with SessionLocal() as db:
-        flows = db.query(FlowModel).order_by(FlowModel.next_run).all()
-        return [
-            Flow(
-                name=f.name,
-                file_path=f.file_path,
-                schedule=f.schedule,
-                agent_profile=f.agent_profile,
-                provider=f.provider,
-                script=f.script,
-                last_run=f.last_run,
-                next_run=f.next_run,
-                enabled=f.enabled,
-            )
-            for f in flows
-        ]
-
-
-def update_flow_run_times(name: str, last_run: datetime, next_run: datetime) -> bool:
-    """Update flow run times after execution."""
-    with SessionLocal() as db:
-        flow = db.query(FlowModel).filter(FlowModel.name == name).first()
-        if flow:
-            flow.last_run = last_run
-            flow.next_run = next_run
-            db.commit()
-            return True
-        return False
-
-
-def update_flow_enabled(name: str, enabled: bool, next_run: Optional[datetime] = None) -> bool:
-    """Update flow enabled status and optionally next_run."""
-    with SessionLocal() as db:
-        flow = db.query(FlowModel).filter(FlowModel.name == name).first()
-        if flow:
-            flow.enabled = enabled
-            if next_run is not None:
-                flow.next_run = next_run
-            db.commit()
-            return True
-        return False
-
-
-def delete_flow(name: str) -> bool:
-    """Delete flow."""
-    with SessionLocal() as db:
-        deleted = db.query(FlowModel).filter(FlowModel.name == name).delete()
-        db.commit()
-        return deleted > 0
-
-
-def get_flows_to_run() -> List[Flow]:
-    """Get enabled flows where next_run <= now."""
-    with SessionLocal() as db:
-        now = datetime.now()
-        flows = (
-            db.query(FlowModel).filter(FlowModel.enabled == True, FlowModel.next_run <= now).all()
-        )
-        return [
-            Flow(
-                name=f.name,
-                file_path=f.file_path,
-                schedule=f.schedule,
-                agent_profile=f.agent_profile,
-                provider=f.provider,
-                script=f.script,
-                last_run=f.last_run,
-                next_run=f.next_run,
-                enabled=f.enabled,
-            )
-            for f in flows
-        ]
+__all__ = [
+    "AgentRuntimeNotificationModel",
+    "Base",
+    "BatonEventModel",
+    "BatonModel",
+    "FlowModel",
+    "InboxMessageModel",
+    "InboxNotificationModel",
+    "MonitoringSessionModel",
+    "PresenceInboxNotificationModel",
+    "PresenceMessageModel",
+    "PresenceThreadModel",
+    "PresenceWorkItemModel",
+    "ProcessedProviderEventModel",
+    "SessionLocal",
+    "TerminalModel",
+    "_migrate_drop_legacy_inbox_notification_ids",
+    "_migrate_drop_legacy_inbox_table",
+    "_migrate_drop_monitoring_session_peers",
+    "_migrate_ensure_agent_runtime_tables",
+    "_migrate_ensure_baton_tables",
+    "_migrate_ensure_presence_tables",
+    "_migrate_ensure_semantic_inbox_tables",
+    "baton_event_from_model",
+    "baton_from_model",
+    "create_flow",
+    "create_inbox_delivery",
+    "create_inbox_message_record",
+    "create_inbox_notification",
+    "create_terminal",
+    "delete_flow",
+    "delete_terminal",
+    "delete_terminals_by_session",
+    "engine",
+    "flow_from_model",
+    "get_baton_record",
+    "get_flow",
+    "get_flows_to_run",
+    "get_inbox_delivery",
+    "get_oldest_pending_inbox_delivery",
+    "get_terminal_metadata",
+    "inbox_delivery_from_models",
+    "inbox_message_record_from_model",
+    "inbox_notification_from_model",
+    "init_db",
+    "list_all_terminals",
+    "list_baton_events",
+    "list_batons",
+    "list_batons_held_by",
+    "list_flows",
+    "list_inbox_deliveries",
+    "list_pending_inbox_deliveries_for_effective_source",
+    "list_pending_inbox_notifications",
+    "list_terminals_by_session",
+    "move_pending_inbox_notifications",
+    "update_flow_enabled",
+    "update_flow_run_times",
+    "update_inbox_notification_receiver",
+    "update_inbox_notification_status",
+    "update_inbox_notification_statuses",
+    "update_last_active",
+]

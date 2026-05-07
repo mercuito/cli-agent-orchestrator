@@ -16,7 +16,7 @@ Internal service seams must be named as internal and defended as such.
 
 **Bad - ambiguous helper service.** A reusable service remains inside an
 unrelated command module with no owner.
-**Good:** The service moves to its owning module/package or the contract states
+**Good:** The service moves to its owning surface/package or the contract states
 it is an internal seam.
 
 **Bad - service by name only.** A class named `ThingService` has no defended

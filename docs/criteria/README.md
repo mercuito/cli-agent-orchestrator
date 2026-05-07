@@ -38,7 +38,7 @@ Code criteria:
 | [prefer-public-surfaces](coding-code-contract/prefer-public-surfaces.md) | Code consumes another package, module, subsystem, or boundary-owned surface. |
 | [readable-and-explicit](coding-code-contract/readable-and-explicit.md) | Any implementation task. |
 | [red-green-refactor](coding-code-contract/red-green-refactor.md) | A task adds or changes testable behavior. |
-| [respect-module-boundaries](coding-code-contract/respect-module-boundaries.md) | Code is added, moved, or restructured across files, modules, or packages. |
+| [respect-ownership-boundaries](coding-code-contract/respect-ownership-boundaries.md) | Code is added, moved, or restructured across files, packages, services, systems, or other ownership surfaces. |
 | [respect-standing-decisions](coding-code-contract/respect-standing-decisions.md) | The feature has committed implementation decisions in force. |
 | [semantic-continuity](coding-code-contract/semantic-continuity.md) | Code extends an existing variant, branch, subtype, or execution path. |
 | [service-definition-surface](coding-code-contract/service-definition-surface.md) | A public or shared service class/module is created or reshaped. |
@@ -77,7 +77,7 @@ Code criteria:
 * `full-verification-required`
 * `minimal-cohesive-changes`
 * `no-unnecessary-duplication`
-* `respect-module-boundaries`
+* `respect-ownership-boundaries`
 * `readable-and-explicit`
 * `respect-standing-decisions`, when a Linear issue or plan records active decisions
 
@@ -104,7 +104,7 @@ When dispatching an implementer, point them to the issue or task definition and
 to the applicable criteria paths. The prompt should require them to:
 
 1. Select applicable criteria before coding.
-2. Keep production behavior behind the owning module or provider boundary.
+2. Keep production behavior behind the owning system, service, provider, or other ownership boundary.
 3. Avoid copying production logic into tests.
 4. Use shared test helpers when repeated setup would make tests brittle.
 5. Test through the owner surface for the behavior being proved.
@@ -117,7 +117,7 @@ When dispatching a reviewer, require them to judge the implementation against:
 
 * the issue/task definition;
 * the selected criteria;
-* this repository's existing module boundaries and test style.
+* this repository's existing ownership boundaries and test style.
 
 Reviewers should treat weak tests as correctness risk when tests mock the
 surface under test, duplicate authoritative behavior, or freeze local

@@ -13,7 +13,7 @@ Code criteria:
 * `docs/criteria/coding-code-contract/full-verification-required.md`
 * `docs/criteria/coding-code-contract/minimal-cohesive-changes.md`
 * `docs/criteria/coding-code-contract/no-unnecessary-duplication.md`
-* `docs/criteria/coding-code-contract/respect-module-boundaries.md`
+* `docs/criteria/coding-code-contract/respect-ownership-boundaries.md`
 * `docs/criteria/coding-code-contract/readable-and-explicit.md`
 
 Test criteria:

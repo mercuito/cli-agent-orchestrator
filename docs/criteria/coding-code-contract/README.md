@@ -57,7 +57,7 @@ obligations at the coding altitude.
 | [minimal-cohesive-changes](minimal-cohesive-changes.md) | Non-refactor code changes are made |
 | [no-unnecessary-duplication](no-unnecessary-duplication.md) | Code, helpers, fixtures, or abstractions are added |
 | [no-test-only-production-seams](no-test-only-production-seams.md) | Tests motivate production seam changes |
-| [respect-module-boundaries](respect-module-boundaries.md) | Code crosses file or package boundaries |
+| [respect-ownership-boundaries](respect-ownership-boundaries.md) | Code crosses file, package, service, system, or other ownership boundaries |
 | [centralized-vocabulary](centralized-vocabulary.md) | Named syntax changes |
 | [path-utils-required](path-utils-required.md) | Paths are manipulated |
 | [filesystem-boundary-required](filesystem-boundary-required.md) | Production code performs filesystem I/O |
