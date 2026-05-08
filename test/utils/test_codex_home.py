@@ -186,6 +186,52 @@ class TestPrepareCodexHome:
         assert not (codex_home / "history.jsonl").exists()
         assert not (codex_home / "logs_2.sqlite").exists()
 
+    def test_prepare_identity_codex_home_uses_provider_owned_identity_dir(
+        self,
+        tmp_path: Path,
+    ):
+        from cli_agent_orchestrator.utils.codex_home import prepare_identity_codex_home
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
+        (global_codex_home / "auth.json").write_text('{"ok":true}\n')
+        provider_data_dir = tmp_path / "cao" / "agents" / "agent-1" / "providers" / "codex"
+        profile = type(
+            "Profile",
+            (),
+            {
+                "name": "codex_developer",
+                "description": "desc",
+                "system_prompt": "identity prompt",
+                "mcpServers": None,
+                "model": None,
+                "codexConfig": None,
+                "reasoning_effort": None,
+            },
+        )()
+
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
+            codex_home = prepare_identity_codex_home(
+                provider_data_dir,
+                terminal_id="terminal-a",
+                agent_profile="codex_developer",
+                working_directory=str(tmp_path / "work"),
+                global_codex_home_dir=global_codex_home,
+            )
+
+        assert codex_home == provider_data_dir / ".codex"
+        assert (codex_home / "auth.json").read_text() == '{"ok":true}\n'
+        assert (codex_home / ".cao-terminal-id").read_text() == "terminal-a\n"
+
     def test_prepare_codex_home_merges_trust_and_mcp(self, tmp_path: Path):
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
 

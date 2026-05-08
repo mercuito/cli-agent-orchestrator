@@ -1,8 +1,8 @@
-"""Per-terminal Codex home management.
+"""Codex home management for CAO-managed terminals and identities.
 
 Codex CLI supports selecting its home directory via the `CODEX_HOME` environment variable. By
-creating a separate home per CAO terminal we can isolate agent configs, MCP server registrations,
-and per-agent instructions (`AGENTS.md`).
+creating separate homes per raw CAO terminal or durable CAO identity we can isolate agent configs,
+MCP server registrations, and per-agent instructions (`AGENTS.md`).
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
@@ -51,6 +52,16 @@ CODEX_AUTH_STATE_GLOBS = (
     "state_*.sqlite-shm",
     "state_*.sqlite-wal",
 )
+
+CODEX_HOME_MATERIALIZATION_SCHEMA_VERSION = "codex-home-materialization.v1"
+
+
+@dataclass(frozen=True)
+class CodexHomeMaterialization:
+    """Codex-owned files that CAO materializes into CODEX_HOME."""
+
+    config: Dict[str, Any]
+    agents_md: str
 
 
 def _format_toml_key(key: str) -> str:
@@ -213,37 +224,16 @@ def _copy_codex_auth_state(global_codex_home_dir: Path, terminal_codex_home: Pat
     return copied
 
 
-def prepare_codex_home(
-    terminal_id: str,
+def build_codex_home_materialization(
     agent_profile: str,
     working_directory: str,
     *,
-    cao_home_dir: Optional[Path] = None,
     global_codex_home_dir: Optional[Path] = None,
-) -> Path:
-    """Create a per-terminal Codex home directory and return the CODEX_HOME path."""
-    cao_home_dir = CAO_HOME_DIR if cao_home_dir is None else cao_home_dir
+) -> CodexHomeMaterialization:
+    """Build Codex-owned CODEX_HOME file contents without writing them."""
     global_codex_home_dir = (
         (Path.home() / ".codex") if global_codex_home_dir is None else global_codex_home_dir
     )
-
-    if not shutil.which("codex"):
-        raise ValueError("codex binary not found in PATH")
-
-    terminal_codex_home = cao_home_dir / "codex-homes" / terminal_id / ".codex"
-    terminal_codex_home.mkdir(parents=True, exist_ok=True)
-
-    _copy_codex_auth_state(global_codex_home_dir, terminal_codex_home)
-
-    if not _codex_login_ok(terminal_codex_home):
-        # Best-effort cleanup so we don't accumulate per-terminal homes on failures.
-        try:
-            shutil.rmtree(terminal_codex_home.parent, ignore_errors=True)
-        finally:
-            raise ValueError(
-                "Codex CLI is not logged in (or requires user interaction). Run `codex auth login` first."
-            )
-
     profile = load_agent_profile(agent_profile)
 
     # Start from a filtered slice of the user's global ~/.codex/config.toml.
@@ -303,16 +293,106 @@ def prepare_codex_home(
     mcp_servers["cao-mcp-server"] = cao_entry
     base_config["mcp_servers"] = mcp_servers
 
-    (terminal_codex_home / "config.toml").write_text(_dump_toml(base_config))
+    return CodexHomeMaterialization(
+        config=base_config,
+        agents_md=(profile.system_prompt or "").rstrip() + "\n",  # type: ignore[attr-defined]
+    )
+
+
+def prepare_codex_home(
+    terminal_id: str,
+    agent_profile: str,
+    working_directory: str,
+    *,
+    cao_home_dir: Optional[Path] = None,
+    global_codex_home_dir: Optional[Path] = None,
+) -> Path:
+    """Create a per-terminal Codex home directory and return the CODEX_HOME path."""
+    cao_home_dir = CAO_HOME_DIR if cao_home_dir is None else cao_home_dir
+    global_codex_home_dir = (
+        (Path.home() / ".codex") if global_codex_home_dir is None else global_codex_home_dir
+    )
+
+    if not shutil.which("codex"):
+        raise ValueError("codex binary not found in PATH")
+
+    terminal_codex_home = cao_home_dir / "codex-homes" / terminal_id / ".codex"
+    return _prepare_codex_home_at(
+        terminal_codex_home,
+        terminal_id=terminal_id,
+        agent_profile=agent_profile,
+        working_directory=working_directory,
+        global_codex_home_dir=global_codex_home_dir,
+        cleanup_on_login_failure=True,
+    )
+
+
+def prepare_identity_codex_home(
+    provider_data_dir: Path,
+    terminal_id: str,
+    agent_profile: str,
+    working_directory: str,
+    *,
+    global_codex_home_dir: Optional[Path] = None,
+) -> Path:
+    """Prepare an identity-scoped Codex CODEX_HOME below the provider-owned data dir."""
+    global_codex_home_dir = (
+        (Path.home() / ".codex") if global_codex_home_dir is None else global_codex_home_dir
+    )
+    codex_home = provider_data_dir / ".codex"
+    return _prepare_codex_home_at(
+        codex_home,
+        terminal_id=terminal_id,
+        agent_profile=agent_profile,
+        working_directory=working_directory,
+        global_codex_home_dir=global_codex_home_dir,
+        cleanup_on_login_failure=False,
+    )
+
+
+def _prepare_codex_home_at(
+    codex_home: Path,
+    *,
+    terminal_id: str,
+    agent_profile: str,
+    working_directory: str,
+    global_codex_home_dir: Path,
+    cleanup_on_login_failure: bool,
+) -> Path:
+    """Prepare a provider-selected Codex home directory and return the CODEX_HOME path."""
+    if not shutil.which("codex"):
+        raise ValueError("codex binary not found in PATH")
+
+    codex_home.mkdir(parents=True, exist_ok=True)
+
+    _copy_codex_auth_state(global_codex_home_dir, codex_home)
+
+    if not _codex_login_ok(codex_home):
+        # Best-effort cleanup only for volatile raw terminal homes. Identity
+        # provider dirs are durable provider-owned state and must not be removed
+        # by CAO during a failed launch.
+        if cleanup_on_login_failure:
+            shutil.rmtree(codex_home.parent, ignore_errors=True)
+        raise ValueError(
+            "Codex CLI is not logged in (or requires user interaction). Run `codex auth login` first."
+        )
+
+    materialization = build_codex_home_materialization(
+        agent_profile,
+        working_directory,
+        global_codex_home_dir=global_codex_home_dir,
+    )
+
+    (codex_home / "config.toml").write_text(_dump_toml(materialization.config))
 
     # Write AGENTS.md from the profile markdown body
-    agents_md = terminal_codex_home / "AGENTS.md"
-    agents_md.write_text((profile.system_prompt or "").rstrip() + "\n")  # type: ignore[attr-defined]
+    agents_md = codex_home / "AGENTS.md"
+    agents_md.write_text(materialization.agents_md)
 
     # Also write a tiny marker for debugging/cleanup tooling.
-    (terminal_codex_home / ".cao-terminal-id").write_text(f"{terminal_id}\n")
+    (codex_home / ".cao-terminal-id").write_text(f"{terminal_id}\n")
 
-    return terminal_codex_home
+    return codex_home
 
 
 def cleanup_codex_home(terminal_id: str, *, cao_home_dir: Optional[Path] = None) -> None:

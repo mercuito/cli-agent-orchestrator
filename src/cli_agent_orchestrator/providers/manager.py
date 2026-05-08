@@ -1,11 +1,16 @@
 """Provider manager as module singleton with direct terminal_id → provider mapping."""
 
 import logging
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Type, cast
 
 from cli_agent_orchestrator.clients.database import get_terminal_metadata
 from cli_agent_orchestrator.models.provider import ProviderType
-from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.base import (
+    AgentRuntimeLaunchContext,
+    BaseProvider,
+    ProviderRuntimeDescriptor,
+    ProviderRuntimePreparation,
+)
 from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.copilot_cli import CopilotCliProvider
@@ -22,6 +27,71 @@ class ProviderManager:
 
     def __init__(self) -> None:
         self._providers: Dict[str, BaseProvider] = {}
+
+    def _provider_class(self, provider_type: str) -> Type[BaseProvider]:
+        """Return the provider class for a provider type string."""
+        if provider_type == ProviderType.Q_CLI.value:
+            return QCliProvider
+        if provider_type == ProviderType.KIRO_CLI.value:
+            return KiroCliProvider
+        if provider_type == ProviderType.CLAUDE_CODE.value:
+            return ClaudeCodeProvider
+        if provider_type == ProviderType.CODEX.value:
+            return CodexProvider
+        if provider_type == ProviderType.COPILOT_CLI.value:
+            return CopilotCliProvider
+        if provider_type == ProviderType.GEMINI_CLI.value:
+            return GeminiCliProvider
+        if provider_type == ProviderType.KIMI_CLI.value:
+            return KimiCliProvider
+        raise ValueError(f"Unknown provider type: {provider_type}")
+
+    def provider_supports_resume(self, provider_type: str) -> bool:
+        """Return whether a provider supports identity runtime context preservation."""
+        return self._provider_class(provider_type).supports_resume()
+
+    def prepare_terminal_runtime(
+        self,
+        provider_type: str,
+        *,
+        terminal_id: str,
+        agent_profile: str,
+        working_directory: str,
+        launch_context: Optional[AgentRuntimeLaunchContext] = None,
+    ) -> ProviderRuntimePreparation:
+        """Let the provider prepare provider-owned runtime state before tmux launch."""
+        provider_cls = self._provider_class(provider_type)
+        prepare = getattr(provider_cls, "prepare_terminal_runtime", None)
+        if prepare is None:
+            return ProviderRuntimePreparation()
+        typed_prepare = cast(
+            Callable[..., ProviderRuntimePreparation],
+            prepare,
+        )
+        return typed_prepare(
+            terminal_id=terminal_id,
+            agent_profile=agent_profile,
+            working_directory=working_directory,
+            launch_context=launch_context,
+        )
+
+    def runtime_fingerprint_contribution(
+        self,
+        provider_type: str,
+        *,
+        launch_context: AgentRuntimeLaunchContext,
+    ) -> ProviderRuntimeDescriptor:
+        """Return provider-owned runtime descriptor material for freshness checks."""
+        return self._provider_class(provider_type).runtime_fingerprint_contribution(
+            launch_context=launch_context,
+        )
+
+    def cleanup_terminal_runtime(self, provider_type: str, terminal_id: str) -> None:
+        """Let the provider clean up terminal-scoped runtime state if it owns any."""
+        provider_cls = self._provider_class(provider_type)
+        cleanup = getattr(provider_cls, "cleanup_terminal_runtime", None)
+        if cleanup is not None:
+            cleanup(terminal_id)
 
     def create_provider(
         self,

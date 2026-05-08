@@ -32,6 +32,7 @@ LINEAR_RUNTIME_SOURCE_KIND = "linear_agent_session_event"
 LIFECYCLE_ACTIVITY_BODY_CHARS = 220
 LIFECYCLE_ERROR_CHARS = 240
 LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY = "linear_external_url_published"
+LINEAR_EXTERNAL_URL_METADATA_KEY = "linear_external_url"
 
 _STACK_TRACE_RE = re.compile(r"Traceback \(most recent call last\):|\n\s*File \"")
 _BEARER_TOKEN_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
@@ -174,8 +175,12 @@ def _publish_persisted_external_url_once(
     agent_id: Optional[str],
     app_key: Optional[str],
 ) -> bool:
-    """Publish Linear's Open CAO URL once per durable Linear presence thread."""
+    """Publish Linear's Open CAO URL unless the current URL is already published."""
     if not thread_id or not terminal_id:
+        return False
+
+    desired_url = app_client.public_cao_runtime_url(terminal_id, agent_id=agent_id)
+    if not desired_url:
         return False
 
     with db_module.SessionLocal() as session:
@@ -189,7 +194,10 @@ def _publish_persisted_external_url_once(
         )
         if thread_row is not None:
             metadata = _json_object(thread_row.metadata_json)
-            if metadata.get(LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY):
+            if (
+                metadata.get(LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY)
+                and metadata.get(LINEAR_EXTERNAL_URL_METADATA_KEY) == desired_url
+            ):
                 return False
 
     if not _update_external_url_once(
@@ -213,6 +221,7 @@ def _publish_persisted_external_url_once(
             return True
         metadata = _json_object(thread_row.metadata_json)
         metadata[LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY] = True
+        metadata[LINEAR_EXTERNAL_URL_METADATA_KEY] = desired_url
         metadata["linear_external_url_terminal_id"] = terminal_id
         if agent_id:
             metadata["linear_external_url_agent_id"] = agent_id
@@ -281,7 +290,6 @@ def build_terminal_message(
 ) -> str:
     """Build the prompt sent into the CAO terminal for this smoke bridge."""
     thread_id = event.thread.ref.id if event.thread else None
-    prompt_context = event.thread.prompt_context if event.thread else None
     prompt_body = event.message.body if event.message else None
     app_key = resolved.presence.app_key if resolved is not None else _event_app_key(event)
     actor_name = (
@@ -303,10 +311,6 @@ def build_terminal_message(
     ]
     if prompt_body:
         parts.extend(["", "User prompt:", prompt_body])
-    if prompt_context:
-        parts.extend(["", "Linear prompt context:", prompt_context])
-    elif event.raw_payload:
-        parts.extend(["", "Raw provider payload:", str(event.raw_payload)])
     return "\n".join(parts)
 
 

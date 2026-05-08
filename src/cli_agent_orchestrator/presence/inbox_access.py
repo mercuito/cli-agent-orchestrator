@@ -124,6 +124,7 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
 
 def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
     """Convert a read result into the slim default MCP shape."""
+    breadcrumb = _workspace_breadcrumb(result.workspace)
 
     payload: Dict[str, Any] = {
         "success": True,
@@ -132,12 +133,11 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
         "from": result.from_label,
         "body": result.body,
         "replyable": result.replyable,
-        "workspace": result.workspace,
     }
+    if breadcrumb is not None:
+        payload["breadcrumb"] = breadcrumb
     if result.reply_error:
         payload["reply_error"] = result.reply_error
-    if result.context:
-        payload["context"] = result.context
     return payload
 
 
@@ -219,6 +219,20 @@ def _bounded_workspace(value: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     return cast(Dict[str, Any], json.loads(encoded))
 
 
+def _workspace_breadcrumb(workspace: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not workspace:
+        return None
+    breadcrumb = workspace.get("breadcrumb")
+    if not isinstance(breadcrumb, Mapping):
+        return None
+    result: Dict[str, Any] = {}
+    workspace_name = workspace.get("name")
+    if isinstance(workspace_name, str) and workspace_name.strip():
+        result["workspace"] = workspace_name
+    result.update(dict(breadcrumb))
+    return result or None
+
+
 def _load_bounded_json_object(metadata_json: Optional[str]) -> Optional[Dict[str, Any]]:
     if not metadata_json or len(metadata_json) > MAX_METADATA_JSON_CHARS:
         return None
@@ -275,9 +289,9 @@ def _presence_body(
     message_row: Optional[db_module.PresenceMessageModel],
     thread_row: db_module.PresenceThreadModel,
 ) -> str:
-    if message_row is not None and message_row.body is not None:
+    if message_row is not None and message_row.body:
         return str(cast(Optional[str], message_row.body))
-    return str(cast(Optional[str], thread_row.prompt_context) or "")
+    return "(no text body)"
 
 
 def _presence_context(metadata: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:

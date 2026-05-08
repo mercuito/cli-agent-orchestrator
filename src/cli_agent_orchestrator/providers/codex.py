@@ -1,6 +1,7 @@
 """Codex CLI provider implementation."""
 
 import logging
+import os
 import re
 import shlex
 import time
@@ -9,8 +10,21 @@ from typing import Optional
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.base import (
+    AgentRuntimeLaunchContext,
+    BaseProvider,
+    ProviderRuntimeDescriptor,
+    ProviderRuntimePreparation,
+)
+from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.utils.codex_home import (
+    CODEX_HOME_MATERIALIZATION_SCHEMA_VERSION,
+    build_codex_home_materialization,
+    cleanup_codex_home,
+    prepare_codex_home,
+    prepare_identity_codex_home,
+)
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -122,6 +136,79 @@ class CodexProvider(BaseProvider):
     """Provider for Codex CLI tool integration."""
 
     provider_type = ProviderType.CODEX.value
+
+    @classmethod
+    def supports_resume(cls) -> bool:
+        """Codex gets identity-scoped CODEX_HOME for durable CAO identities."""
+        return True
+
+    @staticmethod
+    def prepare_terminal_runtime(
+        *,
+        terminal_id: str,
+        agent_profile: str,
+        working_directory: str,
+        launch_context: Optional[AgentRuntimeLaunchContext] = None,
+    ) -> ProviderRuntimePreparation:
+        """Prepare Codex-owned runtime storage and return the tmux environment."""
+        workdir = os.path.realpath(working_directory or os.getcwd())
+        if launch_context is not None:
+            codex_home = prepare_identity_codex_home(
+                launch_context.provider_data_dir,
+                terminal_id,
+                agent_profile,
+                workdir,
+            )
+            return ProviderRuntimePreparation(
+                environment={"CODEX_HOME": str(codex_home)},
+                identity_scoped=True,
+                resume_supported=True,
+                context_preservation="identity-scoped Codex home preserves provider state",
+            )
+
+        codex_home = prepare_codex_home(terminal_id, agent_profile, workdir)
+        return ProviderRuntimePreparation(
+            environment={"CODEX_HOME": str(codex_home)},
+            identity_scoped=False,
+            resume_supported=True,
+            context_preservation="raw terminal Codex home is terminal-scoped",
+        )
+
+    @classmethod
+    def runtime_fingerprint_contribution(
+        cls,
+        *,
+        launch_context: AgentRuntimeLaunchContext,
+    ) -> ProviderRuntimeDescriptor:
+        """Describe Codex-owned runtime inputs that require terminal replacement."""
+        workdir = os.path.realpath(launch_context.working_directory or os.getcwd())
+        materialization = build_codex_home_materialization(
+            launch_context.agent_profile,
+            workdir,
+        )
+        startup_command = cls(
+            terminal_id="<fingerprint>",
+            session_name=launch_context.session_name,
+            window_name=launch_context.window_name,
+            agent_profile=launch_context.agent_profile,
+            allowed_tools=launch_context.allowed_tools,
+            skill_prompt=launch_context.skill_prompt,
+        )._build_codex_command()
+        return ProviderRuntimeDescriptor(
+            schema_version="codex-runtime-descriptor.v1",
+            material={
+                "codex_home_schema_version": CODEX_HOME_MATERIALIZATION_SCHEMA_VERSION,
+                "codex_home_config": materialization.config,
+                "codex_home_agents_md": materialization.agents_md,
+                "startup_command": startup_command,
+                "provider_runtime_config": get_provider_runtime_config(cls.provider_type),
+            },
+        )
+
+    @staticmethod
+    def cleanup_terminal_runtime(terminal_id: str) -> None:
+        """Clean up volatile raw-terminal Codex runtime storage."""
+        cleanup_codex_home(terminal_id)
 
     def __init__(
         self,
@@ -259,7 +346,13 @@ class CodexProvider(BaseProvider):
             if re.search(TRUST_PROMPT_PATTERN, clean_output):
                 logger.info("Codex workspace trust prompt detected, auto-accepting")
                 session = tmux_client.server.sessions.get(session_name=self.session_name)
+                if session is None:
+                    logger.warning("Codex trust prompt detected but tmux session was not found")
+                    return
                 window = session.windows.get(window_name=self.window_name)
+                if window is None:
+                    logger.warning("Codex trust prompt detected but tmux window was not found")
+                    return
                 pane = window.active_pane
                 if pane:
                     pane.send_keys("", enter=True)

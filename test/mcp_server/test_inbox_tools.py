@@ -300,7 +300,6 @@ async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_work
         "from": "Implementation Partner",
         "body": "I finished the patch. Can you review it?",
         "replyable": False,
-        "workspace": None,
         "reply_error": "no provider reply route",
     }
 
@@ -317,7 +316,6 @@ def test_provider_backed_read_returns_slim_payload_without_raw_context(test_sess
         "from": "Example",
         "body": "Full provider body",
         "replyable": True,
-        "workspace": None,
     }
     assert "id" not in result
     assert "provider_context" not in result
@@ -337,17 +335,15 @@ def test_linear_backed_read_returns_provider_owned_workspace_breadcrumb(test_ses
         "from": "Implementation Partner",
         "body": "Please implement the breadcrumb.",
         "replyable": True,
-        "workspace": {
-            "name": "Linear",
-            "breadcrumb": {
-                "agent_session_id": "session-123",
-                "issue": "CAO-34",
-            },
+        "breadcrumb": {
+            "workspace": "Linear",
+            "agent_session_id": "session-123",
+            "issue": "CAO-34",
         },
     }
 
 
-def test_linear_backed_read_returns_bounded_named_prompt_context(test_session):
+def test_linear_backed_read_does_not_expose_prompt_context(test_session):
     # Shape sources:
     # https://linear.app/developers/agent-interaction/
     # https://linear.app/developers/agents
@@ -360,11 +356,39 @@ def test_linear_backed_read_returns_bounded_named_prompt_context(test_session):
 
     assert result["success"] is True
     assert result["body"] == "Please use the bounded context."
-    assert result["context"]["linear_prompt_context"].startswith("<issue>Current scope</issue>")
-    assert len(result["context"]["linear_prompt_context"]) <= 4000
+    assert "context" not in result
     assert "token" not in encoded
     assert "raw-secret" not in encoded
     assert "prior comment " * 500 not in encoded
+
+
+def test_linear_backed_read_never_uses_prompt_context_as_message_body(test_session):
+    prompt_context = "<issue>Should stay out of message reads</issue>"
+    thread = upsert_thread(
+        provider="linear",
+        external_id="session-empty-body",
+        kind="conversation",
+        prompt_context=prompt_context,
+    )
+    message = upsert_message(
+        thread_id=thread.id,
+        provider="linear",
+        external_id="activity-empty-body",
+        direction="inbound",
+        kind="prompt",
+        body=None,
+        metadata=inbox_read_presentation_metadata(source_label="Linear"),
+    )
+    notification_id = create_notification_for_message(
+        presence_message_id=message.id,
+        receiver_id="agent:implementation_partner",
+    ).delivery.notification.id
+
+    result = _read_inbox_message_impl(notification_id)
+    encoded = json.dumps(result)
+
+    assert result["body"] == "(no text body)"
+    assert prompt_context not in encoded
 
 
 def test_provider_backed_read_body_is_backing_message_not_notification_wrapper(test_session):
@@ -441,7 +465,8 @@ def test_large_linear_raw_snapshots_do_not_leak_through_breadcrumb_or_sender_lab
     encoded = json.dumps(result)
 
     assert result["from"] == "Implementation Partner"
-    assert result["workspace"]["breadcrumb"] == {
+    assert result["breadcrumb"] == {
+        "workspace": "Linear",
         "agent_session_id": "session-123",
         "issue": "CAO-34",
     }
@@ -471,7 +496,7 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
     result = _read_inbox_message_impl(notification_id)
 
     assert result["success"] is True
-    assert result["workspace"] is None
+    assert "breadcrumb" not in result
     assert result["body"] == "Full provider body"
 
 
@@ -500,7 +525,7 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
     encoded = json.dumps(result)
 
     assert result["success"] is True
-    assert result["workspace"] is None
+    assert "breadcrumb" not in result
     assert "x" * 1000 not in encoded
 
 
@@ -650,7 +675,6 @@ def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_sessio
         "from": "Terminal sender",
         "body": "Plain terminal message",
         "replyable": False,
-        "workspace": None,
         "reply_error": "no provider reply route",
     }
     assert reply_result["success"] is False
@@ -691,7 +715,6 @@ def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):
         "from": "Linear Event",
         "body": "Agent runtime accepted a Linear event.",
         "replyable": False,
-        "workspace": None,
         "reply_error": "no provider reply route",
     }
     assert reply_result["success"] is False

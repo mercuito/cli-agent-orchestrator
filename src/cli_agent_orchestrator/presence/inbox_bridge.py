@@ -234,7 +234,7 @@ def _presence_message_body(
     body = _compact(cast(Optional[str], message_row.body))
     if body:
         return body
-    return _compact(cast(Optional[str], thread_row.prompt_context)) or "(no text body)"
+    return "(no text body)"
 
 
 def _presence_message_origin(

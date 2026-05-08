@@ -20,8 +20,7 @@ def test_delete_session_cleans_up_codex_homes():
         patch("cli_agent_orchestrator.services.session_service.delete_terminals_by_session"),
         patch("cli_agent_orchestrator.services.session_service.provider_manager.cleanup_provider"),
         patch(
-            "cli_agent_orchestrator.services.session_service.cleanup_codex_home",
-            create=True,
+            "cli_agent_orchestrator.services.session_service.provider_manager.cleanup_terminal_runtime"
         ) as mock_cleanup,
     ):
         mock_tmux.session_exists.return_value = True
@@ -30,5 +29,5 @@ def test_delete_session_cleans_up_codex_homes():
         assert result["deleted"] == ["cao-test"]
         assert result["errors"] == []
 
-        # Best-effort: always attempt per-terminal Codex home cleanup.
-        assert mock_cleanup.call_args_list == [call("t1"), call("t2")]
+        # Best-effort: ask each provider to clean its terminal-scoped runtime.
+        assert mock_cleanup.call_args_list == [call("codex", "t1"), call("q_cli", "t2")]

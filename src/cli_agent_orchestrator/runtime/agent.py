@@ -2,24 +2,33 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent_identity import AgentIdentity, ensure_agent_identity_runtime_paths
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import inbox_service, terminal_service
 
 logger = logging.getLogger(__name__)
+
+RUNTIME_FINGERPRINT_SCHEMA_VERSION = "cao-identity-runtime-fingerprint.v1"
+RUNTIME_STATE_SCHEMA_VERSION = "cao-identity-runtime-state.v1"
+RUNTIME_STATE_FILENAME = "runtime-state.json"
 
 
 class AgentRuntimeStatus(str, Enum):
@@ -34,6 +43,16 @@ class AgentRuntimeStatus(str, Enum):
     UNREACHABLE = "unreachable"
 
 
+class AgentRuntimeFreshnessAction(str, Enum):
+    """Outcome of freshness reconciliation before terminal-send delivery."""
+
+    REUSED = "reused"
+    STARTED = "started"
+    RESTARTED = "restarted"
+    DEFERRED = "deferred"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class AgentRuntimeTerminal:
     """Terminal manifestation of a CAO agent identity."""
@@ -43,6 +62,8 @@ class AgentRuntimeTerminal:
     window_name: str
     provider: str
     agent_profile: Optional[str]
+    resume_supported: bool
+    context_preservation: str
 
     def as_terminal_metadata(self) -> dict[str, object]:
         """Return the legacy terminal metadata shape used by compatibility callers."""
@@ -52,6 +73,8 @@ class AgentRuntimeTerminal:
             "tmux_window": self.window_name,
             "provider": self.provider,
             "agent_profile": self.agent_profile,
+            "resume_supported": self.resume_supported,
+            "context_preservation": self.context_preservation,
         }
 
 
@@ -79,6 +102,18 @@ class AgentRuntimeDeliveryResult:
 
 
 @dataclass(frozen=True)
+class AgentRuntimeFreshnessResult:
+    """Result of making an identity runtime fresh enough for delivery."""
+
+    action: AgentRuntimeFreshnessAction
+    status: AgentRuntimeStatus
+    terminal_id: Optional[str]
+    ready: bool
+    fresh: bool
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class AgentRuntimeNotifyResult:
     """Result of accepting and optionally delivering a runtime notification."""
 
@@ -88,6 +123,11 @@ class AgentRuntimeNotifyResult:
     started: bool
     delivery: AgentRuntimeDeliveryResult
     error: Optional[str] = None
+    freshness: Optional[AgentRuntimeFreshnessResult] = None
+
+
+class AgentRuntimeInvariantError(RuntimeError):
+    """Raised when a durable identity has conflicting terminal manifestations."""
 
 
 class AgentRuntimeHandle:
@@ -95,6 +135,7 @@ class AgentRuntimeHandle:
 
     def __init__(self, identity: AgentIdentity) -> None:
         self.identity = identity
+        self._last_freshness_result: Optional[AgentRuntimeFreshnessResult] = None
 
     @property
     def inbox_receiver_id(self) -> str:
@@ -111,7 +152,10 @@ class AgentRuntimeHandle:
         terminal = self._terminal()
         if terminal is None:
             return AgentRuntimeStatus.NOT_STARTED
+        return self._status_for_terminal(terminal)
 
+    def _status_for_terminal(self, terminal: AgentRuntimeTerminal) -> AgentRuntimeStatus:
+        """Return provider-friendly status for a known terminal manifestation."""
         provider = provider_manager.get_provider(terminal.id)
         if provider is None:
             return AgentRuntimeStatus.UNREACHABLE
@@ -130,20 +174,111 @@ class AgentRuntimeHandle:
         if existing is not None:
             return existing
 
-        created = terminal_service.create_terminal(
-            provider=self.identity.cli_provider,
-            agent_profile=self.identity.agent_profile,
-            session_name=self.session_name,
-            new_session=not tmux_client.session_exists(self.session_name),
-            working_directory=self.identity.workdir,
-        )
-        provider_value = getattr(created.provider, "value", created.provider)
-        return AgentRuntimeTerminal(
-            id=created.id,
-            session_name=created.session_name,
-            window_name=created.name,
-            provider=str(provider_value),
-            agent_profile=created.agent_profile,
+        desired_fingerprint = self._desired_runtime_fingerprint()
+        return self._start_with_fingerprint(desired_fingerprint)
+
+    def ensure_fresh_started(self) -> AgentRuntimeFreshnessResult:
+        """Ensure the identity runtime is started, fresh, and ready for delivery."""
+        desired_fingerprint = self._desired_runtime_fingerprint()
+        terminal = self._terminal()
+        if terminal is None:
+            try:
+                started = self._start_with_fingerprint(desired_fingerprint)
+            except Exception as exc:
+                logger.warning("Unable to start runtime for agent %s: %s", self.identity.id, exc)
+                return AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.FAILED,
+                    status=AgentRuntimeStatus.NOT_STARTED,
+                    terminal_id=None,
+                    ready=False,
+                    fresh=False,
+                    error=str(exc),
+                )
+            return self._freshness_result_for_started_terminal(
+                started,
+                action=AgentRuntimeFreshnessAction.STARTED,
+                fresh=True,
+            )
+
+        status = self._status_for_terminal(terminal)
+        if status is AgentRuntimeStatus.UNREACHABLE:
+            self._move_pending_terminal_notifications_to_agent(terminal.id)
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.FAILED,
+                status=status,
+                terminal_id=terminal.id,
+                ready=False,
+                fresh=False,
+                error="runtime status is unreachable",
+            )
+        if status is AgentRuntimeStatus.ERROR:
+            self._move_pending_terminal_notifications_to_agent(terminal.id)
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.FAILED,
+                status=status,
+                terminal_id=terminal.id,
+                ready=False,
+                fresh=False,
+                error="runtime is in error state",
+            )
+
+        fresh = self._applied_runtime_fingerprint(terminal.id) == desired_fingerprint
+        if fresh:
+            if status in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
+                return AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.REUSED,
+                    status=status,
+                    terminal_id=terminal.id,
+                    ready=True,
+                    fresh=True,
+                )
+            self._move_pending_terminal_notifications_to_agent(terminal.id)
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.DEFERRED,
+                status=status,
+                terminal_id=terminal.id,
+                ready=False,
+                fresh=True,
+                error=f"runtime is {status.value}; delivery deferred",
+            )
+
+        self._move_pending_terminal_notifications_to_agent(terminal.id)
+        if status in (AgentRuntimeStatus.BUSY, AgentRuntimeStatus.WAITING_USER):
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.DEFERRED,
+                status=status,
+                terminal_id=terminal.id,
+                ready=False,
+                fresh=False,
+                error=f"runtime is stale and {status.value}; delivery deferred",
+            )
+        if status not in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.FAILED,
+                status=status,
+                terminal_id=terminal.id,
+                ready=False,
+                fresh=False,
+                error=f"stale runtime cannot be refreshed while {status.value}",
+            )
+
+        try:
+            terminal_service.delete_terminal(terminal.id, require_window_killed=True)
+            restarted = self._start_with_fingerprint(desired_fingerprint)
+        except Exception as exc:
+            logger.warning("Unable to refresh runtime for agent %s: %s", self.identity.id, exc)
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.FAILED,
+                status=status,
+                terminal_id=None,
+                ready=False,
+                fresh=False,
+                error=str(exc),
+            )
+        return self._freshness_result_for_started_terminal(
+            restarted,
+            action=AgentRuntimeFreshnessAction.RESTARTED,
+            fresh=True,
         )
 
     def current_terminal(self) -> Optional[AgentRuntimeTerminal]:
@@ -165,31 +300,16 @@ class AgentRuntimeHandle:
         Acceptance is independent from terminal liveness. ``source_kind`` and
         ``source_id`` act as an idempotency key when supplied together.
         """
-        terminal = self._terminal()
         notification = self._create_or_get_notification(
             sender_id=sender_id,
-            receiver_id=terminal.id if terminal is not None else self.inbox_receiver_id,
+            receiver_id=self.inbox_receiver_id,
             message=message,
             source_kind=source_kind,
             source_id=source_id,
         )
 
-        started = False
-        error = None
-        if ensure_started and self.status() is AgentRuntimeStatus.NOT_STARTED:
-            try:
-                terminal = self.ensure_started()
-                self._move_pending_agent_notifications_to_terminal(terminal.id)
-                notification = self._refresh_notification_receiver(notification)
-                started = True
-            except Exception as exc:
-                error = str(exc)
-                logger.warning(
-                    "Accepted notification for offline agent %s: %s", self.identity.id, exc
-                )
-
         delivery = (
-            self.try_deliver_pending()
+            self.try_deliver_pending(ensure_started=ensure_started)
             if attempt_delivery
             else AgentRuntimeDeliveryResult(
                 status=self.status(),
@@ -198,13 +318,21 @@ class AgentRuntimeHandle:
                 delivered=False,
             )
         )
+        freshness = self._last_freshness_result if attempt_delivery else None
+        started = bool(
+            freshness
+            and freshness.action
+            in (AgentRuntimeFreshnessAction.STARTED, AgentRuntimeFreshnessAction.RESTARTED)
+        )
+        notification = self._refresh_notification_receiver(notification)
         return AgentRuntimeNotifyResult(
             notification=notification,
             status=delivery.status,
             terminal_id=delivery.terminal_id,
             started=started,
             delivery=delivery,
-            error=error or delivery.error,
+            error=delivery.error,
+            freshness=freshness,
         )
 
     def accept_notification(
@@ -221,23 +349,8 @@ class AgentRuntimeHandle:
         This method keeps terminal lifecycle and busy/idle delivery behavior
         behind the runtime handle for those already-durable notifications.
         """
-        terminal = self._terminal()
-        started = False
-        error = None
-        if ensure_started and self.status() is AgentRuntimeStatus.NOT_STARTED:
-            try:
-                terminal = self.ensure_started()
-                self._move_pending_agent_notifications_to_terminal(terminal.id)
-                notification = self._refresh_notification_receiver(notification)
-                started = True
-            except Exception as exc:
-                error = str(exc)
-                logger.warning(
-                    "Accepted notification for offline agent %s: %s", self.identity.id, exc
-                )
-
         delivery = (
-            self.try_deliver_pending()
+            self.try_deliver_pending(ensure_started=ensure_started)
             if attempt_delivery
             else AgentRuntimeDeliveryResult(
                 status=self.status(),
@@ -246,64 +359,76 @@ class AgentRuntimeHandle:
                 delivered=False,
             )
         )
+        freshness = self._last_freshness_result if attempt_delivery else None
+        started = bool(
+            freshness
+            and freshness.action
+            in (AgentRuntimeFreshnessAction.STARTED, AgentRuntimeFreshnessAction.RESTARTED)
+        )
+        notification = self._refresh_notification_receiver(notification)
         return AgentRuntimeNotifyResult(
             notification=notification,
             status=delivery.status,
             terminal_id=delivery.terminal_id,
             started=started,
             delivery=delivery,
-            error=error or delivery.error,
+            error=delivery.error,
+            freshness=freshness,
         )
 
-    def try_deliver_pending(self) -> AgentRuntimeDeliveryResult:
+    def try_deliver_pending(self, *, ensure_started: bool = True) -> AgentRuntimeDeliveryResult:
         """Best-effort delivery of pending notifications when the runtime is ready."""
-        terminal = self._terminal()
-        status = self.status()
-        terminal_id = terminal.id if terminal is not None else None
-        if terminal is None:
+        freshness = (
+            self.ensure_fresh_started() if ensure_started else self._freshness_without_starting()
+        )
+        self._last_freshness_result = freshness
+        if not freshness.ready or freshness.terminal_id is None:
             return AgentRuntimeDeliveryResult(
-                status=status,
-                terminal_id=None,
+                status=freshness.status,
+                terminal_id=freshness.terminal_id,
                 attempted=False,
                 delivered=False,
+                error=freshness.error,
             )
-        self._move_pending_agent_notifications_to_terminal(terminal.id)
-        if status not in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
+
+        terminal_id = freshness.terminal_id
+        self._move_pending_agent_notifications_to_terminal(terminal_id)
+        if freshness.status not in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
             return AgentRuntimeDeliveryResult(
-                status=status,
-                terminal_id=terminal.id,
+                status=freshness.status,
+                terminal_id=terminal_id,
                 attempted=False,
                 delivered=False,
             )
 
-        if db_module.get_oldest_pending_inbox_delivery(terminal.id) is None:
+        if db_module.get_oldest_pending_inbox_delivery(terminal_id) is None:
             return AgentRuntimeDeliveryResult(
-                status=status,
-                terminal_id=terminal.id,
+                status=freshness.status,
+                terminal_id=terminal_id,
                 attempted=False,
                 delivered=False,
             )
 
         try:
-            delivered = inbox_service.check_and_send_pending_messages(terminal.id)
+            delivered = inbox_service.check_and_send_pending_messages(terminal_id)
         except Exception as exc:
             logger.error(
                 "Failed to deliver runtime notifications to agent %s terminal %s: %s",
                 self.identity.id,
-                terminal.id,
+                terminal_id,
                 exc,
             )
             return AgentRuntimeDeliveryResult(
-                status=status,
-                terminal_id=terminal.id,
+                status=freshness.status,
+                terminal_id=terminal_id,
                 attempted=True,
                 delivered=False,
                 error=str(exc),
             )
 
         return AgentRuntimeDeliveryResult(
-            status=status,
-            terminal_id=terminal.id,
+            status=freshness.status,
+            terminal_id=terminal_id,
             attempted=True,
             delivered=delivered,
         )
@@ -312,11 +437,185 @@ class AgentRuntimeHandle:
         terminals = db_module.list_terminals_by_session(self.session_name)
         if not terminals:
             return None
+        if len(terminals) > 1:
+            raise AgentRuntimeInvariantError(
+                "Multiple terminal manifestations exist for CAO agent identity "
+                f"{self.identity.id!r} in session {self.session_name!r}"
+            )
         return _terminal_from_metadata(terminals[0])
+
+    def _start_with_fingerprint(self, desired_fingerprint: str) -> AgentRuntimeTerminal:
+        created = terminal_service.create_terminal(
+            provider=self.identity.cli_provider,
+            agent_profile=self.identity.agent_profile,
+            session_name=self.session_name,
+            new_session=not tmux_client.session_exists(self.session_name),
+            working_directory=self.identity.workdir,
+            agent_identity=self.identity,
+        )
+        self._write_applied_runtime_state(created.id, desired_fingerprint)
+        provider_value = getattr(created.provider, "value", created.provider)
+        provider_name = str(provider_value)
+        return AgentRuntimeTerminal(
+            id=created.id,
+            session_name=created.session_name,
+            window_name=created.name,
+            provider=provider_name,
+            agent_profile=created.agent_profile,
+            resume_supported=provider_manager.provider_supports_resume(provider_name),
+            context_preservation=_context_preservation_message(provider_name),
+        )
+
+    def _freshness_result_for_started_terminal(
+        self,
+        terminal: AgentRuntimeTerminal,
+        *,
+        action: AgentRuntimeFreshnessAction,
+        fresh: bool,
+    ) -> AgentRuntimeFreshnessResult:
+        status = self._status_for_terminal(terminal)
+        if status in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
+            return AgentRuntimeFreshnessResult(
+                action=action,
+                status=status,
+                terminal_id=terminal.id,
+                ready=True,
+                fresh=fresh,
+            )
+        if status in (AgentRuntimeStatus.BUSY, AgentRuntimeStatus.WAITING_USER):
+            self._move_pending_terminal_notifications_to_agent(terminal.id)
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.DEFERRED,
+                status=status,
+                terminal_id=terminal.id,
+                ready=False,
+                fresh=fresh,
+                error=f"runtime is {status.value}; delivery deferred",
+            )
+        self._move_pending_terminal_notifications_to_agent(terminal.id)
+        return AgentRuntimeFreshnessResult(
+            action=AgentRuntimeFreshnessAction.FAILED,
+            status=status,
+            terminal_id=terminal.id,
+            ready=False,
+            fresh=fresh,
+            error=f"runtime is {status.value}",
+        )
+
+    def _freshness_without_starting(self) -> AgentRuntimeFreshnessResult:
+        terminal = self._terminal()
+        if terminal is None:
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.DEFERRED,
+                status=AgentRuntimeStatus.NOT_STARTED,
+                terminal_id=None,
+                ready=False,
+                fresh=False,
+            )
+        status = self._status_for_terminal(terminal)
+        fresh = (
+            self._applied_runtime_fingerprint(terminal.id) == self._desired_runtime_fingerprint()
+        )
+        if not fresh:
+            self._move_pending_terminal_notifications_to_agent(terminal.id)
+        return AgentRuntimeFreshnessResult(
+            action=(
+                AgentRuntimeFreshnessAction.REUSED
+                if fresh
+                else AgentRuntimeFreshnessAction.DEFERRED
+            ),
+            status=status,
+            terminal_id=terminal.id,
+            ready=fresh and status in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED),
+            fresh=fresh,
+            error=None if fresh else "runtime is stale; delivery deferred",
+        )
 
     def _terminal_id(self) -> Optional[str]:
         terminal = self._terminal()
         return terminal.id if terminal is not None else None
+
+    def _desired_runtime_fingerprint(self) -> str:
+        runtime_inputs = terminal_service.resolve_terminal_runtime_inputs(
+            self.identity.agent_profile,
+        )
+        runtime_paths = ensure_agent_identity_runtime_paths(
+            self.identity,
+            self.identity.cli_provider,
+        )
+        context = AgentRuntimeLaunchContext(
+            identity=self.identity,
+            identity_data_dir=runtime_paths.identity_data_dir,
+            provider_data_dir=runtime_paths.provider_data_dir,
+            terminal_id="<desired>",
+            session_name=self.session_name,
+            window_name=self.identity.agent_profile,
+            working_directory=self.identity.workdir,
+            agent_profile=self.identity.agent_profile,
+            allowed_tools=runtime_inputs.allowed_tools,
+            skill_prompt=runtime_inputs.skill_prompt,
+        )
+        provider_descriptor = provider_manager.runtime_fingerprint_contribution(
+            self.identity.cli_provider,
+            launch_context=context,
+        )
+        descriptor = {
+            "schema_version": RUNTIME_FINGERPRINT_SCHEMA_VERSION,
+            "identity": {
+                "id": self.identity.id,
+                "provider": self.identity.cli_provider,
+                "agent_profile": self.identity.agent_profile,
+                "workdir": os.path.realpath(self.identity.workdir or os.getcwd()),
+                "session_name": self.session_name,
+                "allowed_tools": runtime_inputs.allowed_tools,
+                "profile_material": runtime_inputs.profile_material,
+            },
+            "provider": {
+                "schema_version": provider_descriptor.schema_version,
+                "material": provider_descriptor.material,
+            },
+        }
+        return hashlib.sha256(_canonical_json_bytes(descriptor)).hexdigest()
+
+    def _runtime_state_path(self) -> Path:
+        runtime_paths = ensure_agent_identity_runtime_paths(
+            self.identity,
+            self.identity.cli_provider,
+        )
+        return runtime_paths.provider_data_dir / RUNTIME_STATE_FILENAME
+
+    def _applied_runtime_fingerprint(self, terminal_id: str) -> Optional[str]:
+        path = self._runtime_state_path()
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if data.get("schema_version") != RUNTIME_STATE_SCHEMA_VERSION:
+            return None
+        if data.get("terminal_id") != terminal_id:
+            return None
+        value = data.get("fingerprint")
+        return str(value) if isinstance(value, str) else None
+
+    def _write_applied_runtime_state(self, terminal_id: str, fingerprint: str) -> None:
+        path = self._runtime_state_path()
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": RUNTIME_STATE_SCHEMA_VERSION,
+                    "terminal_id": terminal_id,
+                    "fingerprint": fingerprint,
+                    "applied_at": datetime.now().isoformat(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
 
     def _create_or_get_notification(
         self,
@@ -428,6 +727,9 @@ class AgentRuntimeHandle:
     def _move_pending_agent_notifications_to_terminal(self, terminal_id: str) -> None:
         db_module.move_pending_inbox_notifications(self.inbox_receiver_id, terminal_id)
 
+    def _move_pending_terminal_notifications_to_agent(self, terminal_id: str) -> None:
+        db_module.move_pending_inbox_notifications(terminal_id, self.inbox_receiver_id)
+
     def _refresh_notification_receiver(
         self,
         notification: AgentRuntimeNotification,
@@ -448,14 +750,42 @@ def canonical_agent_session_name(session_name: str) -> str:
     return f"{SESSION_PREFIX}{session_name}"
 
 
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if hasattr(value, "model_dump"):
+        return value.model_dump(exclude_none=True)
+    if isinstance(value, set):
+        return sorted(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _terminal_from_metadata(metadata: dict[str, object]) -> AgentRuntimeTerminal:
+    provider = str(metadata["provider"])
     return AgentRuntimeTerminal(
         id=str(metadata["id"]),
         session_name=str(metadata["tmux_session"]),
         window_name=str(metadata["tmux_window"]),
-        provider=str(metadata["provider"]),
+        provider=provider,
         agent_profile=str(metadata["agent_profile"]) if metadata.get("agent_profile") else None,
+        resume_supported=provider_manager.provider_supports_resume(provider),
+        context_preservation=_context_preservation_message(provider),
     )
+
+
+def _context_preservation_message(provider: str) -> str:
+    if provider_manager.provider_supports_resume(provider):
+        return "provider supports identity-scoped runtime context preservation"
+    return f"provider {provider!r} does not support resume; restarted context is unavailable"
 
 
 def _map_terminal_status(status: TerminalStatus) -> AgentRuntimeStatus:

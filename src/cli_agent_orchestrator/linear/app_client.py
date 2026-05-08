@@ -453,6 +453,11 @@ def public_cao_agent_url(agent_id: str) -> Optional[str]:
     )
 
 
+def public_cao_runtime_url(terminal_id: str, *, agent_id: Optional[str] = None) -> Optional[str]:
+    """Return the best public dashboard URL for a Linear-backed CAO runtime."""
+    return public_cao_agent_url(agent_id) if agent_id else public_cao_terminal_url(terminal_id)
+
+
 def update_agent_session_external_url(
     agent_session_id: str,
     terminal_id: str,
@@ -461,9 +466,7 @@ def update_agent_session_external_url(
     app_key: Optional[str] = None,
 ) -> bool:
     """Attach a CAO URL to a Linear AgentSession for smoke-test visibility."""
-    terminal_url = (
-        public_cao_agent_url(agent_id) if agent_id else public_cao_terminal_url(terminal_id)
-    )
+    terminal_url = public_cao_runtime_url(terminal_id, agent_id=agent_id)
     if not terminal_url:
         return False
 

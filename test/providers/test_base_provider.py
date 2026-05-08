@@ -4,8 +4,9 @@ from typing import Optional
 
 import pytest
 
+from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext, BaseProvider
 
 
 class ConcreteProvider(BaseProvider):
@@ -84,6 +85,32 @@ class TestBaseProvider:
         provider = ConcreteProvider("term-123", "session-1", "window-0", skill_prompt="## Skills")
         result = provider._apply_skill_prompt("")
         assert result == "## Skills"
+
+    def test_runtime_fingerprint_contribution_includes_skill_prompt_content(self, tmp_path):
+        """Test default provider freshness changes when runtime skill catalog changes."""
+        context = AgentRuntimeLaunchContext(
+            identity=AgentIdentity(
+                id="agent-1",
+                display_name="Agent 1",
+                agent_profile="developer",
+                cli_provider="test_provider",
+                workdir=str(tmp_path / "repo"),
+                session_name="agent-1",
+            ),
+            identity_data_dir=tmp_path / "agents" / "agent-1",
+            provider_data_dir=tmp_path / "agents" / "agent-1" / "providers" / "test_provider",
+            terminal_id="terminal-1",
+            session_name="cao-agent-1",
+            window_name="developer-1",
+            working_directory=str(tmp_path / "repo"),
+            agent_profile="developer",
+            allowed_tools=["Read"],
+            skill_prompt="## Available Skills\n- test-skill",
+        )
+
+        descriptor = ConcreteProvider.runtime_fingerprint_contribution(launch_context=context)
+
+        assert descriptor.material["skill_prompt"] == "## Available Skills\n- test-skill"
 
     def test_abstract_methods_implemented(self):
         """Test that concrete implementation works."""

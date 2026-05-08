@@ -10,8 +10,11 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.providers.base import ProviderRuntimeDescriptor
 from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import (
+    AgentRuntimeFreshnessAction,
+    AgentRuntimeInvariantError,
     AgentRuntimeHandle,
     AgentRuntimeNotification,
     AgentRuntimeStatus,
@@ -20,7 +23,11 @@ from cli_agent_orchestrator.services import inbox_service
 
 
 @pytest.fixture
-def test_session(runtime_inbox_db_session):
+def test_session(runtime_inbox_db_session, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
+        tmp_path / "agents",
+    )
     return runtime_inbox_db_session
 
 
@@ -42,6 +49,20 @@ def _create_terminal(session_name: str = "cao-implementation-partner") -> str:
         "codex",
         "developer",
     )["id"]
+
+
+def _mark_terminal_fresh(handle: AgentRuntimeHandle, terminal_id: str = "terminal-1") -> None:
+    handle._write_applied_runtime_state(terminal_id, handle._desired_runtime_fingerprint())
+
+
+def _created_terminal_result(terminal_id: str, window_name: str = "developer-5678") -> Mock:
+    return Mock(
+        id=terminal_id,
+        session_name="cao-implementation-partner",
+        name=window_name,
+        provider=Mock(value="codex"),
+        agent_profile="developer",
+    )
 
 
 def _provider(terminal_provider_patcher, status: TerminalStatus | Exception | None) -> None:
@@ -136,7 +157,49 @@ def test_ensure_started_creates_terminal_from_agent_identity_when_not_started(
         session_name="cao-implementation-partner",
         new_session=True,
         working_directory=identity.workdir,
+        agent_identity=identity,
     )
+
+
+def test_current_terminal_rejects_multiple_manifestations_for_identity(test_session, handle):
+    db_module.create_terminal(
+        "terminal-1",
+        "cao-implementation-partner",
+        "developer-1",
+        "codex",
+        "developer",
+    )
+    db_module.create_terminal(
+        "terminal-2",
+        "cao-implementation-partner",
+        "developer-2",
+        "codex",
+        "developer",
+    )
+
+    with pytest.raises(AgentRuntimeInvariantError, match="Multiple terminal manifestations"):
+        handle.current_terminal()
+
+
+def test_current_terminal_reports_resume_unsupported_for_provider_without_resume(
+    test_session,
+    implementation_partner_identity_factory,
+):
+    identity = implementation_partner_identity_factory(cli_provider="kiro_cli")
+    handle = AgentRuntimeHandle(identity)
+    db_module.create_terminal(
+        "terminal-1",
+        "cao-implementation-partner",
+        "developer-1",
+        "kiro_cli",
+        "developer",
+    )
+
+    terminal = handle.current_terminal()
+
+    assert terminal is not None
+    assert terminal.resume_supported is False
+    assert "does not support resume" in terminal.context_preservation
 
 
 def test_notify_accepts_durable_inbox_state_when_startup_fails(
@@ -190,6 +253,7 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
     )
 
     _create_terminal()
+    _mark_terminal_fresh(handle)
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
 
@@ -199,6 +263,234 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
     assert _pending_deliveries(handle.inbox_receiver_id) == []
     assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
     send_input.assert_called_once_with("terminal-1", "Persist me while the agent is offline.")
+
+
+def test_fresh_idle_runtime_is_reused_for_delivery(
+    test_session,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    _mark_terminal_fresh(handle)
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+
+    result = handle.notify(
+        "Deliver through a fresh terminal.",
+        source_kind="linear_event",
+        source_id="event-fresh",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.REUSED
+    assert result.delivery.delivered is True
+    send_input.assert_called_once_with("terminal-1", "Deliver through a fresh terminal.")
+
+
+def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    runtime_inputs_v1 = runtime_agent.terminal_service.TerminalRuntimeInputs(
+        allowed_tools=["Read"],
+        skill_prompt="## Skills\n- old",
+        profile_material={"name": "developer", "system_prompt": "old prompt"},
+    )
+    runtime_inputs_v2 = runtime_agent.terminal_service.TerminalRuntimeInputs(
+        allowed_tools=["Read"],
+        skill_prompt="## Skills\n- new",
+        profile_material={"name": "developer", "system_prompt": "new prompt"},
+    )
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "resolve_terminal_runtime_inputs",
+        Mock(side_effect=[runtime_inputs_v1, runtime_inputs_v2]),
+    )
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_fingerprint_contribution",
+        Mock(
+            return_value=ProviderRuntimeDescriptor(
+                schema_version="test-provider-runtime.v1",
+                material={"provider": "stable"},
+            )
+        ),
+    )
+    handle._write_applied_runtime_state("terminal-1", handle._desired_runtime_fingerprint())
+    monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
+    delete_terminal = Mock(
+        side_effect=lambda terminal_id, **kwargs: db_module.delete_terminal(terminal_id)
+    )
+    monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
+
+    def create_replacement(**kwargs):
+        db_module.create_terminal(
+            "terminal-2",
+            "cao-implementation-partner",
+            "developer-5678",
+            "codex",
+            "developer",
+        )
+        return _created_terminal_result("terminal-2")
+
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(side_effect=create_replacement),
+    )
+
+    result = handle.notify(
+        "Deliver after profile refresh.",
+        source_kind="linear_event",
+        source_id="event-profile-refresh",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+    assert result.terminal_id == "terminal-2"
+    assert result.delivery.delivered is True
+    delete_terminal.assert_called_once_with("terminal-1", require_window_killed=True)
+    send_input.assert_called_once_with("terminal-2", "Deliver after profile refresh.")
+
+
+def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    create_inbox_delivery("presence", "terminal-1", "Old terminal pending")
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "delete_terminal",
+        Mock(side_effect=lambda terminal_id, **kwargs: db_module.delete_terminal(terminal_id)),
+    )
+
+    def create_replacement(**kwargs):
+        db_module.create_terminal(
+            "terminal-2",
+            "cao-implementation-partner",
+            "developer-5678",
+            "codex",
+            "developer",
+        )
+        return _created_terminal_result("terminal-2")
+
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(side_effect=create_replacement),
+    )
+
+    result = handle.try_deliver_pending()
+
+    assert result.terminal_id == "terminal-2"
+    assert result.delivered is True
+    assert handle._last_freshness_result is not None
+    assert handle._last_freshness_result.action == AgentRuntimeFreshnessAction.RESTARTED
+    assert _pending_deliveries("terminal-1") == []
+    assert _pending_deliveries(handle.inbox_receiver_id) == []
+    assert _all_delivery_statuses("terminal-2") == [MessageStatus.DELIVERED]
+    send_input.assert_called_once_with("terminal-2", "Old terminal pending")
+
+
+def test_stale_busy_runtime_defers_and_rehomes_terminal_pending_without_delete(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    create_inbox_delivery("presence", "terminal-1", "Do not strand me")
+    _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    delete_terminal = Mock()
+    monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
+
+    result = handle.try_deliver_pending()
+
+    assert result.status == AgentRuntimeStatus.BUSY
+    assert result.delivered is False
+    assert handle._last_freshness_result is not None
+    assert handle._last_freshness_result.action == AgentRuntimeFreshnessAction.DEFERRED
+    assert handle._last_freshness_result.fresh is False
+    delete_terminal.assert_not_called()
+    send_input.assert_not_called()
+    assert _pending_deliveries("terminal-1") == []
+    assert _pending_deliveries(handle.inbox_receiver_id)[0].message.body == "Do not strand me"
+
+
+def test_refresh_failure_keeps_notifications_on_agent_receiver(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    create_inbox_delivery("presence", "terminal-1", "Keep this durable")
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
+    monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", Mock(return_value=True))
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(side_effect=RuntimeError("restart failed")),
+    )
+
+    result = handle.try_deliver_pending()
+
+    assert result.attempted is False
+    assert result.error == "restart failed"
+    send_input.assert_not_called()
+    assert _pending_deliveries("terminal-1") == []
+    assert _pending_deliveries(handle.inbox_receiver_id)[0].message.body == "Keep this durable"
+
+
+def test_stale_idle_runtime_does_not_restart_when_old_terminal_stop_fails(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    create_inbox_delivery("presence", "terminal-1", "Keep on agent while stop fails")
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    create_terminal = Mock()
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "delete_terminal",
+        Mock(side_effect=RuntimeError("failed to stop old terminal")),
+    )
+    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal", create_terminal)
+
+    result = handle.try_deliver_pending()
+
+    assert result.attempted is False
+    assert result.error == "failed to stop old terminal"
+    create_terminal.assert_not_called()
+    send_input.assert_not_called()
+    assert _pending_deliveries("terminal-1") == []
+    assert (
+        _pending_deliveries(handle.inbox_receiver_id)[0].message.body
+        == "Keep on agent while stop fails"
+    )
 
 
 def test_notify_queues_without_terminal_input_while_agent_is_busy(
@@ -220,7 +512,9 @@ def test_notify_queues_without_terminal_input_while_agent_is_busy(
     assert result.status == AgentRuntimeStatus.BUSY
     assert result.delivery.attempted is False
     send_input.assert_not_called()
-    assert _pending_deliveries("terminal-1")[0].notification.status == MessageStatus.PENDING
+    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+        MessageStatus.PENDING
+    )
 
 
 def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_busy(
@@ -246,7 +540,9 @@ def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_bus
     assert result.delivery.attempted is False
     assert result.notification.delivery.notification.id == delivery.notification.id
     send_input.assert_not_called()
-    assert _pending_deliveries("terminal-1")[0].notification.status == MessageStatus.PENDING
+    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+        MessageStatus.PENDING
+    )
 
 
 def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
@@ -268,8 +564,9 @@ def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
         source_id="event-later",
     )
     provider.status = TerminalStatus.IDLE
+    _mark_terminal_fresh(handle)
 
-    assert inbox_service.check_and_send_pending_messages("terminal-1") is True
+    assert handle.try_deliver_pending().delivered is True
     send_input.assert_called_once_with("terminal-1", "Deliver this after the agent becomes idle.")
     assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
 
@@ -302,7 +599,9 @@ def test_notify_keeps_notifications_pending_when_agent_is_error_or_unreachable(
     assert result.status == runtime_status
     assert result.delivery.attempted is False
     send_input.assert_not_called()
-    assert _pending_deliveries("terminal-1")[0].notification.status == MessageStatus.PENDING
+    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+        MessageStatus.PENDING
+    )
 
 
 def test_notify_delivers_pending_notification_when_agent_is_idle(
@@ -312,6 +611,7 @@ def test_notify_delivers_pending_notification_when_agent_is_idle(
     terminal_send_patcher,
 ):
     _create_terminal()
+    _mark_terminal_fresh(handle)
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
 
@@ -352,7 +652,7 @@ def test_duplicate_notification_source_reuses_existing_inbox_message(
     assert (
         second.notification.delivery.notification.id == first.notification.delivery.notification.id
     )
-    deliveries = _pending_deliveries("terminal-1")
+    deliveries = _pending_deliveries(handle.inbox_receiver_id)
     assert [delivery.message.body for delivery in deliveries] == [
         "Only one notification should be queued."
     ]

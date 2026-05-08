@@ -21,9 +21,54 @@ and output format to reliably detect status changes.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional
 
+from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+
+
+@dataclass(frozen=True)
+class AgentRuntimeLaunchContext:
+    """Provider-facing launch context for an identity-managed runtime."""
+
+    identity: AgentIdentity
+    identity_data_dir: Path
+    provider_data_dir: Path
+    terminal_id: str
+    session_name: str
+    window_name: str
+    working_directory: str
+    agent_profile: str
+    allowed_tools: list[str] | None
+    skill_prompt: str | None = None
+
+
+@dataclass(frozen=True)
+class ProviderRuntimeDescriptor:
+    """Provider-owned material that contributes to runtime freshness."""
+
+    schema_version: str
+    material: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class ProviderResumeState:
+    """Opaque provider-owned resume state captured at the CAO/provider boundary."""
+
+    provider_type: str
+    payload: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ProviderRuntimePreparation:
+    """Provider-owned terminal runtime preparation returned to CAO."""
+
+    environment: Optional[Dict[str, str]] = None
+    identity_scoped: bool = False
+    resume_supported: bool = False
+    context_preservation: str = "resume is not supported by this provider"
 
 
 class BaseProvider(ABC):
@@ -86,6 +131,29 @@ class BaseProvider(ABC):
         )
 
         return get_provider_paste_enter_count(self.provider_type)
+
+    @classmethod
+    def supports_resume(cls) -> bool:
+        """Return whether this provider can preserve context across terminal replacement."""
+        return False
+
+    @classmethod
+    def runtime_fingerprint_contribution(
+        cls,
+        *,
+        launch_context: AgentRuntimeLaunchContext,
+    ) -> ProviderRuntimeDescriptor:
+        """Return provider-owned runtime inputs that affect terminal freshness."""
+        from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
+
+        return ProviderRuntimeDescriptor(
+            schema_version="provider-runtime-default.v1",
+            material={
+                "provider_type": cls.provider_type,
+                "provider_runtime_config": get_provider_runtime_config(cls.provider_type),
+                "skill_prompt": launch_context.skill_prompt,
+            },
+        )
 
     @abstractmethod
     def initialize(self) -> bool:

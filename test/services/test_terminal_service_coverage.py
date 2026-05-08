@@ -249,6 +249,25 @@ class TestDeleteTerminal:
         assert result is True
         mock_pm.cleanup_provider.assert_called_once()
 
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal", return_value=True)
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_delete_terminal_requires_window_killed_before_db_delete(
+        self, mock_meta, mock_tmux, mock_pm, mock_db_del
+    ):
+        """Strict replacement deletion should fail before metadata removal if tmux kill fails."""
+        from cli_agent_orchestrator.services.terminal_service import delete_terminal
+
+        mock_meta.return_value = {"tmux_session": "ses", "tmux_window": "win"}
+        mock_tmux.kill_window.side_effect = Exception("kill error")
+
+        with pytest.raises(RuntimeError, match="Failed to kill tmux window"):
+            delete_terminal("tid1", require_window_killed=True)
+
+        mock_db_del.assert_not_called()
+        mock_pm.cleanup_provider.assert_not_called()
+
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")

@@ -63,6 +63,11 @@ def _merged_provider_runtime_config(provider: Optional[str]) -> Dict[str, Any]:
     return result
 
 
+def get_provider_runtime_config(provider: Optional[str]) -> Dict[str, Any]:
+    """Return the merged runtime configuration for provider-owned descriptors."""
+    return _merged_provider_runtime_config(provider)
+
+
 def _parse_paste_enter_count(value: Any) -> Optional[int]:
     """Parse a configured paste Enter count, returning None when invalid."""
     if isinstance(value, bool):

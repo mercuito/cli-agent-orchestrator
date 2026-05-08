@@ -18,12 +18,13 @@ Terminal Workflow:
 """
 
 import logging
-import os
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
 
+from cli_agent_orchestrator.agent_identity import AgentIdentity, ensure_agent_identity_runtime_paths
 from cli_agent_orchestrator.clients.database import create_terminal as db_create_terminal
 from cli_agent_orchestrator.clients.database import delete_terminal as db_delete_terminal
 from cli_agent_orchestrator.clients.database import (
@@ -34,9 +35,9 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX, TERMINAL_LOG_DIR
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalStatus
+from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
-from cli_agent_orchestrator.utils.codex_home import cleanup_codex_home, prepare_codex_home
 from cli_agent_orchestrator.utils.skills import build_skill_catalog
 from cli_agent_orchestrator.utils.terminal import (
     generate_session_name,
@@ -69,6 +70,43 @@ RUNTIME_SKILL_PROMPT_PROVIDERS = {
 }
 
 
+@dataclass(frozen=True)
+class TerminalRuntimeInputs:
+    """Resolved profile-derived inputs shared by terminal launch and freshness."""
+
+    allowed_tools: Optional[list]
+    skill_prompt: str
+    profile_material: dict
+
+
+def resolve_terminal_runtime_inputs(
+    agent_profile: str,
+    *,
+    allowed_tools: Optional[list] = None,
+) -> TerminalRuntimeInputs:
+    """Resolve launch inputs that affect terminal runtime behavior."""
+    profile = load_agent_profile(agent_profile)
+    skill_prompt = build_skill_catalog()
+
+    resolved_allowed_tools = allowed_tools
+    if resolved_allowed_tools is None:
+        try:
+            from cli_agent_orchestrator.utils.tool_mapping import resolve_allowed_tools
+
+            mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
+            resolved_allowed_tools = resolve_allowed_tools(
+                profile.allowedTools, profile.role, mcp_server_names
+            )
+        except FileNotFoundError:
+            pass  # Profile not found; no tool restrictions
+
+    return TerminalRuntimeInputs(
+        allowed_tools=resolved_allowed_tools,
+        skill_prompt=skill_prompt,
+        profile_material=profile.model_dump(exclude_none=True),
+    )
+
+
 def create_terminal(
     provider: str,
     agent_profile: str,
@@ -76,6 +114,7 @@ def create_terminal(
     new_session: bool = False,
     working_directory: Optional[str] = None,
     allowed_tools: Optional[list] = None,
+    agent_identity: Optional[AgentIdentity] = None,
 ) -> Terminal:
     """Create a new terminal with an initialized CLI agent.
 
@@ -100,31 +139,53 @@ def create_terminal(
         ValueError: If session already exists (new_session=True) or not found (new_session=False)
         TimeoutError: If provider initialization times out
     """
-    created_codex_home = False
     terminal_id = ""
+    runtime_prepared = False
     try:
         # Step 1: Generate unique identifiers
         terminal_id = generate_terminal_id()
 
         if not session_name:
             session_name = generate_session_name()
+        if new_session and not session_name.startswith(SESSION_PREFIX):
+            session_name = f"{SESSION_PREFIX}{session_name}"
 
         window_name = generate_window_name(agent_profile)
 
+        runtime_inputs = resolve_terminal_runtime_inputs(
+            agent_profile,
+            allowed_tools=allowed_tools,
+        )
+        allowed_tools = runtime_inputs.allowed_tools
+
         env: Optional[Dict[str, str]] = None
-        if provider == ProviderType.CODEX.value:
-            # Prepare per-terminal Codex home directory and inject CODEX_HOME for this window.
-            workdir = os.path.realpath(working_directory or os.getcwd())
-            codex_home = prepare_codex_home(terminal_id, agent_profile, workdir)
-            env = {"CODEX_HOME": str(codex_home)}
-            created_codex_home = True
+        launch_context: Optional[AgentRuntimeLaunchContext] = None
+        if agent_identity is not None:
+            runtime_paths = ensure_agent_identity_runtime_paths(agent_identity, provider)
+            launch_context = AgentRuntimeLaunchContext(
+                identity=agent_identity,
+                identity_data_dir=runtime_paths.identity_data_dir,
+                provider_data_dir=runtime_paths.provider_data_dir,
+                terminal_id=terminal_id,
+                session_name=session_name,
+                window_name=window_name,
+                working_directory=working_directory or "",
+                agent_profile=agent_profile,
+                allowed_tools=allowed_tools,
+                skill_prompt=runtime_inputs.skill_prompt,
+            )
+        runtime = provider_manager.prepare_terminal_runtime(
+            provider,
+            terminal_id=terminal_id,
+            agent_profile=agent_profile,
+            working_directory=working_directory or "",
+            launch_context=launch_context,
+        )
+        env = runtime.environment
+        runtime_prepared = True
 
         # Step 2: Create tmux session or window
         if new_session:
-            # Ensure session name has the CAO prefix for identification
-            if not session_name.startswith(SESSION_PREFIX):
-                session_name = f"{SESSION_PREFIX}{session_name}"
-
             # Prevent duplicate sessions
             if tmux_client.session_exists(session_name):
                 raise ValueError(f"Session '{session_name}' already exists")
@@ -150,24 +211,6 @@ def create_terminal(
             terminal_id, session_name, window_name, provider, agent_profile, allowed_tools
         )
 
-        # Step 3b: Load the profile once for allowed tool resolution before
-        # provider initialization. The skill catalog is global and does not
-        # depend on profile contents.
-        profile = load_agent_profile(agent_profile)
-        skill_prompt = build_skill_catalog()
-
-        # Step 3c: Resolve allowed_tools from profile if not explicitly provided
-        if allowed_tools is None:
-            try:
-                from cli_agent_orchestrator.utils.tool_mapping import resolve_allowed_tools
-
-                mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
-                allowed_tools = resolve_allowed_tools(
-                    profile.allowedTools, profile.role, mcp_server_names
-                )
-            except FileNotFoundError:
-                pass  # Profile not found; no tool restrictions
-
         # Step 4: Create and initialize the CLI provider
         # This starts the agent (e.g., runs "kiro-cli chat --agent developer")
         # Only runtime-prompt providers (Claude Code, Codex, Gemini, Kimi) receive
@@ -180,7 +223,9 @@ def create_terminal(
             window_name,
             agent_profile,
             allowed_tools,
-            skill_prompt=skill_prompt if provider in RUNTIME_SKILL_PROMPT_PROVIDERS else None,
+            skill_prompt=(
+                runtime_inputs.skill_prompt if provider in RUNTIME_SKILL_PROMPT_PROVIDERS else None
+            ),
         )
         provider_instance.initialize()
 
@@ -197,6 +242,7 @@ def create_terminal(
             provider=ProviderType(provider),
             session_name=session_name,
             agent_profile=agent_profile,
+            allowed_tools=allowed_tools,
             status=TerminalStatus.IDLE,
             last_active=datetime.now(),
         )
@@ -213,9 +259,9 @@ def create_terminal(
             provider_manager.cleanup_provider(terminal_id)
         except Exception:
             pass  # Ignore cleanup errors
-        if created_codex_home and terminal_id:
+        if runtime_prepared and terminal_id:
             try:
-                cleanup_codex_home(terminal_id)
+                provider_manager.cleanup_terminal_runtime(provider, terminal_id)
             except Exception:
                 pass
         if new_session and session_name:
@@ -398,8 +444,12 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
         raise
 
 
-def delete_terminal(terminal_id: str) -> bool:
-    """Delete terminal and kill its tmux window."""
+def delete_terminal(terminal_id: str, *, require_window_killed: bool = False) -> bool:
+    """Delete terminal and kill its tmux window.
+
+    When replacing an identity runtime, callers can require the tmux window to
+    be killed before metadata is removed so stale live panes are not orphaned.
+    """
     try:
         # Get metadata before deletion
         metadata = get_terminal_metadata(terminal_id)
@@ -416,14 +466,20 @@ def delete_terminal(terminal_id: str) -> bool:
                 tmux_client.kill_window(metadata["tmux_session"], metadata["tmux_window"])
             except Exception as e:
                 logger.warning(f"Failed to kill tmux window for {terminal_id}: {e}")
+                if require_window_killed:
+                    raise RuntimeError(
+                        f"Failed to kill tmux window for terminal {terminal_id}"
+                    ) from e
 
         # Cleanup provider state and database record
         provider_manager.cleanup_provider(terminal_id)
         deleted = db_delete_terminal(terminal_id)
         try:
-            cleanup_codex_home(terminal_id)
+            provider = metadata["provider"] if metadata else ""
+            if provider:
+                provider_manager.cleanup_terminal_runtime(provider, terminal_id)
         except Exception as e:
-            logger.warning(f"Failed to cleanup Codex home for terminal {terminal_id}: {e}")
+            logger.warning(f"Failed to cleanup provider runtime for terminal {terminal_id}: {e}")
         logger.info(f"Deleted terminal: {terminal_id}")
         return deleted
 

@@ -84,7 +84,6 @@ def test_nested_agent_session_payload_normalizes_to_presence_event():
                 },
             },
             "source_label": "Linear",
-            "context": {"linear_prompt_context": '<issue identifier="CAO-13"/>'},
         }
     }
 
@@ -151,7 +150,7 @@ def test_missing_session_id_does_not_invent_thread_id():
     assert event.message.ref == ExternalRef(provider="linear", id="activity-1")
 
 
-def test_created_payload_with_prompt_context_but_no_activity_creates_replyable_message():
+def test_created_payload_with_comment_but_no_activity_creates_replyable_user_message():
     payload = {
         "type": "AgentSessionEvent",
         "action": "created",
@@ -159,6 +158,11 @@ def test_created_payload_with_prompt_context_but_no_activity_creates_replyable_m
             "promptContext": '<issue identifier="CAO-29"><title>Route me</title></issue>',
             "agentSession": {
                 "id": "session-context-only",
+                "creator": {"name": "RJ Wilson"},
+                "comment": {
+                    "id": "comment-1",
+                    "body": "@discoverypartner testing",
+                },
                 "issue": {"id": "issue-29", "identifier": "CAO-29"},
             },
         },
@@ -172,17 +176,15 @@ def test_created_payload_with_prompt_context_but_no_activity_creates_replyable_m
         '<issue identifier="CAO-29"><title>Route me</title></issue>'
     )
     assert event.message is not None
-    assert event.message.ref == ExternalRef(
-        provider="linear",
-        id="agent-session:session-context-only:prompt-context",
+    assert event.message.ref == ExternalRef(provider="linear", id="comment-1")
+    assert event.message.body == "testing"
+    assert event.message.metadata[INBOX_READ_PRESENTATION_METADATA_KEY]["source_label"] == (
+        "RJ Wilson"
     )
-    assert event.message.body == "Linear started an AgentSession with prompt context."
-    assert event.message.metadata[INBOX_READ_PRESENTATION_METADATA_KEY]["context"] == {
-        "linear_prompt_context": '<issue identifier="CAO-29"><title>Route me</title></issue>'
-    }
+    assert "context" not in event.message.metadata[INBOX_READ_PRESENTATION_METADATA_KEY]
 
 
-def test_linear_prompt_context_metadata_is_bounded_while_thread_keeps_full_context():
+def test_created_payload_without_user_message_does_not_invent_prompt_context_message():
     prompt_context = "<issue>Current scope</issue>\n" + ("prior comment " * 800)
     payload = {
         "type": "AgentSessionEvent",
@@ -198,13 +200,7 @@ def test_linear_prompt_context_metadata_is_bounded_while_thread_keeps_full_conte
     assert event is not None
     assert event.thread is not None
     assert event.thread.prompt_context == prompt_context
-    assert event.message is not None
-    assert event.message.body == "Linear started an AgentSession with prompt context."
-    assert "prior comment" not in event.message.body
-    context = event.message.metadata[INBOX_READ_PRESENTATION_METADATA_KEY]["context"]
-    assert context["linear_prompt_context"].startswith("<issue>Current scope</issue>")
-    assert len(context["linear_prompt_context"]) <= 3500
-    assert context["linear_prompt_context"].endswith("...")
+    assert event.message is None
 
 
 def test_activity_body_extraction_supports_top_level_and_nested_content():
@@ -354,7 +350,6 @@ def test_linear_provider_authors_inbox_read_presentation_from_session_and_activi
                 },
             },
             "source_label": "Implementation Partner",
-            "context": {"linear_prompt_context": '<issue identifier="CAO-13"/>'},
         }
     }
 

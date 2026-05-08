@@ -635,6 +635,54 @@ def test_linear_agent_webhook_creates_presence_records_and_inbox_notification(
     presence_provider_manager.clear_providers()
 
 
+def test_linear_agent_webhook_routes_session_comment_body_without_prompt_context(
+    client,
+    monkeypatch,
+):
+    prompt_context = '<issue identifier="CAO-43"><title>Do not deliver this</title></issue>'
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: _verified_linear_app(),
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json={
+            "action": "created",
+            "data": {
+                "promptContext": prompt_context,
+                "agentSession": {
+                    "id": "session-43",
+                    "creator": {"name": "RJ Wilson"},
+                    "comment": {
+                        "id": "comment-43",
+                        "body": "@discoverypartner testing",
+                    },
+                    "issue": {
+                        "id": "issue-43",
+                        "identifier": "CAO-43",
+                        "title": "Durable identity",
+                    },
+                },
+            },
+        },
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["routed"] is True
+    assert len(handle.accepted) == 1
+    delivery = _pending_linear_notifications()[0]
+    assert delivery.message.body == "testing"
+    encoded = str(delivery.message.body) + str(delivery.notification.body)
+    assert "Do not deliver this" not in encoded
+    assert prompt_context not in encoded
+    presence_provider_manager.clear_providers()
+
+
 def test_linear_agent_webhook_delivers_after_migration_repairs_marker_fk_targets(
     client,
     tmp_path,
@@ -673,7 +721,7 @@ def test_linear_agent_webhook_delivers_after_migration_repairs_marker_fk_targets
     presence_provider_manager.clear_providers()
 
 
-def test_linear_agent_webhook_routes_created_session_with_prompt_context_only(
+def test_linear_agent_webhook_does_not_route_created_session_with_prompt_context_only(
     client,
     monkeypatch,
 ):
@@ -692,20 +740,12 @@ def test_linear_agent_webhook_routes_created_session_with_prompt_context_only(
     )
 
     assert response.status_code == 200
-    assert response.json()["routed"] is True
-    assert len(handle.accepted) == 1
+    assert response.json()["routed"] is False
+    assert len(handle.accepted) == 0
     thread = get_thread("linear", "session-context-only")
     assert thread is not None
     messages = list_messages(thread.id)
-    assert len(messages) == 1
-    assert messages[0].external_id == "agent-session:session-context-only:prompt-context"
-    assert messages[0].body == "Linear started an AgentSession with prompt context."
-    delivery = _pending_linear_notifications()[0]
-    notification = delivery.notification.body
-    assert delivery.message.body == "Linear started an AgentSession with prompt context."
-    assert "Linear started an AgentSession with prompt context." in notification
-    assert '<issue identifier="CAO-29">' not in notification
-    assert "read_inbox_message" in notification
+    assert messages == []
     presence_provider_manager.clear_providers()
 
 
