@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
 from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_ROUTE_KIND
 from cli_agent_orchestrator.presence.manager import (
     PresenceProviderManager,
@@ -84,7 +84,17 @@ def reply_to_inbox_message(
     delivery = _read_delivery(notification_id)
     if delivery is None:
         raise PresenceReplyNotFoundError(f"inbox notification {notification_id} not found")
+    message_target = _primary_inbox_message_target(delivery)
+    if message_target is None:
+        raise PresenceReplyUnsupportedSourceError(
+            f"inbox notification {notification_id} has no CAO message target"
+        )
     message = delivery.message
+    if message is None:
+        raise PresenceReplyNotFoundError(
+            f"inbox message target {message_target.target_id} for inbox notification "
+            f"{notification_id} not found"
+        )
 
     if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
         raise PresenceReplyUnsupportedSourceError(
@@ -145,8 +155,22 @@ def _read_delivery(notification_id: int) -> Optional[InboxDelivery]:
     return db_module.get_inbox_delivery(notification_id)
 
 
+def _primary_inbox_message_target(delivery: InboxDelivery) -> Optional[InboxNotificationTarget]:
+    for target in delivery.targets:
+        if (
+            target.target_kind == db_module.INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE
+            and target.role == db_module.INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
+        ):
+            return target
+    return None
+
+
 def _parse_thread_route_id(delivery: InboxDelivery) -> int:
     message = delivery.message
+    if message is None:
+        raise PresenceReplyUnsupportedSourceError(
+            f"inbox notification {delivery.notification.id} is not backed by a CAO message"
+        )
     if message.route_id is None:
         raise PresenceReplyNotFoundError(
             f"inbox notification {delivery.notification.id} does not include a presence thread route id"

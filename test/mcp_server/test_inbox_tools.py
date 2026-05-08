@@ -16,6 +16,7 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
     create_inbox_delivery,
+    create_inbox_notification_event,
     create_terminal,
 )
 from cli_agent_orchestrator.mcp_server.server import (
@@ -654,6 +655,21 @@ def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_sessio
     }
     assert reply_result["success"] is False
     assert reply_result["error_type"] == "PresenceReplyUnsupportedSourceError"
+
+
+def test_read_inbox_message_distinguishes_notification_without_backing_message(test_session):
+    notification = create_inbox_notification_event(
+        "agent:implementation_partner",
+        "CAO-123 has new comments.",
+        source_kind="linear_issue",
+        source_id="CAO-123",
+    )
+
+    result = _read_inbox_message_impl(notification.id)
+
+    assert result["success"] is False
+    assert result["error_type"] == "InboxReadUnsupportedNotificationError"
+    assert "has no CAO message target" in result["error"]
 
 
 def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):

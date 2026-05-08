@@ -95,12 +95,17 @@ def rebuild_table(
     table_identifier = _quote_identifier(table_name)
     old_identifier = _quote_identifier(old_name)
     with foreign_keys_disabled(conn):
+        legacy_alter_table = bool(conn.execute("PRAGMA legacy_alter_table").fetchone()[0])
+        conn.execute("PRAGMA legacy_alter_table=ON")
         conn.execute(f"DROP TABLE IF EXISTS {old_identifier}")
-        conn.execute(f"ALTER TABLE {table_identifier} RENAME TO {old_identifier}")
-        conn.execute(create_sql)
-        if copy_sql is not None:
-            conn.execute(copy_sql.format(old_table=old_identifier))
-        conn.execute(f"DROP TABLE {old_identifier}")
+        try:
+            conn.execute(f"ALTER TABLE {table_identifier} RENAME TO {old_identifier}")
+            conn.execute(create_sql)
+            if copy_sql is not None:
+                conn.execute(copy_sql.format(old_table=old_identifier))
+            conn.execute(f"DROP TABLE {old_identifier}")
+        finally:
+            conn.execute(f"PRAGMA legacy_alter_table={'ON' if legacy_alter_table else 'OFF'}")
 
 
 def drop_tables_if_exist(conn: Connection, table_names: Sequence[str]) -> int:

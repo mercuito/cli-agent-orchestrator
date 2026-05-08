@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine, event as sa_event
+from sqlalchemy import create_engine
+from sqlalchemy import event as sa_event
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -14,8 +15,8 @@ from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.presence.inbox_bridge import (
     PRESENCE_INBOX_ROUTE_KIND,
     PRESENCE_INBOX_SOURCE_KIND,
-    create_notification_for_persisted_event,
     create_notification_for_message,
+    create_notification_for_persisted_event,
 )
 from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
 from cli_agent_orchestrator.presence.persistence import (
@@ -97,7 +98,7 @@ def test_presence_notification_uses_presence_thread_source_and_internal_thread_i
     assert result.delivery.notification.status == MessageStatus.PENDING
 
 
-def test_semantic_message_body_is_compact_notification_with_read_and_reply_ids(test_session):
+def test_message_backed_notification_body_is_compact_and_message_body_is_durable(test_session):
     _, _, message = _persist_message(
         provider="generic-chat",
         body="The worker is blocked on a missing migration test.",
@@ -108,7 +109,10 @@ def test_semantic_message_body_is_compact_notification_with_read_and_reply_ids(t
         receiver_id="terminal-a",
     )
 
-    body = result.delivery.message.body
+    assert result.delivery.message is not None
+    assert result.delivery.message.body == "The worker is blocked on a missing migration test."
+
+    body = result.delivery.notification.body
     assert "[CAO inbox notification]" in body
     assert f"ID: {result.delivery.notification.id}" in body
     assert "Source: generic-chat" in body
@@ -133,9 +137,10 @@ def test_semantic_notification_body_is_bounded(test_session):
         notification_chars=180,
     )
 
-    assert len(result.delivery.message.body) <= 180
-    assert "Latest actionable line" in result.delivery.message.body
-    assert result.delivery.message.body.count("older transcript line") <= 1
+    assert len(result.delivery.notification.body) <= 180
+    assert "Latest actionable line" in result.delivery.notification.body
+    assert result.delivery.notification.body.count("older transcript line") <= 1
+    assert "older transcript line" in result.delivery.message.body
 
 
 def test_duplicate_notification_for_same_receiver_and_presence_message_is_idempotent(
@@ -229,8 +234,8 @@ def test_attachment_metadata_does_not_block_semantic_message(test_session):
     )
 
     assert result.created is True
-    assert "Text that should still notify." in result.delivery.message.body
-    assert "Attachment/media metadata present." in result.delivery.message.body
+    assert result.delivery.message.body == "Text that should still notify."
+    assert "Attachment/media metadata present." in result.delivery.notification.body
     assert result.delivery.message.origin == {
         "attachments": [{"content_type": "image/png", "name": "trace.png"}]
     }
