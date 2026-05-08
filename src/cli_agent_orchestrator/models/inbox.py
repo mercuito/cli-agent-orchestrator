@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -38,12 +38,11 @@ class InboxMessageRecord(BaseModel):
 class InboxNotification(BaseModel):
     """Per-recipient attention notification.
 
-    Notifications own the agent-visible display body and may optionally point
-    at a durable inbox message for read/reply flows.
+    Notifications own the agent-visible display body. First-class CAO objects
+    that the notification is about are modeled through notification targets.
     """
 
     id: int = Field(..., description="Notification ID")
-    message_id: Optional[int] = Field(None, description="Optional durable message ID")
     receiver_id: str = Field(..., description="Recipient identity")
     body: str = Field(..., description="Agent-visible notification body")
     source_kind: str = Field(..., description="Provider-neutral notification source kind")
@@ -58,8 +57,19 @@ class InboxNotification(BaseModel):
     error_detail: Optional[str] = Field(None, description="Delivery failure detail")
 
 
+class InboxNotificationTarget(BaseModel):
+    """First-class CAO object targeted by an inbox notification."""
+
+    id: int = Field(..., description="Notification target ID")
+    notification_id: int = Field(..., description="Notification ID")
+    target_kind: str = Field(..., description="Target object kind")
+    target_id: str = Field(..., description="Target object ID")
+    role: str = Field(..., description="Target role for this notification")
+
+
 class InboxDelivery(BaseModel):
-    """Notification with its optional durable message ready for delivery or display."""
+    """Notification with any resolved primary message target ready for display."""
 
     message: Optional[InboxMessageRecord]
     notification: InboxNotification
+    targets: List[InboxNotificationTarget] = Field(default_factory=list)

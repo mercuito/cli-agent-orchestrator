@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
 from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_ROUTE_KIND
 from cli_agent_orchestrator.presence.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
@@ -53,10 +53,16 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
         delivery = _read_delivery(session, notification_id)
         if delivery is None:
             raise InboxReadNotFoundError(f"inbox notification {notification_id} not found")
+        message_target = _primary_inbox_message_target(delivery)
+        if message_target is None:
+            raise InboxReadUnsupportedNotificationError(
+                f"inbox notification {notification_id} has no CAO message target"
+            )
         message = delivery.message
         if message is None:
-            raise InboxReadUnsupportedNotificationError(
-                f"inbox notification {notification_id} is not backed by a CAO message"
+            raise InboxReadNotFoundError(
+                f"inbox message target {message_target.target_id} for inbox notification "
+                f"{notification_id} not found"
             )
 
         if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
@@ -137,6 +143,16 @@ def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
 
 def _read_delivery(session: Any, notification_id: int) -> Optional[InboxDelivery]:
     return db_module.get_inbox_delivery(notification_id, db=session)
+
+
+def _primary_inbox_message_target(delivery: InboxDelivery) -> Optional[InboxNotificationTarget]:
+    for target in delivery.targets:
+        if (
+            target.target_kind == db_module.INBOX_NOTIFICATION_TARGET_KIND_MESSAGE
+            and target.role == db_module.INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
+        ):
+            return target
+    return None
 
 
 def _selected_presence_message_row(

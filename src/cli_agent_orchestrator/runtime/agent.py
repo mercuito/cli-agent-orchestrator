@@ -370,6 +370,9 @@ class AgentRuntimeHandle:
                         raise RuntimeError(
                             "message-backed runtime notification lost its durable message"
                         )
+                    session.query(db_module.InboxNotificationModel).filter(
+                        db_module.InboxNotificationModel.id == delivery.notification.id
+                    ).delete()
                     session.query(db_module.InboxMessageModel).filter(
                         db_module.InboxMessageModel.id == delivery.message.id
                     ).delete()

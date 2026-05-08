@@ -669,7 +669,7 @@ def test_read_inbox_message_distinguishes_notification_without_backing_message(t
 
     assert result["success"] is False
     assert result["error_type"] == "InboxReadUnsupportedNotificationError"
-    assert "not backed by a CAO message" in result["error"]
+    assert "has no CAO message target" in result["error"]
 
 
 def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):

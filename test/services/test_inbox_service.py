@@ -53,7 +53,6 @@ def _delivery(
         ),
         notification=InboxNotification(
             id=notification_id,
-            message_id=notification_id,
             receiver_id=receiver_id,
             body=message,
             source_kind=source_kind,
@@ -459,7 +458,7 @@ def test_idle_terminal_delivers_non_message_backed_notification_body(
     send_input.assert_called_once_with("terminal-1", "CAO-123 has new comments.")
     persisted = get_inbox_delivery(notification.id)
     assert persisted.message is None
-    assert persisted.notification.message_id is None
+    assert persisted.targets == []
     assert persisted.notification.status == MessageStatus.DELIVERED
 
 

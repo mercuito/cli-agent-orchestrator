@@ -22,12 +22,15 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
+    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
+    InboxNotificationTargetModel,
     MonitoringSessionModel,
 )
 
@@ -217,12 +220,21 @@ def get_session_messages(
 
         q = (
             db.query(InboxNotificationModel, InboxMessageModel)
-            .join(InboxMessageModel, InboxNotificationModel.message_id == InboxMessageModel.id)
+            .join(
+                InboxNotificationTargetModel,
+                InboxNotificationTargetModel.notification_id == InboxNotificationModel.id,
+            )
+            .join(
+                InboxMessageModel,
+                InboxNotificationTargetModel.target_id == cast(InboxMessageModel.id, String),
+            )
             .filter(
+                InboxNotificationTargetModel.target_kind == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                InboxNotificationTargetModel.role == INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                 or_(
                     InboxMessageModel.sender_id == session_row.terminal_id,
                     InboxNotificationModel.receiver_id == session_row.terminal_id,
-                )
+                ),
             )
         )
 

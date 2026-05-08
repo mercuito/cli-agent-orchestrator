@@ -11,8 +11,11 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.clients.database import (
     AgentRuntimeNotificationModel,
     Base,
+    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
+    InboxNotificationTargetModel,
     PresenceInboxNotificationModel,
     PresenceMessageModel,
     PresenceThreadModel,
@@ -82,8 +85,8 @@ class TestCleanupOldData:
         # Execute
         cleanup_old_data()
 
-        # terminals, old notifications, then unreferenced durable messages
-        assert mock_db.query.call_count == 4
+        # terminals, old notifications, orphan targets, and unreferenced durable messages
+        assert mock_db.query.call_count == 6
         assert mock_db.commit.call_count == 2
 
     @patch("cli_agent_orchestrator.services.cleanup_service.SessionLocal")
@@ -258,25 +261,37 @@ class TestCleanupOldData:
             )
             session.add(message)
             session.flush()
+            delivered = InboxNotificationModel(
+                receiver_id="receiver-a",
+                body="still referenced",
+                source_kind="terminal",
+                source_id="sender",
+                status=MessageStatus.DELIVERED.value,
+                created_at=old,
+            )
+            pending = InboxNotificationModel(
+                receiver_id="receiver-b",
+                body="still referenced",
+                source_kind="terminal",
+                source_id="sender",
+                status=MessageStatus.PENDING.value,
+                created_at=old,
+            )
+            session.add_all([delivered, pending])
+            session.flush()
             session.add_all(
                 [
-                    InboxNotificationModel(
-                        message_id=message.id,
-                        receiver_id="receiver-a",
-                        body="still referenced",
-                        source_kind="terminal",
-                        source_id="sender",
-                        status=MessageStatus.DELIVERED.value,
-                        created_at=old,
+                    InboxNotificationTargetModel(
+                        notification_id=delivered.id,
+                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        target_id=str(message.id),
+                        role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                     ),
-                    InboxNotificationModel(
-                        message_id=message.id,
-                        receiver_id="receiver-b",
-                        body="still referenced",
-                        source_kind="terminal",
-                        source_id="sender",
-                        status=MessageStatus.PENDING.value,
-                        created_at=old,
+                    InboxNotificationTargetModel(
+                        notification_id=pending.id,
+                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        target_id=str(message.id),
+                        role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                     ),
                 ]
             )
@@ -309,15 +324,22 @@ class TestCleanupOldData:
             )
             session.add(message)
             session.flush()
+            notification = InboxNotificationModel(
+                receiver_id="receiver",
+                body="old delivered",
+                source_kind="terminal",
+                source_id="sender",
+                status=MessageStatus.DELIVERED.value,
+                created_at=old,
+            )
+            session.add(notification)
+            session.flush()
             session.add(
-                InboxNotificationModel(
-                    message_id=message.id,
-                    receiver_id="receiver",
-                    body="old delivered",
-                    source_kind="terminal",
-                    source_id="sender",
-                    status=MessageStatus.DELIVERED.value,
-                    created_at=old,
+                InboxNotificationTargetModel(
+                    notification_id=notification.id,
+                    target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                    target_id=str(message.id),
+                    role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                 )
             )
             session.commit()
@@ -368,7 +390,6 @@ class TestCleanupOldData:
                 updated_at=old,
             )
             notification = InboxNotificationModel(
-                message_id=durable_message.id,
                 receiver_id="receiver",
                 body="old delivered",
                 source_kind="presence_message",
@@ -380,6 +401,12 @@ class TestCleanupOldData:
             session.flush()
             session.add_all(
                 [
+                    InboxNotificationTargetModel(
+                        notification_id=notification.id,
+                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        target_id=str(durable_message.id),
+                        role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
+                    ),
                     PresenceInboxNotificationModel(
                         receiver_id="receiver",
                         presence_message_id=presence_message.id,

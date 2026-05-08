@@ -13,8 +13,11 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
     FlowModel,
+    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
+    InboxNotificationTargetModel,
     PresenceMessageModel,
     PresenceThreadModel,
     TerminalModel,
@@ -222,12 +225,14 @@ class TestInboxOperations:
         notification_columns = {
             column.name for column in Base.metadata.tables["inbox_notifications"].columns
         }
+        target_columns = {
+            column.name for column in Base.metadata.tables["inbox_notification_targets"].columns
+        }
 
         assert {"body", "source_kind", "source_id", "origin_json", "route_kind", "route_id"} <= (
             message_columns
         )
         assert {
-            "message_id",
             "receiver_id",
             "body",
             "source_kind",
@@ -235,6 +240,8 @@ class TestInboxOperations:
             "metadata_json",
             "status",
         } <= notification_columns
+        assert {"notification_id", "target_kind", "target_id", "role"} <= target_columns
+        assert "message_id" not in notification_columns
         assert "legacy_inbox_id" not in notification_columns
         assert "inbox" not in Base.metadata.tables
 
@@ -260,10 +267,15 @@ class TestInboxOperations:
         assert delivery.notification.source_id == "thread-9"
         assert delivery.notification.receiver_id == "receiver-456"
         assert delivery.notification.status == MessageStatus.PENDING
+        assert len(delivery.targets) == 1
+        assert delivery.targets[0].target_kind == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE
+        assert delivery.targets[0].target_id == str(delivery.message.id)
+        assert delivery.targets[0].role == INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
 
         with live_inbox_db() as session:
             assert session.query(InboxMessageModel).count() == 1
             assert session.query(InboxNotificationModel).count() == 1
+            assert session.query(InboxNotificationTargetModel).count() == 1
 
     def test_message_and_notification_can_be_created_as_separate_owner_steps(self, live_inbox_db):
         """The owner surface supports explicit durable message then notification creation."""
@@ -279,6 +291,9 @@ class TestInboxOperations:
 
         assert delivery.message == message
         assert delivery.notification == notification
+        assert len(delivery.targets) == 1
+        assert delivery.targets[0].target_kind == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE
+        assert delivery.targets[0].target_id == str(message.id)
 
     def test_create_notification_rejects_missing_message(self, live_inbox_db):
         """Message-backed notifications must point at an existing durable message."""
@@ -298,12 +313,12 @@ class TestInboxOperations:
         deliveries = list_pending_inbox_notifications("agent:implementation_partner")
         read = get_inbox_delivery(notification.id)
 
-        assert notification.message_id is None
         assert notification.body == "CAO-123 has new comments."
         assert notification.metadata == {"workspace": "Linear"}
         assert deliveries == [read]
         assert read.message is None
         assert read.notification == notification
+        assert read.targets == []
 
     def test_message_backed_notification_metadata_is_bounded(self, live_inbox_db):
         """Provider/system metadata must stay bounded on message-backed notifications."""
@@ -881,6 +896,7 @@ class TestInitDb:
         table_names = inspect(test_engine).get_table_names()
         assert table_names.count("inbox_messages") == 1
         assert table_names.count("inbox_notifications") == 1
+        assert table_names.count("inbox_notification_targets") == 1
 
     def test_notification_marker_migrations_translate_legacy_inbox_ids(self, tmp_path, monkeypatch):
         """Old marker tables are rebuilt around notification ids before legacy ids drop."""
@@ -1034,6 +1050,7 @@ class TestInitDb:
                 )
             """)
 
+        db_module._migrate_ensure_semantic_inbox_tables()
         db_module._migrate_ensure_presence_tables()
         db_module._migrate_ensure_agent_runtime_tables()
         db_module._migrate_drop_legacy_inbox_notification_ids()
@@ -1055,6 +1072,10 @@ class TestInitDb:
                 row[1]
                 for row in connection.exec_driver_sql("PRAGMA table_info(inbox_notifications)")
             }
+            target = connection.exec_driver_sql("""
+                SELECT notification_id, target_kind, target_id, role
+                FROM inbox_notification_targets
+                """).fetchone()
             presence_notification_id = connection.exec_driver_sql(
                 "SELECT inbox_notification_id FROM presence_inbox_notifications"
             ).scalar_one()
@@ -1070,4 +1091,11 @@ class TestInitDb:
         assert runtime_columns["inbox_notification_id"][3] == 1
         assert presence_notification_id == 301
         assert runtime_notification_id == 301
+        assert target == (
+            301,
+            INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+            "201",
+            INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
+        )
+        assert "message_id" not in notification_columns
         assert "legacy_inbox_id" not in notification_columns

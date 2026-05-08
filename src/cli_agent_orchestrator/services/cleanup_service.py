@@ -4,9 +4,13 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy import String, cast
+
 from cli_agent_orchestrator.clients.database import (
+    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
     InboxMessageModel,
     InboxNotificationModel,
+    InboxNotificationTargetModel,
     SessionLocal,
     TerminalModel,
 )
@@ -45,12 +49,22 @@ def cleanup_old_data():
                 )
                 .delete(synchronize_session=False)
             )
+            db.query(InboxNotificationTargetModel).filter(
+                ~db.query(InboxNotificationModel.id)
+                .filter(InboxNotificationModel.id == InboxNotificationTargetModel.notification_id)
+                .exists()
+            ).delete(synchronize_session=False)
             deleted_messages = (
                 db.query(InboxMessageModel)
                 .filter(
                     InboxMessageModel.created_at < cutoff_date,
-                    ~db.query(InboxNotificationModel.id)
-                    .filter(InboxNotificationModel.message_id == InboxMessageModel.id)
+                    ~db.query(InboxNotificationTargetModel.id)
+                    .filter(
+                        InboxNotificationTargetModel.target_kind
+                        == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        InboxNotificationTargetModel.target_id
+                        == cast(InboxMessageModel.id, String),
+                    )
                     .exists(),
                 )
                 .delete(synchronize_session=False)

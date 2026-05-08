@@ -31,7 +31,6 @@ def sample_inbox_deliveries():
             ),
             notification=InboxNotification(
                 id=1,
-                message_id=11,
                 receiver_id="abcdef12",
                 body="Hello world",
                 source_kind="terminal",
@@ -55,7 +54,6 @@ def sample_inbox_deliveries():
             ),
             notification=InboxNotification(
                 id=2,
-                message_id=12,
                 receiver_id="abcdef12",
                 body="Another message",
                 source_kind="terminal",
@@ -159,7 +157,6 @@ class TestCreateInboxMessageEndpoint:
             ),
             notification=InboxNotification(
                 id=7,
-                message_id=41,
                 receiver_id="abcdef12",
                 body="Hello world",
                 source_kind="terminal",

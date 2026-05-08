@@ -21,7 +21,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, InboxMessageModel, InboxNotificationModel
+from cli_agent_orchestrator.clients.database import (
+    Base,
+    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
+    InboxMessageModel,
+    InboxNotificationModel,
+    InboxNotificationTargetModel,
+)
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
 pytestmark = pytest.mark.integration
@@ -69,15 +76,22 @@ def _seed_inbox(
         )
         s.add(message_row)
         s.flush()
+        notification_row = InboxNotificationModel(
+            receiver_id=receiver_id,
+            body=message,
+            source_kind="terminal",
+            source_id=sender_id,
+            status=status.value,
+            created_at=created_at,
+        )
+        s.add(notification_row)
+        s.flush()
         s.add(
-            InboxNotificationModel(
-                message_id=message_row.id,
-                receiver_id=receiver_id,
-                body=message,
-                source_kind="terminal",
-                source_id=sender_id,
-                status=status.value,
-                created_at=created_at,
+            InboxNotificationTargetModel(
+                notification_id=notification_row.id,
+                target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                target_id=str(message_row.id),
+                role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
             )
         )
         s.commit()

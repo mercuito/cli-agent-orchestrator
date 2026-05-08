@@ -153,6 +153,9 @@ def create_notification_for_message(
 
         if delivery.message is None:
             raise RuntimeError("message-backed presence notification lost its durable message")
+        notification_row = session.get(db_module.InboxNotificationModel, delivery.notification.id)
+        if notification_row is not None:
+            session.delete(notification_row)
         durable_message_row = session.get(db_module.InboxMessageModel, delivery.message.id)
         if durable_message_row is not None:
             session.delete(durable_message_row)
