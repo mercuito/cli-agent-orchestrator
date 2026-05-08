@@ -52,6 +52,17 @@ def table_columns(conn: Connection, table_name: str) -> set[str]:
     return set(table_column_info(conn, table_name))
 
 
+def foreign_key_references_table(
+    conn: Connection, table_name: str, column_name: str, referenced_table: str
+) -> bool:
+    """Return whether one column has an FK to the expected referenced table."""
+
+    return any(
+        str(row[2]) == referenced_table and str(row[3]) == column_name
+        for row in conn.execute(f"PRAGMA foreign_key_list({_quote_identifier(table_name)})")
+    )
+
+
 def add_column_if_missing(
     conn: Connection, table_name: str, column_name: str, column_definition: str
 ) -> bool:

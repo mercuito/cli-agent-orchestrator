@@ -10,6 +10,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
@@ -56,6 +57,73 @@ def _test_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+
+
+def _test_file_session(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    db_path = tmp_path / "linear-route.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @sa_event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(bind=engine)
+    monkeypatch.setattr(db_module, "engine", engine)
+    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(constants, "DATABASE_FILE", db_path)
+    return engine
+
+
+def _break_notification_marker_fks(engine) -> None:
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        connection.exec_driver_sql("DROP TABLE presence_inbox_notifications")
+        connection.exec_driver_sql("DROP TABLE agent_runtime_notifications")
+        connection.exec_driver_sql("""
+            CREATE TABLE presence_inbox_notifications (
+                id INTEGER NOT NULL,
+                receiver_id VARCHAR NOT NULL,
+                presence_message_id INTEGER NOT NULL,
+                inbox_notification_id INTEGER NOT NULL,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE (receiver_id, presence_message_id),
+                FOREIGN KEY(presence_message_id)
+                    REFERENCES presence_messages (id) ON DELETE CASCADE,
+                FOREIGN KEY(inbox_notification_id)
+                    REFERENCES "inbox_notifications_old" (id) ON DELETE CASCADE
+            )
+        """)
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        connection.exec_driver_sql("""
+            CREATE TABLE agent_runtime_notifications (
+                id INTEGER NOT NULL,
+                agent_id VARCHAR NOT NULL,
+                source_kind VARCHAR NOT NULL,
+                source_id VARCHAR NOT NULL,
+                inbox_notification_id INTEGER NOT NULL,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE (agent_id, source_kind, source_id),
+                FOREIGN KEY(inbox_notification_id)
+                    REFERENCES "inbox_notifications_old" (id) ON DELETE CASCADE
+            )
+        """)
+
+
+def _notification_fk_targets(connection, table_name: str) -> list[str]:
+    return [
+        row[2]
+        for row in connection.exec_driver_sql(f"PRAGMA foreign_key_list({table_name})")
+        if row[3] == "inbox_notification_id"
+    ]
 
 
 def _pending_linear_notifications():
@@ -564,6 +632,44 @@ def test_linear_agent_webhook_creates_presence_records_and_inbox_notification(
     assert messages[0].message.route_id == str(thread.id)
     assert "Please wire this into the inbox." in messages[0].message.body
     assert get_processed_event("linear", "delivery-1").event_type == "AgentSessionEvent"
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_delivers_after_migration_repairs_marker_fk_targets(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    engine = _test_file_session(monkeypatch, tmp_path)
+    _break_notification_marker_fks(engine)
+    db_module._migrate_ensure_presence_tables()
+    db_module._migrate_ensure_agent_runtime_tables()
+    presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: _verified_linear_app(),
+    )
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(body="Please wire this into the inbox."),
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["routed"] is True
+    assert len(handle.accepted) == 1
+    assert len(_pending_linear_notifications()) == 1
+    with engine.connect() as connection:
+        assert _notification_fk_targets(connection, "presence_inbox_notifications") == [
+            "inbox_notifications"
+        ]
+        assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
+            "inbox_notifications"
+        ]
     presence_provider_manager.clear_providers()
 
 

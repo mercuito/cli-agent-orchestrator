@@ -42,6 +42,8 @@ def init_db() -> None:
     _migrate_ensure_presence_tables()
     _migrate_ensure_agent_runtime_tables()
     _migrate_drop_legacy_inbox_notification_ids()
+    _migrate_ensure_presence_tables()
+    _migrate_ensure_agent_runtime_tables()
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
     _migrate_drop_monitoring_session_peers()
@@ -301,10 +303,17 @@ def _migrate_ensure_presence_tables() -> None:
             if not column_info:
                 return
 
+            notification_fk_is_current = sqlite_migrations.foreign_key_references_table(
+                conn,
+                "presence_inbox_notifications",
+                "inbox_notification_id",
+                "inbox_notifications",
+            )
             needs_rebuild = (
                 "inbox_message_id" in column_info
                 or "inbox_notification_id" not in column_info
                 or not bool(column_info["inbox_notification_id"][3])
+                or not notification_fk_is_current
             )
             if not needs_rebuild:
                 return
@@ -374,10 +383,17 @@ def _migrate_ensure_agent_runtime_tables() -> None:
             if not column_info:
                 return
 
+            notification_fk_is_current = sqlite_migrations.foreign_key_references_table(
+                conn,
+                "agent_runtime_notifications",
+                "inbox_notification_id",
+                "inbox_notifications",
+            )
             needs_rebuild = (
                 "inbox_message_id" in column_info
                 or "inbox_notification_id" not in column_info
                 or not bool(column_info["inbox_notification_id"][3])
+                or not notification_fk_is_current
             )
             if not needs_rebuild:
                 return
