@@ -7,14 +7,19 @@ import re
 import shutil
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.linear import runtime as linear_runtime
+from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
+from cli_agent_orchestrator.linear.workspace_provider import LinearWorkspaceProvider
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.presence.manager import PresenceProviderManager
 from cli_agent_orchestrator.providers.base import (
     BaseProvider,
     ProviderRuntimeDescriptor,
@@ -145,32 +150,17 @@ class TmuxTestProvider(BaseProvider):
         return None
 
 
+@dataclass
+class TmuxRuntimeProviderWorld:
+    """Installed test provider wiring shared by runtime and Linear boundary tests."""
+
+    capability: TmuxRuntimeStateCapability
+    runtime_version: dict[str, str]
+    created_providers: dict[str, TmuxTestProvider]
+
+
 @pytest.fixture
-def integration_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AgentIdentity:
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
-        tmp_path / "agents",
-    )
-    workdir = tmp_path / "repo"
-    workdir.mkdir()
-    return AgentIdentity(
-        id="cao47_integration_agent",
-        display_name="CAO-47 Integration Agent",
-        agent_profile="developer",
-        cli_provider="codex",
-        workdir=str(workdir),
-        session_name=f"cao47-runtime-{uuid.uuid4().hex[:8]}",
-    )
-
-
-def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_delivery(
-    runtime_inbox_db_session,
-    integration_identity: AgentIdentity,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    if not shutil.which("tmux"):
-        pytest.skip("tmux not installed")
-
+def tmux_runtime_provider_world(monkeypatch: pytest.MonkeyPatch) -> TmuxRuntimeProviderWorld:
     capability = TmuxRuntimeStateCapability()
     runtime_version = {"value": "v1"}
     created_providers: dict[str, TmuxTestProvider] = {}
@@ -237,6 +227,108 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         lambda terminal_id: created_providers.get(terminal_id),
     )
 
+    return TmuxRuntimeProviderWorld(
+        capability=capability,
+        runtime_version=runtime_version,
+        created_providers=created_providers,
+    )
+
+
+@pytest.fixture
+def integration_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AgentIdentity:
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
+        tmp_path / "agents",
+    )
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    return AgentIdentity(
+        id="cao47_integration_agent",
+        display_name="CAO-47 Integration Agent",
+        agent_profile="developer",
+        cli_provider="codex",
+        workdir=str(workdir),
+        session_name=f"cao47-runtime-{uuid.uuid4().hex[:8]}",
+    )
+
+
+def _linear_agent_session_payload(
+    *,
+    session_id: str,
+    activity_id: str,
+    body: str,
+    prompt_context: str,
+) -> dict[str, object]:
+    return {
+        "type": "AgentSessionEvent",
+        "action": "prompted",
+        "_cao_linear_app_key": "discovery_partner",
+        "data": {
+            "promptContext": prompt_context,
+            "agentSession": {
+                "id": session_id,
+                "url": f"https://linear.app/agent-session/{session_id}",
+                "issue": {
+                    "id": "issue-49",
+                    "identifier": "CAO-49",
+                    "title": "Prove resume-aware refresh at the Linear delivery boundary",
+                    "url": "https://linear.app/yards-framework/issue/CAO-49",
+                },
+            },
+            "agentActivity": {
+                "id": activity_id,
+                "actor": {"name": "RJ Wilson"},
+                "content": {
+                    "type": "prompt",
+                    "body": body,
+                },
+            },
+        },
+    }
+
+
+def _install_linear_workspace_provider(
+    *,
+    identity: AgentIdentity,
+    config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path.write_text("""
+[presences.discovery_partner]
+agent_id = "{agent_id}"
+app_key = "discovery_partner"
+app_user_name = "Discovery Partner"
+""".format(agent_id=identity.id))
+    workspace_provider = LinearWorkspaceProvider(
+        agent_registry=AgentIdentityRegistry({identity.id: identity}),
+        config_path=config_path,
+        preflight_credentials=False,
+    )
+    monkeypatch.setattr(
+        linear_runtime,
+        "get_linear_workspace_provider",
+        lambda: workspace_provider,
+    )
+
+
+def _history_contains(session_name: str, window_name: str, expected: str) -> bool:
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if expected in tmux_client.get_history(session_name, window_name):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_delivery(
+    runtime_inbox_db_session,
+    integration_identity: AgentIdentity,
+    tmux_runtime_provider_world: TmuxRuntimeProviderWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not shutil.which("tmux"):
+        pytest.skip("tmux not installed")
+
     handle = AgentRuntimeHandle(integration_identity)
     session_name = handle.session_name
     try:
@@ -244,7 +336,7 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         assert initial_start.ready is True
         initial_terminal = handle.current_terminal()
         assert initial_terminal is not None
-        assert initial_terminal.id in created_providers
+        assert initial_terminal.id in tmux_runtime_provider_world.created_providers
         initial_output = tmux_client.get_history(
             initial_terminal.session_name,
             initial_terminal.window_name,
@@ -253,7 +345,7 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         initial_state = json.loads(handle._runtime_state_path().read_text())
         assert initial_state["provider_runtime"] == _payload("session-a")
 
-        runtime_version["value"] = "v2"
+        tmux_runtime_provider_world.runtime_version["value"] = "v2"
         result = handle.notify(
             "echo CAO47_DELIVERED_THROUGH_REFRESH",
             source_kind="integration",
@@ -265,8 +357,12 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         assert result.delivery.delivered is True
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
-        assert capability.deserialized_payloads == [_payload("session-a")]
-        assert capability.resume_args == [["--resume-thread", "session-a"]]
+        assert tmux_runtime_provider_world.capability.deserialized_payloads == [
+            _payload("session-a")
+        ]
+        assert tmux_runtime_provider_world.capability.resume_args == [
+            ["--resume-thread", "session-a"]
+        ]
 
         refreshed_terminal = handle.current_terminal()
         assert refreshed_terminal is not None
@@ -280,5 +376,100 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         final_state = json.loads(handle._runtime_state_path().read_text())
         assert final_state["terminal_id"] == refreshed_terminal.id
         assert final_state["provider_runtime"] == _payload("session-a")
+    finally:
+        tmux_client.kill_session(session_name)
+
+
+def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
+    runtime_inbox_db_session,
+    integration_identity: AgentIdentity,
+    tmux_runtime_provider_world: TmuxRuntimeProviderWorld,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not shutil.which("tmux"):
+        pytest.skip("tmux not installed")
+
+    _install_linear_workspace_provider(
+        identity=integration_identity,
+        config_path=tmp_path / "linear.toml",
+        monkeypatch=monkeypatch,
+    )
+    monkeypatch.setattr(
+        linear_runtime.app_client,
+        "public_cao_runtime_url",
+        lambda terminal_id, agent_id=None: f"https://cao.local/terminals/{terminal_id}",
+    )
+    monkeypatch.setattr(
+        linear_runtime.app_client,
+        "update_agent_session_external_url",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        linear_runtime.app_client,
+        "create_agent_activity",
+        lambda *args, **kwargs: {"id": "activity-accepted"},
+    )
+
+    handle = AgentRuntimeHandle(integration_identity)
+    session_name = handle.session_name
+    try:
+        assert handle.ensure_fresh_started().ready is True
+        initial_terminal = handle.current_terminal()
+        assert initial_terminal is not None
+
+        tmux_runtime_provider_world.runtime_version["value"] = "linear-boundary-v2"
+        prompt_body = "testing"
+        prompt_context = (
+            '<issue identifier="CAO-49"><title>Should stay breadcrumb context only</title>'
+            "<description>Do not deliver this description as the prompt body.</description></issue>"
+        )
+        payload = _linear_agent_session_payload(
+            session_id=f"linear-session-{uuid.uuid4().hex}",
+            activity_id=f"activity-{uuid.uuid4().hex}",
+            body=prompt_body,
+            prompt_context=prompt_context,
+        )
+        manager = PresenceProviderManager({"linear": LinearPresenceProvider()})
+        persisted_event = manager.ingest_event(
+            "linear",
+            payload,
+            delivery_id=f"delivery-{uuid.uuid4().hex}",
+        )
+        event = manager.normalize_event("linear", payload)
+
+        result = linear_runtime.notify_agent_for_persisted_event(persisted_event, event)
+
+        assert result is not None
+        assert result.freshness is not None
+        assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+        assert result.delivery.delivered is True
+        assert result.terminal_id is not None
+        assert result.terminal_id != initial_terminal.id
+        assert result.notification.delivery.message is not None
+        assert result.notification.delivery.message.body == prompt_body
+        assert result.notification.delivery.message.sender_id == "presence"
+
+        refreshed_terminal = handle.current_terminal()
+        assert refreshed_terminal is not None
+        assert refreshed_terminal.id == result.terminal_id
+        assert _history_contains(
+            refreshed_terminal.session_name,
+            refreshed_terminal.window_name,
+            "Preview: testing",
+        )
+        refreshed_output = tmux_client.get_history(
+            refreshed_terminal.session_name,
+            refreshed_terminal.window_name,
+        )
+        assert "From: RJ Wilson" in refreshed_output
+        assert "Issue: CAO-49 - Prove resume-aware refresh at the Linear delivery boundary" in (
+            refreshed_output
+        )
+        assert "Linear started an AgentSession with prompt context" not in refreshed_output
+        assert "Do not deliver this description as the prompt body" not in refreshed_output
+        assert tmux_runtime_provider_world.capability.resume_args == [
+            ["--resume-thread", "session-a"]
+        ]
     finally:
         tmux_client.kill_session(session_name)

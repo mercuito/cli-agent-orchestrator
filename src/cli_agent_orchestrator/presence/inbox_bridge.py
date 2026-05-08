@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.presence.inbox_read_presentation import (
+    INBOX_READ_PRESENTATION_METADATA_KEY,
+)
 from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
 
 PRESENCE_INBOX_SOURCE_KIND = "presence_thread"
@@ -337,6 +340,11 @@ def _find_author_metadata(value: Any) -> Optional[str]:
                     return _compact(str(name))
             elif isinstance(item, str) and item.strip():
                 return _compact(item)
+        presentation = value.get(INBOX_READ_PRESENTATION_METADATA_KEY)
+        if isinstance(presentation, dict):
+            source_label = presentation.get("source_label")
+            if isinstance(source_label, str) and source_label.strip():
+                return _compact(source_label)
         data = value.get("data")
         if isinstance(data, dict):
             found = _find_author_metadata(data)
