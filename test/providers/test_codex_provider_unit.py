@@ -6,7 +6,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.codex import CodexProvider, ProviderError
+from cli_agent_orchestrator.providers.codex import (
+    CODEX_RUNTIME_STATE_SCHEMA_VERSION,
+    CODEX_THREAD_ID_PROBE_PREFIX,
+    CodexProvider,
+    ProviderError,
+    parse_codex_thread_id_probe_output,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -68,7 +74,10 @@ class TestCodexBuildCommand:
     def test_build_command_no_profile(self):
         provider = CodexProvider("test1234", "test-session", "window-0", None)
         command = provider._build_codex_command()
-        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+        assert (
+            command
+            == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+        )
 
     def test_build_command_always_disables_plugins_and_apps(self):
         """Every CAO-spawned Codex session must suppress user-level plugins/apps.
@@ -124,7 +133,10 @@ class TestCodexBuildCommand:
         command = provider._build_codex_command()
 
         mock_load_profile.assert_called_once_with("code_supervisor")
-        assert "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps" in command
+        assert (
+            "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+            in command
+        )
         assert "-c" in command
         assert "developer_instructions=" in command
         assert "You are a code supervisor agent." in command
@@ -236,7 +248,10 @@ class TestCodexBuildCommand:
         provider = CodexProvider("test1234", "test-session", "window-0", "empty_agent")
         command = provider._build_codex_command()
 
-        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+        assert (
+            command
+            == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+        )
         assert "developer_instructions" not in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
@@ -249,7 +264,10 @@ class TestCodexBuildCommand:
         provider = CodexProvider("test1234", "test-session", "window-0", "none_agent")
         command = provider._build_codex_command()
 
-        assert command == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+        assert (
+            command
+            == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
+        )
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
     def test_build_command_profile_load_failure(self, mock_load_profile):
@@ -970,6 +988,110 @@ class TestCodexProviderMisc:
         provider = CodexProvider("test1234", "test-session", "window-0")
         message = provider.extract_last_message_from_script(output)
         assert message == "Hello\nSecond line"
+
+
+class TestCodexRuntimeStateCapability:
+    def test_payload_serializes_to_minimal_schema_and_thread_id_only(self, tmp_path):
+        capability = CodexProvider.runtime_state_capability()
+        state = capability.deserialize_runtime_state(
+            {
+                "schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION,
+                "thread_id": "019e0707-afb4-72e3-ad1e-468306ca90f8",
+            },
+            provider_data_dir=tmp_path,
+        )
+
+        payload = capability.serialize_runtime_state(state)
+
+        assert payload == {
+            "schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION,
+            "thread_id": "019e0707-afb4-72e3-ad1e-468306ca90f8",
+        }
+        assert state.provider_data_dir == tmp_path
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"schema_version": "unknown", "thread_id": "thread-1"},
+            {"schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION},
+            {"schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION, "thread_id": ""},
+        ],
+    )
+    def test_deserialize_rejects_invalid_payloads(self, payload, tmp_path):
+        capability = CodexProvider.runtime_state_capability()
+
+        with pytest.raises(ValueError):
+            capability.deserialize_runtime_state(payload, provider_data_dir=tmp_path)
+
+    def test_launch_resume_args_use_validated_thread_id(self, tmp_path):
+        capability = CodexProvider.runtime_state_capability()
+        state = capability.deserialize_runtime_state(
+            {
+                "schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION,
+                "thread_id": "thread-123",
+            },
+            provider_data_dir=tmp_path,
+        )
+
+        assert capability.launch_resume_args(state, provider_data_dir=tmp_path) == [
+            "resume",
+            "thread-123",
+        ]
+
+    def test_runtime_resume_args_are_appended_to_codex_command(self):
+        provider = CodexProvider(
+            "test1234",
+            "test-session",
+            "window-0",
+            runtime_resume_args=["resume", "thread-123"],
+        )
+
+        assert provider._build_codex_command().endswith("resume thread-123")
+
+    def test_probe_parser_uses_nonce_and_ignores_unrelated_output(self):
+        output = (
+            "unrelated CODEX_THREAD_ID=wrong\n"
+            f"{CODEX_THREAD_ID_PROBE_PREFIX}other:CODEX_THREAD_ID=other-thread\n"
+            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123:CODEX_THREAD_ID=thread-123\n"
+        )
+
+        assert parse_codex_thread_id_probe_output(output, nonce="abc123") == "thread-123"
+        assert parse_codex_thread_id_probe_output(output, nonce="missing") is None
+
+    @patch("cli_agent_orchestrator.providers.codex.uuid.uuid4")
+    @patch("cli_agent_orchestrator.providers.codex.tmux_client")
+    @patch("cli_agent_orchestrator.providers.codex.get_terminal_metadata")
+    def test_discover_current_runtime_state_uses_no_llm_probe(
+        self,
+        mock_get_metadata,
+        mock_tmux,
+        mock_uuid4,
+        tmp_path,
+    ):
+        mock_uuid4.return_value.hex = "abc123"
+        mock_get_metadata.return_value = {
+            "tmux_session": "cao-session",
+            "tmux_window": "window-1",
+        }
+        mock_tmux.get_history.return_value = (
+            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123:CODEX_THREAD_ID=thread-123"
+        )
+
+        state = CodexProvider.runtime_state_capability().discover_current_runtime_state(
+            terminal_id="terminal-1",
+            provider_data_dir=tmp_path,
+        )
+
+        assert state is not None
+        assert state.payload == {
+            "schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION,
+            "thread_id": "thread-123",
+        }
+        mock_tmux.send_keys.assert_called_once_with(
+            "cao-session",
+            "window-1",
+            f'!echo "{CODEX_THREAD_ID_PROBE_PREFIX}abc123:CODEX_THREAD_ID=$CODEX_THREAD_ID"',
+        )
 
 
 class TestCodexProviderTrustPrompt:

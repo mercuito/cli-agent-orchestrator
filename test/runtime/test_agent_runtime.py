@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -10,7 +11,7 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import ProviderRuntimeDescriptor
+from cli_agent_orchestrator.providers.base import ProviderRuntimeDescriptor, ProviderRuntimeState
 from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeFreshnessAction,
@@ -28,6 +29,7 @@ def test_session(runtime_inbox_db_session, tmp_path, monkeypatch):
         "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
         tmp_path / "agents",
     )
+    monkeypatch.setattr(runtime_agent.provider_manager, "runtime_state_capability", lambda _: None)
     return runtime_inbox_db_session
 
 
@@ -85,6 +87,54 @@ def _all_delivery_statuses(receiver_id: str) -> list[MessageStatus]:
             .all()
         )
     return [MessageStatus(row.status) for row in rows]
+
+
+def _provider_runtime_payload(thread_id: str) -> dict[str, str]:
+    return {
+        "schema_version": "test-provider-runtime-state.v1",
+        "thread_id": thread_id,
+    }
+
+
+class RecordingRuntimeStateCapability:
+    def __init__(self, *discover_results):
+        self.discover_results = list(discover_results)
+        self.discovered_terminal_ids: list[str] = []
+        self.deserialized_payloads: list[dict[str, str]] = []
+        self.serialized_payloads: list[dict[str, str]] = []
+        self.resume_states: list[ProviderRuntimeState] = []
+
+    def discover_current_runtime_state(self, *, terminal_id, provider_data_dir):
+        self.discovered_terminal_ids.append(terminal_id)
+        result = self.discover_results.pop(0) if self.discover_results else None
+        if isinstance(result, Exception):
+            raise result
+        if result is None:
+            return None
+        return ProviderRuntimeState(
+            provider_type="codex",
+            provider_data_dir=provider_data_dir,
+            payload=result,
+        )
+
+    def deserialize_runtime_state(self, payload, *, provider_data_dir):
+        self.deserialized_payloads.append(dict(payload))
+        if payload.get("schema_version") != "test-provider-runtime-state.v1":
+            raise ValueError("bad test provider runtime schema")
+        return ProviderRuntimeState(
+            provider_type="codex",
+            provider_data_dir=provider_data_dir,
+            payload=dict(payload),
+        )
+
+    def serialize_runtime_state(self, state):
+        payload = dict(state.payload)
+        self.serialized_payloads.append(payload)
+        return payload
+
+    def launch_resume_args(self, state, *, provider_data_dir):
+        self.resume_states.append(state)
+        return ["--resume-thread", state.payload["thread_id"]]
 
 
 def test_status_reports_not_started_without_terminal_metadata(test_session, handle):
@@ -358,6 +408,238 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
     assert result.delivery.delivered is True
     delete_terminal.assert_called_once_with("terminal-1", require_window_killed=True)
     send_input.assert_called_once_with("terminal-2", "Deliver after profile refresh.")
+
+
+def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    capability = RecordingRuntimeStateCapability(
+        _provider_runtime_payload("session-a"),
+        _provider_runtime_payload("session-a"),
+    )
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: capability,
+    )
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "delete_terminal",
+        Mock(side_effect=lambda terminal_id, **kwargs: db_module.delete_terminal(terminal_id)),
+    )
+    create_terminal = Mock()
+
+    def create_replacement(**kwargs):
+        create_terminal(**kwargs)
+        db_module.create_terminal(
+            "terminal-2",
+            "cao-implementation-partner",
+            "developer-5678",
+            "codex",
+            "developer",
+        )
+        return _created_terminal_result("terminal-2")
+
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(side_effect=create_replacement),
+    )
+
+    result = handle.notify(
+        "Deliver after provider runtime refresh.",
+        source_kind="linear_event",
+        source_id="event-provider-runtime-refresh",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+    assert capability.discovered_terminal_ids == ["terminal-1", "terminal-2"]
+    assert capability.serialized_payloads == [
+        _provider_runtime_payload("session-a"),
+        _provider_runtime_payload("session-a"),
+    ]
+    assert create_terminal.call_args.kwargs["provider_runtime"] == _provider_runtime_payload(
+        "session-a"
+    )
+    assert result.delivery.delivered is True
+    send_input.assert_called_once_with(
+        "terminal-2",
+        "Deliver after provider runtime refresh.",
+    )
+    state = json.loads(handle._runtime_state_path().read_text())
+    assert state["terminal_id"] == "terminal-2"
+    assert state["provider_runtime"] == _provider_runtime_payload("session-a")
+
+
+def test_stale_refresh_with_no_current_session_restarts_without_resume_payload(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    capability = RecordingRuntimeStateCapability(None, None)
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: capability,
+    )
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "delete_terminal",
+        Mock(side_effect=lambda terminal_id, **kwargs: db_module.delete_terminal(terminal_id)),
+    )
+    create_terminal = Mock()
+
+    def create_replacement(**kwargs):
+        create_terminal(**kwargs)
+        db_module.create_terminal(
+            "terminal-2",
+            "cao-implementation-partner",
+            "developer-5678",
+            "codex",
+            "developer",
+        )
+        return _created_terminal_result("terminal-2")
+
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(side_effect=create_replacement),
+    )
+
+    result = handle.notify(
+        "Deliver without provider resume.",
+        source_kind="linear_event",
+        source_id="event-no-current-session",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+    assert "provider_runtime" not in create_terminal.call_args.kwargs
+    assert capability.deserialized_payloads == []
+    assert result.delivery.delivered is True
+    send_input.assert_called_once_with("terminal-2", "Deliver without provider resume.")
+    state = json.loads(handle._runtime_state_path().read_text())
+    assert state["provider_runtime"] is None
+
+
+def test_stale_refresh_surfaces_provider_discovery_failure_without_restarting(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    capability = RecordingRuntimeStateCapability(RuntimeError("probe failed"))
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: capability,
+    )
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    delete_terminal = Mock()
+    create_terminal = Mock()
+    monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
+    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal", create_terminal)
+
+    result = handle.notify(
+        "Do not deliver after provider failure.",
+        source_kind="linear_event",
+        source_id="event-provider-failure",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.FAILED
+    assert result.error == "probe failed"
+    delete_terminal.assert_not_called()
+    create_terminal.assert_not_called()
+    send_input.assert_not_called()
+
+
+def test_fresh_runtime_updates_identity_provider_runtime_cache(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    _mark_terminal_fresh(handle)
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    capability = RecordingRuntimeStateCapability(_provider_runtime_payload("session-b"))
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: capability,
+    )
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+
+    result = handle.notify(
+        "Deliver after provider state changed.",
+        source_kind="linear_event",
+        source_id="event-provider-cache-update",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.REUSED
+    send_input.assert_called_once_with("terminal-1", "Deliver after provider state changed.")
+    state = json.loads(handle._runtime_state_path().read_text())
+    assert state["terminal_id"] == "terminal-1"
+    assert state["provider_runtime"] == _provider_runtime_payload("session-b")
+
+
+def test_supported_provider_no_current_session_clears_stale_provider_runtime_cache(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    _create_terminal()
+    handle._write_applied_runtime_state(
+        "terminal-1",
+        handle._desired_runtime_fingerprint(),
+        provider_runtime=_provider_runtime_payload("stale-session"),
+    )
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    capability = RecordingRuntimeStateCapability(None)
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: capability,
+    )
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+
+    result = handle.notify(
+        "Deliver after provider reports no current session.",
+        source_kind="linear_event",
+        source_id="event-clear-stale-provider-cache",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.REUSED
+    send_input.assert_called_once_with(
+        "terminal-1",
+        "Deliver after provider reports no current session.",
+    )
+    state = json.loads(handle._runtime_state_path().read_text())
+    assert state["provider_runtime"] is None
 
 
 def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(

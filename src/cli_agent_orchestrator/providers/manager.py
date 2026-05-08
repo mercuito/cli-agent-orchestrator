@@ -10,6 +10,7 @@ from cli_agent_orchestrator.providers.base import (
     BaseProvider,
     ProviderRuntimeDescriptor,
     ProviderRuntimePreparation,
+    ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
@@ -48,7 +49,19 @@ class ProviderManager:
 
     def provider_supports_resume(self, provider_type: str) -> bool:
         """Return whether a provider supports identity runtime context preservation."""
-        return self._provider_class(provider_type).supports_resume()
+        return self.runtime_state_capability(provider_type) is not None
+
+    def runtime_state_capability(
+        self,
+        provider_type: str,
+    ) -> Optional[ProviderRuntimeStateCapability]:
+        """Return a provider's optional runtime/session capability, if supported."""
+        provider_cls = self._provider_class(provider_type)
+        capability_factory = getattr(provider_cls, "runtime_state_capability", None)
+        if capability_factory is None:
+            return None
+        capability = capability_factory()
+        return cast(ProviderRuntimeStateCapability, capability)
 
     def prepare_terminal_runtime(
         self,
@@ -102,6 +115,7 @@ class ProviderManager:
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[List[str]] = None,
         skill_prompt: Optional[str] = None,
+        runtime_resume_args: Optional[List[str]] = None,
     ) -> BaseProvider:
         """Create and store provider instance."""
         try:
@@ -143,6 +157,7 @@ class ProviderManager:
                     agent_profile,
                     allowed_tools,
                     skill_prompt=skill_prompt,
+                    runtime_resume_args=runtime_resume_args,
                 )
             elif provider_type == ProviderType.COPILOT_CLI.value:
                 provider = CopilotCliProvider(

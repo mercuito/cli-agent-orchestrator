@@ -23,7 +23,7 @@ and output format to reliably detect status changes.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Protocol
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -54,11 +54,54 @@ class ProviderRuntimeDescriptor:
 
 
 @dataclass(frozen=True)
-class ProviderResumeState:
-    """Opaque provider-owned resume state captured at the CAO/provider boundary."""
+class ProviderRuntimeState:
+    """Provider-owned runtime/session state captured at the CAO/provider boundary."""
 
     provider_type: str
-    payload: Dict[str, Any]
+    provider_data_dir: Path
+    payload: Mapping[str, Any]
+
+
+class ProviderRuntimeStateCapability(Protocol):
+    """Optional provider capability for runtime/session restoration.
+
+    Providers expose this capability only when they support provider-owned
+    runtime/session restoration. Unsupported providers expose no capability.
+    """
+
+    def discover_current_runtime_state(
+        self,
+        *,
+        terminal_id: str,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState | None:
+        """Discover the current provider-owned runtime state, if one exists."""
+        ...
+
+    def deserialize_runtime_state(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState:
+        """Validate a durable payload into provider-owned runtime state."""
+        ...
+
+    def serialize_runtime_state(
+        self,
+        state: ProviderRuntimeState,
+    ) -> Mapping[str, Any]:
+        """Serialize provider-owned runtime state for CAO persistence."""
+        ...
+
+    def launch_resume_args(
+        self,
+        state: ProviderRuntimeState,
+        *,
+        provider_data_dir: Path,
+    ) -> list[str]:
+        """Return provider-owned CLI arguments for session restoration."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -67,8 +110,6 @@ class ProviderRuntimePreparation:
 
     environment: Optional[Dict[str, str]] = None
     identity_scoped: bool = False
-    resume_supported: bool = False
-    context_preservation: str = "resume is not supported by this provider"
 
 
 class BaseProvider(ABC):
@@ -131,11 +172,6 @@ class BaseProvider(ABC):
         )
 
         return get_provider_paste_enter_count(self.provider_type)
-
-    @classmethod
-    def supports_resume(cls) -> bool:
-        """Return whether this provider can preserve context across terminal replacement."""
-        return False
 
     @classmethod
     def runtime_fingerprint_contribution(

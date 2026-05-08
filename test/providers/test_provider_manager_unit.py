@@ -38,6 +38,22 @@ def test_create_provider_copilot_stores_mapping():
     assert manager.get_provider("t1") is provider
 
 
+def test_runtime_state_capability_absent_for_unsupported_provider():
+    manager = ProviderManager()
+
+    assert manager.runtime_state_capability(ProviderType.KIRO_CLI.value) is None
+    assert manager.provider_supports_resume(ProviderType.KIRO_CLI.value) is False
+
+
+def test_runtime_state_capability_present_for_codex_provider():
+    manager = ProviderManager()
+
+    capability = manager.runtime_state_capability(ProviderType.CODEX.value)
+
+    assert capability is not None
+    assert manager.provider_supports_resume(ProviderType.CODEX.value) is True
+
+
 def test_create_provider_unknown_type_raises():
     manager = ProviderManager()
     with pytest.raises(ValueError, match="Unknown provider type"):

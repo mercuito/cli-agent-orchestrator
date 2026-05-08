@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity, ensure_agent_identity_runtime_paths
 from cli_agent_orchestrator.clients.database import create_terminal as db_create_terminal
@@ -115,6 +115,7 @@ def create_terminal(
     working_directory: Optional[str] = None,
     allowed_tools: Optional[list] = None,
     agent_identity: Optional[AgentIdentity] = None,
+    provider_runtime: Optional[Mapping[str, Any]] = None,
 ) -> Terminal:
     """Create a new terminal with an initialized CLI agent.
 
@@ -183,6 +184,21 @@ def create_terminal(
         )
         env = runtime.environment
         runtime_prepared = True
+        runtime_resume_args: Optional[list[str]] = None
+        if provider_runtime is not None:
+            if launch_context is None:
+                raise ValueError("provider_runtime requires an agent identity launch context")
+            runtime_capability = provider_manager.runtime_state_capability(provider)
+            if runtime_capability is None:
+                raise ValueError(f"Provider {provider!r} does not support runtime restoration")
+            runtime_state = runtime_capability.deserialize_runtime_state(
+                provider_runtime,
+                provider_data_dir=launch_context.provider_data_dir,
+            )
+            runtime_resume_args = runtime_capability.launch_resume_args(
+                runtime_state,
+                provider_data_dir=launch_context.provider_data_dir,
+            )
 
         # Step 2: Create tmux session or window
         if new_session:
@@ -226,6 +242,7 @@ def create_terminal(
             skill_prompt=(
                 runtime_inputs.skill_prompt if provider in RUNTIME_SKILL_PROMPT_PROVIDERS else None
             ),
+            runtime_resume_args=runtime_resume_args,
         )
         provider_instance.initialize()
 

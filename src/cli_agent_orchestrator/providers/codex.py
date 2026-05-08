@@ -5,8 +5,11 @@ import os
 import re
 import shlex
 import time
-from typing import Optional
+import uuid
+from pathlib import Path
+from typing import Mapping, Optional
 
+from cli_agent_orchestrator.clients.database import get_terminal_metadata
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -15,6 +18,8 @@ from cli_agent_orchestrator.providers.base import (
     BaseProvider,
     ProviderRuntimeDescriptor,
     ProviderRuntimePreparation,
+    ProviderRuntimeState,
+    ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -85,6 +90,8 @@ SHELL_COMMAND_NOT_FOUND_PATTERN = (
     r"(?:command not found: codex|codex: command not found|not found: codex)"
 )
 CODEX_TERM_DUMB_PATTERN = r'TERM is set to "dumb"\. Refusing to start'
+CODEX_RUNTIME_STATE_SCHEMA_VERSION = "codex-runtime-state.v1"
+CODEX_THREAD_ID_PROBE_PREFIX = "CAO_THREAD_ID_PROBE_"
 
 
 def _compute_tui_footer_cutoff(all_lines: list) -> int:
@@ -132,15 +139,120 @@ class ProviderError(Exception):
     pass
 
 
+def parse_codex_thread_id_probe_output(output: str, *, nonce: str) -> str | None:
+    """Return the nonce-tagged Codex thread id from tmux output, if present."""
+    pattern = re.compile(
+        rf"{re.escape(CODEX_THREAD_ID_PROBE_PREFIX + nonce)}:" r"CODEX_THREAD_ID=([A-Za-z0-9_.:-]+)"
+    )
+    matches = pattern.findall(output)
+    if not matches:
+        return None
+    thread_id = matches[-1].strip()
+    return thread_id or None
+
+
+class CodexRuntimeStateCapability(ProviderRuntimeStateCapability):
+    """Codex-owned runtime/session restoration capability."""
+
+    provider_type = ProviderType.CODEX.value
+
+    def discover_current_runtime_state(
+        self,
+        *,
+        terminal_id: str,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState | None:
+        """Discover the active Codex thread id without sending a model prompt.
+
+        WARNING: this intentionally relies on brittle Codex CLI behavior observed
+        in Codex CLI 0.128.0:
+        - Codex hooks did not fire for startup, `!` shell commands, or `/clear`
+          without a real model prompt.
+        - Codex `!` shell commands currently receive `CODEX_THREAD_ID`.
+        - The observed `CODEX_THREAD_ID` matches transcript
+          `session_meta.payload.id`.
+        - Replace this probe when Codex exposes a stable session-discovery API.
+        """
+        metadata = get_terminal_metadata(terminal_id)
+        if metadata is None:
+            raise ValueError(f"Terminal '{terminal_id}' not found")
+
+        nonce = uuid.uuid4().hex
+        probe = f'!echo "{CODEX_THREAD_ID_PROBE_PREFIX}{nonce}:CODEX_THREAD_ID=$CODEX_THREAD_ID"'
+        tmux_client.send_keys(metadata["tmux_session"], metadata["tmux_window"], probe)
+
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            output = tmux_client.get_history(metadata["tmux_session"], metadata["tmux_window"])
+            thread_id = parse_codex_thread_id_probe_output(output, nonce=nonce)
+            if thread_id is not None:
+                return ProviderRuntimeState(
+                    provider_type=self.provider_type,
+                    provider_data_dir=provider_data_dir,
+                    payload={
+                        "schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION,
+                        "thread_id": thread_id,
+                    },
+                )
+            time.sleep(0.2)
+        return None
+
+    def deserialize_runtime_state(
+        self,
+        payload: Mapping[str, object],
+        *,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState:
+        """Validate a durable Codex runtime payload."""
+        schema_version = payload.get("schema_version")
+        thread_id = payload.get("thread_id")
+        if schema_version != CODEX_RUNTIME_STATE_SCHEMA_VERSION:
+            raise ValueError("Codex runtime state has unsupported schema_version")
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise ValueError("Codex runtime state requires a non-empty thread_id")
+        return ProviderRuntimeState(
+            provider_type=self.provider_type,
+            provider_data_dir=provider_data_dir,
+            payload={
+                "schema_version": CODEX_RUNTIME_STATE_SCHEMA_VERSION,
+                "thread_id": thread_id.strip(),
+            },
+        )
+
+    def serialize_runtime_state(
+        self,
+        state: ProviderRuntimeState,
+    ) -> Mapping[str, object]:
+        """Serialize Codex runtime state as the minimal durable payload."""
+        if state.provider_type != self.provider_type:
+            raise ValueError("Codex cannot serialize runtime state for another provider")
+        return self.deserialize_runtime_state(
+            state.payload,
+            provider_data_dir=state.provider_data_dir,
+        ).payload
+
+    def launch_resume_args(
+        self,
+        state: ProviderRuntimeState,
+        *,
+        provider_data_dir: Path,
+    ) -> list[str]:
+        """Return Codex CLI args that resume the captured thread."""
+        validated = self.deserialize_runtime_state(
+            state.payload, provider_data_dir=provider_data_dir
+        )
+        return ["resume", str(validated.payload["thread_id"])]
+
+
 class CodexProvider(BaseProvider):
     """Provider for Codex CLI tool integration."""
 
     provider_type = ProviderType.CODEX.value
 
     @classmethod
-    def supports_resume(cls) -> bool:
-        """Codex gets identity-scoped CODEX_HOME for durable CAO identities."""
-        return True
+    def runtime_state_capability(cls) -> CodexRuntimeStateCapability:
+        """Expose Codex's optional runtime/session restoration capability."""
+        return CodexRuntimeStateCapability()
 
     @staticmethod
     def prepare_terminal_runtime(
@@ -162,16 +274,12 @@ class CodexProvider(BaseProvider):
             return ProviderRuntimePreparation(
                 environment={"CODEX_HOME": str(codex_home)},
                 identity_scoped=True,
-                resume_supported=True,
-                context_preservation="identity-scoped Codex home preserves provider state",
             )
 
         codex_home = prepare_codex_home(terminal_id, agent_profile, workdir)
         return ProviderRuntimePreparation(
             environment={"CODEX_HOME": str(codex_home)},
             identity_scoped=False,
-            resume_supported=True,
-            context_preservation="raw terminal Codex home is terminal-scoped",
         )
 
     @classmethod
@@ -218,11 +326,13 @@ class CodexProvider(BaseProvider):
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[list] = None,
         skill_prompt: Optional[str] = None,
+        runtime_resume_args: Optional[list[str]] = None,
     ):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools, skill_prompt)
         self._initialized = False
         self._agent_profile = agent_profile
+        self._runtime_resume_args = list(runtime_resume_args or [])
 
     def _build_codex_command(self) -> str:
         """Build Codex command with agent profile if provided.
@@ -323,6 +433,7 @@ class CodexProvider(BaseProvider):
             except Exception as e:
                 raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
 
+        command_parts.extend(self._runtime_resume_args)
         return shlex.join(command_parts)
 
     def _handle_trust_prompt(self, timeout: float = 20.0) -> None:

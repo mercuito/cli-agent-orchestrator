@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 RUNTIME_FINGERPRINT_SCHEMA_VERSION = "cao-identity-runtime-fingerprint.v1"
 RUNTIME_STATE_SCHEMA_VERSION = "cao-identity-runtime-state.v1"
 RUNTIME_STATE_FILENAME = "runtime-state.json"
+_PRESERVE_PROVIDER_RUNTIME = object()
 
 
 class AgentRuntimeStatus(str, Enum):
@@ -76,6 +77,27 @@ class AgentRuntimeTerminal:
             "resume_supported": self.resume_supported,
             "context_preservation": self.context_preservation,
         }
+
+
+@dataclass(frozen=True)
+class AgentIdentityRuntimeState:
+    """CAO-owned runtime envelope for a durable agent identity."""
+
+    schema_version: str
+    agent_id: str
+    provider: str
+    terminal_id: str | None
+    provider_runtime: Mapping[str, Any] | None
+
+
+@dataclass(frozen=True)
+class TerminalRuntimeState:
+    """CAO-owned runtime envelope for a terminal manifestation."""
+
+    schema_version: str
+    terminal_id: str
+    provider: str
+    provider_runtime: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -183,7 +205,15 @@ class AgentRuntimeHandle:
         terminal = self._terminal()
         if terminal is None:
             try:
-                started = self._start_with_fingerprint(desired_fingerprint)
+                provider_runtime = self._stored_provider_runtime_payload()
+                started = self._start_with_fingerprint(
+                    desired_fingerprint,
+                    provider_runtime=provider_runtime,
+                )
+                self._refresh_provider_runtime_cache_for_terminal(
+                    started.id,
+                    desired_fingerprint,
+                )
             except Exception as exc:
                 logger.warning("Unable to start runtime for agent %s: %s", self.identity.id, exc)
                 return AgentRuntimeFreshnessResult(
@@ -225,6 +255,26 @@ class AgentRuntimeHandle:
         fresh = self._applied_runtime_fingerprint(terminal.id) == desired_fingerprint
         if fresh:
             if status in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
+                try:
+                    self._refresh_provider_runtime_cache_for_terminal(
+                        terminal.id,
+                        desired_fingerprint,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Unable to update provider runtime cache for agent %s terminal %s: %s",
+                        self.identity.id,
+                        terminal.id,
+                        exc,
+                    )
+                    return AgentRuntimeFreshnessResult(
+                        action=AgentRuntimeFreshnessAction.FAILED,
+                        status=status,
+                        terminal_id=terminal.id,
+                        ready=False,
+                        fresh=True,
+                        error=str(exc),
+                    )
                 return AgentRuntimeFreshnessResult(
                     action=AgentRuntimeFreshnessAction.REUSED,
                     status=status,
@@ -243,6 +293,28 @@ class AgentRuntimeHandle:
             )
 
         self._move_pending_terminal_notifications_to_agent(terminal.id)
+        try:
+            provider_runtime = self._discover_live_provider_runtime_payload(terminal.id)
+            self._write_applied_runtime_state(
+                terminal.id,
+                self._applied_runtime_fingerprint(terminal.id) or "",
+                provider_runtime=provider_runtime,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Unable to discover provider runtime state for agent %s terminal %s: %s",
+                self.identity.id,
+                terminal.id,
+                exc,
+            )
+            return AgentRuntimeFreshnessResult(
+                action=AgentRuntimeFreshnessAction.FAILED,
+                status=status,
+                terminal_id=terminal.id,
+                ready=False,
+                fresh=False,
+                error=str(exc),
+            )
         if status in (AgentRuntimeStatus.BUSY, AgentRuntimeStatus.WAITING_USER):
             return AgentRuntimeFreshnessResult(
                 action=AgentRuntimeFreshnessAction.DEFERRED,
@@ -264,7 +336,14 @@ class AgentRuntimeHandle:
 
         try:
             terminal_service.delete_terminal(terminal.id, require_window_killed=True)
-            restarted = self._start_with_fingerprint(desired_fingerprint)
+            restarted = self._start_with_fingerprint(
+                desired_fingerprint,
+                provider_runtime=provider_runtime,
+            )
+            self._refresh_provider_runtime_cache_for_terminal(
+                restarted.id,
+                desired_fingerprint,
+            )
         except Exception as exc:
             logger.warning("Unable to refresh runtime for agent %s: %s", self.identity.id, exc)
             return AgentRuntimeFreshnessResult(
@@ -444,16 +523,28 @@ class AgentRuntimeHandle:
             )
         return _terminal_from_metadata(terminals[0])
 
-    def _start_with_fingerprint(self, desired_fingerprint: str) -> AgentRuntimeTerminal:
-        created = terminal_service.create_terminal(
-            provider=self.identity.cli_provider,
-            agent_profile=self.identity.agent_profile,
-            session_name=self.session_name,
-            new_session=not tmux_client.session_exists(self.session_name),
-            working_directory=self.identity.workdir,
-            agent_identity=self.identity,
+    def _start_with_fingerprint(
+        self,
+        desired_fingerprint: str,
+        *,
+        provider_runtime: Mapping[str, Any] | None = None,
+    ) -> AgentRuntimeTerminal:
+        create_kwargs: dict[str, Any] = {
+            "provider": self.identity.cli_provider,
+            "agent_profile": self.identity.agent_profile,
+            "session_name": self.session_name,
+            "new_session": not tmux_client.session_exists(self.session_name),
+            "working_directory": self.identity.workdir,
+            "agent_identity": self.identity,
+        }
+        if provider_runtime is not None:
+            create_kwargs["provider_runtime"] = provider_runtime
+        created = terminal_service.create_terminal(**create_kwargs)
+        self._write_applied_runtime_state(
+            created.id,
+            desired_fingerprint,
+            provider_runtime=provider_runtime,
         )
-        self._write_applied_runtime_state(created.id, desired_fingerprint)
         provider_value = getattr(created.provider, "value", created.provider)
         provider_name = str(provider_value)
         return AgentRuntimeTerminal(
@@ -585,14 +676,8 @@ class AgentRuntimeHandle:
         return runtime_paths.provider_data_dir / RUNTIME_STATE_FILENAME
 
     def _applied_runtime_fingerprint(self, terminal_id: str) -> Optional[str]:
-        path = self._runtime_state_path()
-        if not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text())
-        except Exception:
-            return None
-        if not isinstance(data, dict):
+        data = self._read_runtime_state_data()
+        if data is None:
             return None
         if data.get("schema_version") != RUNTIME_STATE_SCHEMA_VERSION:
             return None
@@ -601,14 +686,95 @@ class AgentRuntimeHandle:
         value = data.get("fingerprint")
         return str(value) if isinstance(value, str) else None
 
-    def _write_applied_runtime_state(self, terminal_id: str, fingerprint: str) -> None:
+    def _stored_provider_runtime_payload(self) -> Mapping[str, Any] | None:
+        if provider_manager.runtime_state_capability(self.identity.cli_provider) is None:
+            return None
+        data = self._read_runtime_state_data()
+        if data is None:
+            return None
+        provider_runtime = data.get("provider_runtime")
+        if provider_runtime is None:
+            return None
+        if not isinstance(provider_runtime, Mapping):
+            raise ValueError("Stored provider_runtime must be a mapping or null")
+        return dict(provider_runtime)
+
+    def _discover_live_provider_runtime_payload(
+        self,
+        terminal_id: str,
+    ) -> Mapping[str, Any] | None:
+        capability = provider_manager.runtime_state_capability(self.identity.cli_provider)
+        if capability is None:
+            return None
+        runtime_paths = ensure_agent_identity_runtime_paths(
+            self.identity,
+            self.identity.cli_provider,
+        )
+        state = capability.discover_current_runtime_state(
+            terminal_id=terminal_id,
+            provider_data_dir=runtime_paths.provider_data_dir,
+        )
+        if state is None:
+            return None
+        return dict(capability.serialize_runtime_state(state))
+
+    def _refresh_provider_runtime_cache_for_terminal(
+        self,
+        terminal_id: str,
+        fingerprint: str,
+    ) -> None:
+        capability = provider_manager.runtime_state_capability(self.identity.cli_provider)
+        if capability is None:
+            return
+        runtime_paths = ensure_agent_identity_runtime_paths(
+            self.identity,
+            self.identity.cli_provider,
+        )
+        state = capability.discover_current_runtime_state(
+            terminal_id=terminal_id,
+            provider_data_dir=runtime_paths.provider_data_dir,
+        )
+        provider_runtime = (
+            None if state is None else dict(capability.serialize_runtime_state(state))
+        )
+        self._write_applied_runtime_state(
+            terminal_id,
+            fingerprint,
+            provider_runtime=provider_runtime,
+        )
+
+    def _read_runtime_state_data(self) -> dict[str, Any] | None:
         path = self._runtime_state_path()
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _write_applied_runtime_state(
+        self,
+        terminal_id: str,
+        fingerprint: str,
+        *,
+        provider_runtime: Mapping[str, Any] | None | object = _PRESERVE_PROVIDER_RUNTIME,
+    ) -> None:
+        path = self._runtime_state_path()
+        if provider_runtime is _PRESERVE_PROVIDER_RUNTIME:
+            existing = self._read_runtime_state_data()
+            runtime_payload = None if existing is None else existing.get("provider_runtime")
+        else:
+            runtime_payload = provider_runtime
         path.write_text(
             json.dumps(
                 {
                     "schema_version": RUNTIME_STATE_SCHEMA_VERSION,
+                    "agent_id": self.identity.id,
+                    "provider": self.identity.cli_provider,
                     "terminal_id": terminal_id,
                     "fingerprint": fingerprint,
+                    "provider_runtime": runtime_payload,
                     "applied_at": datetime.now().isoformat(),
                 },
                 sort_keys=True,

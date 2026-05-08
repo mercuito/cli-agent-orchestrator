@@ -460,6 +460,11 @@ app_user_name = "Implementation Partner"
         "create_provider",
         Mock(return_value=created_provider),
     )
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: None,
+    )
     terminal_provider_patcher(runtime_agent.provider_manager, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     update_url = Mock(return_value=True)
