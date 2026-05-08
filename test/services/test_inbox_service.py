@@ -4,14 +4,8 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy import event as sa_event
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
-    Base,
     create_inbox_delivery,
     create_inbox_notification_event,
     get_inbox_delivery,
@@ -23,6 +17,7 @@ from cli_agent_orchestrator.models.inbox import (
     MessageStatus,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.services import inbox_service
 from cli_agent_orchestrator.services.inbox_service import (
     LogFileHandler,
     check_and_send_pending_messages,
@@ -65,33 +60,12 @@ def _delivery(
 
 
 @pytest.fixture
-def live_inbox_db(monkeypatch):
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    @sa_event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(bind=engine)
-    TestSession = sessionmaker(bind=engine)
-    monkeypatch.setattr(db_module, "SessionLocal", TestSession)
-    return TestSession
+def live_inbox_db(runtime_inbox_db_session):
+    return runtime_inbox_db_session
 
 
-def _provider_with_status(monkeypatch, status: TerminalStatus):
-    provider = MagicMock()
-    provider.get_status.return_value = status
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.provider_manager.get_provider",
-        lambda terminal_id: provider,
-    )
-    return provider
+def _provider_with_status(terminal_provider_patcher, status: TerminalStatus):
+    return terminal_provider_patcher(inbox_service.provider_manager, status)
 
 
 class TestCheckAndSendPendingMessages:
@@ -393,15 +367,12 @@ class TestAutoDeliveryRegression:
 
 def test_busy_terminal_keeps_semantic_notification_pending(
     live_inbox_db,
-    monkeypatch,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     delivery = create_inbox_delivery("worker-a", "terminal-1", "Wait until idle.")
-    _provider_with_status(monkeypatch, TerminalStatus.PROCESSING)
-    send_input = MagicMock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
-        send_input,
-    )
+    _provider_with_status(terminal_provider_patcher, TerminalStatus.PROCESSING)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
 
     result = check_and_send_pending_messages("terminal-1")
 
@@ -415,16 +386,13 @@ def test_busy_terminal_keeps_semantic_notification_pending(
 @pytest.mark.parametrize("status", [TerminalStatus.IDLE, TerminalStatus.COMPLETED])
 def test_idle_or_completed_terminal_delivers_semantic_notification(
     live_inbox_db,
-    monkeypatch,
     status,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     delivery = create_inbox_delivery("worker-a", "terminal-1", "Ready now.")
-    _provider_with_status(monkeypatch, status)
-    send_input = MagicMock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
-        send_input,
-    )
+    _provider_with_status(terminal_provider_patcher, status)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
 
     result = check_and_send_pending_messages("terminal-1")
 
@@ -437,7 +405,8 @@ def test_idle_or_completed_terminal_delivers_semantic_notification(
 
 def test_idle_terminal_delivers_non_message_backed_notification_body(
     live_inbox_db,
-    monkeypatch,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     notification = create_inbox_notification_event(
         "terminal-1",
@@ -445,12 +414,8 @@ def test_idle_terminal_delivers_non_message_backed_notification_body(
         source_kind="linear_issue",
         source_id="CAO-123",
     )
-    _provider_with_status(monkeypatch, TerminalStatus.IDLE)
-    send_input = MagicMock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
-        send_input,
-    )
+    _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
 
     result = check_and_send_pending_messages("terminal-1")
 
@@ -465,6 +430,7 @@ def test_idle_terminal_delivers_non_message_backed_notification_body(
 def test_delivery_failure_marks_notification_failed_without_mutating_durable_message(
     live_inbox_db,
     monkeypatch,
+    terminal_provider_patcher,
 ):
     delivery = create_inbox_delivery(
         "linear",
@@ -473,7 +439,7 @@ def test_delivery_failure_marks_notification_failed_without_mutating_durable_mes
         source_kind="presence_thread",
         source_id="thread-1",
     )
-    _provider_with_status(monkeypatch, TerminalStatus.IDLE)
+    _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
         MagicMock(side_effect=RuntimeError("tmux send failed")),
@@ -493,17 +459,14 @@ def test_delivery_failure_marks_notification_failed_without_mutating_durable_mes
 
 def test_same_source_notifications_batch_without_merging_different_sources(
     live_inbox_db,
-    monkeypatch,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     first = create_inbox_delivery("worker-a", "terminal-1", "first")
     other = create_inbox_delivery("worker-b", "terminal-1", "other source")
     third = create_inbox_delivery("worker-a", "terminal-1", "third")
-    _provider_with_status(monkeypatch, TerminalStatus.IDLE)
-    send_input = MagicMock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
-        send_input,
-    )
+    _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
 
     result = check_and_send_pending_messages("terminal-1")
 

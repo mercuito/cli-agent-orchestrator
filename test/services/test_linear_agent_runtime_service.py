@@ -6,17 +6,8 @@ from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy import event as sa_event
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
-from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import (
-    Base,
-    create_inbox_delivery,
-)
+from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.linear import runtime
 from cli_agent_orchestrator.linear.workspace_provider import LinearPresence, LinearResolvedPresence
 from cli_agent_orchestrator.presence.models import (
@@ -36,21 +27,38 @@ from cli_agent_orchestrator.runtime.agent import (
 
 
 @pytest.fixture
-def test_db(monkeypatch):
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+def test_db(runtime_inbox_db_session):
+    return runtime_inbox_db_session
 
-    @sa_event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
 
-    Base.metadata.create_all(bind=engine)
-    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+@pytest.fixture
+def resolved_presence(implementation_partner_identity_factory):
+    def _resolved_presence(
+        *,
+        app_key: str = "implementation_partner",
+        agent_id: str = "implementation_partner",
+        session_name: str = "implementation-partner",
+        agent_profile: str = "developer",
+        cli_provider: str = "codex",
+        workdir: str = "/repo",
+    ) -> LinearResolvedPresence:
+        return LinearResolvedPresence(
+            presence=LinearPresence(
+                presence_id=app_key,
+                agent_id=agent_id,
+                app_key=app_key,
+                app_user_name="Implementation Partner",
+            ),
+            identity=implementation_partner_identity_factory(
+                id=agent_id,
+                agent_profile=agent_profile,
+                cli_provider=cli_provider,
+                workdir=workdir,
+                session_name=session_name,
+            ),
+        )
+
+    return _resolved_presence
 
 
 def _presence_event(
@@ -70,33 +78,6 @@ def _presence_event(
         ),
         message=ConversationMessage(kind="prompt", body=prompt_body) if prompt_body else None,
         raw_payload={"action": action},
-    )
-
-
-def _resolved_presence(
-    *,
-    app_key: str = "implementation_partner",
-    agent_id: str = "implementation_partner",
-    session_name: str = "implementation-partner",
-    agent_profile: str = "developer",
-    cli_provider: str = "codex",
-    workdir: str = "/repo",
-) -> LinearResolvedPresence:
-    return LinearResolvedPresence(
-        presence=LinearPresence(
-            presence_id=app_key,
-            agent_id=agent_id,
-            app_key=app_key,
-            app_user_name="Implementation Partner",
-        ),
-        identity=AgentIdentity(
-            id=agent_id,
-            display_name="Implementation Partner",
-            agent_profile=agent_profile,
-            cli_provider=cli_provider,
-            workdir=workdir,
-            session_name=session_name,
-        ),
     )
 
 
@@ -120,14 +101,14 @@ def test_build_terminal_message_uses_prompted_body():
     assert "Can you scope this?" in message
 
 
-def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch):
+def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolved_presence):
     terminal = {"id": "terminal-1", "tmux_session": "cao-linear-discovery-partner"}
     handle = Mock()
     handle.ensure_started.return_value.as_terminal_metadata.return_value = terminal
     monkeypatch.setattr(
         runtime,
         "_resolve_linear_event",
-        lambda event: _resolved_presence(session_name="linear-discovery-partner"),
+        lambda event: resolved_presence(session_name="linear-discovery-partner"),
     )
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
 
@@ -135,16 +116,19 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch):
     handle.ensure_started.assert_called_once()
 
 
-def test_terminal_config_comes_from_cao_identity_mapping(monkeypatch):
+def test_terminal_config_comes_from_cao_identity_mapping(monkeypatch, resolved_presence):
     handle = Mock()
     handle.ensure_started.return_value.as_terminal_metadata.return_value = {"id": "terminal-1"}
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
 
-    assert runtime._terminal_for_resolved_presence(_resolved_presence())["id"] == "terminal-1"
+    assert runtime._terminal_for_resolved_presence(resolved_presence())["id"] == "terminal-1"
     handle.ensure_started.assert_called_once()
 
 
-def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(monkeypatch):
+def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
+    monkeypatch,
+    resolved_presence,
+):
     event = _presence_event(prompt_context="<issue/>")
     calls = []
     handle = Mock()
@@ -153,7 +137,7 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(monk
         status=Mock(value="idle"),
         notification=Mock(created=True),
     )
-    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: _resolved_presence())
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_presence())
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
     update_url = Mock(side_effect=lambda *args, **kwargs: calls.append("update_url"))
     create_activity = Mock(side_effect=lambda *args, **kwargs: calls.append("create_activity"))
@@ -173,7 +157,7 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(monk
     create_activity.assert_called_once()
 
 
-def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch):
+def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch, resolved_presence):
     event = _presence_event(prompt_context="<issue/>")
     event.raw_payload["_cao_linear_app_key"] = "implementation_partner"
     handle = Mock()
@@ -185,7 +169,7 @@ def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch):
     monkeypatch.setattr(
         runtime,
         "_resolve_linear_event",
-        lambda event: _resolved_presence(app_key=event.raw_payload["_cao_linear_app_key"]),
+        lambda event: resolved_presence(app_key=event.raw_payload["_cao_linear_app_key"]),
     )
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
     monkeypatch.setattr(runtime.app_client, "linear_app_env", lambda app_key, name: None)
@@ -210,6 +194,7 @@ def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch):
 def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
     test_db,
     monkeypatch,
+    resolved_presence,
 ):
     event = _presence_event(prompt_body="Can you inspect this?")
     persisted_event = PersistedPresenceEvent(
@@ -273,7 +258,7 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
 
     handle = Mock(inbox_receiver_id="agent:implementation_partner")
     handle.accept_notification.side_effect = accept_notification
-    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: _resolved_presence())
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_presence())
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
     monkeypatch.setattr(
         runtime,

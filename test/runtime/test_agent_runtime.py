@@ -5,16 +5,12 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy import event as sa_event
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_delivery
+from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeHandle,
     AgentRuntimeNotification,
@@ -24,50 +20,18 @@ from cli_agent_orchestrator.services import inbox_service
 
 
 @pytest.fixture
-def test_session(monkeypatch):
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    @sa_event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(bind=engine)
-    TestSession = sessionmaker(bind=engine)
-    monkeypatch.setattr(db_module, "SessionLocal", TestSession)
-    return TestSession
+def test_session(runtime_inbox_db_session):
+    return runtime_inbox_db_session
 
 
 @pytest.fixture
-def identity() -> AgentIdentity:
-    return AgentIdentity(
-        id="implementation_partner",
-        display_name="Implementation Partner",
-        agent_profile="developer",
-        cli_provider="codex",
-        workdir="/repo",
-        session_name="implementation-partner",
-    )
+def identity(implementation_partner_identity_factory):
+    return implementation_partner_identity_factory()
 
 
 @pytest.fixture
-def handle(identity: AgentIdentity) -> AgentRuntimeHandle:
+def handle(identity) -> AgentRuntimeHandle:
     return AgentRuntimeHandle(identity)
-
-
-class _FakeProvider:
-    def __init__(self, status: TerminalStatus | Exception) -> None:
-        self._status = status
-
-    def get_status(self) -> TerminalStatus:
-        if isinstance(self._status, Exception):
-            raise self._status
-        return self._status
 
 
 def _create_terminal(session_name: str = "cao-implementation-partner") -> str:
@@ -80,12 +44,8 @@ def _create_terminal(session_name: str = "cao-implementation-partner") -> str:
     )["id"]
 
 
-def _provider(monkeypatch, status: TerminalStatus | Exception | None) -> None:
-    provider = None if status is None else _FakeProvider(status)
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.provider_manager.get_provider",
-        lambda terminal_id: provider,
-    )
+def _provider(terminal_provider_patcher, status: TerminalStatus | Exception | None) -> None:
+    terminal_provider_patcher(runtime_agent.provider_manager, status)
 
 
 def _pending_deliveries(receiver_id: str):
@@ -122,24 +82,24 @@ def test_status_reports_not_started_without_terminal_metadata(test_session, hand
 )
 def test_status_maps_terminal_state_to_provider_friendly_runtime_state(
     test_session,
-    monkeypatch,
     handle,
     terminal_status,
     runtime_status,
+    terminal_provider_patcher,
 ):
     _create_terminal()
-    _provider(monkeypatch, terminal_status)
+    _provider(terminal_provider_patcher, terminal_status)
 
     assert handle.status() == runtime_status
 
 
 def test_status_reports_unreachable_when_provider_cannot_be_queried(
     test_session,
-    monkeypatch,
     handle,
+    terminal_provider_patcher,
 ):
     _create_terminal()
-    _provider(monkeypatch, RuntimeError("tmux unavailable"))
+    _provider(terminal_provider_patcher, RuntimeError("tmux unavailable"))
 
     assert handle.status() == AgentRuntimeStatus.UNREACHABLE
 
@@ -213,6 +173,8 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
     test_session,
     monkeypatch,
     handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     monkeypatch.setattr(
         "cli_agent_orchestrator.runtime.agent.terminal_service.create_terminal",
@@ -228,12 +190,8 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
     )
 
     _create_terminal()
-    _provider(monkeypatch, TerminalStatus.IDLE)
-    send_input = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.terminal_service.send_input",
-        send_input,
-    )
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
 
     result = handle.try_deliver_pending()
 
@@ -245,16 +203,13 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
 
 def test_notify_queues_without_terminal_input_while_agent_is_busy(
     test_session,
-    monkeypatch,
     handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     _create_terminal()
-    _provider(monkeypatch, TerminalStatus.PROCESSING)
-    send_input = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.terminal_service.send_input",
-        send_input,
-    )
+    _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
 
     result = handle.notify(
         "A follow-up arrived while you were working.",
@@ -270,16 +225,13 @@ def test_notify_queues_without_terminal_input_while_agent_is_busy(
 
 def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_busy(
     test_session,
-    monkeypatch,
     handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     _create_terminal()
-    _provider(monkeypatch, TerminalStatus.PROCESSING)
-    send_input = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.terminal_service.send_input",
-        send_input,
-    )
+    _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
     delivery = create_inbox_delivery(
         "presence",
         "terminal-1",
@@ -299,27 +251,23 @@ def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_bus
 
 def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
     test_session,
-    monkeypatch,
     handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     _create_terminal()
-    provider = _FakeProvider(TerminalStatus.PROCESSING)
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.provider_manager.get_provider",
-        lambda terminal_id: provider,
+    provider = terminal_provider_patcher(
+        runtime_agent.provider_manager,
+        TerminalStatus.PROCESSING,
     )
-    send_input = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.terminal_service.send_input",
-        send_input,
-    )
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
 
     handle.notify(
         "Deliver this after the agent becomes idle.",
         source_kind="linear_event",
         source_id="event-later",
     )
-    provider._status = TerminalStatus.IDLE
+    provider.status = TerminalStatus.IDLE
 
     assert inbox_service.check_and_send_pending_messages("terminal-1") is True
     send_input.assert_called_once_with("terminal-1", "Deliver this after the agent becomes idle.")
@@ -335,18 +283,15 @@ def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
 )
 def test_notify_keeps_notifications_pending_when_agent_is_error_or_unreachable(
     test_session,
-    monkeypatch,
     handle,
     provider_status,
     runtime_status,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     _create_terminal()
-    _provider(monkeypatch, provider_status)
-    send_input = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.terminal_service.send_input",
-        send_input,
-    )
+    _provider(terminal_provider_patcher, provider_status)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
 
     result = handle.notify(
         "This should remain durable.",
@@ -362,16 +307,13 @@ def test_notify_keeps_notifications_pending_when_agent_is_error_or_unreachable(
 
 def test_notify_delivers_pending_notification_when_agent_is_idle(
     test_session,
-    monkeypatch,
     handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
 ):
     _create_terminal()
-    _provider(monkeypatch, TerminalStatus.IDLE)
-    send_input = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.terminal_service.send_input",
-        send_input,
-    )
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
 
     result = handle.notify(
         "A Linear mention is ready.",
@@ -388,11 +330,11 @@ def test_notify_delivers_pending_notification_when_agent_is_idle(
 
 def test_duplicate_notification_source_reuses_existing_inbox_message(
     test_session,
-    monkeypatch,
     handle,
+    terminal_provider_patcher,
 ):
     _create_terminal()
-    _provider(monkeypatch, TerminalStatus.PROCESSING)
+    _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
 
     first = handle.notify(
         "Only one notification should be queued.",

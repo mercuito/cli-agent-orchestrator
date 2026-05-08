@@ -7,12 +7,7 @@ from typing import Any, Dict, List
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine, event as sa_event
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
 from cli_agent_orchestrator.presence.manager import PresenceProviderManager
@@ -26,23 +21,6 @@ from cli_agent_orchestrator.presence.persistence import (
     get_thread,
     get_work_item,
 )
-
-
-def _test_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    @sa_event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_conn, _conn_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(bind=engine)
-    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
 
 
 def _nested_payload() -> Dict[str, Any]:
@@ -276,8 +254,7 @@ def test_activity_kind_mapping_covers_known_stop_and_unknown(activity, expected_
     assert event.message.kind == expected_kind
 
 
-def test_manager_ingestion_persists_linear_event_idempotently(monkeypatch):
-    _test_session(monkeypatch)
+def test_manager_ingestion_persists_linear_event_idempotently(runtime_inbox_db_session):
     manager = PresenceProviderManager({"linear": LinearPresenceProvider()})
 
     first = manager.ingest_event("linear", _nested_payload(), delivery_id="delivery-1")
