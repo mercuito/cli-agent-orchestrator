@@ -13,7 +13,7 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
     FlowModel,
-    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
@@ -268,7 +268,7 @@ class TestInboxOperations:
         assert delivery.notification.receiver_id == "receiver-456"
         assert delivery.notification.status == MessageStatus.PENDING
         assert len(delivery.targets) == 1
-        assert delivery.targets[0].target_kind == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE
+        assert delivery.targets[0].target_kind == INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE
         assert delivery.targets[0].target_id == str(delivery.message.id)
         assert delivery.targets[0].role == INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
 
@@ -292,7 +292,7 @@ class TestInboxOperations:
         assert delivery.message == message
         assert delivery.notification == notification
         assert len(delivery.targets) == 1
-        assert delivery.targets[0].target_kind == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE
+        assert delivery.targets[0].target_kind == INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE
         assert delivery.targets[0].target_id == str(message.id)
 
     def test_create_notification_rejects_missing_message(self, live_inbox_db):
@@ -1093,7 +1093,7 @@ class TestInitDb:
         assert runtime_notification_id == 301
         assert target == (
             301,
-            INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+            INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
             "201",
             INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
         )

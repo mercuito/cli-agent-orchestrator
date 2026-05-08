@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
-    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
@@ -64,7 +64,7 @@ def _seed_inbox(
         s.add(
             InboxNotificationTargetModel(
                 notification_id=notification_row.id,
-                target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
                 target_id=str(message_row.id),
                 role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
             )

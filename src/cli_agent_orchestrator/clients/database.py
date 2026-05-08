@@ -22,7 +22,7 @@ from cli_agent_orchestrator.clients.terminal_store import (  # noqa: E402
     update_last_active,
 )
 from cli_agent_orchestrator.clients.inbox_store import (  # noqa: E402
-    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
@@ -92,7 +92,7 @@ __all__ = [
     "BatonEventModel",
     "BatonModel",
     "FlowModel",
-    "INBOX_NOTIFICATION_TARGET_KIND_MESSAGE",
+    "INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE",
     "INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY",
     "InboxMessageModel",
     "InboxNotificationModel",

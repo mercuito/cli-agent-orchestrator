@@ -148,7 +148,7 @@ def _read_delivery(session: Any, notification_id: int) -> Optional[InboxDelivery
 def _primary_inbox_message_target(delivery: InboxDelivery) -> Optional[InboxNotificationTarget]:
     for target in delivery.targets:
         if (
-            target.target_kind == db_module.INBOX_NOTIFICATION_TARGET_KIND_MESSAGE
+            target.target_kind == db_module.INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE
             and target.role == db_module.INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
         ):
             return target

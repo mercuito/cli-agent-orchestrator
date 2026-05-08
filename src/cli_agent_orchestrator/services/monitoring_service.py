@@ -26,7 +26,7 @@ from sqlalchemy import String, cast, or_
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
-    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
@@ -229,7 +229,8 @@ def get_session_messages(
                 InboxNotificationTargetModel.target_id == cast(InboxMessageModel.id, String),
             )
             .filter(
-                InboxNotificationTargetModel.target_kind == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                InboxNotificationTargetModel.target_kind
+                == INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
                 InboxNotificationTargetModel.role == INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                 or_(
                     InboxMessageModel.sender_id == session_row.terminal_id,

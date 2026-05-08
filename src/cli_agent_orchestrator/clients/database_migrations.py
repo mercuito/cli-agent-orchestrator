@@ -9,7 +9,7 @@ from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import sqlite_migrations
 from cli_agent_orchestrator.clients.baton_store import BatonEventModel, BatonModel
 from cli_agent_orchestrator.clients.inbox_store import (
-    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
@@ -235,7 +235,7 @@ def _copy_inbox_notification_message_targets(sqlite_conn) -> None:
             ?
         FROM temp.inbox_notification_message_targets_migration
         """,
-        (INBOX_NOTIFICATION_TARGET_KIND_MESSAGE, INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY),
+        (INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE, INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY),
     )
     sqlite_conn.execute("DROP TABLE IF EXISTS temp.inbox_notification_message_targets_migration")
 

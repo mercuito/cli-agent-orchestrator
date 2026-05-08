@@ -19,7 +19,7 @@ from cli_agent_orchestrator.models.inbox import (
 )
 
 MAX_NOTIFICATION_METADATA_JSON_CHARS = 4000
-INBOX_NOTIFICATION_TARGET_KIND_MESSAGE = "inbox_message"
+INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE = "inbox_message"
 INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY = "primary"
 
 
@@ -195,7 +195,7 @@ def _add_primary_inbox_message_target(
 ) -> InboxNotificationTargetModel:
     target_row = InboxNotificationTargetModel(
         notification_id=notification_id,
-        target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+        target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
         target_id=str(message_id),
         role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     )
@@ -209,7 +209,7 @@ def _primary_inbox_message_target(
 ) -> Optional[InboxNotificationTargetModel]:
     for target_row in target_rows:
         if (
-            target_row.target_kind == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE
+            target_row.target_kind == INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE
             and target_row.role == INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
         ):
             return target_row

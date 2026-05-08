@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.clients.database import (
     AgentRuntimeNotificationModel,
     Base,
-    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     InboxMessageModel,
     InboxNotificationModel,
@@ -283,13 +283,13 @@ class TestCleanupOldData:
                 [
                     InboxNotificationTargetModel(
                         notification_id=delivered.id,
-                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
                         target_id=str(message.id),
                         role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                     ),
                     InboxNotificationTargetModel(
                         notification_id=pending.id,
-                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
                         target_id=str(message.id),
                         role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                     ),
@@ -337,7 +337,7 @@ class TestCleanupOldData:
             session.add(
                 InboxNotificationTargetModel(
                     notification_id=notification.id,
-                    target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                    target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
                     target_id=str(message.id),
                     role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                 )
@@ -403,7 +403,7 @@ class TestCleanupOldData:
                 [
                     InboxNotificationTargetModel(
                         notification_id=notification.id,
-                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
                         target_id=str(durable_message.id),
                         role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                     ),

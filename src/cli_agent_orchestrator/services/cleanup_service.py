@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import String, cast
 
 from cli_agent_orchestrator.clients.database import (
-    INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     InboxMessageModel,
     InboxNotificationModel,
     InboxNotificationTargetModel,
@@ -61,7 +61,7 @@ def cleanup_old_data():
                     ~db.query(InboxNotificationTargetModel.id)
                     .filter(
                         InboxNotificationTargetModel.target_kind
-                        == INBOX_NOTIFICATION_TARGET_KIND_MESSAGE,
+                        == INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
                         InboxNotificationTargetModel.target_id
                         == cast(InboxMessageModel.id, String),
                     )
