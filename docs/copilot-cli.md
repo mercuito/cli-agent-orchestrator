@@ -116,7 +116,7 @@ Copilot provider currently has no provider-specific environment knobs.
 
 - Provider file: `src/cli_agent_orchestrator/providers/copilot_cli.py`
 - Exit command: `/exit`
-- Paste behavior: single Enter (`paste_enter_count = 1`)
+- Paste behavior: single Enter, configured through provider runtime settings.
 
 ## End-to-End Testing
 

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -128,6 +129,8 @@ class KimiCliProvider(BaseProvider):
     Kimi uses its built-in default agent.
     """
 
+    provider_type = ProviderType.KIMI_CLI.value
+
     # Class-level flag: ensures ~/.kimi/config.toml MCP timeout is set only once,
     # even when multiple KimiCliProvider instances are created in parallel (e.g.,
     # 3 data_analyst workers via assign). Without this, concurrent read/write to
@@ -157,11 +160,6 @@ class KimiCliProvider(BaseProvider):
         # Without this, get_status() returns IDLE instead of COMPLETED after
         # the agent finishes processing, causing handoff to time out.
         self._has_received_input = False
-
-    @property
-    def paste_enter_count(self) -> int:
-        """Kimi CLI's prompt_toolkit submits on single Enter after bracketed paste."""
-        return 1
 
     def _build_kimi_command(self) -> str:
         """Build Kimi CLI command with agent profile and MCP config if provided.

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -146,6 +147,8 @@ class GeminiCliProvider(BaseProvider):
     and cleanup. Gemini CLI does not support inline agent profiles —
     if provided, the system prompt is passed via --prompt-interactive flag.
     """
+
+    provider_type = ProviderType.GEMINI_CLI.value
 
     def __init__(
         self,

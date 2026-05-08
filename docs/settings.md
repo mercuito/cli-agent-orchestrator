@@ -70,9 +70,35 @@ Add additional directories that are scanned for agent profiles across all provid
     "codex": "~/.aws/cli-agent-orchestrator/agent-store",
     "cao_installed": "~/.aws/cli-agent-orchestrator/agent-context"
   },
-  "extra_agent_dirs": []
+  "extra_agent_dirs": [],
+  "provider_runtime": {
+    "codex": {
+      "paste_enter_count": 3
+    }
+  }
 }
 ```
+
+## Provider Runtime Settings
+
+Provider runtime settings tune volatile terminal/TUI behavior without changing
+provider code. CAO ships packaged defaults in
+`providers/runtime_defaults.json`; values in `settings.json` override those
+defaults.
+
+```json
+{
+  "provider_runtime": {
+    "codex": {
+      "paste_enter_count": 3
+    }
+  }
+}
+```
+
+`paste_enter_count` controls how many Enter keys CAO sends after bracketed
+pasting text into a provider TUI. If a CLI changes how pasted text is submitted,
+update this setting; subsequent sends resolve the current value from settings.
 
 ## API Endpoints
 

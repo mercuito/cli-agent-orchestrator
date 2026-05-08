@@ -37,6 +37,11 @@ def _save(data: Dict[str, Any]) -> None:
     SETTINGS_FILE.write_text(json.dumps(data, indent=2))
 
 
+def get_settings() -> Dict[str, Any]:
+    """Load raw user settings."""
+    return _load()
+
+
 def get_agent_dirs() -> Dict[str, str]:
     """Get configured agent directories per provider.
 

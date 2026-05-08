@@ -940,7 +940,7 @@ class TestCodexV0111Extraction:
 
 
 class TestCodexProviderMisc:
-    def test_paste_enter_count_submits_multiline_bracketed_paste(self):
+    def test_paste_enter_count_uses_provider_runtime_config(self):
         provider = CodexProvider("test1234", "test-session", "window-0")
 
         assert provider.paste_enter_count == 3

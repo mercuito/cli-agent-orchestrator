@@ -1,0 +1,14 @@
+{
+  "default": {
+    "paste_enter_count": 2
+  },
+  "codex": {
+    "paste_enter_count": 3
+  },
+  "copilot_cli": {
+    "paste_enter_count": 1
+  },
+  "kimi_cli": {
+    "paste_enter_count": 1
+  }
+}

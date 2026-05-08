@@ -37,6 +37,7 @@ packages = ["src/cli_agent_orchestrator"]
 [tool.hatch.build]
 artifacts = [
     "src/cli_agent_orchestrator/web_ui/**",
+    "src/cli_agent_orchestrator/providers/runtime_defaults.json",
 ]
 
 [dependency-groups]

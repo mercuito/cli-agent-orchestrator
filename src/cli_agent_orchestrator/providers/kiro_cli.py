@@ -23,6 +23,7 @@ import shlex
 from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
@@ -99,6 +100,8 @@ class KiroCliProvider(BaseProvider):
         _idle_prompt_pattern: Regex pattern for detecting IDLE state
         _permission_prompt_pattern: Regex pattern for detecting permission prompts
     """
+
+    provider_type = ProviderType.KIRO_CLI.value
 
     def __init__(
         self,

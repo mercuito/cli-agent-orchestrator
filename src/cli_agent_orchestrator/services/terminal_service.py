@@ -286,10 +286,8 @@ def get_working_directory(terminal_id: str) -> Optional[str]:
 def send_input(terminal_id: str, message: str) -> bool:
     """Send input to terminal via tmux paste buffer.
 
-    Uses bracketed paste mode (-p) to bypass TUI hotkey handling. The number
-    of Enter keys sent after pasting is determined by the provider's
-    ``paste_enter_count`` property (e.g., some TUIs need 2 Enters because
-    bracketed paste triggers multi-line mode).
+    Uses bracketed paste mode (-p) to bypass TUI hotkey handling. The provider
+    resolves how many Enter keys to send from provider runtime configuration.
     """
     try:
         metadata = get_terminal_metadata(terminal_id)

@@ -7,6 +7,7 @@ import time
 from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -120,11 +121,7 @@ class ProviderError(Exception):
 class CodexProvider(BaseProvider):
     """Provider for Codex CLI tool integration."""
 
-    @property
-    def paste_enter_count(self) -> int:
-        """Codex needs a third Enter to submit multi-line bracketed paste input."""
-
-        return 3
+    provider_type = ProviderType.CODEX.value
 
     def __init__(
         self,

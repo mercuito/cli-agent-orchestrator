@@ -6,6 +6,7 @@ import shlex
 from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
@@ -26,6 +27,8 @@ ERROR_INDICATORS = ["Amazon Q is having trouble responding right now"]
 
 class QCliProvider(BaseProvider):
     """Provider for Q CLI tool integration."""
+
+    provider_type = ProviderType.Q_CLI.value
 
     def __init__(
         self,

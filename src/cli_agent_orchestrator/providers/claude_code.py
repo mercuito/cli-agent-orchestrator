@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -61,6 +62,8 @@ IDLE_PROMPT_PATTERN_LOG = r"[>❯][\s\xa0]"  # Same pattern for log files
 
 class ClaudeCodeProvider(BaseProvider):
     """Provider for Claude Code CLI tool integration."""
+
+    provider_type = ProviderType.CLAUDE_CODE.value
 
     def __init__(
         self,

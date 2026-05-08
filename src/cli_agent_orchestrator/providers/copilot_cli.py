@@ -17,6 +17,7 @@ from typing import Optional
 from libtmux.exc import LibTmuxException
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
@@ -44,6 +45,8 @@ PROCESSING_LINE_PATTERN = r"^(?:[●◐◑◒◓◉◎∙]\s*)?.*\besc to cancel
 class CopilotCliProvider(BaseProvider):
     """Provider for GitHub Copilot CLI."""
 
+    provider_type = ProviderType.COPILOT_CLI.value
+
     def __init__(
         self,
         terminal_id: str,
@@ -56,10 +59,6 @@ class CopilotCliProvider(BaseProvider):
         self._initialized = False
         self._agent_profile = agent_profile
         self._copilot_help_text_cache: Optional[str] = None
-
-    @property
-    def paste_enter_count(self) -> int:
-        return 1
 
     @staticmethod
     def _clean(output: str) -> str:

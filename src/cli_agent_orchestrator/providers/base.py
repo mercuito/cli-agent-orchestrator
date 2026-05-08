@@ -41,6 +41,8 @@ class BaseProvider(ABC):
         _allowed_tools: CAO-vocabulary tool names this agent is allowed to use
     """
 
+    provider_type: Optional[str] = None
+
     def __init__(
         self,
         terminal_id: str,
@@ -75,14 +77,15 @@ class BaseProvider(ABC):
     def paste_enter_count(self) -> int:
         """Number of Enter keys to send after pasting user input.
 
-        After bracketed paste (``paste-buffer -p``), many TUIs (e.g.
-        Claude Code) enter multi-line mode. The first Enter adds a
-        newline; the second Enter on the empty line triggers submission.
-
-        Default is 2 (double-Enter). Override to 1 for TUIs where single
-        Enter submits after bracketed paste.
+        TUI submit behavior is volatile, so CAO resolves this from provider
+        runtime configuration instead of baking provider-specific counts into
+        provider classes.
         """
-        return 2
+        from cli_agent_orchestrator.providers.runtime_config import (
+            get_provider_paste_enter_count,
+        )
+
+        return get_provider_paste_enter_count(self.provider_type)
 
     @abstractmethod
     def initialize(self) -> bool:
