@@ -120,6 +120,12 @@ class ProviderError(Exception):
 class CodexProvider(BaseProvider):
     """Provider for Codex CLI tool integration."""
 
+    @property
+    def paste_enter_count(self) -> int:
+        """Codex needs a third Enter to submit multi-line bracketed paste input."""
+
+        return 3
+
     def __init__(
         self,
         terminal_id: str,

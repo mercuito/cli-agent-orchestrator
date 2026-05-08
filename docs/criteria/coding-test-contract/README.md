@@ -49,6 +49,7 @@ the default assignment list in [../README.md](../README.md).
 | [inspectable-authored-inputs](inspectable-authored-inputs.md) | Authored input affects assertions |
 | [setup-invariant-ownership](setup-invariant-ownership.md) | Tests require valid setup |
 | [reusable-test-state](reusable-test-state.md) | Tests repeat setup state |
+| [sqlite-rebuild-migration-proof](sqlite-rebuild-migration-proof.md) | SQLite migrations rebuild tables |
 | [test-through-owner-surfaces](test-through-owner-surfaces.md) | Tests depend on another subsystem's behavior |
 | [test-artifact-containment](test-artifact-containment.md) | Tests create real artifacts |
 | [test-file-organization](test-file-organization.md) | A file covers multiple behavior families |

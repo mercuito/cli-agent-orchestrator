@@ -940,6 +940,11 @@ class TestCodexV0111Extraction:
 
 
 class TestCodexProviderMisc:
+    def test_paste_enter_count_submits_multiline_bracketed_paste(self):
+        provider = CodexProvider("test1234", "test-session", "window-0")
+
+        assert provider.paste_enter_count == 3
+
     def test_get_idle_pattern_for_log(self):
         provider = CodexProvider("test1234", "test-session", "window-0")
         pattern = provider.get_idle_pattern_for_log()

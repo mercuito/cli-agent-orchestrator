@@ -55,6 +55,7 @@ Test criteria:
 | [real-surface-proof-discipline](coding-test-contract/real-surface-proof-discipline.md) | Confidence depends on an integration surface. |
 | [reusable-test-state](coding-test-contract/reusable-test-state.md) | Tests repeat setup state across scenarios. |
 | [setup-invariant-ownership](coding-test-contract/setup-invariant-ownership.md) | Tests require valid setup that is not the behavior under test. |
+| [sqlite-rebuild-migration-proof](coding-test-contract/sqlite-rebuild-migration-proof.md) | A SQLite migration rebuilds, renames, drops, or replaces a table. |
 | [test-artifact-containment](coding-test-contract/test-artifact-containment.md) | Tests create files, directories, repos, persisted instances, or similar artifacts. |
 | [test-file-organization](coding-test-contract/test-file-organization.md) | A test file covers multiple behavior families or public surfaces. |
 | [test-through-owner-surfaces](coding-test-contract/test-through-owner-surfaces.md) | A test depends on behavior owned by another subsystem. |
@@ -95,6 +96,7 @@ Add narrower criteria when the task touches the matching surface. For example:
 * Use `migration-discipline` when code moves to a new service, API, config shape, or architecture.
 * Use `no-test-only-production-seams` when tests motivate a new constructor option, hook, or helper.
 * Use `public-boundary-proof` when a route, CLI command, MCP tool, API, config file, or exported module changes.
+* Use `sqlite-rebuild-migration-proof` when a SQLite migration rebuilds, renames, drops, or replaces a table.
 * Use `test-artifact-containment` when tests create files, directories, database rows, terminals, or external artifacts.
 * Use `external-integration-testing` when the task touches Linear or another external provider.
 
