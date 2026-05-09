@@ -288,6 +288,33 @@ def test_pre_call_denial_reason_and_diagnostics_are_bounded():
     assert recorder.events == ["pre_call:deny_before"]
 
 
+def test_pre_call_denial_surfaces_only_provider_vetted_display_context():
+    recorder = InvocationRecorder(
+        denial_reason="not_allowed",
+        denial_diagnostics={
+            "display_detail": "The requested target is outside the configured scope.",
+            "policy_reason": "This reviewer only works on assigned review issues.",
+            "internal_note": "this should stay in diagnostics only",
+        },
+    )
+    service = _service(recorder, pre_hooks=("deny_before",), post_hooks=())
+
+    with pytest.raises(ProviderMediatedToolAccessDenied) as exc_info:
+        service.invoke(
+            terminal_id="terminal-a",
+            provider_name="fake",
+            tool_name="cao_fake.lookup",
+            arguments={"query": "alpha"},
+        )
+
+    message = str(exc_info.value)
+    assert "not_allowed" in message
+    assert "Detail: The requested target is outside the configured scope." in message
+    assert "Policy reason: This reviewer only works on assigned review issues." in message
+    assert "internal_note" not in message
+    assert exc_info.value.diagnostics["internal_note"] == "this should stay in diagnostics only"
+
+
 def test_unconfigured_terminal_identity_fails_closed_before_provider_code_runs():
     recorder = InvocationRecorder()
     service = _service(

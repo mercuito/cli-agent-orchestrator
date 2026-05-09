@@ -44,6 +44,7 @@ TOOL_ACCESS_CREATE_PROJECT_IDS_KEY = "create_project_ids"
 TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY = "create_parent_issues"
 TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY = "allow_top_level_create"
 TOOL_ACCESS_UPDATE_FIELDS_KEY = "update_fields"
+TOOL_ACCESS_REASON_KEY = "reason"
 _default_linear_workspace_provider: Optional["LinearWorkspaceProvider"] = None
 
 
@@ -365,6 +366,7 @@ def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAcc
                 raise LinearWorkspaceProviderConfigError(
                     f"{location}.update_fields[{index}] unknown Linear update field: {field}"
                 )
+        reason = _optional_str(raw_config, TOOL_ACCESS_REASON_KEY)
         tool_access[access_id] = LinearToolAccess(
             access_id=access_id,
             agent_id=agent_id,
@@ -376,6 +378,7 @@ def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAcc
             create_parent_issues=create_parent_issues,
             allow_top_level_create=allow_top_level_create,
             update_fields=update_fields,
+            reason=reason,
         )
     return tool_access
 
@@ -714,6 +717,8 @@ def save_linear_provider_config(
                 f"{TOOL_ACCESS_UPDATE_FIELDS_KEY} = "
                 f"{_format_toml_value(list(access.update_fields))}"
             )
+        if access.reason:
+            lines.append(f"{TOOL_ACCESS_REASON_KEY} = {_format_toml_value(access.reason)}")
         lines.append("")
     path.write_text("\n".join(lines).rstrip() + "\n")
     path.chmod(0o600)

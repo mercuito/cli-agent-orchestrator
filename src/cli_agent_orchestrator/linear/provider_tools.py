@@ -132,6 +132,9 @@ MAX_COMMENT_LIMIT = 100
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 100
 _TRUNCATED = "...[truncated]"
+DEFAULT_LINEAR_POLICY_REASON = (
+    "This agent is configured to not have access to that Linear target or operation."
+)
 # External contract source: Linear's official GraphQL developer docs document
 # issue lookup by shorthand id/UUID, core fields such as id, title, description,
 # assignee, createdAt, and archivedAt, and GraphQL mutations returning success
@@ -146,6 +149,7 @@ class LinearToolError(RuntimeError):
 
     def __init__(self, reason: str, detail: str) -> None:
         self.reason = reason
+        self.detail = detail
         super().__init__(f"{reason}: {detail}")
 
 
@@ -163,6 +167,7 @@ class LinearToolAccess:
     create_parent_issues: tuple[str, ...] = ()
     allow_top_level_create: bool = False
     update_fields: tuple[str, ...] = ()
+    reason: str | None = None
 
     @property
     def location(self) -> str:
@@ -443,6 +448,7 @@ def _linear_runtime_constant_material(tool_name: str) -> Mapping[str, Any]:
         values["UPDATE_ISSUE_FIELDS"] = sorted(UPDATE_ISSUE_FIELDS)
         values["REFERENCE_FIELDS"] = sorted(REFERENCE_FIELDS)
     if tool_name in LINEAR_PROVIDER_TOOLS:
+        values["DEFAULT_LINEAR_POLICY_REASON"] = DEFAULT_LINEAR_POLICY_REASON
         from cli_agent_orchestrator.linear import app_client
         from cli_agent_orchestrator.linear import workspace_provider as linear_provider
 
@@ -721,14 +727,7 @@ class LinearToolProvider:
         try:
             self._authorized_issue_request(context)
         except LinearToolError as exc:
-            return ProviderToolPreCallResult.deny(
-                exc.reason,
-                {
-                    "provider_name": PROVIDER_NAME,
-                    "tool_name": context.tool_name,
-                    "detail": str(exc),
-                },
-            )
+            return self._deny_with_policy_context(context, exc)
         return ProviderToolPreCallResult.allow()
 
     def _authorize_exploration_before_call(
@@ -738,14 +737,7 @@ class LinearToolProvider:
             self._presence_for_identity(context.agent_identity.id)
             _validated_exploration_request(context.tool_name, context.arguments)
         except LinearToolError as exc:
-            return ProviderToolPreCallResult.deny(
-                exc.reason,
-                {
-                    "provider_name": PROVIDER_NAME,
-                    "tool_name": context.tool_name,
-                    "detail": str(exc),
-                },
-            )
+            return self._deny_with_policy_context(context, exc)
         return ProviderToolPreCallResult.allow()
 
     def _authorize_create_issue_before_call(
@@ -754,14 +746,7 @@ class LinearToolProvider:
         try:
             self._validated_create_issue_request(context)
         except LinearToolError as exc:
-            return ProviderToolPreCallResult.deny(
-                exc.reason,
-                {
-                    "provider_name": PROVIDER_NAME,
-                    "tool_name": context.tool_name,
-                    "detail": str(exc),
-                },
-            )
+            return self._deny_with_policy_context(context, exc)
         return ProviderToolPreCallResult.allow()
 
     def _authorize_update_issue_before_call(
@@ -770,14 +755,7 @@ class LinearToolProvider:
         try:
             self._validated_update_issue_request(context)
         except LinearToolError as exc:
-            return ProviderToolPreCallResult.deny(
-                exc.reason,
-                {
-                    "provider_name": PROVIDER_NAME,
-                    "tool_name": context.tool_name,
-                    "detail": str(exc),
-                },
-            )
+            return self._deny_with_policy_context(context, exc)
         return ProviderToolPreCallResult.allow()
 
     def _authorize_comment_before_call(
@@ -787,15 +765,26 @@ class LinearToolProvider:
             self._authorized_issue_request(context)
             _comment_body_from_arguments(context.arguments)
         except LinearToolError as exc:
-            return ProviderToolPreCallResult.deny(
-                exc.reason,
-                {
-                    "provider_name": PROVIDER_NAME,
-                    "tool_name": context.tool_name,
-                    "detail": str(exc),
-                },
-            )
+            return self._deny_with_policy_context(context, exc)
         return ProviderToolPreCallResult.allow()
+
+    def _deny_with_policy_context(
+        self,
+        context: ProviderToolInvocationContext,
+        exc: LinearToolError,
+    ) -> ProviderToolPreCallResult:
+        access = self._access_by_location.get(context.access.source_location)
+        policy_reason = access.reason if access and access.reason else DEFAULT_LINEAR_POLICY_REASON
+        return ProviderToolPreCallResult.deny(
+            exc.reason,
+            {
+                "provider_name": PROVIDER_NAME,
+                "tool_name": context.tool_name,
+                "detail": str(exc),
+                "display_detail": exc.detail,
+                "policy_reason": policy_reason,
+            },
+        )
 
     def _get_issue(
         self,

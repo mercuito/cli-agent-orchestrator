@@ -454,6 +454,7 @@ create_project_ids = ["project-bridge"]
 create_parent_issues = ["CAO-25"]
 allow_top_level_create = true
 update_fields = ["title", "description", "state_id", "assignee_id", "project_id", "parent_issue", "label_ids", "priority"]
+reason = "Implementation Partner is limited to the bridge planning issue during smoke validation."
 custom_authored_key = "preserve me"
 """,
     )
@@ -506,4 +507,8 @@ custom_authored_key = "preserve me"
         "parent_issue",
         "label_ids",
         "priority",
+    )
+    assert (
+        reloaded.tool_access["implementation_partner_reads"].reason
+        == "Implementation Partner is limited to the bridge planning issue during smoke validation."
     )

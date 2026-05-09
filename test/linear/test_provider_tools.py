@@ -225,6 +225,9 @@ update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
     list_teams_material = policy.tools[LIST_TEAMS_TOOL].runtime_generation
     assert list_teams_material["constants"]["values"] == {
         "APP_KEY_PATTERN": "[^A-Za-z0-9]+",
+        "DEFAULT_LINEAR_POLICY_REASON": (
+            "This agent is configured to not have access to that Linear target or operation."
+        ),
         "DEFAULT_LIST_LIMIT": 50,
         "LINEAR_GRAPHQL_URL": "https://api.linear.app/graphql",
         "LINEAR_TOKEN_URL": "https://api.linear.app/oauth/token",
@@ -1231,6 +1234,7 @@ async def test_linear_comment_tool_denies_unauthorized_issue_before_graphql(
 agent_id = "implementation_partner"
 tools = ["{CREATE_COMMENT_TOOL}"]
 issues = ["CAO-50"]
+reason = "Implementation Partner may only comment on assigned smoke issues."
 """,
     )
     monkeypatch.setattr(
@@ -1241,11 +1245,15 @@ issues = ["CAO-50"]
     mcp, registered = _mcp_for_provider(provider, "terminal-impl")
 
     assert registered == [CREATE_COMMENT_TOOL]
-    with pytest.raises(ToolError, match="unauthorized_linear_issue"):
+    with pytest.raises(ToolError) as exc_info:
         await mcp.call_tool(
             CREATE_COMMENT_TOOL,
             {"issue": "CAO-51", "body": "This should be denied."},
         )
+    message = str(exc_info.value)
+    assert "unauthorized_linear_issue" in message
+    assert "'CAO-51' is not authorized by tool_access.implementation_partner_comments" in message
+    assert "Implementation Partner may only comment on assigned smoke issues." in message
     with pytest.raises(ToolError, match="wrong_provider_ref"):
         await mcp.call_tool(
             CREATE_COMMENT_TOOL,
@@ -1934,6 +1942,7 @@ tools = {json.dumps(tools)}
         if "CaoLinearGetIssueLabel" in query:
             return {"data": {"issueLabel": _issue_label_payload()}}
         if "CaoLinearListProjects" in query:
+            assert "teams" not in (variables or {}).get("filter", {})
             return {"data": {"projects": {"nodes": [_project_payload()]}}}
         if "CaoLinearGetProject" in query:
             return {"data": {"project": _project_payload()}}
@@ -2035,6 +2044,12 @@ tools = {json.dumps(tools)}
     )
     assert (
         json.loads(
+            (await mcp.call_tool(LIST_PROJECTS_TOOL, {"team_id": "team-cao"})).content[0].text
+        )["projects"][0]["id"]
+        == "project-bridge"
+    )
+    assert (
+        json.loads(
             (await mcp.call_tool(GET_PROJECT_TOOL, {"project_id": "project-bridge"}))
             .content[0]
             .text
@@ -2110,7 +2125,7 @@ tools = {json.dumps(tools)}
         )["documents"][0]["id"]
         == "document-1"
     )
-    assert len(calls) == len(LINEAR_EXPLORATION_READ_TOOLS)
+    assert len(calls) == len(LINEAR_EXPLORATION_READ_TOOLS) + 1
 
 
 def test_linear_exploration_tools_do_not_require_issue_scope(tmp_path):

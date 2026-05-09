@@ -214,6 +214,10 @@ class ProviderMediatedToolInvocationService:
                 message = "Provider-mediated tool call denied by pre-call hook"
                 if decision.reason:
                     message = f"{message}: {decision.reason}"
+                message = _append_display_denial_context(
+                    message,
+                    decision.diagnostics or {},
+                )
                 raise ProviderMediatedToolAccessDenied(
                     message,
                     reason=decision.reason or "pre_call_hook_denied",
@@ -311,6 +315,22 @@ def _bounded_diagnostics(diagnostics: Mapping[str, Any]) -> dict[str, str]:
             limit=_MAX_DIAGNOSTIC_VALUE_CHARS,
         )
     return bounded
+
+
+def _append_display_denial_context(message: str, diagnostics: Mapping[str, Any]) -> str:
+    """Append only provider-vetted, agent-visible denial context."""
+    display_detail = diagnostics.get("display_detail")
+    policy_reason = diagnostics.get("policy_reason")
+    parts: list[str] = []
+    if display_detail:
+        parts.append(f"Detail: {_bounded_text(str(display_detail), limit=_MAX_DIAGNOSTIC_VALUE_CHARS)}")
+    if policy_reason:
+        parts.append(
+            f"Policy reason: {_bounded_text(str(policy_reason), limit=_MAX_DIAGNOSTIC_VALUE_CHARS)}"
+        )
+    if not parts:
+        return message
+    return f"{message}. {' '.join(parts)}"
 
 
 def _copy_for_post_hook(result: Any) -> Any:

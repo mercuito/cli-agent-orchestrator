@@ -262,12 +262,10 @@ def get_issue_label(presence: Any, *, label_id: str) -> dict[str, Any]:
 def list_projects(
     presence: Any, *, limit: int, query: str | None = None, team_id: str | None = None
 ) -> dict[str, Any]:
-    variables: dict[str, Any] = {"first": limit}
+    variables: dict[str, Any] = {"first": max(limit, 50) if team_id else limit}
     filters: dict[str, Any] = {}
     if query:
         filters["name"] = {"containsIgnoreCase": query}
-    if team_id:
-        filters["teams"] = {"some": {"id": {"eq": team_id}}}
     if filters:
         variables["filter"] = filters
     payload = _linear_graphql(
@@ -293,7 +291,12 @@ def list_projects(
         variables,
         presence,
     )
-    return {"projects": [_compact_project(node) for node in _connection_nodes(payload, "projects")]}
+    projects = [
+        _compact_project(node)
+        for node in _connection_nodes(payload, "projects")
+        if team_id is None or _project_has_team(node, team_id)
+    ]
+    return {"projects": projects[:limit]}
 
 
 def get_project(presence: Any, *, project_id: str) -> dict[str, Any]:
@@ -322,6 +325,24 @@ def get_project(presence: Any, *, project_id: str) -> dict[str, Any]:
     return _required_node(
         payload, "project", project_id, "linear_project_not_found", _compact_project
     )
+
+
+def _project_has_team(project: Mapping[str, Any], team_id: str) -> bool:
+    teams = project.get("teams")
+    if not isinstance(teams, Mapping):
+        return False
+    nodes = teams.get("nodes")
+    if not isinstance(nodes, list):
+        return False
+    needle = str(team_id).lower()
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        if str(node.get("id") or "").lower() == needle:
+            return True
+        if str(node.get("key") or "").lower() == needle:
+            return True
+    return False
 
 
 def list_issues(
