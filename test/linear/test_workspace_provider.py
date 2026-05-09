@@ -438,15 +438,23 @@ def test_structured_token_update_preserves_linear_tool_access(tmp_path):
     config = _linear_config(
         tmp_path,
         """
+# User-authored Linear provider config.
 [presences.implementation_partner]
 agent_id = "implementation_partner"
 app_key = "implementation_partner"
 access_token = "old-token"
+# Keep this comment next to the token block.
 
 [tool_access.implementation_partner_reads]
 agent_id = "implementation_partner"
-tools = ["cao_linear.get_issue", "cao_linear.list_comments", "cao_linear.create_comment"]
+tools = ["cao_linear.get_issue", "cao_linear.list_comments", "cao_linear.create_comment", "cao_linear.create_issue", "cao_linear.update_issue"]
 issues = ["CAO-28", "issue-28"]
+create_team_ids = ["team-cao"]
+create_project_ids = ["project-bridge"]
+create_parent_issues = ["CAO-25"]
+allow_top_level_create = true
+update_fields = ["title", "description", "state_id", "assignee_id", "project_id", "parent_issue", "label_ids", "priority"]
+custom_authored_key = "preserve me"
 """,
     )
 
@@ -463,6 +471,10 @@ issues = ["CAO-28", "issue-28"]
         allow_legacy_env=False,
     )
     assert updated is True
+    raw = config.read_text()
+    assert "# User-authored Linear provider config." in raw
+    assert "# Keep this comment next to the token block." in raw
+    assert 'custom_authored_key = "preserve me"' in raw
     assert reloaded is not None
     presence = reloaded.presence_by_app_key("implementation_partner")
     assert presence is not None
@@ -472,8 +484,26 @@ issues = ["CAO-28", "issue-28"]
         "cao_linear.get_issue",
         "cao_linear.list_comments",
         "cao_linear.create_comment",
+        "cao_linear.create_issue",
+        "cao_linear.update_issue",
     )
     assert reloaded.tool_access["implementation_partner_reads"].issues == (
         "CAO-28",
         "issue-28",
+    )
+    assert reloaded.tool_access["implementation_partner_reads"].create_team_ids == ("team-cao",)
+    assert reloaded.tool_access["implementation_partner_reads"].create_project_ids == (
+        "project-bridge",
+    )
+    assert reloaded.tool_access["implementation_partner_reads"].create_parent_issues == ("CAO-25",)
+    assert reloaded.tool_access["implementation_partner_reads"].allow_top_level_create is True
+    assert reloaded.tool_access["implementation_partner_reads"].update_fields == (
+        "title",
+        "description",
+        "state_id",
+        "assignee_id",
+        "project_id",
+        "parent_issue",
+        "label_ids",
+        "priority",
     )

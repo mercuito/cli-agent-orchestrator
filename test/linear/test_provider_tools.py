@@ -13,8 +13,10 @@ from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRe
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_COMMENT_TOOL,
+    CREATE_ISSUE_TOOL,
     GET_ISSUE_TOOL,
     LIST_COMMENTS_TOOL,
+    UPDATE_ISSUE_TOOL,
 )
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
@@ -182,12 +184,584 @@ def _created_comment_payload() -> dict[str, Any]:
     }
 
 
+def _teams_payload() -> dict[str, Any]:
+    return {
+        "nodes": [
+            {"id": "team-cao", "key": "CAO", "name": "CAO"},
+            {"id": "team-yards", "key": "YARDS", "name": "Yards"},
+        ]
+    }
+
+
+def _mutated_issue_payload(
+    *,
+    id: str = "issue-51",
+    identifier: str = "CAO-51",
+    title: str = "Add governed Linear issue mutation write tools",
+) -> dict[str, Any]:
+    return {
+        "id": id,
+        "identifier": identifier,
+        "title": title,
+        "url": f"https://linear.app/yards-framework/issue/{identifier.lower()}/example",
+        "state": {"name": "Todo", "type": "unstarted"},
+        "team": {"key": "CAO", "name": "CAO"},
+        "project": {"name": "Linear-backed CAO agent bridge"},
+    }
+
+
 def _service(provider: LinearWorkspaceProvider) -> ProviderMediatedToolInvocationService:
     return ProviderMediatedToolInvocationService(
         policies={"linear": provider.provider_tool_access()},
         agent_registry=_agents(),
         terminal_metadata_resolver=_terminal_metadata,
     )
+
+
+@pytest.mark.asyncio
+async def test_linear_create_issue_tool_registers_and_creates_authorized_subissue(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_create]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+create_team_ids = ["CAO"]
+create_project_ids = ["project-bridge"]
+create_parent_issues = ["CAO-25", "parent-25"]
+""",
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        calls.append({"query": query, "variables": variables, "app_key": app_key})
+        assert app_key == "implementation_partner"
+        if "CaoLinearTeams" in query:
+            assert variables == {}
+            return {"data": {"teams": _teams_payload()}}
+        if "issueCreate" in query:
+            assert variables == {
+                "input": {
+                    "teamId": "team-cao",
+                    "title": "Governed mutation task",
+                    "projectId": "project-bridge",
+                    "parentId": "parent-25",
+                    "priority": 2,
+                }
+            }
+            return {"data": {"issueCreate": {"success": True, "issue": _mutated_issue_payload()}}}
+        if "CaoLinearReference" in query:
+            return {"data": {"node": {"id": variables["id"]}}}
+        assert variables == {"id": "CAO-25"}
+        return {"data": {"issue": _issue_payload(id="parent-25", identifier="CAO-25")}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+
+    # Given the Linear provider grants issue creation only under an authorized parent.
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    # When the identity-managed terminal creates a governed sub-issue.
+    result = await mcp.call_tool(
+        CREATE_ISSUE_TOOL,
+        {
+            "team_id": "CAO",
+            "title": "Governed mutation task",
+            "project_id": "project-bridge",
+            "parent_issue": "CAO-25",
+            "priority": 2,
+        },
+    )
+
+    # Then the provider resolves/validates references before issuing a compact success result.
+    payload = json.loads(result.content[0].text)
+    assert registered == [CREATE_ISSUE_TOOL]
+    assert payload == {
+        "status": "created",
+        "id": "issue-51",
+        "identifier": "CAO-51",
+        "title": "Add governed Linear issue mutation write tools",
+        "url": "https://linear.app/yards-framework/issue/cao-51/example",
+        "team": {"key": "CAO", "name": "CAO"},
+        "project": {"name": "Linear-backed CAO agent bridge"},
+        "state": {"name": "Todo", "type": "unstarted"},
+        "changed_fields": ["parent_issue", "priority", "project_id", "team_id", "title"],
+    }
+    assert ["issueCreate" in call["query"] for call in calls] == [False, False, False, True]
+
+
+@pytest.mark.asyncio
+async def test_linear_update_issue_tool_registers_and_updates_authorized_fields(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_update]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51", "issue-51"]
+create_parent_issues = ["CAO-25", "parent-25"]
+update_fields = ["title", "state_id", "parent_issue", "label_ids"]
+""",
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        calls.append({"query": query, "variables": variables})
+        if "issueUpdate" in query:
+            assert variables == {
+                "id": "issue-51",
+                "input": {
+                    "title": "Updated governed mutation task",
+                    "stateId": "state-started",
+                    "parentId": "parent-25",
+                    "labelIds": ["label-work"],
+                },
+            }
+            return {
+                "data": {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": _mutated_issue_payload(
+                            title="Updated governed mutation task",
+                        ),
+                    }
+                }
+            }
+        if "CaoLinearReference" in query:
+            return {"data": {"node": {"id": variables["id"]}}}
+        if variables == {"id": "CAO-25"}:
+            return {"data": {"issue": _issue_payload(id="parent-25", identifier="CAO-25")}}
+        assert variables == {"id": "CAO-51"}
+        return {"data": {"issue": _mutated_issue_payload()}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    result = await mcp.call_tool(
+        UPDATE_ISSUE_TOOL,
+        {
+            "issue": "CAO-51",
+            "title": "Updated governed mutation task",
+            "state_id": "state-started",
+            "parent_issue": "CAO-25",
+            "label_ids": ["label-work"],
+        },
+    )
+
+    payload = json.loads(result.content[0].text)
+    assert registered == [UPDATE_ISSUE_TOOL]
+    assert payload["status"] == "updated"
+    assert payload["id"] == "issue-51"
+    assert payload["changed_fields"] == ["label_ids", "parent_issue", "state_id", "title"]
+    assert ["issueUpdate" in call["query"] for call in calls] == [
+        False,
+        False,
+        False,
+        False,
+        True,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tool_access_body", "arguments", "expected"),
+    (
+        (
+            f"""
+[tool_access.implementation_partner_issue_create]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+""",
+            {"team_id": "team-other", "title": "Denied"},
+            "unauthorized_linear_team",
+        ),
+        (
+            f"""
+[tool_access.implementation_partner_issue_create]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+create_team_ids = ["team-cao"]
+create_parent_issues = ["CAO-25"]
+""",
+            {"team_id": "team-cao", "title": "Denied", "parent_issue": "CAO-52"},
+            "unauthorized_linear_parent_issue",
+        ),
+        (
+            f"""
+[tool_access.implementation_partner_issue_create]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+create_team_ids = ["team-cao"]
+create_project_ids = ["project-bridge"]
+allow_top_level_create = true
+""",
+            {"team_id": "team-cao", "title": "Denied", "project_id": "project-other"},
+            "unauthorized_linear_project",
+        ),
+        (
+            f"""
+[tool_access.implementation_partner_issue_update]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+create_project_ids = ["project-bridge"]
+update_fields = ["project_id"]
+""",
+            {"issue": "CAO-51", "project_id": "project-other"},
+            "unauthorized_linear_project",
+        ),
+        (
+            f"""
+[tool_access.implementation_partner_issue_update]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+create_parent_issues = ["CAO-25"]
+update_fields = ["parent_issue"]
+""",
+            {"issue": "CAO-51", "parent_issue": "CAO-52"},
+            "unauthorized_linear_parent_issue",
+        ),
+        (
+            f"""
+[tool_access.implementation_partner_issue_update]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+update_fields = ["title"]
+""",
+            {"issue": "CAO-52", "title": "Denied"},
+            "unauthorized_linear_issue",
+        ),
+        (
+            f"""
+[tool_access.implementation_partner_issue_update]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+update_fields = ["title"]
+""",
+            {"issue": "CAO-51", "description": "Denied"},
+            "unauthorized_linear_update_field",
+        ),
+    ),
+)
+def test_linear_issue_mutation_tools_reject_unauthorized_targets_before_graphql(
+    tmp_path,
+    monkeypatch,
+    tool_access_body,
+    arguments,
+    expected,
+):
+    provider = _provider(tmp_path, tool_access_body)
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+    tool_name = CREATE_ISSUE_TOOL if "team_id" in arguments else UPDATE_ISSUE_TOOL
+
+    with pytest.raises(ProviderMediatedToolAccessDenied, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    (
+        ({"team_id": "team-cao", "title": "   "}, "invalid_linear_issue_title"),
+        (
+            {"team_id": "team-cao", "title": "Bad labels", "label_ids": [""]},
+            "invalid_linear_label_ids",
+        ),
+        (
+            {"team_id": "team-cao", "title": "Bad priority", "priority": 9},
+            "invalid_linear_priority",
+        ),
+        (
+            {"team_id": "team-cao", "title": "Bad priority", "priority": "2"},
+            "invalid_linear_priority",
+        ),
+        (
+            {"team_id": "team-cao", "title": "Unknown", "raw_passthrough": True},
+            "invalid_linear_create_issue_field",
+        ),
+    ),
+)
+def test_linear_create_issue_tool_rejects_invalid_fields_before_graphql(
+    tmp_path,
+    monkeypatch,
+    arguments,
+    expected,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_create]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+""",
+    )
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+
+    with pytest.raises(ProviderMediatedToolAccessDenied, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=CREATE_ISSUE_TOOL,
+            arguments=arguments,
+        )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    (
+        ({"issue": "CAO-51", "title": "   "}, "invalid_linear_issue_title"),
+        ({"issue": "CAO-51", "label_ids": [""]}, "invalid_linear_label_ids"),
+        ({"issue": "CAO-51", "priority": 2.2}, "invalid_linear_priority"),
+        ({"issue": "CAO-51", "raw_passthrough": True}, "invalid_linear_update_issue_field"),
+    ),
+)
+def test_linear_update_issue_tool_rejects_invalid_fields_before_graphql(
+    tmp_path,
+    monkeypatch,
+    arguments,
+    expected,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_update]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+update_fields = ["title", "label_ids", "priority"]
+""",
+    )
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+
+    with pytest.raises(ProviderMediatedToolAccessDenied, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=UPDATE_ISSUE_TOOL,
+            arguments=arguments,
+        )
+
+
+def test_linear_issue_mutation_tools_reject_invalid_references_before_mutation(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_create]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+""",
+    )
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        assert "issueCreate" not in query
+        if "CaoLinearTeams" in query:
+            return {"data": {"teams": _teams_payload()}}
+        assert "CaoLinearReference" in query
+        return {"data": {"node": None}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+
+    with pytest.raises(ProviderMediatedToolHandlerError, match="invalid_linear_reference"):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=CREATE_ISSUE_TOOL,
+            arguments={
+                "team_id": "team-cao",
+                "title": "Invalid ref",
+                "state_id": "missing-state",
+            },
+        )
+
+
+@pytest.mark.parametrize("terminal_id", ("terminal-discovery", "raw-terminal", "missing"))
+def test_linear_issue_mutation_tools_fail_closed_for_unmapped_or_unauthorized_terminals(
+    tmp_path,
+    terminal_id,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_mutations]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}", "{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+update_fields = ["title"]
+""",
+    )
+
+    _mcp, registered = _mcp_for_provider(provider, terminal_id)
+
+    assert registered == []
+    with pytest.raises(ProviderMediatedToolAccessDenied):
+        _service(provider).invoke(
+            terminal_id=terminal_id,
+            provider_name="linear",
+            tool_name=CREATE_ISSUE_TOOL,
+            arguments={"team_id": "team-cao", "title": "Denied"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "presence_patch", "expected"),
+    (
+        (
+            CREATE_ISSUE_TOOL,
+            {"team_id": "team-cao", "title": "Credential check"},
+            {"access_token": None, "refresh_token": None},
+            "linear_credentials_missing",
+        ),
+        (
+            UPDATE_ISSUE_TOOL,
+            {"issue": "CAO-51", "title": "Credential check"},
+            {
+                "access_token": "expired-token",
+                "refresh_token": None,
+                "token_expires_at": "2026-05-01T00:00:00+00:00",
+            },
+            "linear_credentials_expired",
+        ),
+    ),
+)
+def test_linear_issue_mutation_tools_report_missing_or_expired_credentials_before_graphql(
+    tmp_path,
+    monkeypatch,
+    tool_name,
+    arguments,
+    presence_patch,
+    expected,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_mutations]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}", "{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+update_fields = ["title"]
+""",
+    )
+    config = provider.config
+    assert config is not None
+    presence = config.presences["implementation_partner"]
+    config.presences["implementation_partner"] = type(presence)(
+        **{**presence.__dict__, **presence_patch}
+    )
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+
+    with pytest.raises(ProviderMediatedToolHandlerError, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "mutation_response", "raised", "expected"),
+    (
+        (
+            CREATE_ISSUE_TOOL,
+            {"data": {"issueCreate": {"success": False, "issue": None}}},
+            None,
+            "linear_issueCreate_failed",
+        ),
+        (
+            UPDATE_ISSUE_TOOL,
+            None,
+            RuntimeError("Linear GraphQL request failed: upstream exploded"),
+            "linear_api_failure",
+        ),
+    ),
+)
+def test_linear_issue_mutation_tools_report_provider_api_failures(
+    tmp_path,
+    monkeypatch,
+    tool_name,
+    mutation_response,
+    raised,
+    expected,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_mutations]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}", "{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51", "issue-51"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+update_fields = ["title"]
+""",
+    )
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        if "CaoLinearTeams" in query:
+            return {"data": {"teams": _teams_payload()}}
+        if "issueCreate" in query or "issueUpdate" in query:
+            if raised is not None:
+                raise raised
+            return mutation_response
+        if "CaoLinearReference" in query:
+            return {"data": {"node": {"id": variables["id"]}}}
+        return {"data": {"issue": _mutated_issue_payload()}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+    arguments = (
+        {"team_id": "team-cao", "title": "Failure path"}
+        if tool_name == CREATE_ISSUE_TOOL
+        else {"issue": "CAO-51", "title": "Failure path"}
+    )
+
+    with pytest.raises(ProviderMediatedToolHandlerError, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=tool_name,
+            arguments=arguments,
+        )
 
 
 @pytest.mark.asyncio
@@ -570,13 +1144,18 @@ async def test_linear_comment_tool_leaves_read_only_tools_unaffected(tmp_path, m
         f"""
 [tool_access.implementation_partner_linear_tools]
 agent_id = "implementation_partner"
-tools = ["{GET_ISSUE_TOOL}", "{LIST_COMMENTS_TOOL}", "{CREATE_COMMENT_TOOL}"]
+tools = ["{GET_ISSUE_TOOL}", "{LIST_COMMENTS_TOOL}", "{CREATE_COMMENT_TOOL}", "{CREATE_ISSUE_TOOL}", "{UPDATE_ISSUE_TOOL}"]
 issues = ["CAO-28", "issue-28"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+update_fields = ["title"]
 """,
     )
 
     def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
         assert "commentCreate" not in query
+        assert "issueCreate" not in query
+        assert "issueUpdate" not in query
         issue = _comments_payload() if "comments" in query else _issue_payload()
         return {"data": {"issue": issue}}
 
@@ -586,7 +1165,13 @@ issues = ["CAO-28", "issue-28"]
     issue_result = await mcp.call_tool(GET_ISSUE_TOOL, {"issue": "CAO-28"})
     comments_result = await mcp.call_tool(LIST_COMMENTS_TOOL, {"issue": "CAO-28"})
 
-    assert registered == [CREATE_COMMENT_TOOL, GET_ISSUE_TOOL, LIST_COMMENTS_TOOL]
+    assert registered == [
+        CREATE_COMMENT_TOOL,
+        CREATE_ISSUE_TOOL,
+        GET_ISSUE_TOOL,
+        LIST_COMMENTS_TOOL,
+        UPDATE_ISSUE_TOOL,
+    ]
     assert json.loads(issue_result.content[0].text)["identifier"] == "CAO-28"
     assert json.loads(comments_result.content[0].text)["comments"][0]["id"] == "comment-1"
 
@@ -978,6 +1563,43 @@ tools = ["cao_linear.get_issue"]
 issues = "CAO-28"
 """,
             "tool_access.bad.issues must be a non-empty string list",
+        ),
+        (
+            f"""
+[tool_access.bad]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+allow_top_level_create = true
+""",
+            "tool_access.bad.create_team_ids must be a non-empty string list",
+        ),
+        (
+            f"""
+[tool_access.bad]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}"]
+create_team_ids = ["team-cao"]
+""",
+            "must allow top-level issue creation or configure create_parent_issues",
+        ),
+        (
+            f"""
+[tool_access.bad]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+""",
+            "tool_access.bad.update_fields must be a non-empty string list",
+        ),
+        (
+            f"""
+[tool_access.bad]
+agent_id = "implementation_partner"
+tools = ["{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+update_fields = ["raw"]
+""",
+            "tool_access.bad.update_fields[0] unknown Linear update field: raw",
         ),
     ),
 )

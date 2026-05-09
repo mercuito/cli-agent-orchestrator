@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional
@@ -20,7 +20,11 @@ from cli_agent_orchestrator.agent_identity import (
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER, SESSION_PREFIX
 from cli_agent_orchestrator.linear.provider_tools import (
+    CREATE_ISSUE_TOOL,
+    ISSUE_TARGETING_TOOLS,
     LINEAR_PROVIDER_TOOLS,
+    UPDATE_ISSUE_FIELDS,
+    UPDATE_ISSUE_TOOL,
     LinearToolAccess,
     LinearToolProvider,
 )
@@ -34,6 +38,12 @@ from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolA
 
 LINEAR_PROVIDER_CONFIG_PATH = CAO_HOME_DIR / "workspace-providers" / "linear.toml"
 APP_KEY_PATTERN = re.compile(r"[^A-Za-z0-9]+")
+TOOL_ACCESS_ISSUES_KEY = "issues"
+TOOL_ACCESS_CREATE_TEAM_IDS_KEY = "create_team_ids"
+TOOL_ACCESS_CREATE_PROJECT_IDS_KEY = "create_project_ids"
+TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY = "create_parent_issues"
+TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY = "allow_top_level_create"
+TOOL_ACCESS_UPDATE_FIELDS_KEY = "update_fields"
 _default_linear_workspace_provider: Optional["LinearWorkspaceProvider"] = None
 
 
@@ -275,6 +285,15 @@ def _optional_str_list(
     return normalized
 
 
+def _optional_bool(table: Mapping[str, Any], key: str, *, location: str) -> bool:
+    value = table.get(key)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise LinearWorkspaceProviderConfigError(f"{location}.{key} must be a boolean")
+    return value
+
+
 def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAccess]:
     raw_table = data.get("tool_access", {})
     if raw_table is None:
@@ -298,11 +317,53 @@ def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAcc
                 f"{location} must configure exactly one of agent_id or agent_profile"
             )
         tools = _optional_str_list(raw_config, "tools", location=location, required=True)
-        issues = _optional_str_list(raw_config, "issues", location=location, required=True)
         for index, tool in enumerate(tools):
             if tool not in LINEAR_PROVIDER_TOOLS:
                 raise LinearWorkspaceProviderConfigError(
                     f"{location}.tools[{index}] unknown Linear tool: {tool}"
+                )
+        issues = _optional_str_list(
+            raw_config,
+            TOOL_ACCESS_ISSUES_KEY,
+            location=location,
+            required=any(tool in ISSUE_TARGETING_TOOLS for tool in tools),
+        )
+        create_team_ids = _optional_str_list(
+            raw_config,
+            TOOL_ACCESS_CREATE_TEAM_IDS_KEY,
+            location=location,
+            required=CREATE_ISSUE_TOOL in tools,
+        )
+        create_project_ids = _optional_str_list(
+            raw_config,
+            TOOL_ACCESS_CREATE_PROJECT_IDS_KEY,
+            location=location,
+        )
+        create_parent_issues = _optional_str_list(
+            raw_config,
+            TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY,
+            location=location,
+        )
+        allow_top_level_create = _optional_bool(
+            raw_config,
+            TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY,
+            location=location,
+        )
+        if CREATE_ISSUE_TOOL in tools and not allow_top_level_create and not create_parent_issues:
+            raise LinearWorkspaceProviderConfigError(
+                f"{location} must allow top-level issue creation or configure "
+                "create_parent_issues for cao_linear.create_issue"
+            )
+        update_fields = _optional_str_list(
+            raw_config,
+            TOOL_ACCESS_UPDATE_FIELDS_KEY,
+            location=location,
+            required=UPDATE_ISSUE_TOOL in tools,
+        )
+        for index, field in enumerate(update_fields):
+            if field not in UPDATE_ISSUE_FIELDS:
+                raise LinearWorkspaceProviderConfigError(
+                    f"{location}.update_fields[{index}] unknown Linear update field: {field}"
                 )
         tool_access[access_id] = LinearToolAccess(
             access_id=access_id,
@@ -310,6 +371,11 @@ def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAcc
             agent_profile=agent_profile,
             tools=tools,
             issues=issues,
+            create_team_ids=create_team_ids,
+            create_project_ids=create_project_ids,
+            create_parent_issues=create_parent_issues,
+            allow_top_level_create=allow_top_level_create,
+            update_fields=update_fields,
         )
     return tool_access
 
@@ -621,10 +687,80 @@ def save_linear_provider_config(
         if access.agent_profile:
             lines.append(f"agent_profile = {_format_toml_value(access.agent_profile)}")
         lines.append(f"tools = {_format_toml_value(list(access.tools))}")
-        lines.append(f"issues = {_format_toml_value(list(access.issues))}")
+        if access.issues:
+            lines.append(f"{TOOL_ACCESS_ISSUES_KEY} = {_format_toml_value(list(access.issues))}")
+        if access.create_team_ids:
+            lines.append(
+                f"{TOOL_ACCESS_CREATE_TEAM_IDS_KEY} = "
+                f"{_format_toml_value(list(access.create_team_ids))}"
+            )
+        if access.create_project_ids:
+            lines.append(
+                f"{TOOL_ACCESS_CREATE_PROJECT_IDS_KEY} = "
+                f"{_format_toml_value(list(access.create_project_ids))}"
+            )
+        if access.create_parent_issues:
+            lines.append(
+                f"{TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY} = "
+                f"{_format_toml_value(list(access.create_parent_issues))}"
+            )
+        if access.allow_top_level_create:
+            lines.append(
+                f"{TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY} = "
+                f"{_format_toml_value(access.allow_top_level_create)}"
+            )
+        if access.update_fields:
+            lines.append(
+                f"{TOOL_ACCESS_UPDATE_FIELDS_KEY} = "
+                f"{_format_toml_value(list(access.update_fields))}"
+            )
         lines.append("")
     path.write_text("\n".join(lines).rstrip() + "\n")
     path.chmod(0o600)
+
+
+def _toml_section_bounds(lines: list[str], section: str) -> tuple[int, int] | None:
+    header = f"[{section}]"
+    start: int | None = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if start is None:
+            if stripped == header:
+                start = index
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return start, index
+    if start is None:
+        return None
+    return start, len(lines)
+
+
+def _patch_toml_section_values(
+    text: str,
+    *,
+    section: str,
+    values: Mapping[str, Any],
+) -> str:
+    lines = text.splitlines()
+    bounds = _toml_section_bounds(lines, section)
+    if bounds is None:
+        return text
+    start, end = bounds
+    pending = dict(values)
+    key_pattern = re.compile(r"^(\s*)([A-Za-z0-9_]+)\s*=.*$")
+    for index in range(start + 1, end):
+        match = key_pattern.match(lines[index])
+        if match is None:
+            continue
+        indent, key = match.groups()
+        if key in pending:
+            lines[index] = f"{indent}{key} = {_format_toml_value(pending.pop(key))}"
+    insert_at = end
+    for key, value in pending.items():
+        lines.insert(insert_at, f"{key} = {_format_toml_value(value)}")
+        insert_at += 1
+    trailing_newline = "\n" if text.endswith("\n") else ""
+    return "\n".join(lines) + trailing_newline
 
 
 def update_linear_presence_tokens(
@@ -645,16 +781,22 @@ def update_linear_presence_tokens(
     presence = config.presence_by_app_key(app_key)
     if presence is None:
         return False
-    updated = replace(
-        presence,
-        access_token=access_token,
-        refresh_token=refresh_token or presence.refresh_token,
-        app_user_id=app_user_id or presence.app_user_id,
-        app_user_name=app_user_name or presence.app_user_name,
-        token_expires_at=token_expires_at or presence.token_expires_at,
+    updates: dict[str, str] = {"access_token": access_token}
+    if refresh_token:
+        updates["refresh_token"] = refresh_token
+    if app_user_id:
+        updates["app_user_id"] = app_user_id
+    if app_user_name:
+        updates["app_user_name"] = app_user_name
+    if token_expires_at:
+        updates["token_expires_at"] = token_expires_at
+    patched = _patch_toml_section_values(
+        path.read_text(),
+        section=f"presences.{presence.presence_id}",
+        values=updates,
     )
-    config.presences[presence.presence_id] = updated
-    save_linear_provider_config(config, config_path=path)
+    path.write_text(patched)
+    path.chmod(0o600)
     return True
 
 

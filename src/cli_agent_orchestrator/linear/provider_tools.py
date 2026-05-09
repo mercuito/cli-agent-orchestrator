@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,
@@ -23,11 +23,42 @@ PROVIDER_NAME = "linear"
 GET_ISSUE_TOOL = "cao_linear.get_issue"
 LIST_COMMENTS_TOOL = "cao_linear.list_comments"
 CREATE_COMMENT_TOOL = "cao_linear.create_comment"
+CREATE_ISSUE_TOOL = "cao_linear.create_issue"
+UPDATE_ISSUE_TOOL = "cao_linear.update_issue"
 READ_POLICY_HOOK = "linear_read_policy"
 COMMENT_WRITE_POLICY_HOOK = "linear_comment_write_policy"
+ISSUE_MUTATION_POLICY_HOOK = "linear_issue_mutation_policy"
 LINEAR_READ_TOOLS = frozenset({GET_ISSUE_TOOL, LIST_COMMENTS_TOOL})
 LINEAR_COMMENT_WRITE_TOOLS = frozenset({CREATE_COMMENT_TOOL})
-LINEAR_PROVIDER_TOOLS = LINEAR_READ_TOOLS | LINEAR_COMMENT_WRITE_TOOLS
+LINEAR_ISSUE_MUTATION_TOOLS = frozenset({CREATE_ISSUE_TOOL, UPDATE_ISSUE_TOOL})
+LINEAR_PROVIDER_TOOLS = LINEAR_READ_TOOLS | LINEAR_COMMENT_WRITE_TOOLS | LINEAR_ISSUE_MUTATION_TOOLS
+ISSUE_TARGETING_TOOLS = LINEAR_READ_TOOLS | LINEAR_COMMENT_WRITE_TOOLS | {UPDATE_ISSUE_TOOL}
+CREATE_ISSUE_FIELDS = frozenset(
+    {
+        "team_id",
+        "title",
+        "description",
+        "project_id",
+        "parent_issue",
+        "state_id",
+        "assignee_id",
+        "label_ids",
+        "priority",
+    }
+)
+UPDATE_ISSUE_FIELDS = frozenset(
+    {
+        "title",
+        "description",
+        "state_id",
+        "assignee_id",
+        "project_id",
+        "parent_issue",
+        "label_ids",
+        "priority",
+    }
+)
+REFERENCE_FIELDS = frozenset({"project_id", "state_id", "assignee_id"})
 MAX_DESCRIPTION_CHARS = 4000
 MAX_COMMENT_BODY_CHARS = 4000
 DEFAULT_COMMENT_LIMIT = 50
@@ -60,6 +91,11 @@ class LinearToolAccess:
     agent_profile: str | None
     tools: tuple[str, ...]
     issues: tuple[str, ...]
+    create_team_ids: tuple[str, ...] = ()
+    create_project_ids: tuple[str, ...] = ()
+    create_parent_issues: tuple[str, ...] = ()
+    allow_top_level_create: bool = False
+    update_fields: tuple[str, ...] = ()
 
     @property
     def location(self) -> str:
@@ -79,7 +115,7 @@ class LinearToolProvider:
         self._config = config
         self._agent_registry = agent_registry
         self._profile_exists = profile_exists
-        self._access_by_location = {
+        self._access_by_location: dict[str, LinearToolAccess] = {
             access.location: access for access in config.tool_access.values()
         }
 
@@ -138,6 +174,18 @@ class LinearToolProvider:
                 input_schema=_create_comment_input_schema(),
                 handler=self._create_comment,
             ),
+            ProviderMediatedToolDefinition(
+                name=CREATE_ISSUE_TOOL,
+                description="Create a Linear issue or sub-issue inside configured boundaries.",
+                input_schema=_create_issue_input_schema(),
+                handler=self._create_issue,
+            ),
+            ProviderMediatedToolDefinition(
+                name=UPDATE_ISSUE_TOOL,
+                description="Update explicitly allowed fields on an authorized Linear issue.",
+                input_schema=_update_issue_input_schema(),
+                handler=self._update_issue,
+            ),
         )
 
     def _hooks(self) -> tuple[ProviderToolHookDefinition, ...]:
@@ -152,17 +200,23 @@ class LinearToolProvider:
                 phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
                 handler=self._authorize_comment_before_call,
             ),
+            ProviderToolHookDefinition(
+                name=ISSUE_MUTATION_POLICY_HOOK,
+                phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
+                handler=self._authorize_issue_mutation_before_call,
+            ),
         )
 
     def _access_requests(self) -> tuple[ProviderToolAccessRequest, ...]:
         requests: list[ProviderToolAccessRequest] = []
         for access in self._config.tool_access.values():
             for tool_name in access.tools:
-                pre_hook = (
-                    COMMENT_WRITE_POLICY_HOOK
-                    if tool_name == CREATE_COMMENT_TOOL
-                    else READ_POLICY_HOOK
-                )
+                if tool_name == CREATE_COMMENT_TOOL:
+                    pre_hook = COMMENT_WRITE_POLICY_HOOK
+                elif tool_name in LINEAR_ISSUE_MUTATION_TOOLS:
+                    pre_hook = ISSUE_MUTATION_POLICY_HOOK
+                else:
+                    pre_hook = READ_POLICY_HOOK
                 requests.append(
                     ProviderToolAccessRequest(
                         tool_name=tool_name,
@@ -179,6 +233,30 @@ class LinearToolProvider:
     ) -> ProviderToolPreCallResult:
         try:
             self._authorized_issue_request(context)
+        except LinearToolError as exc:
+            return ProviderToolPreCallResult.deny(
+                exc.reason,
+                {
+                    "provider_name": PROVIDER_NAME,
+                    "tool_name": context.tool_name,
+                    "detail": str(exc),
+                },
+            )
+        return ProviderToolPreCallResult.allow()
+
+    def _authorize_issue_mutation_before_call(
+        self, context: ProviderToolInvocationContext
+    ) -> ProviderToolPreCallResult:
+        try:
+            if context.tool_name == CREATE_ISSUE_TOOL:
+                self._validated_create_issue_request(context)
+            elif context.tool_name == UPDATE_ISSUE_TOOL:
+                self._validated_update_issue_request(context)
+            else:
+                raise LinearToolError(
+                    "malformed_linear_tool_policy",
+                    f"unexpected Linear mutation tool {context.tool_name!r}",
+                )
         except LinearToolError as exc:
             return ProviderToolPreCallResult.deny(
                 exc.reason,
@@ -250,13 +328,246 @@ class LinearToolProvider:
         comment = _create_linear_comment(issue, body, presence)
         return _compact_created_comment_payload(comment, issue)
 
-    def _authorized_issue_request(self, context: ProviderToolInvocationContext) -> str:
+    def _create_issue(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = self._validated_create_issue_request(context)
+        presence = self._presence_for_identity(context.agent_identity.id)
+        mutation_input: dict[str, Any] = {}
+        parent_issue = None
+        for field, value in request.items():
+            if field == "parent_issue":
+                parent_issue = _fetch_issue(value, presence)
+                self._require_parent_issue_allowed(
+                    value,
+                    parent_issue,
+                    context.access.source_location,
+                )
+                mutation_input["parentId"] = _required_string(
+                    parent_issue.get("id"),
+                    field="parent_issue",
+                    reason="linear_parent_issue_not_found",
+                )
+            elif field == "team_id":
+                team = _fetch_team(value, presence)
+                mutation_input["teamId"] = _required_string(
+                    team.get("id"),
+                    field="team_id",
+                    reason="invalid_linear_team_id",
+                )
+            elif field in REFERENCE_FIELDS:
+                _validate_linear_reference(field, value, presence)
+                mutation_input[_linear_input_field(field)] = value
+            elif field == "label_ids":
+                for label_id in value:
+                    _validate_linear_reference(field, label_id, presence)
+                mutation_input["labelIds"] = list(value)
+            else:
+                mutation_input[_linear_input_field(field)] = value
+        issue = _create_linear_issue(mutation_input, presence)
+        return _compact_issue_mutation_payload(
+            issue,
+            status="created",
+            changed_fields=tuple(sorted(request)),
+        )
+
+    def _update_issue(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        target_issue_key, request = self._validated_update_issue_request(context)
+        presence = self._presence_for_identity(context.agent_identity.id)
+        target_issue = _fetch_issue(target_issue_key, presence)
+        self._require_returned_issue_allowed(target_issue, context.access.source_location)
+        target_issue_id = _required_string(
+            target_issue.get("id"),
+            field="issue",
+            reason="linear_issue_not_found",
+        )
+        mutation_input: dict[str, Any] = {}
+        for field, value in request.items():
+            if field == "parent_issue":
+                parent_issue = _fetch_issue(value, presence)
+                self._require_parent_issue_allowed(
+                    value,
+                    parent_issue,
+                    context.access.source_location,
+                )
+                mutation_input["parentId"] = _required_string(
+                    parent_issue.get("id"),
+                    field="parent_issue",
+                    reason="linear_parent_issue_not_found",
+                )
+            elif field in REFERENCE_FIELDS:
+                _validate_linear_reference(field, value, presence)
+                mutation_input[_linear_input_field(field)] = value
+            elif field == "label_ids":
+                for label_id in value:
+                    _validate_linear_reference(field, label_id, presence)
+                mutation_input["labelIds"] = list(value)
+            else:
+                mutation_input[_linear_input_field(field)] = value
+        issue = _update_linear_issue(target_issue_id, mutation_input, presence)
+        return _compact_issue_mutation_payload(
+            issue,
+            status="updated",
+            changed_fields=tuple(sorted(request)),
+        )
+
+    def _validated_create_issue_request(
+        self,
+        context: ProviderToolInvocationContext,
+    ) -> dict[str, Any]:
+        access = self._linear_access_for_context(context)
+        arguments = context.arguments
+        unknown = set(arguments) - CREATE_ISSUE_FIELDS
+        if unknown:
+            raise LinearToolError(
+                "invalid_linear_create_issue_field",
+                f"unsupported create_issue fields: {', '.join(sorted(unknown))}",
+            )
+        team_id = _required_string(
+            arguments.get("team_id"),
+            field="team_id",
+            reason="invalid_linear_team_id",
+        )
+        if _canonical_issue_key(team_id) not in {
+            _canonical_issue_key(item) for item in access.create_team_ids
+        }:
+            raise LinearToolError(
+                "unauthorized_linear_team",
+                f"team_id {team_id!r} is not authorized by {access.location}",
+            )
+        request: dict[str, Any] = {
+            "team_id": team_id,
+            "title": _required_title(arguments.get("title")),
+        }
+        _copy_optional_string(arguments, request, "description")
+        _copy_optional_reference(arguments, request, "state_id")
+        _copy_optional_reference(arguments, request, "assignee_id")
+        if "priority" in arguments:
+            request["priority"] = _priority(arguments["priority"])
+        if "label_ids" in arguments:
+            request["label_ids"] = _label_ids(arguments["label_ids"])
+        if "project_id" in arguments:
+            project_id = _required_string(
+                arguments.get("project_id"),
+                field="project_id",
+                reason="invalid_linear_project_id",
+            )
+            if _canonical_issue_key(project_id) not in {
+                _canonical_issue_key(item) for item in access.create_project_ids
+            }:
+                raise LinearToolError(
+                    "unauthorized_linear_project",
+                    f"project_id {project_id!r} is not authorized by {access.location}",
+                )
+            request["project_id"] = project_id
+        if "parent_issue" in arguments:
+            parent_issue = _required_string(
+                arguments.get("parent_issue"),
+                field="parent_issue",
+                reason="invalid_linear_parent_issue",
+            )
+            if _canonical_issue_key(parent_issue) not in {
+                _canonical_issue_key(item) for item in access.create_parent_issues
+            }:
+                raise LinearToolError(
+                    "unauthorized_linear_parent_issue",
+                    f"parent_issue {parent_issue!r} is not authorized by {access.location}",
+                )
+            request["parent_issue"] = parent_issue
+        elif not access.allow_top_level_create:
+            raise LinearToolError(
+                "unauthorized_linear_top_level_create",
+                f"{access.location} does not allow top-level issue creation",
+            )
+        return request
+
+    def _validated_update_issue_request(
+        self,
+        context: ProviderToolInvocationContext,
+    ) -> tuple[str, dict[str, Any]]:
+        access = self._linear_access_for_context(context)
+        issue_key = self._authorized_issue_request(context)
+        arguments = context.arguments
+        mutation_fields = set(arguments) - {"issue", "issue_ref"}
+        unknown = mutation_fields - UPDATE_ISSUE_FIELDS
+        if unknown:
+            raise LinearToolError(
+                "invalid_linear_update_issue_field",
+                f"unsupported update_issue fields: {', '.join(sorted(unknown))}",
+            )
+        if not mutation_fields:
+            raise LinearToolError(
+                "invalid_linear_update_issue_field",
+                "update_issue requires at least one mutation field",
+            )
+        allowed_fields = set(access.update_fields)
+        denied = mutation_fields - allowed_fields
+        if denied:
+            raise LinearToolError(
+                "unauthorized_linear_update_field",
+                f"update fields are not authorized by {access.location}: "
+                f"{', '.join(sorted(denied))}",
+            )
+        request: dict[str, Any] = {}
+        if "title" in arguments:
+            request["title"] = _required_title(arguments.get("title"))
+        _copy_optional_string(arguments, request, "description")
+        _copy_optional_reference(arguments, request, "state_id")
+        _copy_optional_reference(arguments, request, "assignee_id")
+        if "project_id" in arguments:
+            project_id = _required_string(
+                arguments.get("project_id"),
+                field="project_id",
+                reason="invalid_linear_project_id",
+            )
+            if _canonical_issue_key(project_id) not in {
+                _canonical_issue_key(item) for item in access.create_project_ids
+            }:
+                raise LinearToolError(
+                    "unauthorized_linear_project",
+                    f"project_id {project_id!r} is not authorized by {access.location}",
+                )
+            request["project_id"] = project_id
+        if "parent_issue" in arguments:
+            parent_issue = _required_string(
+                arguments.get("parent_issue"),
+                field="parent_issue",
+                reason="invalid_linear_parent_issue",
+            )
+            if _canonical_issue_key(parent_issue) not in {
+                _canonical_issue_key(item) for item in access.create_parent_issues
+            }:
+                raise LinearToolError(
+                    "unauthorized_linear_parent_issue",
+                    f"parent_issue {parent_issue!r} is not authorized by {access.location}",
+                )
+            request["parent_issue"] = parent_issue
+        if "label_ids" in arguments:
+            request["label_ids"] = _label_ids(arguments["label_ids"])
+        if "priority" in arguments:
+            request["priority"] = _priority(arguments["priority"])
+        return issue_key, request
+
+    def _linear_access_for_context(
+        self,
+        context: ProviderToolInvocationContext,
+    ) -> LinearToolAccess:
         access = self._access_by_location.get(context.access.source_location)
         if access is None:
             raise LinearToolError(
                 "malformed_linear_tool_policy",
                 f"missing Linear tool policy for {context.access.source_location}",
             )
+        return access
+
+    def _authorized_issue_request(self, context: ProviderToolInvocationContext) -> str:
+        access = self._linear_access_for_context(context)
         issue_key = _issue_key_from_arguments(context.arguments)
         if _canonical_issue_key(issue_key) not in {
             _canonical_issue_key(item) for item in access.issues
@@ -283,6 +594,25 @@ class LinearToolProvider:
             raise LinearToolError(
                 "linear_issue_outside_policy",
                 "Linear returned an issue that does not match the authorized target",
+            )
+
+    def _require_parent_issue_allowed(
+        self,
+        parent_key: str,
+        issue: Mapping[str, Any],
+        source_location: str,
+    ) -> None:
+        access = self._access_by_location[source_location]
+        allowed = {_canonical_issue_key(item) for item in access.create_parent_issues}
+        returned = {
+            _canonical_issue_key(value)
+            for value in (parent_key, issue.get("id"), issue.get("identifier"))
+            if value
+        }
+        if not returned.intersection(allowed):
+            raise LinearToolError(
+                "linear_parent_issue_outside_policy",
+                "Linear returned a parent issue that does not match the authorized parent target",
             )
 
     def _presence_for_identity(self, agent_identity_id: str) -> Any:
@@ -344,6 +674,45 @@ def _create_comment_input_schema() -> dict[str, Any]:
     }
 
 
+def _create_issue_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "team_id": {"type": "string"},
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "project_id": {"type": "string"},
+            "parent_issue": {"type": "string"},
+            "state_id": {"type": "string"},
+            "assignee_id": {"type": "string"},
+            "label_ids": {"type": "array", "items": {"type": "string"}},
+            "priority": {"type": "integer", "minimum": 0, "maximum": 4},
+        },
+        "required": ["team_id", "title"],
+        "additionalProperties": False,
+    }
+
+
+def _update_issue_input_schema() -> dict[str, Any]:
+    issue_schema = _issue_input_schema()
+    return {
+        "type": "object",
+        "properties": {
+            **issue_schema["properties"],
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "state_id": {"type": "string"},
+            "assignee_id": {"type": "string"},
+            "project_id": {"type": "string"},
+            "parent_issue": {"type": "string"},
+            "label_ids": {"type": "array", "items": {"type": "string"}},
+            "priority": {"type": "integer", "minimum": 0, "maximum": 4},
+        },
+        "anyOf": issue_schema["anyOf"],
+        "additionalProperties": False,
+    }
+
+
 def _issue_key_from_arguments(arguments: Mapping[str, Any]) -> str:
     issue = arguments.get("issue")
     issue_ref = arguments.get("issue_ref")
@@ -379,6 +748,76 @@ def _comment_body_from_arguments(arguments: Mapping[str, Any]) -> str:
             "comment body must not be blank",
         )
     return body
+
+
+def _required_string(value: Any, *, field: str, reason: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise LinearToolError(reason, f"{field} must be a non-empty string")
+    return value.strip()
+
+
+def _required_title(value: Any) -> str:
+    return _required_string(value, field="title", reason="invalid_linear_issue_title")
+
+
+def _copy_optional_string(
+    arguments: Mapping[str, Any],
+    request: dict[str, Any],
+    field: str,
+) -> None:
+    if field not in arguments:
+        return
+    value = arguments[field]
+    if not isinstance(value, str):
+        raise LinearToolError(
+            f"invalid_linear_{field}",
+            f"{field} must be a string",
+        )
+    request[field] = value
+
+
+def _copy_optional_reference(
+    arguments: Mapping[str, Any],
+    request: dict[str, Any],
+    field: str,
+) -> None:
+    if field in arguments:
+        request[field] = _required_string(
+            arguments.get(field),
+            field=field,
+            reason=f"invalid_linear_{field}",
+        )
+
+
+def _label_ids(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise LinearToolError("invalid_linear_label_ids", "label_ids must be a list of strings")
+    labels = tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
+    if len(labels) != len(value) or not labels:
+        raise LinearToolError(
+            "invalid_linear_label_ids",
+            "label_ids must be a list of non-empty strings",
+        )
+    return labels
+
+
+def _priority(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise LinearToolError("invalid_linear_priority", "priority must be an integer from 0 to 4")
+    if value < 0 or value > 4:
+        raise LinearToolError("invalid_linear_priority", "priority must be an integer from 0 to 4")
+    return cast(int, value)
+
+
+def _linear_input_field(field: str) -> str:
+    return {
+        "team_id": "teamId",
+        "project_id": "projectId",
+        "parent_issue": "parentId",
+        "state_id": "stateId",
+        "assignee_id": "assigneeId",
+        "label_ids": "labelIds",
+    }.get(field, field)
 
 
 def _fetch_issue(issue_key: str, presence: Any) -> Mapping[str, Any]:
@@ -491,6 +930,129 @@ def _create_linear_comment(
     return _created_comment_from_payload(payload, issue_id)
 
 
+def _validate_linear_reference(field: str, value: str, presence: Any) -> None:
+    from cli_agent_orchestrator.linear import app_client
+
+    _preflight_presence_credentials(presence)
+    try:
+        payload = app_client.linear_graphql(
+            """
+            query CaoLinearReference($id: String!) {
+              node(id: $id) {
+                id
+              }
+            }
+            """,
+            {"id": value},
+            access_token=app_client.access_token_for_presence(presence),
+            app_key=presence.app_key,
+        )
+    except Exception as exc:
+        raise _linear_api_error(exc) from exc
+    data = payload.get("data")
+    node = data.get("node") if isinstance(data, Mapping) else None
+    if not isinstance(node, Mapping) or not node.get("id"):
+        raise LinearToolError(
+            "invalid_linear_reference",
+            f"{field} references an unknown Linear object: {value}",
+        )
+
+
+def _fetch_team(team_ref: str, presence: Any) -> Mapping[str, Any]:
+    from cli_agent_orchestrator.linear import app_client
+
+    _preflight_presence_credentials(presence)
+    try:
+        payload = app_client.linear_graphql(
+            """
+            query CaoLinearTeams {
+              teams {
+                nodes {
+                  id
+                  key
+                  name
+                }
+              }
+            }
+            """,
+            {},
+            access_token=app_client.access_token_for_presence(presence),
+            app_key=presence.app_key,
+        )
+    except Exception as exc:
+        raise _linear_api_error(exc) from exc
+    return _team_from_payload(payload, team_ref)
+
+
+def _create_linear_issue(
+    mutation_input: Mapping[str, Any],
+    presence: Any,
+) -> Mapping[str, Any]:
+    from cli_agent_orchestrator.linear import app_client
+
+    _preflight_presence_credentials(presence)
+    try:
+        payload = app_client.linear_graphql(
+            """
+            mutation CaoLinearCreateIssue($input: IssueCreateInput!) {
+              issueCreate(input: $input) {
+                success
+                issue {
+                  id
+                  identifier
+                  title
+                  url
+                  state { name type }
+                  team { key name }
+                  project { name }
+                }
+              }
+            }
+            """,
+            {"input": dict(mutation_input)},
+            access_token=app_client.access_token_for_presence(presence),
+            app_key=presence.app_key,
+        )
+    except Exception as exc:
+        raise _linear_api_error(exc) from exc
+    return _mutated_issue_from_payload(payload, "issueCreate")
+
+
+def _update_linear_issue(
+    issue_id: str,
+    mutation_input: Mapping[str, Any],
+    presence: Any,
+) -> Mapping[str, Any]:
+    from cli_agent_orchestrator.linear import app_client
+
+    _preflight_presence_credentials(presence)
+    try:
+        payload = app_client.linear_graphql(
+            """
+            mutation CaoLinearUpdateIssue($id: String!, $input: IssueUpdateInput!) {
+              issueUpdate(id: $id, input: $input) {
+                success
+                issue {
+                  id
+                  identifier
+                  title
+                  url
+                  state { name type }
+                  team { key name }
+                  project { name }
+                }
+              }
+            }
+            """,
+            {"id": issue_id, "input": dict(mutation_input)},
+            access_token=app_client.access_token_for_presence(presence),
+            app_key=presence.app_key,
+        )
+    except Exception as exc:
+        raise _linear_api_error(exc) from exc
+    return _mutated_issue_from_payload(payload, "issueUpdate")
+
+
 def _issue_from_payload(payload: Mapping[str, Any], issue_key: str) -> Mapping[str, Any]:
     data = payload.get("data")
     issue = data.get("issue") if isinstance(data, Mapping) else None
@@ -503,6 +1065,30 @@ def _issue_from_payload(payload: Mapping[str, Any], issue_key: str) -> Mapping[s
             f"Linear issue {issue_key} is archived at {archived_at}",
         )
     return issue
+
+
+def _team_from_payload(payload: Mapping[str, Any], team_ref: str) -> Mapping[str, Any]:
+    data = payload.get("data")
+    teams = data.get("teams") if isinstance(data, Mapping) else None
+    nodes = teams.get("nodes") if isinstance(teams, Mapping) else None
+    if not isinstance(nodes, list):
+        raise LinearToolError(
+            "invalid_linear_team_id",
+            "Linear teams lookup did not return a node list",
+        )
+    target = _canonical_issue_key(team_ref)
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        candidates = {
+            _canonical_issue_key(value) for value in (node.get("id"), node.get("key")) if value
+        }
+        if target in candidates:
+            return node
+    raise LinearToolError(
+        "invalid_linear_team_id",
+        f"team_id references an unknown Linear team id or key: {team_ref}",
+    )
 
 
 def _created_comment_from_payload(
@@ -528,6 +1114,30 @@ def _created_comment_from_payload(
             f"Linear commentCreate did not return a comment id for issue {issue_id}",
         )
     return comment
+
+
+def _mutated_issue_from_payload(
+    payload: Mapping[str, Any], mutation_name: str
+) -> Mapping[str, Any]:
+    data = payload.get("data")
+    result = data.get(mutation_name) if isinstance(data, Mapping) else None
+    if not isinstance(result, Mapping):
+        raise LinearToolError(
+            f"linear_{mutation_name}_failed",
+            f"Linear {mutation_name} did not return a result object",
+        )
+    if result.get("success") is not True:
+        raise LinearToolError(
+            f"linear_{mutation_name}_failed",
+            f"Linear {mutation_name} did not report success",
+        )
+    issue = result.get("issue")
+    if not isinstance(issue, Mapping) or not issue.get("id"):
+        raise LinearToolError(
+            f"linear_{mutation_name}_failed",
+            f"Linear {mutation_name} did not return an issue id",
+        )
+    return issue
 
 
 def _preflight_presence_credentials(presence: Any) -> None:
@@ -638,6 +1248,25 @@ def _compact_created_comment_payload(
     }
 
 
+def _compact_issue_mutation_payload(
+    issue: Mapping[str, Any],
+    *,
+    status: str,
+    changed_fields: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "id": _string_or_none(issue.get("id")),
+        "identifier": _string_or_none(issue.get("identifier")),
+        "title": _string_or_none(issue.get("title")),
+        "url": _string_or_none(issue.get("url")),
+        "team": _named_object(issue.get("team"), ("key", "name")),
+        "project": _named_object(issue.get("project"), ("name",)),
+        "state": _named_object(issue.get("state"), ("name", "type")),
+        "changed_fields": list(changed_fields),
+    }
+
+
 def _named_object(value: Any, keys: tuple[str, ...]) -> dict[str, str] | None:
     if not isinstance(value, Mapping):
         return None
@@ -676,11 +1305,17 @@ def _parse_expires_at(value: Any) -> datetime | None:
 
 __all__ = [
     "CREATE_COMMENT_TOOL",
+    "CREATE_ISSUE_FIELDS",
+    "CREATE_ISSUE_TOOL",
     "GET_ISSUE_TOOL",
     "LINEAR_COMMENT_WRITE_TOOLS",
+    "LINEAR_ISSUE_MUTATION_TOOLS",
     "LINEAR_PROVIDER_TOOLS",
     "LINEAR_READ_TOOLS",
     "LIST_COMMENTS_TOOL",
+    "ISSUE_TARGETING_TOOLS",
+    "UPDATE_ISSUE_FIELDS",
+    "UPDATE_ISSUE_TOOL",
     "LinearToolProvider",
     "LinearToolAccess",
     "LinearToolError",
