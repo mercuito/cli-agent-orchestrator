@@ -10,11 +10,12 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.clients import database_migrations
 from cli_agent_orchestrator.clients.database import (
-    Base,
-    FlowModel,
     INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
+    Base,
+    FlowModel,
     InboxMessageModel,
     InboxNotificationModel,
     InboxNotificationTargetModel,
@@ -37,6 +38,7 @@ from cli_agent_orchestrator.clients.database import (
     list_flows,
     list_inbox_deliveries,
     list_pending_inbox_notifications,
+    list_terminals_by_agent_identity,
     list_terminals_by_session,
     update_flow_enabled,
     update_flow_run_times,
@@ -104,6 +106,7 @@ class TestTerminalOperations:
         mock_terminal.tmux_window = "window-0"
         mock_terminal.provider = "kiro_cli"
         mock_terminal.agent_profile = "developer"
+        mock_terminal.agent_identity_id = None
         mock_terminal.allowed_tools = None
         mock_terminal.last_active = datetime.now()
 
@@ -196,6 +199,7 @@ class TestTerminalOperations:
         mock_terminal.tmux_window = "window-0"
         mock_terminal.provider = "kiro_cli"
         mock_terminal.agent_profile = "developer"
+        mock_terminal.agent_identity_id = None
         mock_terminal.last_active = datetime.now()
 
         mock_query = MagicMock()
@@ -207,6 +211,33 @@ class TestTerminalOperations:
 
         assert len(result) == 1
         assert result[0]["id"] == "test123"
+
+    def test_identity_managed_terminal_metadata_carries_agent_identity_id(self, live_inbox_db):
+        """Persisted terminal metadata distinguishes identity-managed terminals."""
+        create_terminal(
+            "test123",
+            "cao-session",
+            "window-0",
+            "codex",
+            "developer",
+            agent_identity_id="implementation_partner",
+        )
+
+        result = get_terminal_metadata("test123")
+
+        assert result is not None
+        assert result["agent_identity_id"] == "implementation_partner"
+        assert list_terminals_by_agent_identity("implementation_partner")[0]["id"] == "test123"
+
+    def test_raw_terminal_metadata_has_no_agent_identity_id(self, live_inbox_db):
+        """Manual terminals remain valid and unmapped."""
+        create_terminal("test123", "cao-session", "window-0", "codex", "developer")
+
+        result = get_terminal_metadata("test123")
+
+        assert result is not None
+        assert result["agent_identity_id"] is None
+        assert list_terminals_by_agent_identity("implementation_partner") == []
 
     @patch("cli_agent_orchestrator.clients.database.SessionLocal")
     def test_delete_terminals_by_session(self, mock_session_class):
@@ -906,6 +937,43 @@ class TestInitDb:
         assert table_names.count("inbox_messages") == 1
         assert table_names.count("inbox_notifications") == 1
         assert table_names.count("inbox_notification_targets") == 1
+
+    def test_terminal_identity_migration_adds_nullable_column(self, tmp_path, monkeypatch):
+        """Existing terminal tables gain optional identity mapping without rebuilding."""
+        db_path = tmp_path / "legacy-terminals.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE terminals (
+                    id VARCHAR NOT NULL,
+                    tmux_session VARCHAR NOT NULL,
+                    tmux_window VARCHAR NOT NULL,
+                    provider VARCHAR NOT NULL,
+                    agent_profile VARCHAR,
+                    allowed_tools TEXT,
+                    last_active DATETIME,
+                    PRIMARY KEY (id)
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO terminals (
+                    id, tmux_session, tmux_window, provider, agent_profile
+                )
+                VALUES ('terminal-1', 'cao-session', 'developer-1', 'codex', 'developer')
+            """)
+
+        database_migrations._migrate_add_terminal_agent_identity_id()
+
+        with test_engine.connect() as connection:
+            columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(terminals)")}
+            row = connection.exec_driver_sql(
+                "SELECT agent_identity_id FROM terminals WHERE id = 'terminal-1'"
+            ).fetchone()
+
+        assert "agent_identity_id" in columns
+        assert row == (None,)
 
     def test_marker_migrations_repair_notification_fk_targets_after_inbox_rebuild(
         self, tmp_path, monkeypatch

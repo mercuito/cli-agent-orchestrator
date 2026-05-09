@@ -224,7 +224,13 @@ def create_terminal(
 
         # Step 3: Persist terminal metadata to database
         db_create_terminal(
-            terminal_id, session_name, window_name, provider, agent_profile, allowed_tools
+            terminal_id,
+            session_name,
+            window_name,
+            provider,
+            agent_profile,
+            allowed_tools,
+            agent_identity_id=agent_identity.id if agent_identity is not None else None,
         )
 
         # Step 4: Create and initialize the CLI provider
@@ -259,6 +265,7 @@ def create_terminal(
             provider=ProviderType(provider),
             session_name=session_name,
             agent_profile=agent_profile,
+            agent_identity_id=agent_identity.id if agent_identity is not None else None,
             allowed_tools=allowed_tools,
             status=TerminalStatus.IDLE,
             last_active=datetime.now(),
@@ -308,6 +315,7 @@ def get_terminal(terminal_id: str) -> Dict:
             "provider": metadata["provider"],
             "session_name": metadata["tmux_session"],
             "agent_profile": metadata["agent_profile"],
+            "agent_identity_id": metadata.get("agent_identity_id"),
             "allowed_tools": metadata.get("allowed_tools"),
             "status": status,
             "last_active": metadata["last_active"],

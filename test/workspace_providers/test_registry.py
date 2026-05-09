@@ -13,6 +13,7 @@ from cli_agent_orchestrator.linear.workspace_provider import (
 from cli_agent_orchestrator.workspace_providers import (
     UnknownWorkspaceProviderError,
     initialize_enabled_workspace_providers,
+    load_enabled_provider_tool_access_policies,
 )
 
 
@@ -116,3 +117,23 @@ def test_initialize_workspace_providers_starts_legacy_linear_provider_when_uncon
 
     assert providers == initialized
     assert len(providers) == 1
+
+
+def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_access(
+    tmp_path, monkeypatch
+):
+    enabled = tmp_path / "workspace-providers.toml"
+    enabled.write_text('enabled = ["linear"]\n')
+    agents = tmp_path / "agents.toml"
+    agents.write_text("")
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        lambda presence: (_ for _ in ()).throw(AssertionError("credential preflight called")),
+    )
+
+    policies = load_enabled_provider_tool_access_policies(
+        enabled_config_path=enabled,
+        agents_config_path=agents,
+    )
+
+    assert policies == {}

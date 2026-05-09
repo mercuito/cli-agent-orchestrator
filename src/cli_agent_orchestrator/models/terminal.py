@@ -30,6 +30,10 @@ class Terminal(BaseModel):
     provider: ProviderType = Field(..., description="CLI tool provider")
     session_name: str = Field(..., description="Session name")
     agent_profile: Optional[str] = Field(None, description="Agent profile")
+    agent_identity_id: Optional[str] = Field(
+        None,
+        description="Durable CAO agent identity id when this terminal is identity-managed",
+    )
     allowed_tools: Optional[List[str]] = Field(None, description="Allowed CAO tools")
     status: Optional[TerminalStatus] = Field(
         None, description="Current terminal status (live only)"

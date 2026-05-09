@@ -24,6 +24,7 @@ export interface Terminal {
   provider: string
   session_name: string
   agent_profile: string | null
+  agent_identity_id: string | null
   status: string | null
   last_active: string | null
 }
@@ -39,6 +40,7 @@ export interface TerminalMeta {
   tmux_window: string
   provider: string
   agent_profile: string | null
+  agent_identity_id: string | null
   last_active: string | null
 }
 

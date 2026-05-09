@@ -89,6 +89,7 @@ class TestAgentRuntimeTerminalEndpoint:
                 "provider": "codex",
                 "session_name": "cao-linear-discovery-partner",
                 "agent_profile": "developer",
+                "agent_identity_id": "discovery_partner",
                 "allowed_tools": None,
                 "status": "idle",
                 "last_active": None,
@@ -99,6 +100,7 @@ class TestAgentRuntimeTerminalEndpoint:
 
         assert response.status_code == 200
         assert response.json()["terminal"]["id"] == "abcd1234"
+        assert response.json()["terminal"]["agent_identity_id"] == "discovery_partner"
         assert response.json()["terminal_token"] == "signed-token"
 
     def test_returns_404_when_agent_has_no_running_terminal(self, client, monkeypatch):
@@ -187,6 +189,7 @@ class TestAgentRuntimeTerminalEndpoint:
                 "provider": "codex",
                 "session_name": "cao-linear-discovery-partner",
                 "agent_profile": "developer",
+                "agent_identity_id": "discovery_partner",
                 "allowed_tools": None,
                 "status": "idle",
                 "last_active": None,

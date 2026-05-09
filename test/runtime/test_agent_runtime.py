@@ -15,8 +15,8 @@ from cli_agent_orchestrator.providers.base import ProviderRuntimeDescriptor, Pro
 from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeFreshnessAction,
-    AgentRuntimeInvariantError,
     AgentRuntimeHandle,
+    AgentRuntimeInvariantError,
     AgentRuntimeNotification,
     AgentRuntimeStatus,
 )
@@ -50,6 +50,7 @@ def _create_terminal(session_name: str = "cao-implementation-partner") -> str:
         "developer-1234",
         "codex",
         "developer",
+        agent_identity_id="implementation_partner",
     )["id"]
 
 
@@ -141,6 +142,18 @@ def test_status_reports_not_started_without_terminal_metadata(test_session, hand
     assert handle.status() == AgentRuntimeStatus.NOT_STARTED
 
 
+def test_current_terminal_ignores_raw_terminal_in_identity_session(test_session, handle):
+    db_module.create_terminal(
+        "terminal-1",
+        "cao-implementation-partner",
+        "developer-raw",
+        "codex",
+        "developer",
+    )
+
+    assert handle.current_terminal() is None
+
+
 @pytest.mark.parametrize(
     ("terminal_status", "runtime_status"),
     [
@@ -218,6 +231,7 @@ def test_current_terminal_rejects_multiple_manifestations_for_identity(test_sess
         "developer-1",
         "codex",
         "developer",
+        agent_identity_id="implementation_partner",
     )
     db_module.create_terminal(
         "terminal-2",
@@ -225,6 +239,7 @@ def test_current_terminal_rejects_multiple_manifestations_for_identity(test_sess
         "developer-2",
         "codex",
         "developer",
+        agent_identity_id="implementation_partner",
     )
 
     with pytest.raises(AgentRuntimeInvariantError, match="Multiple terminal manifestations"):
@@ -243,6 +258,7 @@ def test_current_terminal_reports_resume_unsupported_for_provider_without_resume
         "developer-1",
         "kiro_cli",
         "developer",
+        agent_identity_id="implementation_partner",
     )
 
     terminal = handle.current_terminal()
@@ -387,6 +403,7 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
             "developer-5678",
             "codex",
             "developer",
+            agent_identity_id="implementation_partner",
         )
         return _created_terminal_result("terminal-2")
 
@@ -445,6 +462,7 @@ def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(
             "developer-5678",
             "codex",
             "developer",
+            agent_identity_id="implementation_partner",
         )
         return _created_terminal_result("terminal-2")
 
@@ -512,6 +530,7 @@ def test_stale_refresh_with_no_current_session_restarts_without_resume_payload(
             "developer-5678",
             "codex",
             "developer",
+            agent_identity_id="implementation_partner",
         )
         return _created_terminal_result("terminal-2")
 
@@ -667,6 +686,7 @@ def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
             "developer-5678",
             "codex",
             "developer",
+            agent_identity_id="implementation_partner",
         )
         return _created_terminal_result("terminal-2")
 

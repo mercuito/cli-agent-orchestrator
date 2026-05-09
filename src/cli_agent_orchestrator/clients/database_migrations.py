@@ -46,6 +46,7 @@ def init_db() -> None:
     _migrate_ensure_agent_runtime_tables()
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
+    _migrate_add_terminal_agent_identity_id()
     _migrate_drop_monitoring_session_peers()
 
 
@@ -502,3 +503,16 @@ def _migrate_add_allowed_tools() -> None:
                 logger.info("Migration: added allowed_tools column to terminals table")
     except Exception as e:
         logger.warning(f"Migration check for allowed_tools failed: {e}")
+
+
+def _migrate_add_terminal_agent_identity_id() -> None:
+    """Add agent_identity_id column to terminals table if missing."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            if sqlite_migrations.add_column_if_missing(
+                conn, "terminals", "agent_identity_id", "agent_identity_id TEXT"
+            ):
+                logger.info("Migration: added agent_identity_id column to terminals table")
+    except Exception as e:
+        logger.warning(f"Migration check for terminal agent_identity_id failed: {e}")

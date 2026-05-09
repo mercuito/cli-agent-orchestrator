@@ -8,18 +8,37 @@ persistence lives in focused owner modules such as ``terminal_store``,
 
 from __future__ import annotations
 
+from cli_agent_orchestrator.clients.baton_store import (  # noqa: E402
+    BatonEventModel,
+    BatonModel,
+    baton_event_from_model,
+    baton_from_model,
+    get_baton_record,
+    list_baton_events,
+    list_batons,
+    list_batons_held_by,
+)
 from cli_agent_orchestrator.clients.database_core import Base, SessionLocal, engine
-
-# Import domain owner surfaces after Base exists so models register metadata.
-from cli_agent_orchestrator.clients.terminal_store import (  # noqa: E402
-    TerminalModel,
-    create_terminal,
-    delete_terminal,
-    delete_terminals_by_session,
-    get_terminal_metadata,
-    list_all_terminals,
-    list_terminals_by_session,
-    update_last_active,
+from cli_agent_orchestrator.clients.database_migrations import (  # noqa: E402
+    _migrate_drop_legacy_inbox_notification_ids,
+    _migrate_drop_legacy_inbox_table,
+    _migrate_drop_monitoring_session_peers,
+    _migrate_ensure_agent_runtime_tables,
+    _migrate_ensure_baton_tables,
+    _migrate_ensure_presence_tables,
+    _migrate_ensure_semantic_inbox_tables,
+    init_db,
+)
+from cli_agent_orchestrator.clients.flow_store import (  # noqa: E402
+    FlowModel,
+    create_flow,
+    delete_flow,
+    flow_from_model,
+    get_flow,
+    get_flows_to_run,
+    list_flows,
+    update_flow_enabled,
+    update_flow_run_times,
 )
 from cli_agent_orchestrator.clients.inbox_store import (  # noqa: E402
     INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
@@ -54,36 +73,18 @@ from cli_agent_orchestrator.clients.presence_store import (  # noqa: E402
     PresenceWorkItemModel,
     ProcessedProviderEventModel,
 )
-from cli_agent_orchestrator.clients.baton_store import (  # noqa: E402
-    BatonEventModel,
-    BatonModel,
-    baton_event_from_model,
-    baton_from_model,
-    get_baton_record,
-    list_baton_events,
-    list_batons,
-    list_batons_held_by,
-)
-from cli_agent_orchestrator.clients.flow_store import (  # noqa: E402
-    FlowModel,
-    create_flow,
-    delete_flow,
-    flow_from_model,
-    get_flow,
-    get_flows_to_run,
-    list_flows,
-    update_flow_enabled,
-    update_flow_run_times,
-)
-from cli_agent_orchestrator.clients.database_migrations import (  # noqa: E402
-    _migrate_drop_legacy_inbox_notification_ids,
-    _migrate_drop_legacy_inbox_table,
-    _migrate_drop_monitoring_session_peers,
-    _migrate_ensure_agent_runtime_tables,
-    _migrate_ensure_baton_tables,
-    _migrate_ensure_presence_tables,
-    _migrate_ensure_semantic_inbox_tables,
-    init_db,
+
+# Import domain owner surfaces after Base exists so models register metadata.
+from cli_agent_orchestrator.clients.terminal_store import (  # noqa: E402
+    TerminalModel,
+    create_terminal,
+    delete_terminal,
+    delete_terminals_by_session,
+    get_terminal_metadata,
+    list_all_terminals,
+    list_terminals_by_agent_identity,
+    list_terminals_by_session,
+    update_last_active,
 )
 
 __all__ = [
@@ -137,6 +138,7 @@ __all__ = [
     "inbox_notification_target_from_model",
     "init_db",
     "list_all_terminals",
+    "list_terminals_by_agent_identity",
     "list_baton_events",
     "list_batons",
     "list_batons_held_by",

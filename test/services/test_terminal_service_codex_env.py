@@ -125,7 +125,7 @@ def test_create_terminal_identity_codex_runtime_passes_provider_data_dir(
             "cli_agent_orchestrator.services.terminal_service.generate_window_name",
             return_value="developer-0000",
         ),
-        patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal"),
+        patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal") as db_create,
         patch(
             "cli_agent_orchestrator.services.terminal_service.provider_manager.create_provider",
             return_value=provider,
@@ -156,6 +156,7 @@ def test_create_terminal_identity_codex_runtime_passes_provider_data_dir(
         "developer",
         str(tmp_path / "repo"),
     )
+    assert db_create.call_args.kwargs["agent_identity_id"] == "implementation_partner"
     create_kwargs = mock_tmux.create_session.call_args.kwargs
     assert create_kwargs["environment"]["CODEX_HOME"] == str(codex_home)
 

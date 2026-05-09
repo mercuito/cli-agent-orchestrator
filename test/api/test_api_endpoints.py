@@ -504,8 +504,18 @@ class TestListTerminalsInSession:
     def test_list_terminals_success(self, client):
         """GET /sessions/{name}/terminals returns terminal list."""
         mock_terminals = [
-            {"id": "abcd1234", "tmux_session": "s1", "provider": "kiro_cli"},
-            {"id": "abcd5678", "tmux_session": "s1", "provider": "claude_code"},
+            {
+                "id": "abcd1234",
+                "tmux_session": "s1",
+                "provider": "kiro_cli",
+                "agent_identity_id": "implementation_partner",
+            },
+            {
+                "id": "abcd5678",
+                "tmux_session": "s1",
+                "provider": "claude_code",
+                "agent_identity_id": None,
+            },
         ]
         with patch(
             "cli_agent_orchestrator.clients.database.list_terminals_by_session",
@@ -516,6 +526,8 @@ class TestListTerminalsInSession:
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 2
+        assert data[0]["agent_identity_id"] == "implementation_partner"
+        assert data[1]["agent_identity_id"] is None
 
     def test_list_terminals_empty(self, client):
         """GET /sessions/{name}/terminals returns empty list."""
@@ -554,6 +566,7 @@ class TestGetTerminal:
             "session_name": "test-session",
             "provider": "kiro_cli",
             "agent_profile": "developer",
+            "agent_identity_id": "implementation_partner",
         }
         with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             mock_svc.get_terminal.return_value = mock_terminal_dict
@@ -564,6 +577,7 @@ class TestGetTerminal:
         data = response.json()
         assert data["id"] == "abcd1234"
         assert data["provider"] == "kiro_cli"
+        assert data["agent_identity_id"] == "implementation_partner"
         mock_svc.get_terminal.assert_called_once_with("abcd1234")
 
     def test_get_terminal_not_found(self, client):

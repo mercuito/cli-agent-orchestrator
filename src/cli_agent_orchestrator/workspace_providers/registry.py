@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Mapping, Optional, Protocol
+from typing import Callable, Mapping, Optional, Protocol, runtime_checkable
 
 import tomli
 
@@ -14,6 +14,7 @@ from cli_agent_orchestrator.agent_identity import (
     load_agent_identity_registry,
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
+from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
 
 WORKSPACE_PROVIDERS_CONFIG_PATH = CAO_HOME_DIR / "workspace-providers.toml"
 
@@ -26,6 +27,7 @@ class UnknownWorkspaceProviderError(WorkspaceProviderConfigError):
     """Raised when an enabled workspace provider has no registered factory."""
 
 
+@runtime_checkable
 class WorkspaceProvider(Protocol):
     """Small provider lifecycle boundary used by CAO startup."""
 
@@ -35,11 +37,20 @@ class WorkspaceProvider(Protocol):
         """Validate and initialize the provider."""
 
 
+@runtime_checkable
 class AgentIdentityWorkspaceProvider(WorkspaceProvider, Protocol):
     """Optional workspace-provider surface for resolving CAO agent identities."""
 
     def resolve_identity_for_agent_id(self, agent_id: str) -> AgentIdentity:
         """Resolve a durable CAO agent identity through provider-owned mapping."""
+
+
+@runtime_checkable
+class ProviderToolAccessWorkspaceProvider(WorkspaceProvider, Protocol):
+    """Optional provider surface for CAO-mediated MCP tool access."""
+
+    def provider_tool_access(self) -> ProviderToolAccessPolicy:
+        """Return preflighted provider-mediated tool access for CAO consumption."""
 
 
 WorkspaceProviderFactory = Callable[[AgentIdentityRegistry], WorkspaceProvider]
@@ -160,6 +171,45 @@ def initialize_enabled_workspace_providers(
     return providers
 
 
+def load_provider_tool_access_policies(
+    providers: list[WorkspaceProvider],
+) -> dict[str, ProviderToolAccessPolicy]:
+    """Ask initialized providers for CAO-mediated tool access policies."""
+    policies: dict[str, ProviderToolAccessPolicy] = {}
+    for provider in providers:
+        if not isinstance(provider, ProviderToolAccessWorkspaceProvider):
+            continue
+        policy = provider.provider_tool_access()
+        if policy.provider_name in policies:
+            raise WorkspaceProviderConfigError(
+                f"Duplicate provider tool access policy: {policy.provider_name}"
+            )
+        policies[policy.provider_name] = policy
+    return policies
+
+
+def load_enabled_provider_tool_access_policies(
+    *,
+    enabled_config_path: Optional[Path] = None,
+    agents_config_path: Optional[Path] = None,
+    registry: Optional[WorkspaceProviderRegistry] = None,
+    agent_registry: Optional[AgentIdentityRegistry] = None,
+) -> dict[str, ProviderToolAccessPolicy]:
+    """Load provider-mediated tool access without initializing unrelated providers."""
+    enabled = load_enabled_workspace_providers(enabled_config_path)
+    agents = agent_registry or load_agent_identity_registry(agents_config_path)
+    provider_registry = registry or default_workspace_provider_registry()
+
+    providers_with_tools: list[WorkspaceProvider] = []
+    for name in enabled:
+        provider = provider_registry.create(name, agents)
+        if not isinstance(provider, ProviderToolAccessWorkspaceProvider):
+            continue
+        provider.initialize()
+        providers_with_tools.append(provider)
+    return load_provider_tool_access_policies(providers_with_tools)
+
+
 def resolve_agent_identity_for_runtime(
     agent_id: str,
     *,
@@ -171,11 +221,10 @@ def resolve_agent_identity_for_runtime(
     except AgentIdentityConfigError as registry_error:
         provider_errors: list[Exception] = []
         for provider in _candidate_identity_workspace_providers():
-            resolver = getattr(provider, "resolve_identity_for_agent_id", None)
-            if resolver is None:
+            if not isinstance(provider, AgentIdentityWorkspaceProvider):
                 continue
             try:
-                return resolver(agent_id)
+                return provider.resolve_identity_for_agent_id(agent_id)
             except Exception as exc:
                 provider_errors.append(exc)
         if provider_errors:

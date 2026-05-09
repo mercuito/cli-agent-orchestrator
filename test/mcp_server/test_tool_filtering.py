@@ -224,13 +224,18 @@ class TestMainStartupFiltering:
     server doesn't actually start."""
 
     @patch("cli_agent_orchestrator.mcp_server.server.mcp")
+    @patch(
+        "cli_agent_orchestrator.mcp_server.server.register_provider_mediated_mcp_tools_for_terminal"
+    )
     @patch("cli_agent_orchestrator.mcp_server.server._register_tools")
     @patch("cli_agent_orchestrator.mcp_server.server._resolve_allowlist_for_terminal")
     def test_main_passes_resolved_allowlist_to_register(
-        self, mock_resolve, mock_register, mock_mcp, monkeypatch
+        self, mock_resolve, mock_register, mock_register_provider, mock_mcp, monkeypatch
     ):
         monkeypatch.setenv("CAO_TERMINAL_ID", "term-xyz")
         mock_resolve.return_value = ["assign", "send_message"]
+        mock_register.return_value = ["assign", "send_message"]
+        mock_register_provider.return_value = []
 
         server.main()
 
@@ -238,22 +243,32 @@ class TestMainStartupFiltering:
         # First arg = pending registry, second = allowlist, third = mcp instance
         args = mock_register.call_args[0]
         assert args[1] == ["assign", "send_message"]
+        mock_register_provider.assert_called_once()
+        assert mock_register_provider.call_args.kwargs["terminal_id"] == "term-xyz"
+        assert set(mock_register_provider.call_args.kwargs["reserved_tool_names"]) == {
+            name for name, _, _ in server._PENDING_TOOLS
+        }
         mock_mcp.run.assert_called_once()
 
     @patch("cli_agent_orchestrator.mcp_server.server.mcp")
+    @patch(
+        "cli_agent_orchestrator.mcp_server.server.register_provider_mediated_mcp_tools_for_terminal"
+    )
     @patch("cli_agent_orchestrator.mcp_server.server._register_tools")
     def test_main_without_cao_terminal_id_registers_permissively(
-        self, mock_register, mock_mcp, monkeypatch
+        self, mock_register, mock_register_provider, mock_mcp, monkeypatch
     ):
         """If the server is started outside of CAO (developer invokes
         directly to test, etc.) there's no terminal context. Register all
         tools rather than erroring out."""
         monkeypatch.delenv("CAO_TERMINAL_ID", raising=False)
+        mock_register.return_value = []
 
         server.main()
 
         args = mock_register.call_args[0]
         assert args[1] is None  # permissive
+        mock_register_provider.assert_not_called()
         mock_mcp.run.assert_called_once()
 
 

@@ -13,17 +13,26 @@ from pydantic import Field
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
+from cli_agent_orchestrator.mcp_server.provider_tools import (
+    register_provider_mediated_mcp_tools_for_terminal,
+)
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.presence.builtins import ensure_builtin_presence_provider
 from cli_agent_orchestrator.presence.inbox_access import (
     InboxReadError,
+)
+from cli_agent_orchestrator.presence.inbox_access import (
     read_inbox_message as read_provider_inbox_message,
+)
+from cli_agent_orchestrator.presence.inbox_access import (
     read_result_to_dict,
 )
 from cli_agent_orchestrator.presence.manager import UnknownPresenceProviderError
 from cli_agent_orchestrator.presence.reply_service import (
     PresenceReplyError,
+)
+from cli_agent_orchestrator.presence.reply_service import (
     reply_to_inbox_message as route_provider_inbox_reply,
 )
 from cli_agent_orchestrator.services import baton_service
@@ -1206,10 +1215,17 @@ def main():
     if terminal_id:
         allowlist = _resolve_allowlist_for_terminal(terminal_id)
     registered = _register_tools(_PENDING_TOOLS, allowlist, mcp)
+    provider_registered: list[str] = []
+    if terminal_id:
+        provider_registered = register_provider_mediated_mcp_tools_for_terminal(
+            terminal_id=terminal_id,
+            mcp_instance=mcp,
+            reserved_tool_names=[name for name, _, _ in _PENDING_TOOLS],
+        )
     logger.info(
         f"Registered {len(registered)}/{len(_PENDING_TOOLS)} MCP tools "
         f"(allowlist={'permissive' if allowlist is None else sorted(allowlist)}): "
-        f"{sorted(registered)}"
+        f"{sorted(registered)}; provider-mediated={sorted(provider_registered)}"
     )
     mcp.run()
 

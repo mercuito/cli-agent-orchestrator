@@ -59,6 +59,7 @@ class AgentRuntimeTerminal:
     """Terminal manifestation of a CAO agent identity."""
 
     id: str
+    agent_identity_id: str
     session_name: str
     window_name: str
     provider: str
@@ -70,6 +71,7 @@ class AgentRuntimeTerminal:
         """Return the legacy terminal metadata shape used by compatibility callers."""
         return {
             "id": self.id,
+            "agent_identity_id": self.agent_identity_id,
             "tmux_session": self.session_name,
             "tmux_window": self.window_name,
             "provider": self.provider,
@@ -513,13 +515,13 @@ class AgentRuntimeHandle:
         )
 
     def _terminal(self) -> Optional[AgentRuntimeTerminal]:
-        terminals = db_module.list_terminals_by_session(self.session_name)
+        terminals = db_module.list_terminals_by_agent_identity(self.identity.id)
         if not terminals:
             return None
         if len(terminals) > 1:
             raise AgentRuntimeInvariantError(
                 "Multiple terminal manifestations exist for CAO agent identity "
-                f"{self.identity.id!r} in session {self.session_name!r}"
+                f"{self.identity.id!r}"
             )
         return _terminal_from_metadata(terminals[0])
 
@@ -549,6 +551,7 @@ class AgentRuntimeHandle:
         provider_name = str(provider_value)
         return AgentRuntimeTerminal(
             id=created.id,
+            agent_identity_id=self.identity.id,
             session_name=created.session_name,
             window_name=created.name,
             provider=provider_name,
@@ -939,6 +942,7 @@ def _terminal_from_metadata(metadata: dict[str, object]) -> AgentRuntimeTerminal
     provider = str(metadata["provider"])
     return AgentRuntimeTerminal(
         id=str(metadata["id"]),
+        agent_identity_id=str(metadata["agent_identity_id"]),
         session_name=str(metadata["tmux_session"]),
         window_name=str(metadata["tmux_window"]),
         provider=provider,
