@@ -14,8 +14,28 @@ from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_COMMENT_TOOL,
     CREATE_ISSUE_TOOL,
+    GET_AGENT_SESSION_ACTIVITY_TOOL,
+    GET_AGENT_SESSION_TOOL,
+    GET_COMMENT_TOOL,
+    GET_DOCUMENT_TOOL,
     GET_ISSUE_TOOL,
+    GET_ISSUE_LABEL_TOOL,
+    GET_ISSUE_STATUS_TOOL,
+    GET_PROJECT_TOOL,
+    GET_TEAM_TOOL,
+    GET_USER_TOOL,
+    LINEAR_EXPLORATION_READ_TOOLS,
+    LIST_AGENT_SESSION_ACTIVITIES_TOOL,
     LIST_COMMENTS_TOOL,
+    LIST_DOCUMENTS_TOOL,
+    LIST_ISSUE_LABELS_TOOL,
+    LIST_ISSUE_STATUSES_TOOL,
+    LIST_ISSUES_TOOL,
+    LIST_PROJECTS_TOOL,
+    LIST_TEAMS_TOOL,
+    LIST_USERS_TOOL,
+    SEARCH_DOCUMENTS_TOOL,
+    SEARCH_ISSUES_TOOL,
     UPDATE_ISSUE_TOOL,
 )
 from cli_agent_orchestrator.linear.workspace_provider import (
@@ -190,6 +210,133 @@ def _teams_payload() -> dict[str, Any]:
             {"id": "team-cao", "key": "CAO", "name": "CAO"},
             {"id": "team-yards", "key": "YARDS", "name": "Yards"},
         ]
+    }
+
+
+def _users_payload() -> dict[str, Any]:
+    return {
+        "nodes": [
+            {
+                "id": "user-1",
+                "name": "RJ Wilson",
+                "displayName": "RJ Wilson",
+                "email": "rj@example.test",
+                "active": True,
+                "admin": False,
+                "guest": False,
+                "createdAt": "2026-05-01T00:00:00.000Z",
+                "updatedAt": "2026-05-02T00:00:00.000Z",
+            }
+        ]
+    }
+
+
+def _issue_status_payload() -> dict[str, Any]:
+    return {
+        "id": "status-started",
+        "name": "In Progress",
+        "type": "started",
+        "description": "Work has started.",
+        "color": "#f2c94c",
+        "position": 2,
+        "createdAt": "2026-05-01T00:00:00.000Z",
+        "updatedAt": "2026-05-02T00:00:00.000Z",
+        "team": {"id": "team-cao", "key": "CAO", "name": "CAO"},
+    }
+
+
+def _issue_label_payload() -> dict[str, Any]:
+    return {
+        "id": "label-provider",
+        "name": "provider",
+        "description": "Provider work",
+        "color": "#36c",
+        "isGroup": False,
+        "createdAt": "2026-05-01T00:00:00.000Z",
+        "updatedAt": "2026-05-02T00:00:00.000Z",
+        "team": {"id": "team-cao", "key": "CAO", "name": "CAO"},
+        "parent": {"id": "label-area", "name": "area"},
+    }
+
+
+def _project_payload() -> dict[str, Any]:
+    return {
+        "id": "project-bridge",
+        "name": "Linear-backed CAO agent bridge",
+        "description": "Bridge project.",
+        "content": "Project notes.",
+        "url": "https://linear.app/yards-framework/project/bridge",
+        "state": "started",
+        "startDate": "2026-05-01",
+        "targetDate": "2026-05-30",
+        "createdAt": "2026-05-01T00:00:00.000Z",
+        "updatedAt": "2026-05-02T00:00:00.000Z",
+        "lead": {"id": "user-1", "name": "RJ Wilson"},
+        "teams": {"nodes": [{"id": "team-cao", "key": "CAO", "name": "CAO"}]},
+    }
+
+
+def _agent_session_payload() -> dict[str, Any]:
+    return {
+        "id": "agent-session-1",
+        "url": "https://linear.app/yards-framework/issue/CAO-54#agent-session-1",
+        "status": "working",
+        "summary": "Testing session",
+        "context": {"issue": "CAO-54"},
+        "createdAt": "2026-05-07T10:00:00.000Z",
+        "updatedAt": "2026-05-07T10:01:00.000Z",
+        "startedAt": "2026-05-07T10:00:00.000Z",
+        "endedAt": None,
+        "issue": {"id": "issue-54", "identifier": "CAO-54", "title": "Tools", "url": "url"},
+        "comment": {
+            "id": "comment-1",
+            "url": "comment-url",
+            "body": "Mentioned you.",
+            "createdAt": "2026-05-07T10:00:00.000Z",
+            "updatedAt": "2026-05-07T10:00:00.000Z",
+            "user": {"id": "user-1", "name": "RJ Wilson"},
+        },
+        "sourceComment": {
+            "id": "comment-1",
+            "url": "comment-url",
+            "body": "Mentioned you.",
+            "createdAt": "2026-05-07T10:00:00.000Z",
+            "updatedAt": "2026-05-07T10:00:00.000Z",
+            "user": {"id": "user-1", "name": "RJ Wilson"},
+        },
+        "appUser": {"id": "app-user-1", "name": "Discovery Partner"},
+        "creator": {"id": "user-1", "name": "RJ Wilson"},
+    }
+
+
+def _agent_activity_payload() -> dict[str, Any]:
+    return {
+        "id": "activity-1",
+        "signal": "prompt",
+        "createdAt": "2026-05-07T10:00:00.000Z",
+        "updatedAt": "2026-05-07T10:00:00.000Z",
+        "user": {"id": "user-1", "name": "RJ Wilson"},
+        "sourceComment": {"id": "comment-1", "url": "comment-url"},
+        "agentSession": {"id": "agent-session-1", "url": "session-url"},
+        "content": {"type": "prompt", "body": "testing"},
+    }
+
+
+def _document_payload() -> dict[str, Any]:
+    return {
+        "id": "document-1",
+        "slugId": "doc-1",
+        "title": "Planning document",
+        "summary": "Plan summary",
+        "content": "Plan body",
+        "url": "https://linear.app/yards-framework/document/doc-1",
+        "createdAt": "2026-05-07T10:00:00.000Z",
+        "updatedAt": "2026-05-07T10:00:00.000Z",
+        "project": {"id": "project-bridge", "name": "Bridge", "url": "project-url"},
+        "issue": {"id": "issue-54", "identifier": "CAO-54", "title": "Tools", "url": "url"},
+        "team": {"id": "team-cao", "key": "CAO", "name": "CAO"},
+        "creator": {"id": "user-1", "name": "RJ Wilson"},
+        "updatedBy": {"id": "user-1", "name": "RJ Wilson"},
     }
 
 
@@ -1541,6 +1688,280 @@ issues = ["CAO-28"]
     assert registered == ["cao_linear.list_comments"]
     with pytest.raises(ToolError, match="invalid_linear_comment_limit"):
         await mcp.call_tool("cao_linear.list_comments", {"issue": "CAO-28", "limit": 101})
+
+
+@pytest.mark.asyncio
+async def test_linear_exploration_tools_register_and_fetch_provider_context(
+    tmp_path,
+    monkeypatch,
+):
+    tools = sorted(LINEAR_EXPLORATION_READ_TOOLS)
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_exploration]
+agent_id = "implementation_partner"
+tools = {json.dumps(tools)}
+""",
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        calls.append({"query": query, "variables": variables, "app_key": app_key})
+        assert app_key == "implementation_partner"
+        if "CaoLinearListTeams" in query:
+            return {"data": {"teams": _teams_payload()}}
+        if "CaoLinearGetTeam" in query:
+            return {"data": {"team": _teams_payload()["nodes"][0]}}
+        if "CaoLinearListUsers" in query:
+            return {"data": {"users": _users_payload()}}
+        if "CaoLinearGetUser" in query:
+            return {"data": {"user": _users_payload()["nodes"][0]}}
+        if "CaoLinearListIssueStatuses" in query:
+            return {"data": {"workflowStates": {"nodes": [_issue_status_payload()]}}}
+        if "CaoLinearGetIssueStatus" in query:
+            return {"data": {"workflowState": _issue_status_payload()}}
+        if "CaoLinearListIssueLabels" in query:
+            return {"data": {"issueLabels": {"nodes": [_issue_label_payload()]}}}
+        if "CaoLinearGetIssueLabel" in query:
+            return {"data": {"issueLabel": _issue_label_payload()}}
+        if "CaoLinearListProjects" in query:
+            return {"data": {"projects": {"nodes": [_project_payload()]}}}
+        if "CaoLinearGetProject" in query:
+            return {"data": {"project": _project_payload()}}
+        if "CaoLinearListIssues" in query:
+            return {
+                "data": {"issues": {"nodes": [_issue_payload(id="issue-54", identifier="CAO-54")]}}
+            }
+        if "CaoLinearSearchIssues" in query:
+            return {
+                "data": {
+                    "searchIssues": {"nodes": [_issue_payload(id="issue-54", identifier="CAO-54")]}
+                }
+            }
+        if "CaoLinearGetComment" in query:
+            return {
+                "data": {
+                    "comment": _comments_payload()["comments"]["nodes"][0]
+                    | {"issue": _issue_payload()}
+                }
+            }
+        if "CaoLinearGetAgentSessionActivity" in query:
+            return {"data": {"agentActivity": _agent_activity_payload()}}
+        if "CaoLinearListAgentSessionActivities" in query:
+            return {
+                "data": {
+                    "agentSession": {
+                        "id": "agent-session-1",
+                        "activities": {"nodes": [_agent_activity_payload()]},
+                    }
+                }
+            }
+        if "CaoLinearGetAgentSession" in query:
+            return {"data": {"agentSession": _agent_session_payload()}}
+        if "CaoLinearListDocuments" in query:
+            return {"data": {"documents": {"nodes": [_document_payload()]}}}
+        if "CaoLinearGetDocument" in query:
+            return {"data": {"document": _document_payload()}}
+        if "CaoLinearSearchDocuments" in query:
+            return {"data": {"searchDocuments": {"nodes": [_document_payload()]}}}
+        raise AssertionError(f"unexpected query: {query}")
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    assert set(registered) == LINEAR_EXPLORATION_READ_TOOLS
+    assert (
+        json.loads((await mcp.call_tool(LIST_TEAMS_TOOL, {"limit": 2})).content[0].text)["teams"][
+            0
+        ]["key"]
+        == "CAO"
+    )
+    assert (
+        json.loads((await mcp.call_tool(GET_TEAM_TOOL, {"team_id": "CAO"})).content[0].text)["id"]
+        == "team-cao"
+    )
+    assert (
+        json.loads((await mcp.call_tool(LIST_USERS_TOOL, {"query": "RJ"})).content[0].text)[
+            "users"
+        ][0]["name"]
+        == "RJ Wilson"
+    )
+    assert (
+        json.loads((await mcp.call_tool(GET_USER_TOOL, {"user_id": "user-1"})).content[0].text)[
+            "active"
+        ]
+        is True
+    )
+    statuses = json.loads(
+        (await mcp.call_tool(LIST_ISSUE_STATUSES_TOOL, {"team_id": "team-cao"})).content[0].text
+    )
+    assert statuses["issue_statuses"][0]["id"] == "status-started"
+    assert (
+        json.loads(
+            (await mcp.call_tool(GET_ISSUE_STATUS_TOOL, {"status_id": "status-started"}))
+            .content[0]
+            .text
+        )["type"]
+        == "started"
+    )
+    assert (
+        json.loads((await mcp.call_tool(LIST_ISSUE_LABELS_TOOL, {})).content[0].text)[
+            "issue_labels"
+        ][0]["id"]
+        == "label-provider"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(GET_ISSUE_LABEL_TOOL, {"label_id": "label-provider"}))
+            .content[0]
+            .text
+        )["name"]
+        == "provider"
+    )
+    assert (
+        json.loads((await mcp.call_tool(LIST_PROJECTS_TOOL, {"query": "Bridge"})).content[0].text)[
+            "projects"
+        ][0]["id"]
+        == "project-bridge"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(GET_PROJECT_TOOL, {"project_id": "project-bridge"}))
+            .content[0]
+            .text
+        )["name"]
+        == "Linear-backed CAO agent bridge"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(LIST_ISSUES_TOOL, {"project_id": "project-bridge"}))
+            .content[0]
+            .text
+        )["issues"][0]["identifier"]
+        == "CAO-54"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(SEARCH_ISSUES_TOOL, {"term": "Linear tools"})).content[0].text
+        )["issues"][0]["identifier"]
+        == "CAO-54"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(GET_COMMENT_TOOL, {"comment_id": "comment-1"})).content[0].text
+        )["id"]
+        == "comment-2"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(GET_AGENT_SESSION_TOOL, {"agent_session_id": "agent-session-1"}))
+            .content[0]
+            .text
+        )["issue"]["identifier"]
+        == "CAO-54"
+    )
+    assert (
+        json.loads(
+            (
+                await mcp.call_tool(
+                    LIST_AGENT_SESSION_ACTIVITIES_TOOL,
+                    {"agent_session_id": "agent-session-1", "limit": 1},
+                )
+            )
+            .content[0]
+            .text
+        )["activities"][0]["content"]["body"]
+        == "testing"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(GET_AGENT_SESSION_ACTIVITY_TOOL, {"activity_id": "activity-1"}))
+            .content[0]
+            .text
+        )["content"]["body"]
+        == "testing"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(LIST_DOCUMENTS_TOOL, {"project_id": "project-bridge"}))
+            .content[0]
+            .text
+        )["documents"][0]["id"]
+        == "document-1"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(GET_DOCUMENT_TOOL, {"document_id": "document-1"})).content[0].text
+        )["title"]
+        == "Planning document"
+    )
+    assert (
+        json.loads(
+            (await mcp.call_tool(SEARCH_DOCUMENTS_TOOL, {"term": "Planning"})).content[0].text
+        )["documents"][0]["id"]
+        == "document-1"
+    )
+    assert len(calls) == len(LINEAR_EXPLORATION_READ_TOOLS)
+
+
+def test_linear_exploration_tools_do_not_require_issue_scope(tmp_path):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_exploration]
+agent_id = "implementation_partner"
+tools = ["{LIST_TEAMS_TOOL}", "{LIST_PROJECTS_TOOL}", "{SEARCH_DOCUMENTS_TOOL}"]
+""",
+    )
+
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    assert mcp is not None
+    assert registered == [LIST_PROJECTS_TOOL, LIST_TEAMS_TOOL, SEARCH_DOCUMENTS_TOOL]
+
+
+@pytest.mark.asyncio
+async def test_linear_exploration_tools_reject_invalid_arguments_before_graphql(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_exploration]
+agent_id = "implementation_partner"
+tools = ["{SEARCH_ISSUES_TOOL}", "{LIST_DOCUMENTS_TOOL}"]
+""",
+    )
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    assert registered == [LIST_DOCUMENTS_TOOL, SEARCH_ISSUES_TOOL]
+    with pytest.raises(ToolError, match="invalid_linear_tool_argument"):
+        await mcp.call_tool(SEARCH_ISSUES_TOOL, {"term": "   "})
+    with pytest.raises(ToolError, match="invalid_linear_list_limit"):
+        await mcp.call_tool(LIST_DOCUMENTS_TOOL, {"limit": 101})
+
+
+def test_linear_exploration_tool_names_keep_list_get_parity():
+    list_to_get = {
+        LIST_TEAMS_TOOL: GET_TEAM_TOOL,
+        LIST_USERS_TOOL: GET_USER_TOOL,
+        LIST_ISSUE_STATUSES_TOOL: GET_ISSUE_STATUS_TOOL,
+        LIST_ISSUE_LABELS_TOOL: GET_ISSUE_LABEL_TOOL,
+        LIST_PROJECTS_TOOL: GET_PROJECT_TOOL,
+        LIST_DOCUMENTS_TOOL: GET_DOCUMENT_TOOL,
+        LIST_AGENT_SESSION_ACTIVITIES_TOOL: GET_AGENT_SESSION_ACTIVITY_TOOL,
+    }
+
+    assert all(get_tool in LINEAR_EXPLORATION_READ_TOOLS for get_tool in list_to_get.values())
+    assert SEARCH_ISSUES_TOOL in LINEAR_EXPLORATION_READ_TOOLS
+    assert SEARCH_DOCUMENTS_TOOL in LINEAR_EXPLORATION_READ_TOOLS
 
 
 @pytest.mark.parametrize(

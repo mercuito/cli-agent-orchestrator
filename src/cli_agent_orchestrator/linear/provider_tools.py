@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, cast
 
+from cli_agent_orchestrator.linear import provider_tool_queries as linear_queries
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,
     ProviderToolAccessConfigError,
@@ -25,13 +26,61 @@ LIST_COMMENTS_TOOL = "cao_linear.list_comments"
 CREATE_COMMENT_TOOL = "cao_linear.create_comment"
 CREATE_ISSUE_TOOL = "cao_linear.create_issue"
 UPDATE_ISSUE_TOOL = "cao_linear.update_issue"
+LIST_TEAMS_TOOL = "cao_linear.list_teams"
+GET_TEAM_TOOL = "cao_linear.get_team"
+LIST_USERS_TOOL = "cao_linear.list_users"
+GET_USER_TOOL = "cao_linear.get_user"
+LIST_ISSUE_STATUSES_TOOL = "cao_linear.list_issue_statuses"
+GET_ISSUE_STATUS_TOOL = "cao_linear.get_issue_status"
+LIST_ISSUE_LABELS_TOOL = "cao_linear.list_issue_labels"
+GET_ISSUE_LABEL_TOOL = "cao_linear.get_issue_label"
+LIST_PROJECTS_TOOL = "cao_linear.list_projects"
+GET_PROJECT_TOOL = "cao_linear.get_project"
+LIST_ISSUES_TOOL = "cao_linear.list_issues"
+SEARCH_ISSUES_TOOL = "cao_linear.search_issues"
+GET_COMMENT_TOOL = "cao_linear.get_comment"
+GET_AGENT_SESSION_TOOL = "cao_linear.get_agent_session"
+LIST_AGENT_SESSION_ACTIVITIES_TOOL = "cao_linear.list_agent_session_activities"
+GET_AGENT_SESSION_ACTIVITY_TOOL = "cao_linear.get_agent_session_activity"
+LIST_DOCUMENTS_TOOL = "cao_linear.list_documents"
+GET_DOCUMENT_TOOL = "cao_linear.get_document"
+SEARCH_DOCUMENTS_TOOL = "cao_linear.search_documents"
 READ_POLICY_HOOK = "linear_read_policy"
+EXPLORATION_READ_POLICY_HOOK = "linear_exploration_read_policy"
 COMMENT_WRITE_POLICY_HOOK = "linear_comment_write_policy"
 ISSUE_MUTATION_POLICY_HOOK = "linear_issue_mutation_policy"
 LINEAR_READ_TOOLS = frozenset({GET_ISSUE_TOOL, LIST_COMMENTS_TOOL})
 LINEAR_COMMENT_WRITE_TOOLS = frozenset({CREATE_COMMENT_TOOL})
 LINEAR_ISSUE_MUTATION_TOOLS = frozenset({CREATE_ISSUE_TOOL, UPDATE_ISSUE_TOOL})
-LINEAR_PROVIDER_TOOLS = LINEAR_READ_TOOLS | LINEAR_COMMENT_WRITE_TOOLS | LINEAR_ISSUE_MUTATION_TOOLS
+LINEAR_EXPLORATION_READ_TOOLS = frozenset(
+    {
+        LIST_TEAMS_TOOL,
+        GET_TEAM_TOOL,
+        LIST_USERS_TOOL,
+        GET_USER_TOOL,
+        LIST_ISSUE_STATUSES_TOOL,
+        GET_ISSUE_STATUS_TOOL,
+        LIST_ISSUE_LABELS_TOOL,
+        GET_ISSUE_LABEL_TOOL,
+        LIST_PROJECTS_TOOL,
+        GET_PROJECT_TOOL,
+        LIST_ISSUES_TOOL,
+        SEARCH_ISSUES_TOOL,
+        GET_COMMENT_TOOL,
+        GET_AGENT_SESSION_TOOL,
+        LIST_AGENT_SESSION_ACTIVITIES_TOOL,
+        GET_AGENT_SESSION_ACTIVITY_TOOL,
+        LIST_DOCUMENTS_TOOL,
+        GET_DOCUMENT_TOOL,
+        SEARCH_DOCUMENTS_TOOL,
+    }
+)
+LINEAR_PROVIDER_TOOLS = (
+    LINEAR_READ_TOOLS
+    | LINEAR_EXPLORATION_READ_TOOLS
+    | LINEAR_COMMENT_WRITE_TOOLS
+    | LINEAR_ISSUE_MUTATION_TOOLS
+)
 ISSUE_TARGETING_TOOLS = LINEAR_READ_TOOLS | LINEAR_COMMENT_WRITE_TOOLS | {UPDATE_ISSUE_TOOL}
 CREATE_ISSUE_FIELDS = frozenset(
     {
@@ -63,6 +112,8 @@ MAX_DESCRIPTION_CHARS = 4000
 MAX_COMMENT_BODY_CHARS = 4000
 DEFAULT_COMMENT_LIMIT = 50
 MAX_COMMENT_LIMIT = 100
+DEFAULT_LIST_LIMIT = 50
+MAX_LIST_LIMIT = 100
 _TRUNCATED = "...[truncated]"
 
 # External contract source: Linear's official GraphQL developer docs document
@@ -186,6 +237,120 @@ class LinearToolProvider:
                 input_schema=_update_issue_input_schema(),
                 handler=self._update_issue,
             ),
+            ProviderMediatedToolDefinition(
+                name=LIST_TEAMS_TOOL,
+                description="List compact Linear teams visible to this Linear app presence.",
+                input_schema=_list_query_schema(),
+                handler=self._list_teams,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_TEAM_TOOL,
+                description="Fetch one compact Linear team by id or key.",
+                input_schema=_id_input_schema("team_id", "Linear team UUID or key."),
+                handler=self._get_team,
+            ),
+            ProviderMediatedToolDefinition(
+                name=LIST_USERS_TOOL,
+                description="List compact Linear users visible to this Linear app presence.",
+                input_schema=_list_users_input_schema(),
+                handler=self._list_users,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_USER_TOOL,
+                description="Fetch one compact Linear user by id.",
+                input_schema=_id_input_schema("user_id", "Linear user UUID."),
+                handler=self._get_user,
+            ),
+            ProviderMediatedToolDefinition(
+                name=LIST_ISSUE_STATUSES_TOOL,
+                description="List compact Linear issue statuses, optionally filtered by team.",
+                input_schema=_list_team_scoped_schema(),
+                handler=self._list_issue_statuses,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_ISSUE_STATUS_TOOL,
+                description="Fetch one compact Linear issue status by workflow state id.",
+                input_schema=_id_input_schema("status_id", "Linear workflow state UUID."),
+                handler=self._get_issue_status,
+            ),
+            ProviderMediatedToolDefinition(
+                name=LIST_ISSUE_LABELS_TOOL,
+                description="List compact Linear issue labels, optionally filtered by team.",
+                input_schema=_list_team_scoped_schema(),
+                handler=self._list_issue_labels,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_ISSUE_LABEL_TOOL,
+                description="Fetch one compact Linear issue label by id.",
+                input_schema=_id_input_schema("label_id", "Linear issue label UUID."),
+                handler=self._get_issue_label,
+            ),
+            ProviderMediatedToolDefinition(
+                name=LIST_PROJECTS_TOOL,
+                description="List compact Linear projects visible to this Linear app presence.",
+                input_schema=_list_projects_input_schema(),
+                handler=self._list_projects,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_PROJECT_TOOL,
+                description="Fetch one compact Linear project by id or slug.",
+                input_schema=_id_input_schema("project_id", "Linear project UUID or slug."),
+                handler=self._get_project,
+            ),
+            ProviderMediatedToolDefinition(
+                name=LIST_ISSUES_TOOL,
+                description="List compact Linear issues with ordinary optional filters.",
+                input_schema=_list_issues_input_schema(),
+                handler=self._list_issues,
+            ),
+            ProviderMediatedToolDefinition(
+                name=SEARCH_ISSUES_TOOL,
+                description="Search Linear issues by term and return compact issue results.",
+                input_schema=_search_input_schema(),
+                handler=self._search_issues,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_COMMENT_TOOL,
+                description="Fetch one compact Linear comment by id.",
+                input_schema=_id_input_schema("comment_id", "Linear comment UUID."),
+                handler=self._get_comment,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_AGENT_SESSION_TOOL,
+                description="Fetch one compact Linear agent session by id.",
+                input_schema=_id_input_schema("agent_session_id", "Linear AgentSession UUID."),
+                handler=self._get_agent_session,
+            ),
+            ProviderMediatedToolDefinition(
+                name=LIST_AGENT_SESSION_ACTIVITIES_TOOL,
+                description="List bounded activities for a Linear agent session.",
+                input_schema=_list_agent_session_activities_schema(),
+                handler=self._list_agent_session_activities,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_AGENT_SESSION_ACTIVITY_TOOL,
+                description="Fetch one Linear agent session activity by id.",
+                input_schema=_id_input_schema("activity_id", "Linear AgentActivity UUID."),
+                handler=self._get_agent_session_activity,
+            ),
+            ProviderMediatedToolDefinition(
+                name=LIST_DOCUMENTS_TOOL,
+                description="List compact Linear documents, optionally filtered by project.",
+                input_schema=_list_documents_input_schema(),
+                handler=self._list_documents,
+            ),
+            ProviderMediatedToolDefinition(
+                name=GET_DOCUMENT_TOOL,
+                description="Fetch one compact Linear document by id.",
+                input_schema=_id_input_schema("document_id", "Linear document UUID."),
+                handler=self._get_document,
+            ),
+            ProviderMediatedToolDefinition(
+                name=SEARCH_DOCUMENTS_TOOL,
+                description="Search Linear documents by term and return compact document results.",
+                input_schema=_search_input_schema(),
+                handler=self._search_documents,
+            ),
         )
 
     def _hooks(self) -> tuple[ProviderToolHookDefinition, ...]:
@@ -194,6 +359,11 @@ class LinearToolProvider:
                 name=READ_POLICY_HOOK,
                 phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
                 handler=self._authorize_before_call,
+            ),
+            ProviderToolHookDefinition(
+                name=EXPLORATION_READ_POLICY_HOOK,
+                phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
+                handler=self._authorize_exploration_before_call,
             ),
             ProviderToolHookDefinition(
                 name=COMMENT_WRITE_POLICY_HOOK,
@@ -215,6 +385,8 @@ class LinearToolProvider:
                     pre_hook = COMMENT_WRITE_POLICY_HOOK
                 elif tool_name in LINEAR_ISSUE_MUTATION_TOOLS:
                     pre_hook = ISSUE_MUTATION_POLICY_HOOK
+                elif tool_name in LINEAR_EXPLORATION_READ_TOOLS:
+                    pre_hook = EXPLORATION_READ_POLICY_HOOK
                 else:
                     pre_hook = READ_POLICY_HOOK
                 requests.append(
@@ -233,6 +405,23 @@ class LinearToolProvider:
     ) -> ProviderToolPreCallResult:
         try:
             self._authorized_issue_request(context)
+        except LinearToolError as exc:
+            return ProviderToolPreCallResult.deny(
+                exc.reason,
+                {
+                    "provider_name": PROVIDER_NAME,
+                    "tool_name": context.tool_name,
+                    "detail": str(exc),
+                },
+            )
+        return ProviderToolPreCallResult.allow()
+
+    def _authorize_exploration_before_call(
+        self, context: ProviderToolInvocationContext
+    ) -> ProviderToolPreCallResult:
+        try:
+            self._presence_for_identity(context.agent_identity.id)
+            _validated_exploration_request(context.tool_name, context.arguments)
         except LinearToolError as exc:
             return ProviderToolPreCallResult.deny(
                 exc.reason,
@@ -416,6 +605,222 @@ class LinearToolProvider:
             status="updated",
             changed_fields=tuple(sorted(request)),
         )
+
+    def _list_teams(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.list_teams,
+            limit=request["limit"],
+            query=request.get("query"),
+        )
+
+    def _get_team(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(context, linear_queries.get_team, team_id=request["team_id"])
+
+    def _list_users(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.list_users,
+            limit=request["limit"],
+            query=request.get("query"),
+            include_disabled=request["include_disabled"],
+        )
+
+    def _get_user(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(context, linear_queries.get_user, user_id=request["user_id"])
+
+    def _list_issue_statuses(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.list_issue_statuses,
+            limit=request["limit"],
+            team_id=request.get("team_id"),
+            query=request.get("query"),
+        )
+
+    def _get_issue_status(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context, linear_queries.get_issue_status, status_id=request["status_id"]
+        )
+
+    def _list_issue_labels(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.list_issue_labels,
+            limit=request["limit"],
+            team_id=request.get("team_id"),
+            query=request.get("query"),
+        )
+
+    def _get_issue_label(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context, linear_queries.get_issue_label, label_id=request["label_id"]
+        )
+
+    def _list_projects(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.list_projects,
+            limit=request["limit"],
+            query=request.get("query"),
+            team_id=request.get("team_id"),
+        )
+
+    def _get_project(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context, linear_queries.get_project, project_id=request["project_id"]
+        )
+
+    def _list_issues(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(context, linear_queries.list_issues, **request)
+
+    def _search_issues(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(context, linear_queries.search_issues, **request)
+
+    def _get_comment(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context, linear_queries.get_comment, comment_id=request["comment_id"]
+        )
+
+    def _get_agent_session(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.get_agent_session,
+            agent_session_id=request["agent_session_id"],
+        )
+
+    def _list_agent_session_activities(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.list_agent_session_activities,
+            agent_session_id=request["agent_session_id"],
+            limit=request["limit"],
+        )
+
+    def _get_agent_session_activity(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context,
+            linear_queries.get_agent_session_activity,
+            activity_id=request["activity_id"],
+        )
+
+    def _list_documents(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(context, linear_queries.list_documents, **request)
+
+    def _get_document(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(
+            context, linear_queries.get_document, document_id=request["document_id"]
+        )
+
+    def _search_documents(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = _validated_exploration_request(context.tool_name, arguments)
+        return self._run_linear_query(context, linear_queries.search_documents, **request)
+
+    def _run_linear_query(
+        self,
+        context: ProviderToolInvocationContext,
+        query_func: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        presence = self._presence_for_identity(context.agent_identity.id)
+        try:
+            return query_func(presence, **kwargs)
+        except linear_queries.LinearProviderQueryError as exc:
+            raise LinearToolError(exc.reason, str(exc)) from exc
 
     def _validated_create_issue_request(
         self,
@@ -658,6 +1063,128 @@ def _issue_input_schema() -> dict[str, Any]:
     }
 
 
+def _id_input_schema(field: str, description: str) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            field: {
+                "type": "string",
+                "description": description,
+            }
+        },
+        "required": [field],
+        "additionalProperties": False,
+    }
+
+
+def _list_query_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "limit": _limit_schema(),
+            "query": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _list_team_scoped_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "limit": _limit_schema(),
+            "query": {"type": "string"},
+            "team_id": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _list_users_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "limit": _limit_schema(),
+            "query": {"type": "string"},
+            "include_disabled": {"type": "boolean"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _list_projects_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "limit": _limit_schema(),
+            "query": {"type": "string"},
+            "team_id": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _list_issues_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "limit": _limit_schema(),
+            "team_id": {"type": "string"},
+            "project_id": {"type": "string"},
+            "state_id": {"type": "string"},
+            "assignee_id": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _search_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "term": {"type": "string"},
+            "limit": _limit_schema(),
+            "team_id": {"type": "string"},
+            "include_comments": {"type": "boolean"},
+        },
+        "required": ["term"],
+        "additionalProperties": False,
+    }
+
+
+def _list_agent_session_activities_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "agent_session_id": {"type": "string"},
+            "limit": _limit_schema(),
+        },
+        "required": ["agent_session_id"],
+        "additionalProperties": False,
+    }
+
+
+def _list_documents_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "limit": _limit_schema(),
+            "query": {"type": "string"},
+            "project_id": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+
+
+def _limit_schema() -> dict[str, Any]:
+    return {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": MAX_LIST_LIMIT,
+        "description": "Maximum objects to return.",
+    }
+
+
 def _create_comment_input_schema() -> dict[str, Any]:
     issue_schema = _issue_input_schema()
     return {
@@ -711,6 +1238,181 @@ def _update_issue_input_schema() -> dict[str, Any]:
         "anyOf": issue_schema["anyOf"],
         "additionalProperties": False,
     }
+
+
+def _validated_exploration_request(
+    tool_name: str,
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    if tool_name in {LIST_TEAMS_TOOL}:
+        _require_only_arguments(arguments, {"limit", "query"}, tool_name)
+        return {
+            "limit": _list_limit(arguments.get("limit")),
+            **_optional_argument(arguments, "query"),
+        }
+    if tool_name == GET_TEAM_TOOL:
+        return {"team_id": _single_required_argument(arguments, "team_id", tool_name)}
+    if tool_name == LIST_USERS_TOOL:
+        _require_only_arguments(arguments, {"limit", "query", "include_disabled"}, tool_name)
+        return {
+            "limit": _list_limit(arguments.get("limit")),
+            "include_disabled": _optional_bool(arguments.get("include_disabled")),
+            **_optional_argument(arguments, "query"),
+        }
+    if tool_name == GET_USER_TOOL:
+        return {"user_id": _single_required_argument(arguments, "user_id", tool_name)}
+    if tool_name in {LIST_ISSUE_STATUSES_TOOL, LIST_ISSUE_LABELS_TOOL}:
+        _require_only_arguments(arguments, {"limit", "query", "team_id"}, tool_name)
+        return {
+            "limit": _list_limit(arguments.get("limit")),
+            **_optional_argument(arguments, "query"),
+            **_optional_argument(arguments, "team_id"),
+        }
+    if tool_name == GET_ISSUE_STATUS_TOOL:
+        return {"status_id": _single_required_argument(arguments, "status_id", tool_name)}
+    if tool_name == GET_ISSUE_LABEL_TOOL:
+        return {"label_id": _single_required_argument(arguments, "label_id", tool_name)}
+    if tool_name == LIST_PROJECTS_TOOL:
+        _require_only_arguments(arguments, {"limit", "query", "team_id"}, tool_name)
+        return {
+            "limit": _list_limit(arguments.get("limit")),
+            **_optional_argument(arguments, "query"),
+            **_optional_argument(arguments, "team_id"),
+        }
+    if tool_name == GET_PROJECT_TOOL:
+        return {"project_id": _single_required_argument(arguments, "project_id", tool_name)}
+    if tool_name == LIST_ISSUES_TOOL:
+        _require_only_arguments(
+            arguments,
+            {"limit", "team_id", "project_id", "state_id", "assignee_id"},
+            tool_name,
+        )
+        return {
+            "limit": _list_limit(arguments.get("limit")),
+            **_optional_argument(arguments, "team_id"),
+            **_optional_argument(arguments, "project_id"),
+            **_optional_argument(arguments, "state_id"),
+            **_optional_argument(arguments, "assignee_id"),
+        }
+    if tool_name == SEARCH_ISSUES_TOOL:
+        return _search_request(arguments, tool_name)
+    if tool_name == GET_COMMENT_TOOL:
+        return {"comment_id": _single_required_argument(arguments, "comment_id", tool_name)}
+    if tool_name == GET_AGENT_SESSION_TOOL:
+        return {
+            "agent_session_id": _single_required_argument(arguments, "agent_session_id", tool_name)
+        }
+    if tool_name == LIST_AGENT_SESSION_ACTIVITIES_TOOL:
+        _require_only_arguments(arguments, {"agent_session_id", "limit"}, tool_name)
+        return {
+            "agent_session_id": _required_argument(
+                arguments, "agent_session_id", tool_name=tool_name
+            ),
+            "limit": _list_limit(arguments.get("limit")),
+        }
+    if tool_name == GET_AGENT_SESSION_ACTIVITY_TOOL:
+        return {"activity_id": _single_required_argument(arguments, "activity_id", tool_name)}
+    if tool_name == LIST_DOCUMENTS_TOOL:
+        _require_only_arguments(arguments, {"limit", "query", "project_id"}, tool_name)
+        return {
+            "limit": _list_limit(arguments.get("limit")),
+            **_optional_argument(arguments, "query"),
+            **_optional_argument(arguments, "project_id"),
+        }
+    if tool_name == GET_DOCUMENT_TOOL:
+        return {"document_id": _single_required_argument(arguments, "document_id", tool_name)}
+    if tool_name == SEARCH_DOCUMENTS_TOOL:
+        return _search_request(arguments, tool_name)
+    raise LinearToolError(
+        "malformed_linear_tool_policy",
+        f"unexpected Linear exploration tool {tool_name!r}",
+    )
+
+
+def _search_request(arguments: Mapping[str, Any], tool_name: str) -> dict[str, Any]:
+    _require_only_arguments(arguments, {"term", "limit", "team_id", "include_comments"}, tool_name)
+    return {
+        "term": _required_argument(arguments, "term", tool_name=tool_name),
+        "limit": _list_limit(arguments.get("limit")),
+        "include_comments": _optional_bool(arguments.get("include_comments")),
+        **_optional_argument(arguments, "team_id"),
+    }
+
+
+def _single_required_argument(
+    arguments: Mapping[str, Any],
+    field: str,
+    tool_name: str,
+) -> str:
+    _require_only_arguments(arguments, {field}, tool_name)
+    return _required_argument(arguments, field, tool_name=tool_name)
+
+
+def _required_argument(
+    arguments: Mapping[str, Any],
+    field: str,
+    *,
+    tool_name: str,
+) -> str:
+    value = arguments.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise LinearToolError(
+            "invalid_linear_tool_argument",
+            f"{tool_name} requires non-empty string argument {field}",
+        )
+    return value.strip()
+
+
+def _optional_argument(arguments: Mapping[str, Any], field: str) -> dict[str, str]:
+    if field not in arguments or arguments.get(field) is None:
+        return {}
+    value = arguments.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise LinearToolError(
+            "invalid_linear_tool_argument",
+            f"{field} must be a non-empty string when provided",
+        )
+    return {field: value.strip()}
+
+
+def _optional_bool(value: Any) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise LinearToolError(
+            "invalid_linear_tool_argument",
+            "boolean arguments must be true or false",
+        )
+    return value
+
+
+def _require_only_arguments(
+    arguments: Mapping[str, Any],
+    allowed: set[str],
+    tool_name: str,
+) -> None:
+    unknown = set(arguments) - allowed
+    if unknown:
+        raise LinearToolError(
+            "invalid_linear_tool_argument",
+            f"{tool_name} does not accept arguments: {', '.join(sorted(unknown))}",
+        )
+
+
+def _list_limit(value: Any) -> int:
+    if value is None:
+        return DEFAULT_LIST_LIMIT
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise LinearToolError(
+            "invalid_linear_list_limit",
+            "limit must be an integer",
+        )
+    if value < 1 or value > MAX_LIST_LIMIT:
+        raise LinearToolError(
+            "invalid_linear_list_limit",
+            f"limit must be between 1 and {MAX_LIST_LIMIT}",
+        )
+    return value
 
 
 def _issue_key_from_arguments(arguments: Mapping[str, Any]) -> str:
