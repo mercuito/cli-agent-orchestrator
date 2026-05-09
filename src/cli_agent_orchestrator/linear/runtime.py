@@ -438,6 +438,28 @@ def notify_agent_for_persisted_event(
     return result
 
 
+def notify_or_retry_agent_for_persisted_event(
+    persisted_event: Optional[PersistedPresenceEvent],
+    event: Optional[PresenceEvent],
+) -> Optional[AgentRuntimeNotifyResult]:
+    """Deliver a persisted Linear event, retrying when idempotency found local state."""
+
+    notification_result = notify_agent_for_persisted_event(persisted_event, event)
+    if notification_result is not None:
+        return notification_result
+    duplicate_delivery = (
+        persisted_event is not None
+        and persisted_event.processed_event is not None
+        and event is not None
+        and event.thread is not None
+        and persisted_event.thread is None
+        and persisted_event.message is None
+    )
+    if not duplicate_delivery:
+        return None
+    return retry_agent_for_presence_event(event)
+
+
 def retry_agent_for_presence_event(
     event: Optional[PresenceEvent],
 ) -> Optional[AgentRuntimeNotifyResult]:

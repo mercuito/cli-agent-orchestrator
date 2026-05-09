@@ -8,8 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from cli_agent_orchestrator.linear import app_client
-from cli_agent_orchestrator.linear import runtime
+from cli_agent_orchestrator.linear import app_client, runtime
 from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
 from cli_agent_orchestrator.linear.presence_provider import (
     LinearPresenceProvider,
@@ -204,7 +203,10 @@ async def agent_webhook(
         verification.verified,
     )
 
-    notification_result = runtime.notify_agent_for_persisted_event(persisted, presence_event)
+    notification_result = runtime.notify_or_retry_agent_for_persisted_event(
+        persisted,
+        presence_event,
+    )
     duplicate_delivery = (
         persisted is not None
         and persisted.processed_event is not None
@@ -213,12 +215,7 @@ async def agent_webhook(
         and persisted.thread is None
         and persisted.message is None
     )
-    retry_result = (
-        runtime.retry_agent_for_presence_event(presence_event)
-        if notification_result is None and duplicate_delivery
-        else None
-    )
-    routed = notification_result is not None or retry_result is not None or duplicate_delivery
+    routed = notification_result is not None or duplicate_delivery
     return LinearWebhookResponse(
         ok=True,
         verified=verification.verified,

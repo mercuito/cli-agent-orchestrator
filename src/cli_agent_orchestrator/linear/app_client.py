@@ -59,6 +59,17 @@ class LinearWebhookVerification:
     app_user_name: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class RecentAgentSessionsResult:
+    """Bounded AgentSession page result for Linear monitor reconciliation."""
+
+    sessions: list[Dict[str, Any]]
+    page_count: int
+    max_pages: int
+    page_size: int
+    has_more: bool
+
+
 def linear_env(name: str) -> Optional[str]:
     """Read Linear config from process env first, then CAO's managed env file."""
     return linear_provider.linear_env(name)
@@ -668,6 +679,156 @@ def list_agent_session_activities(agent_session_id: str) -> list[Dict[str, Any]]
     if not isinstance(nodes, list):
         return []
     return [node for node in nodes if isinstance(node, dict)]
+
+
+def list_recent_agent_sessions(
+    *,
+    app_key: Optional[str] = None,
+    page_size: int = 25,
+    max_pages: int = 2,
+    activities_page_size: int = 25,
+) -> RecentAgentSessionsResult:
+    """Fetch a bounded recent AgentSession window ordered by Linear ``updatedAt``.
+
+    Linear's public schema exposes ``agentSessions(first, after, orderBy: updatedAt)``
+    and per-session ``activities(first, orderBy: updatedAt)``. This helper
+    deliberately applies page limits at the API boundary so reconciliation
+    cannot become an unbounded workspace crawl.
+    """
+
+    if page_size < 1 or page_size > 100:
+        raise LinearConfigError("Linear monitor page_size must be between 1 and 100")
+    if max_pages < 1 or max_pages > 10:
+        raise LinearConfigError("Linear monitor max_pages must be between 1 and 10")
+    if activities_page_size < 1 or activities_page_size > 100:
+        raise LinearConfigError("Linear monitor activities_page_size must be between 1 and 100")
+
+    sessions: list[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    has_more = False
+    page_count = 0
+
+    for _page_number in range(max_pages):
+        payload = linear_graphql(
+            """
+            query RecentAgentSessions(
+              $first: Int!
+              $after: String
+              $activitiesFirst: Int!
+            ) {
+              agentSessions(first: $first, after: $after, orderBy: updatedAt) {
+                nodes {
+                  id
+                  url
+                  status
+                  createdAt
+                  updatedAt
+                  appUser {
+                    id
+                    name
+                  }
+                  issue {
+                    id
+                    identifier
+                    title
+                    url
+                    state {
+                      name
+                    }
+                  }
+                  comment {
+                    id
+                    body
+                    createdAt
+                    updatedAt
+                  }
+                  sourceComment {
+                    id
+                    body
+                    createdAt
+                    updatedAt
+                  }
+                  activities(first: $activitiesFirst, orderBy: updatedAt) {
+                    nodes {
+                      id
+                      createdAt
+                      updatedAt
+                      signal
+                      content {
+                        ... on AgentActivityPromptContent {
+                          type
+                          body
+                        }
+                        ... on AgentActivityThoughtContent {
+                          type
+                          body
+                        }
+                        ... on AgentActivityResponseContent {
+                          type
+                          body
+                        }
+                        ... on AgentActivityElicitationContent {
+                          type
+                          body
+                        }
+                        ... on AgentActivityErrorContent {
+                          type
+                          body
+                        }
+                        ... on AgentActivityActionContent {
+                          type
+                          action
+                          parameter
+                          result
+                        }
+                      }
+                    }
+                    pageInfo {
+                      hasNextPage
+                      endCursor
+                    }
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+            """,
+            {
+                "first": page_size,
+                "after": cursor,
+                "activitiesFirst": activities_page_size,
+            },
+            app_key=app_key,
+        )
+        connection = payload.get("data", {}).get("agentSessions")
+        if not isinstance(connection, dict):
+            raise LinearAppError("Linear recent AgentSession query returned no connection")
+        nodes = connection.get("nodes")
+        if not isinstance(nodes, list):
+            raise LinearAppError("Linear recent AgentSession query returned invalid nodes")
+        sessions.extend(node for node in nodes if isinstance(node, dict))
+        page_count += 1
+
+        page_info = connection.get("pageInfo")
+        if not isinstance(page_info, dict):
+            raise LinearAppError("Linear recent AgentSession query returned no pageInfo")
+        has_more = bool(page_info.get("hasNextPage"))
+        cursor_value = page_info.get("endCursor")
+        cursor = str(cursor_value) if cursor_value else None
+        if not has_more or not cursor:
+            has_more = False
+            break
+
+    return RecentAgentSessionsResult(
+        sessions=sessions,
+        page_count=page_count,
+        max_pages=max_pages,
+        page_size=page_size,
+        has_more=has_more,
+    )
 
 
 def _verify_webhook_with_secret(

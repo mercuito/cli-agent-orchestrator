@@ -23,6 +23,7 @@ from cli_agent_orchestrator.clients.presence_store import (
     PresenceWorkItemModel,
     ProcessedProviderEventModel,
 )
+from cli_agent_orchestrator.linear.monitor_store import LinearMonitorWatermarkModel
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,11 @@ def init_db() -> None:
     _migrate_ensure_baton_tables()
     _migrate_ensure_presence_tables()
     _migrate_ensure_agent_runtime_tables()
+    _migrate_ensure_linear_monitor_tables()
     _migrate_drop_legacy_inbox_notification_ids()
     _migrate_ensure_presence_tables()
     _migrate_ensure_agent_runtime_tables()
+    _migrate_ensure_linear_monitor_tables()
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
     _migrate_add_terminal_agent_identity_id()
@@ -446,6 +449,16 @@ def _migrate_ensure_agent_runtime_tables() -> None:
             logger.info("Migration: rebuilt agent_runtime_notifications with notification ids")
     except Exception as e:
         logger.warning(f"Migration check for agent runtime notification ids failed: {e}")
+
+
+def _migrate_ensure_linear_monitor_tables() -> None:
+    """Create Linear-owned monitor watermark tables on existing databases."""
+    try:
+        LinearMonitorWatermarkModel.__table__.create(
+            bind=_database_module().engine, checkfirst=True
+        )
+    except Exception as e:
+        logger.warning(f"Migration check for Linear monitor tables failed: {e}")
 
 
 def _migrate_drop_legacy_inbox_notification_ids() -> None:

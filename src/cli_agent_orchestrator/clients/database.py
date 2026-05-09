@@ -25,6 +25,7 @@ from cli_agent_orchestrator.clients.database_migrations import (  # noqa: E402
     _migrate_drop_monitoring_session_peers,
     _migrate_ensure_agent_runtime_tables,
     _migrate_ensure_baton_tables,
+    _migrate_ensure_linear_monitor_tables,
     _migrate_ensure_presence_tables,
     _migrate_ensure_semantic_inbox_tables,
     init_db,
@@ -86,6 +87,7 @@ from cli_agent_orchestrator.clients.terminal_store import (  # noqa: E402
     list_terminals_by_session,
     update_last_active,
 )
+from cli_agent_orchestrator.linear.monitor_store import LinearMonitorWatermarkModel  # noqa: E402
 
 __all__ = [
     "AgentRuntimeNotificationModel",
@@ -98,6 +100,7 @@ __all__ = [
     "InboxMessageModel",
     "InboxNotificationModel",
     "InboxNotificationTargetModel",
+    "LinearMonitorWatermarkModel",
     "MonitoringSessionModel",
     "PresenceInboxNotificationModel",
     "PresenceMessageModel",
@@ -111,6 +114,7 @@ __all__ = [
     "_migrate_drop_monitoring_session_peers",
     "_migrate_ensure_agent_runtime_tables",
     "_migrate_ensure_baton_tables",
+    "_migrate_ensure_linear_monitor_tables",
     "_migrate_ensure_presence_tables",
     "_migrate_ensure_semantic_inbox_tables",
     "baton_event_from_model",
