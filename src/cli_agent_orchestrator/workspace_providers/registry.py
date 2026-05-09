@@ -53,6 +53,16 @@ class ProviderToolAccessWorkspaceProvider(WorkspaceProvider, Protocol):
         """Return preflighted provider-mediated tool access for CAO consumption."""
 
 
+@runtime_checkable
+class ProviderToolAccessConfigurableWorkspaceProvider(
+    ProviderToolAccessWorkspaceProvider, Protocol
+):
+    """Optional provider hint for avoiding tool-access startup without access config."""
+
+    def has_provider_tool_access_config(self) -> bool:
+        """Return whether this provider has configured mediated tool access."""
+
+
 WorkspaceProviderFactory = Callable[[AgentIdentityRegistry], WorkspaceProvider]
 
 
@@ -204,6 +214,11 @@ def load_enabled_provider_tool_access_policies(
     for name in enabled:
         provider = provider_registry.create(name, agents)
         if not isinstance(provider, ProviderToolAccessWorkspaceProvider):
+            continue
+        if (
+            isinstance(provider, ProviderToolAccessConfigurableWorkspaceProvider)
+            and not provider.has_provider_tool_access_config()
+        ):
             continue
         provider.initialize()
         providers_with_tools.append(provider)

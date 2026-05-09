@@ -19,11 +19,18 @@ from cli_agent_orchestrator.agent_identity import (
     load_agent_identity_registry,
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER, SESSION_PREFIX
+from cli_agent_orchestrator.linear.provider_tools import (
+    LINEAR_READ_TOOLS,
+    LinearReadToolProvider,
+    LinearToolAccess,
+)
+from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.env import load_env_vars, set_env_var
 from cli_agent_orchestrator.workspace_providers.registry import (
     is_workspace_provider_enabled,
     workspace_provider_config_exists,
 )
+from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
 
 LINEAR_PROVIDER_CONFIG_PATH = CAO_HOME_DIR / "workspace-providers" / "linear.toml"
 APP_KEY_PATTERN = re.compile(r"[^A-Za-z0-9]+")
@@ -62,6 +69,7 @@ class LinearProviderConfig:
 
     public_url: Optional[str]
     presences: dict[str, LinearPresence]
+    tool_access: dict[str, LinearToolAccess]
     source: str = "structured"
 
     def presence_by_app_key(self, app_key: str) -> Optional[LinearPresence]:
@@ -241,6 +249,71 @@ def _optional_str(table: Mapping[str, Any], key: str) -> Optional[str]:
     return value or None
 
 
+def _optional_str_list(
+    table: Mapping[str, Any],
+    key: str,
+    *,
+    location: str,
+    required: bool = False,
+) -> tuple[str, ...]:
+    value = table.get(key)
+    if value is None:
+        if required:
+            raise LinearWorkspaceProviderConfigError(
+                f"{location}.{key} must be a non-empty string list"
+            )
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise LinearWorkspaceProviderConfigError(
+            f"{location}.{key} must be a non-empty string list"
+        )
+    normalized = tuple(item.strip() for item in value if item.strip())
+    if required and not normalized:
+        raise LinearWorkspaceProviderConfigError(
+            f"{location}.{key} must be a non-empty string list"
+        )
+    return normalized
+
+
+def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAccess]:
+    raw_table = data.get("tool_access", {})
+    if raw_table is None:
+        return {}
+    if not isinstance(raw_table, Mapping):
+        raise LinearWorkspaceProviderConfigError("tool_access must be a table")
+
+    tool_access: dict[str, LinearToolAccess] = {}
+    for raw_access_id, raw_config in raw_table.items():
+        access_id = str(raw_access_id).strip()
+        location = f"tool_access.{access_id or '<empty>'}"
+        if not access_id:
+            raise LinearWorkspaceProviderConfigError("Linear tool_access id must be non-empty")
+        if not isinstance(raw_config, Mapping):
+            raise LinearWorkspaceProviderConfigError(f"{location} must be a table")
+
+        agent_id = _optional_str(raw_config, "agent_id")
+        agent_profile = _optional_str(raw_config, "agent_profile")
+        if bool(agent_id) == bool(agent_profile):
+            raise LinearWorkspaceProviderConfigError(
+                f"{location} must configure exactly one of agent_id or agent_profile"
+            )
+        tools = _optional_str_list(raw_config, "tools", location=location, required=True)
+        issues = _optional_str_list(raw_config, "issues", location=location, required=True)
+        for index, tool in enumerate(tools):
+            if tool not in LINEAR_READ_TOOLS:
+                raise LinearWorkspaceProviderConfigError(
+                    f"{location}.tools[{index}] unknown Linear read tool: {tool}"
+                )
+        tool_access[access_id] = LinearToolAccess(
+            access_id=access_id,
+            agent_id=agent_id,
+            agent_profile=agent_profile,
+            tools=tools,
+            issues=issues,
+        )
+    return tool_access
+
+
 def _load_structured_linear_config(path: Path) -> LinearProviderConfig:
     try:
         data = tomli.loads(path.read_text())
@@ -275,7 +348,12 @@ def _load_structured_linear_config(path: Path) -> LinearProviderConfig:
         )
 
     public_url = _optional_str(data, "public_url")
-    return LinearProviderConfig(public_url=public_url, presences=presences, source="structured")
+    return LinearProviderConfig(
+        public_url=public_url,
+        presences=presences,
+        tool_access=_load_linear_tool_access(data),
+        source="structured",
+    )
 
 
 def _legacy_configured_app_keys(env_reader: Callable[[str], Optional[str]]) -> list[str]:
@@ -330,7 +408,12 @@ def _load_legacy_linear_config(
         return None
     presences = {key: _legacy_presence(key, env_reader=env_reader) for key in keys}
     public_url = env_reader("LINEAR_CAO_PUBLIC_URL")
-    return LinearProviderConfig(public_url=public_url, presences=presences, source="legacy_env")
+    return LinearProviderConfig(
+        public_url=public_url,
+        presences=presences,
+        tool_access={},
+        source="legacy_env",
+    )
 
 
 def load_linear_provider_config(
@@ -413,6 +496,12 @@ def validate_linear_provider_config(
                     f"Linear presence {presence.presence_id} references missing CAO agent "
                     f"identity: {presence.agent_id}"
                 ) from exc
+
+    for access in config.tool_access.values():
+        if access.agent_id and access.agent_id not in agent_ids:
+            raise LinearWorkspaceProviderConfigError(
+                f"{access.location}.agent_id references missing Linear presence: {access.agent_id}"
+            )
 
 
 def parse_linear_token_expires_at(presence: LinearPresence) -> Optional[datetime]:
@@ -523,6 +612,16 @@ def save_linear_provider_config(
             value = getattr(presence, field)
             if value:
                 lines.append(f"{field} = {_format_toml_value(value)}")
+        lines.append("")
+    for access_id in sorted(config.tool_access):
+        access = config.tool_access[access_id]
+        lines.append(f"[tool_access.{access_id}]")
+        if access.agent_id:
+            lines.append(f"agent_id = {_format_toml_value(access.agent_id)}")
+        if access.agent_profile:
+            lines.append(f"agent_profile = {_format_toml_value(access.agent_profile)}")
+        lines.append(f"tools = {_format_toml_value(list(access.tools))}")
+        lines.append(f"issues = {_format_toml_value(list(access.issues))}")
         lines.append("")
     path.write_text("\n".join(lines).rstrip() + "\n")
     path.chmod(0o600)
@@ -671,6 +770,14 @@ def _legacy_identity_for_presence(
     )
 
 
+def _agent_profile_exists(profile: str) -> bool:
+    try:
+        load_agent_profile(profile)
+    except Exception:
+        return False
+    return True
+
+
 class LinearWorkspaceProvider:
     """Linear workspace-provider lifecycle and presence resolver."""
 
@@ -696,6 +803,19 @@ class LinearWorkspaceProvider:
     def config(self) -> Optional[LinearProviderConfig]:
         return self._config
 
+    def has_provider_tool_access_config(self) -> bool:
+        """Return whether Linear config declares CAO-mediated tool access."""
+        try:
+            config = load_linear_provider_config(
+                config_path=self._config_path,
+                agent_registry=self._agent_registry,
+                allow_legacy_env=False,
+                env_reader=self._env_reader,
+            )
+        except LinearWorkspaceProviderConfigError:
+            return True
+        return bool(config and config.tool_access)
+
     def initialize(self) -> None:
         self._config = load_linear_provider_config(
             config_path=self._config_path,
@@ -712,6 +832,15 @@ class LinearWorkspaceProvider:
                 self._config,
                 credential_checker=self._credential_checker,
             )
+
+    def provider_tool_access(self) -> ProviderToolAccessPolicy:
+        """Return Linear read-only CAO-mediated MCP tool access."""
+        config = self._load_config()
+        return LinearReadToolProvider(
+            config=config,
+            agent_registry=self._agent_registry,
+            profile_exists=_agent_profile_exists,
+        ).provider_tool_access()
 
     def _load_config(self) -> LinearProviderConfig:
         if self._config is None:

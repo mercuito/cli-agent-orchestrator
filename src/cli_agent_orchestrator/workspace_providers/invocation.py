@@ -211,8 +211,11 @@ class ProviderMediatedToolInvocationService:
                     },
                 )
             if not decision.allowed:
+                message = "Provider-mediated tool call denied by pre-call hook"
+                if decision.reason:
+                    message = f"{message}: {decision.reason}"
                 raise ProviderMediatedToolAccessDenied(
-                    "Provider-mediated tool call denied by pre-call hook",
+                    message,
                     reason=decision.reason or "pre_call_hook_denied",
                     diagnostics={
                         "provider_name": policy.provider_name,

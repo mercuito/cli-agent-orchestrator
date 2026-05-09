@@ -11,8 +11,8 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
     LinearWorkspaceProviderConfigError,
     configured_app_keys,
-    load_linear_provider_config,
     linear_app_env,
+    load_linear_provider_config,
     persist_linear_oauth_install,
 )
 
@@ -432,3 +432,47 @@ def test_persist_linear_oauth_install_uses_legacy_app_env_at_provider_edge(monke
         "LINEAR_APP_IMPLEMENTATION_PARTNER_APP_USER_ID": "impl-user-1",
         "LINEAR_APP_IMPLEMENTATION_PARTNER_APP_USER_NAME": "Implementation Partner",
     }
+
+
+def test_structured_token_update_preserves_linear_tool_access(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+access_token = "old-token"
+
+[tool_access.implementation_partner_reads]
+agent_id = "implementation_partner"
+tools = ["cao_linear.get_issue", "cao_linear.list_comments"]
+issues = ["CAO-28", "issue-28"]
+""",
+    )
+
+    updated = persist_linear_oauth_install(
+        app_key="implementation_partner",
+        access_token="new-token",
+        refresh_token="refresh-token",
+        config_path=config,
+    )
+
+    reloaded = load_linear_provider_config(
+        config_path=config,
+        agent_registry=_agents(),
+        allow_legacy_env=False,
+    )
+    assert updated is True
+    assert reloaded is not None
+    presence = reloaded.presence_by_app_key("implementation_partner")
+    assert presence is not None
+    assert presence.access_token == "new-token"
+    assert presence.refresh_token == "refresh-token"
+    assert reloaded.tool_access["implementation_partner_reads"].tools == (
+        "cao_linear.get_issue",
+        "cao_linear.list_comments",
+    )
+    assert reloaded.tool_access["implementation_partner_reads"].issues == (
+        "CAO-28",
+        "issue-28",
+    )
