@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from typing import Any, Mapping
 
 import pytest
@@ -18,9 +20,9 @@ from cli_agent_orchestrator.linear.provider_tools import (
     GET_AGENT_SESSION_TOOL,
     GET_COMMENT_TOOL,
     GET_DOCUMENT_TOOL,
-    GET_ISSUE_TOOL,
     GET_ISSUE_LABEL_TOOL,
     GET_ISSUE_STATUS_TOOL,
+    GET_ISSUE_TOOL,
     GET_PROJECT_TOOL,
     GET_TEAM_TOOL,
     GET_USER_TOOL,
@@ -37,8 +39,8 @@ from cli_agent_orchestrator.linear.provider_tools import (
     LIST_USERS_TOOL,
     SEARCH_DOCUMENTS_TOOL,
     SEARCH_ISSUES_TOOL,
-    UPDATE_ISSUE_TOOL,
     UPDATE_ISSUE_FIELDS,
+    UPDATE_ISSUE_TOOL,
 )
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
@@ -59,6 +61,20 @@ from cli_agent_orchestrator.workspace_providers.tool_access import (
 # The mocked Linear issue/comment payloads mirror the GraphQL object shape used
 # by Linear's official developer docs and schema explorer. See the contract note
 # beside the production queries in ``linear.provider_tools``.
+
+
+def test_provider_tools_imports_without_workspace_provider_import_order():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import cli_agent_orchestrator.linear.provider_tools",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _agents() -> AgentIdentityRegistry:
@@ -178,6 +194,160 @@ update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
     for tool in policy.tools.values():
         assert tool.input_schema.get("type") == "object"
         assert not forbidden_top_level_keywords.intersection(tool.input_schema)
+
+
+def test_linear_provider_tools_include_runtime_generation_material(tmp_path):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_all]
+agent_id = "implementation_partner"
+tools = {json.dumps(sorted(LINEAR_PROVIDER_TOOLS))}
+issues = ["CAO-28"]
+create_team_ids = ["team-cao"]
+create_project_ids = ["project-smoke"]
+create_parent_issues = ["CAO-28"]
+allow_top_level_create = true
+update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
+""",
+    )
+
+    policy = provider.provider_tool_access()
+
+    for tool in policy.tools.values():
+        material = tool.runtime_generation
+        assert material["schema_version"] == "cao-linear-mcp-tool-runtime-generation.v1"
+        assert material["tool_name"] == tool.name
+        assert material["handler"]["schema_version"] == "cao-callable-runtime-fingerprint.v1"
+        assert material["handler"]["entries"]
+        assert all(len(entry["sha256"]) == 64 for entry in material["handler"]["entries"])
+
+    list_teams_material = policy.tools[LIST_TEAMS_TOOL].runtime_generation
+    assert list_teams_material["constants"]["values"] == {
+        "APP_KEY_PATTERN": "[^A-Za-z0-9]+",
+        "DEFAULT_LIST_LIMIT": 50,
+        "LINEAR_GRAPHQL_URL": "https://api.linear.app/graphql",
+        "LINEAR_TOKEN_URL": "https://api.linear.app/oauth/token",
+        "MAX_LIST_LIMIT": 100,
+        "TOKEN_REFRESH_SKEW_SECONDS": 300.0,
+    }
+    list_teams_handler_entries = {
+        (entry["module"], entry["qualname"]) for entry in list_teams_material["handler"]["entries"]
+    }
+    assert (
+        "cli_agent_orchestrator.linear.provider_tools",
+        "LinearToolProvider._list_teams",
+    ) in list_teams_handler_entries
+    list_teams_query_entries = {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"]["linear_query"]["entries"]
+    }
+    assert (
+        "cli_agent_orchestrator.linear.provider_tool_queries",
+        "list_teams",
+    ) in list_teams_query_entries
+    assert (
+        "cli_agent_orchestrator.linear.app_client",
+        "linear_graphql",
+    ) in list_teams_query_entries
+    assert "app_client.access_token_for_app_key" in list_teams_material["dependencies"]
+    list_teams_refresh_entries = {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"]["app_client.refresh_access_token"][
+            "entries"
+        ]
+    }
+    assert (
+        "cli_agent_orchestrator.linear.app_client",
+        "refresh_access_token",
+    ) in list_teams_refresh_entries
+    assert (
+        "cli_agent_orchestrator.linear.workspace_provider",
+        "persist_linear_oauth_install",
+    ) in list_teams_refresh_entries
+    assert (
+        "cli_agent_orchestrator.linear.app_client",
+        "required_linear_app_env",
+    ) in {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"]["app_client.required_linear_app_env"][
+            "entries"
+        ]
+    }
+    assert (
+        "cli_agent_orchestrator.linear.workspace_provider",
+        "required_linear_app_env",
+    ) in {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"]["app_client.required_linear_app_env"][
+            "entries"
+        ]
+    }
+    assert (
+        "cli_agent_orchestrator.linear.app_client",
+        "linear_env",
+    ) in {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"]["app_client.linear_env"]["entries"]
+    }
+    assert {
+        "linear_provider.required_linear_app_env",
+        "linear_provider.linear_app_env",
+        "linear_provider.app_env_prefix",
+        "linear_provider.normalize_app_key",
+        "linear_provider.persist_linear_oauth_install",
+        "linear_provider.update_linear_presence_tokens",
+        "linear_provider.LinearProviderConfig.presence_by_app_key",
+    }.issubset(list_teams_material["dependencies"])
+    assert (
+        "cli_agent_orchestrator.linear.workspace_provider",
+        "linear_app_env",
+    ) in {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"]["linear_provider.linear_app_env"][
+            "entries"
+        ]
+    }
+    assert (
+        "cli_agent_orchestrator.linear.workspace_provider",
+        "update_linear_presence_tokens",
+    ) in {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"][
+            "linear_provider.update_linear_presence_tokens"
+        ]["entries"]
+    }
+    assert (
+        "cli_agent_orchestrator.linear.provider_tools",
+        "_list_query_request",
+    ) in {
+        (entry["module"], entry["qualname"])
+        for entry in list_teams_material["dependencies"]["_list_query_request"]["entries"]
+    }
+    assert "_validated_exploration_request" in list_teams_material["dependencies"]
+
+    get_issue_material = policy.tools[GET_ISSUE_TOOL].runtime_generation
+    get_issue_dependencies = set(get_issue_material["dependencies"])
+    assert {
+        "LinearToolProvider._authorized_issue_request",
+        "LinearToolProvider._presence_for_identity",
+        "LinearToolProvider._require_returned_issue_allowed",
+        "_fetch_issue",
+        "_issue_from_payload",
+        "_compact_issue_payload",
+    }.issubset(get_issue_dependencies)
+
+    update_issue_dependencies = set(
+        policy.tools[UPDATE_ISSUE_TOOL].runtime_generation["dependencies"]
+    )
+    assert policy.tools[UPDATE_ISSUE_TOOL].runtime_generation["constants"]["values"][
+        "UPDATE_ISSUE_FIELDS"
+    ] == sorted(UPDATE_ISSUE_FIELDS)
+    assert {
+        "LinearToolProvider._validated_update_issue_request",
+        "LinearToolProvider._require_parent_issue_allowed",
+    }.issubset(update_issue_dependencies)
+    assert "_fetch_team" not in update_issue_dependencies
 
 
 def _issue_payload(

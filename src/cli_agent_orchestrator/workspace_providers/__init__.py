@@ -17,6 +17,8 @@ from cli_agent_orchestrator.workspace_providers.registry import (
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,
+    ProviderMediatedToolRuntimeGenerationDescriptor,
+    ProviderMediatedToolSurfaceDescriptor,
     ProviderToolAccess,
     ProviderToolAccessConfigError,
     ProviderToolAccessIssue,
@@ -33,6 +35,8 @@ from cli_agent_orchestrator.workspace_providers.tool_access import (
 
 __all__ = [
     "ProviderMediatedToolDefinition",
+    "ProviderMediatedToolRuntimeGenerationDescriptor",
+    "ProviderMediatedToolSurfaceDescriptor",
     "ProviderToolAccess",
     "ProviderToolAccessConfigError",
     "ProviderToolAccessIssue",

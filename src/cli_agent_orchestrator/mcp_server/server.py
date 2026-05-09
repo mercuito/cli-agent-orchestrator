@@ -6,12 +6,23 @@ import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-import requests
+import requests  # type: ignore[import-untyped]
 from fastmcp import FastMCP
 from pydantic import Field
 
+from cli_agent_orchestrator.agent_identity import (
+    AgentIdentity,
+    AgentIdentityRegistry,
+    load_agent_identity_registry,
+)
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
+from cli_agent_orchestrator.mcp_server.freshness import (
+    build_agent_mcp_runtime_generation_descriptor,
+    build_agent_mcp_surface_descriptor,
+    callable_runtime_fingerprint,
+    fingerprint_agent_mcp_surface,
+)
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
 from cli_agent_orchestrator.mcp_server.provider_tools import (
     register_provider_mediated_mcp_tools_for_terminal,
@@ -41,6 +52,14 @@ from cli_agent_orchestrator.utils import agent_profiles as agent_profiles_utils
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 from cli_agent_orchestrator.utils.terminal import generate_session_name, wait_until_terminal_status
+from cli_agent_orchestrator.workspace_providers.registry import (
+    WorkspaceProviderConfigError,
+    load_enabled_provider_tool_access_policies,
+)
+from cli_agent_orchestrator.workspace_providers.tool_access import (
+    ProviderToolAccessConfigError,
+    ProviderToolAccessPolicy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +183,115 @@ def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
             "Registering all tools (permissive fallback)."
         )
         return None
+
+
+def build_mcp_surface_descriptor_for_identity(
+    identity: AgentIdentity,
+    *,
+    agent_registry: Optional[AgentIdentityRegistry] = None,
+    provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
+) -> Dict[str, Any]:
+    """Build the stable MCP surface descriptor for one identity."""
+    profile = load_agent_profile(identity.agent_profile)
+    built_in_allowlist = resolve_cao_tool_allowlist(profile)
+    policies = (
+        provider_policies
+        if provider_policies is not None
+        else _load_provider_policies_for_freshness(agent_registry)
+    )
+    return build_agent_mcp_surface_descriptor(
+        identity=identity,
+        built_in_tools=_PENDING_TOOLS,
+        built_in_tool_allowlist=built_in_allowlist,
+        provider_policies=policies,
+        baton_enabled=is_baton_enabled(),
+    )
+
+
+def build_mcp_runtime_generation_descriptor_for_identity(
+    identity: AgentIdentity,
+    *,
+    agent_registry: Optional[AgentIdentityRegistry] = None,
+    provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
+) -> Dict[str, Any]:
+    """Build runtime-generation material for one identity's visible MCP tools."""
+    profile = load_agent_profile(identity.agent_profile)
+    built_in_allowlist = resolve_cao_tool_allowlist(profile)
+    policies = (
+        provider_policies
+        if provider_policies is not None
+        else _load_provider_policies_for_freshness(agent_registry)
+    )
+    return build_agent_mcp_runtime_generation_descriptor(
+        identity=identity,
+        built_in_tools=_PENDING_TOOLS,
+        built_in_tool_allowlist=built_in_allowlist,
+        provider_policies=policies,
+        baton_enabled=is_baton_enabled(),
+        built_in_runtime_generation=_built_in_mcp_runtime_generation_material(),
+    )
+
+
+def build_mcp_surface_fingerprint_for_identity(
+    identity: AgentIdentity,
+    *,
+    agent_registry: Optional[AgentIdentityRegistry] = None,
+    provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
+) -> str:
+    """Return the deterministic hash for one identity's visible MCP tool surface."""
+    return fingerprint_agent_mcp_surface(
+        build_mcp_surface_descriptor_for_identity(
+            identity,
+            agent_registry=agent_registry,
+            provider_policies=provider_policies,
+        )
+    )
+
+
+def build_mcp_runtime_generation_fingerprint_for_identity(
+    identity: AgentIdentity,
+    *,
+    agent_registry: Optional[AgentIdentityRegistry] = None,
+    provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
+) -> str:
+    """Return deterministic hash of runtime material behind visible MCP tools."""
+    return fingerprint_agent_mcp_surface(
+        build_mcp_runtime_generation_descriptor_for_identity(
+            identity,
+            agent_registry=agent_registry,
+            provider_policies=provider_policies,
+        )
+    )
+
+
+def _load_provider_policies_for_freshness(
+    agent_registry: Optional[AgentIdentityRegistry],
+) -> Dict[str, ProviderToolAccessPolicy]:
+    registry = agent_registry or load_agent_identity_registry()
+    try:
+        return dict(load_enabled_provider_tool_access_policies(agent_registry=registry))
+    except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
+        logger.exception("Provider-mediated MCP tool configuration is invalid")
+        raise
+    except Exception:
+        logger.exception(
+            "Provider-mediated MCP freshness descriptor failed while loading provider "
+            "access; fingerprinting built-in CAO MCP tools only"
+        )
+        return {}
+
+
+def _built_in_mcp_runtime_generation_material() -> Dict[str, Any]:
+    """Return runtime-generation material for built-in CAO MCP tools."""
+    return {
+        "schema_version": "cao-built-in-mcp-runtime-generation.v1",
+        "tools": {
+            tool_name: {
+                "handler": callable_runtime_fingerprint(fn),
+            }
+            for tool_name, fn, _ in _PENDING_TOOLS
+        },
+    }
 
 
 LOAD_SKILL_TOOL_DESCRIPTION = """Retrieve the full Markdown body of an available skill from cao-server.

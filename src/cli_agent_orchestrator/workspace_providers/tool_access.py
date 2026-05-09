@@ -8,7 +8,7 @@ normalization into identity-scoped access.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Mapping, Protocol
 
@@ -48,6 +48,7 @@ class ProviderMediatedToolDefinition:
     description: str
     input_schema: Mapping[str, Any]
     handler: ProviderToolHandler
+    runtime_generation: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,27 @@ class ProviderToolAccess:
     pre_hooks: tuple[str, ...]
     post_hooks: tuple[str, ...]
     source_location: str
+
+
+@dataclass(frozen=True)
+class ProviderMediatedToolSurfaceDescriptor:
+    """Stable agent-facing provider-mediated MCP tool contract."""
+
+    provider_name: str
+    name: str
+    description: str
+    input_schema: Mapping[str, Any]
+    pre_hooks: tuple[str, ...]
+    post_hooks: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProviderMediatedToolRuntimeGenerationDescriptor:
+    """Stable provider-owned runtime material for a visible mediated tool."""
+
+    provider_name: str
+    name: str
+    runtime_generation: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -175,6 +197,51 @@ class ProviderToolAccessPolicy:
     def can_identity_access_tool(self, identity: AgentIdentity, tool_name: str) -> bool:
         """Return whether an identity has normalized access to a provider tool."""
         return any(entry.tool_name == tool_name for entry in self.access_for_identity(identity))
+
+    def surface_descriptors_for_identity(
+        self, identity: AgentIdentity
+    ) -> tuple[ProviderMediatedToolSurfaceDescriptor, ...]:
+        """Return stable visible tool contracts for one identity.
+
+        Provider access owns the mapping from identity to tool plus configured
+        hooks, so this projection intentionally lives beside that access policy.
+        Handler callables, source locations, credentials, and runtime data are
+        excluded because they are not part of the agent-visible MCP contract.
+        """
+        descriptors: list[ProviderMediatedToolSurfaceDescriptor] = []
+        for access in self.access_for_identity(identity):
+            tool = self.tools.get(access.tool_name)
+            if tool is None:
+                continue
+            descriptors.append(
+                ProviderMediatedToolSurfaceDescriptor(
+                    provider_name=self.provider_name,
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=tool.input_schema,
+                    pre_hooks=access.pre_hooks,
+                    post_hooks=access.post_hooks,
+                )
+            )
+        return tuple(sorted(descriptors, key=lambda item: (item.provider_name, item.name)))
+
+    def runtime_generation_descriptors_for_identity(
+        self, identity: AgentIdentity
+    ) -> tuple[ProviderMediatedToolRuntimeGenerationDescriptor, ...]:
+        """Return visible tool implementation/runtime material for one identity."""
+        descriptors: list[ProviderMediatedToolRuntimeGenerationDescriptor] = []
+        for access in self.access_for_identity(identity):
+            tool = self.tools.get(access.tool_name)
+            if tool is None:
+                continue
+            descriptors.append(
+                ProviderMediatedToolRuntimeGenerationDescriptor(
+                    provider_name=self.provider_name,
+                    name=tool.name,
+                    runtime_generation=tool.runtime_generation,
+                )
+            )
+        return tuple(sorted(descriptors, key=lambda item: (item.provider_name, item.name)))
 
 
 def normalize_provider_tool_access(
@@ -459,6 +526,8 @@ def _identities_by_profile(
 
 __all__ = [
     "ProviderMediatedToolDefinition",
+    "ProviderMediatedToolRuntimeGenerationDescriptor",
+    "ProviderMediatedToolSurfaceDescriptor",
     "ProviderToolAccess",
     "ProviderToolAccessConfigError",
     "ProviderToolAccessIssue",

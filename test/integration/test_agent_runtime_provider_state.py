@@ -37,6 +37,7 @@ from cli_agent_orchestrator.providers.base import (
     ProviderRuntimePreparation,
     ProviderRuntimeState,
 )
+from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeFreshnessAction, AgentRuntimeHandle
 
 pytestmark = pytest.mark.integration
@@ -455,6 +456,63 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         final_state = json.loads(handle._runtime_state_path().read_text())
         assert final_state["terminal_id"] == refreshed_terminal.id
         assert final_state["provider_runtime"] == _payload("session-a")
+    finally:
+        tmux_client.kill_session(session_name)
+
+
+def test_stale_mcp_runtime_generation_refreshes_and_resumes_before_delivery(
+    runtime_inbox_db_session,
+    integration_identity: AgentIdentity,
+    tmux_runtime_provider_world: TmuxRuntimeProviderWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not shutil.which("tmux"):
+        pytest.skip("tmux not installed")
+
+    mcp_runtime_generation = {"value": "mcp-v1"}
+    monkeypatch.setattr(
+        runtime_agent,
+        "_mcp_surface_fingerprint_for_identity",
+        lambda identity: "mcp-surface-v1",
+    )
+    monkeypatch.setattr(
+        runtime_agent,
+        "_mcp_runtime_generation_fingerprint_for_identity",
+        lambda identity: mcp_runtime_generation["value"],
+    )
+
+    handle = AgentRuntimeHandle(integration_identity)
+    session_name = handle.session_name
+    try:
+        initial_start = handle.ensure_fresh_started()
+        assert initial_start.ready is True
+        initial_terminal = handle.current_terminal()
+        assert initial_terminal is not None
+
+        mcp_runtime_generation["value"] = "mcp-v2"
+        result = handle.notify(
+            "echo CAO59_DELIVERED_AFTER_MCP_REFRESH",
+            source_kind="integration",
+            source_id="cao-59-mcp-runtime-generation-refresh",
+        )
+
+        assert result.freshness is not None
+        assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+        assert result.delivery.delivered is True
+        assert result.terminal_id is not None
+        assert result.terminal_id != initial_terminal.id
+        assert tmux_runtime_provider_world.capability.resume_args == [
+            ["--resume-thread", "session-a"]
+        ]
+
+        refreshed_terminal = handle.current_terminal()
+        assert refreshed_terminal is not None
+        refreshed_output = tmux_client.get_history(
+            refreshed_terminal.session_name,
+            refreshed_terminal.window_name,
+        )
+        assert "READY thread=session-a" in refreshed_output
+        assert "CAO59_DELIVERED_AFTER_MCP_REFRESH" in refreshed_output
     finally:
         tmux_client.kill_session(session_name)
 

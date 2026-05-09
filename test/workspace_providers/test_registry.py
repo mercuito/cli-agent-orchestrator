@@ -125,7 +125,28 @@ def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_ac
     enabled = tmp_path / "workspace-providers.toml"
     enabled.write_text('enabled = ["linear"]\n')
     agents = tmp_path / "agents.toml"
-    agents.write_text("")
+    agents.write_text("""
+[agents.discovery_partner]
+display_name = "Discovery Partner"
+agent_profile = "developer"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "discovery-partner"
+""")
+    linear_config = tmp_path / "workspace-providers" / "linear.toml"
+    linear_config.parent.mkdir(parents=True)
+    linear_config.write_text("""
+[presences.discovery_partner]
+agent_id = "discovery_partner"
+app_key = "discovery_partner"
+app_user_id = "app-user-discovery"
+app_user_name = "Discovery Partner"
+access_token = "access-token"
+""")
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider.LINEAR_PROVIDER_CONFIG_PATH",
+        linear_config,
+    )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
         lambda presence: (_ for _ in ()).throw(AssertionError("credential preflight called")),

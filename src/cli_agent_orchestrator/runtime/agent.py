@@ -653,6 +653,10 @@ class AgentRuntimeHandle:
             self.identity.cli_provider,
             launch_context=context,
         )
+        mcp_surface_fingerprint = _mcp_surface_fingerprint_for_identity(self.identity)
+        mcp_runtime_generation_fingerprint = _mcp_runtime_generation_fingerprint_for_identity(
+            self.identity
+        )
         descriptor = {
             "schema_version": RUNTIME_FINGERPRINT_SCHEMA_VERSION,
             "identity": {
@@ -667,6 +671,14 @@ class AgentRuntimeHandle:
             "provider": {
                 "schema_version": provider_descriptor.schema_version,
                 "material": provider_descriptor.material,
+            },
+            "mcp_surface": {
+                "schema_version": "cao-agent-mcp-surface-fingerprint.v1",
+                "fingerprint": mcp_surface_fingerprint,
+            },
+            "mcp_runtime_generation": {
+                "schema_version": "cao-agent-mcp-runtime-generation-fingerprint.v1",
+                "fingerprint": mcp_runtime_generation_fingerprint,
             },
         }
         return hashlib.sha256(_canonical_json_bytes(descriptor)).hexdigest()
@@ -926,6 +938,22 @@ def _canonical_json_bytes(value: Any) -> bytes:
         separators=(",", ":"),
         default=_json_default,
     ).encode("utf-8")
+
+
+def _mcp_surface_fingerprint_for_identity(identity: AgentIdentity) -> str:
+    from cli_agent_orchestrator.mcp_server.server import (
+        build_mcp_surface_fingerprint_for_identity,
+    )
+
+    return build_mcp_surface_fingerprint_for_identity(identity)
+
+
+def _mcp_runtime_generation_fingerprint_for_identity(identity: AgentIdentity) -> str:
+    from cli_agent_orchestrator.mcp_server.server import (
+        build_mcp_runtime_generation_fingerprint_for_identity,
+    )
+
+    return build_mcp_runtime_generation_fingerprint_for_identity(identity)
 
 
 def _json_default(value: Any) -> Any:

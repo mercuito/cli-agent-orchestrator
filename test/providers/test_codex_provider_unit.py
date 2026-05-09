@@ -1051,12 +1051,23 @@ class TestCodexRuntimeStateCapability:
     def test_probe_parser_uses_nonce_and_ignores_unrelated_output(self):
         output = (
             "unrelated CODEX_THREAD_ID=wrong\n"
-            f"{CODEX_THREAD_ID_PROBE_PREFIX}other:CODEX_THREAD_ID=other-thread\n"
-            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123:CODEX_THREAD_ID=thread-123\n"
+            f"{CODEX_THREAD_ID_PROBE_PREFIX}other=other-thread\n"
+            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123=thread-123\n"
         )
 
         assert parse_codex_thread_id_probe_output(output, nonce="abc123") == "thread-123"
         assert parse_codex_thread_id_probe_output(output, nonce="missing") is None
+
+    def test_probe_parser_tolerates_codex_wrapped_thread_id_output(self):
+        output = (
+            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123=019e0b8\n"
+            "    c-0138-7130-885e-9fbf56f88782\n"
+        )
+
+        assert (
+            parse_codex_thread_id_probe_output(output, nonce="abc123")
+            == "019e0b8c-0138-7130-885e-9fbf56f88782"
+        )
 
     @patch("cli_agent_orchestrator.providers.codex.uuid.uuid4")
     @patch("cli_agent_orchestrator.providers.codex.tmux_client")
@@ -1073,9 +1084,7 @@ class TestCodexRuntimeStateCapability:
             "tmux_session": "cao-session",
             "tmux_window": "window-1",
         }
-        mock_tmux.get_history.return_value = (
-            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123:CODEX_THREAD_ID=thread-123"
-        )
+        mock_tmux.get_history.return_value = f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123=thread-123"
 
         state = CodexProvider.runtime_state_capability().discover_current_runtime_state(
             terminal_id="terminal-1",
@@ -1090,7 +1099,7 @@ class TestCodexRuntimeStateCapability:
         mock_tmux.send_keys.assert_called_once_with(
             "cao-session",
             "window-1",
-            f'!echo "{CODEX_THREAD_ID_PROBE_PREFIX}abc123:CODEX_THREAD_ID=$CODEX_THREAD_ID"',
+            f'!printf "%s\\n" "{CODEX_THREAD_ID_PROBE_PREFIX}abc123=$CODEX_THREAD_ID"',
         )
 
 

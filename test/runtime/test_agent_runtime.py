@@ -30,6 +30,16 @@ def test_session(runtime_inbox_db_session, tmp_path, monkeypatch):
         tmp_path / "agents",
     )
     monkeypatch.setattr(runtime_agent.provider_manager, "runtime_state_capability", lambda _: None)
+    monkeypatch.setattr(
+        runtime_agent,
+        "_mcp_surface_fingerprint_for_identity",
+        lambda identity: "surface-v1",
+    )
+    monkeypatch.setattr(
+        runtime_agent,
+        "_mcp_runtime_generation_fingerprint_for_identity",
+        lambda identity: "runtime-generation-v1",
+    )
     return runtime_inbox_db_session
 
 
@@ -425,6 +435,74 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
     assert result.delivery.delivered is True
     delete_terminal.assert_called_once_with("terminal-1", require_window_killed=True)
     send_input.assert_called_once_with("terminal-2", "Deliver after profile refresh.")
+
+
+@pytest.mark.parametrize(
+    ("surface_v2", "runtime_generation_v2", "message"),
+    (
+        ("surface-v2", "runtime-generation-v1", "Deliver after MCP surface refresh."),
+        ("surface-v1", "runtime-generation-v2", "Deliver after MCP runtime refresh."),
+    ),
+)
+def test_changed_mcp_freshness_restarts_idle_terminal_before_delivery(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+    surface_v2,
+    runtime_generation_v2,
+    message,
+):
+    _create_terminal()
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    handle._write_applied_runtime_state("terminal-1", handle._desired_runtime_fingerprint())
+    monkeypatch.setattr(
+        runtime_agent,
+        "_mcp_surface_fingerprint_for_identity",
+        lambda identity: surface_v2,
+    )
+    monkeypatch.setattr(
+        runtime_agent,
+        "_mcp_runtime_generation_fingerprint_for_identity",
+        lambda identity: runtime_generation_v2,
+    )
+    monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
+    delete_terminal = Mock(
+        side_effect=lambda terminal_id, **kwargs: db_module.delete_terminal(terminal_id)
+    )
+    monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
+
+    def create_replacement(**kwargs):
+        db_module.create_terminal(
+            "terminal-2",
+            "cao-implementation-partner",
+            "developer-5678",
+            "codex",
+            "developer",
+            agent_identity_id="implementation_partner",
+        )
+        return _created_terminal_result("terminal-2")
+
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(side_effect=create_replacement),
+    )
+
+    result = handle.notify(
+        message,
+        source_kind="linear_event",
+        source_id=f"event-{message}",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+    assert result.terminal_id == "terminal-2"
+    assert result.delivery.delivered is True
+    delete_terminal.assert_called_once_with("terminal-1", require_window_killed=True)
+    send_input.assert_called_once_with("terminal-2", message)
 
 
 def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(

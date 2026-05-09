@@ -91,7 +91,7 @@ SHELL_COMMAND_NOT_FOUND_PATTERN = (
 )
 CODEX_TERM_DUMB_PATTERN = r'TERM is set to "dumb"\. Refusing to start'
 CODEX_RUNTIME_STATE_SCHEMA_VERSION = "codex-runtime-state.v1"
-CODEX_THREAD_ID_PROBE_PREFIX = "CAO_THREAD_ID_PROBE_"
+CODEX_THREAD_ID_PROBE_PREFIX = "CAOCT_"
 
 
 def _compute_tui_footer_cutoff(all_lines: list) -> int:
@@ -141,10 +141,12 @@ class ProviderError(Exception):
 
 def parse_codex_thread_id_probe_output(output: str, *, nonce: str) -> str | None:
     """Return the nonce-tagged Codex thread id from tmux output, if present."""
+    normalized = re.sub(r"(?<=[A-Za-z0-9_.:-])\n[ \t]+(?=[A-Za-z0-9_.:-])", "", output)
     pattern = re.compile(
-        rf"{re.escape(CODEX_THREAD_ID_PROBE_PREFIX + nonce)}:" r"CODEX_THREAD_ID=([A-Za-z0-9_.:-]+)"
+        rf"{re.escape(CODEX_THREAD_ID_PROBE_PREFIX + nonce)}="
+        r"([A-Za-z0-9_.:-]{8,})"
     )
-    matches = pattern.findall(output)
+    matches = pattern.findall(normalized)
     if not matches:
         return None
     thread_id = matches[-1].strip()
@@ -177,8 +179,11 @@ class CodexRuntimeStateCapability(ProviderRuntimeStateCapability):
         if metadata is None:
             raise ValueError(f"Terminal '{terminal_id}' not found")
 
-        nonce = uuid.uuid4().hex
-        probe = f'!echo "{CODEX_THREAD_ID_PROBE_PREFIX}{nonce}:CODEX_THREAD_ID=$CODEX_THREAD_ID"'
+        nonce = uuid.uuid4().hex[:8]
+        # Keep the probe line short enough to avoid Codex TUI wrapping the
+        # thread id across visual lines; the parser still tolerates wrapping
+        # because this discovery path depends on brittle CLI output behavior.
+        probe = f'!printf "%s\\n" "{CODEX_THREAD_ID_PROBE_PREFIX}{nonce}=$CODEX_THREAD_ID"'
         tmux_client.send_keys(metadata["tmux_session"], metadata["tmux_window"], probe)
 
         deadline = time.time() + 5.0
