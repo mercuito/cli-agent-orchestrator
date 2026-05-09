@@ -3,7 +3,9 @@
 import logging
 import os
 import re
+import shutil
 import shlex
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -83,6 +85,16 @@ TUI_PROGRESS_PATTERN = r"•.*\(\d+s\s*•\s*esc to interrupt\)"
 TRUST_PROMPT_PATTERN = r"allow Codex to work in this folder"
 # Codex welcome banner indicating normal startup (no trust prompt)
 CODEX_WELCOME_PATTERN = r"OpenAI Codex"
+CODEX_UPDATE_TIMEOUT_SECONDS = 120.0
+CODEX_STARTUP_DIAGNOSTIC_MAX_CHARS = 800
+CODEX_UPDATE_STARTUP_PROMPT_PATTERN = (
+    r"(?:codex\s+update|update\s+codex|update\s+available|self[- ]?update|"
+    r"please\s+restart\s+codex|restart\s+codex)"
+)
+CODEX_UNKNOWN_STARTUP_PROMPT_PATTERN = (
+    r"(?:press\s+(?:enter|return)\b|would\s+you\s+like|select\s+an\s+option|"
+    r"choose\s+an\s+option|continue\?)"
+)
 
 # Fatal startup errors that never recover — short-circuit to ERROR before
 # the normal status-detection logic runs.
@@ -137,6 +149,24 @@ class ProviderError(Exception):
     """Exception raised for provider-specific errors."""
 
     pass
+
+
+def _bounded_startup_diagnostics(output: str) -> str:
+    """Return short terminal diagnostics suitable for logs and Linear errors."""
+    clean_output = re.sub(ANSI_CODE_PATTERN, "", output or "").strip()
+    if not clean_output:
+        return "<no terminal output captured>"
+    lines = [line.rstrip() for line in clean_output.splitlines() if line.strip()]
+    diagnostic = "\n".join(lines[-20:]).strip()
+    if len(diagnostic) > CODEX_STARTUP_DIAGNOSTIC_MAX_CHARS:
+        diagnostic = "..." + diagnostic[-CODEX_STARTUP_DIAGNOSTIC_MAX_CHARS:]
+    return diagnostic
+
+
+def _detect_codex_update_prompt(output: str) -> bool:
+    """Return whether startup output indicates Codex wants an update/restart flow."""
+    clean_output = re.sub(ANSI_CODE_PATTERN, "", output or "")
+    return bool(re.search(CODEX_UPDATE_STARTUP_PROMPT_PATTERN, clean_output, re.IGNORECASE))
 
 
 def parse_codex_thread_id_probe_output(output: str, *, nonce: str) -> str | None:
@@ -319,6 +349,50 @@ class CodexProvider(BaseProvider):
         )
 
     @staticmethod
+    def run_update_preflight(*, timeout: float = CODEX_UPDATE_TIMEOUT_SECONDS) -> None:
+        """Run Codex's own updater before launching the interactive runtime.
+
+        CAO launches Codex inside managed tmux windows where interactive update
+        prompts can block Linear message delivery. Running `codex update` outside
+        the managed terminal makes routine update prompts happen before the agent
+        runtime starts. This depends on the Codex CLI's documented `update`
+        subcommand; if that contract changes, fail before creating a misleading
+        hanging runtime.
+        """
+        codex_bin = shutil.which("codex")
+        if not codex_bin:
+            raise ProviderError("Codex update preflight failed: codex binary not found in PATH")
+
+        env = os.environ.copy()
+        # The update is for the installed CLI, not a per-terminal CODEX_HOME.
+        env.pop("CODEX_HOME", None)
+        try:
+            proc = subprocess.run(
+                [codex_bin, "update"],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            raise ProviderError(
+                "Codex update preflight timed out. "
+                f"Output:\n{_bounded_startup_diagnostics(str(output))}"
+            ) from exc
+        except OSError as exc:
+            raise ProviderError(f"Codex update preflight failed to start: {exc}") from exc
+
+        if proc.returncode != 0:
+            raise ProviderError(
+                "Codex update preflight failed "
+                f"(exit {proc.returncode}). Output:\n"
+                f"{_bounded_startup_diagnostics(proc.stdout or '')}"
+            )
+
+    @staticmethod
     def cleanup_terminal_runtime(terminal_id: str) -> None:
         """Clean up volatile raw-terminal Codex runtime storage."""
         cleanup_codex_home(terminal_id)
@@ -459,6 +533,12 @@ class CodexProvider(BaseProvider):
             # Clean ANSI codes for reliable text matching
             clean_output = re.sub(ANSI_CODE_PATTERN, "", output)
 
+            if _detect_codex_update_prompt(clean_output):
+                raise ProviderError(
+                    "Codex startup stopped on an update/restart prompt after update preflight. "
+                    f"Output:\n{_bounded_startup_diagnostics(clean_output)}"
+                )
+
             if re.search(TRUST_PROMPT_PATTERN, clean_output):
                 logger.info("Codex workspace trust prompt detected, auto-accepting")
                 session = tmux_client.server.sessions.get(session_name=self.session_name)
@@ -479,6 +559,12 @@ class CodexProvider(BaseProvider):
                 logger.info("Codex started without trust prompt")
                 return
 
+            if re.search(CODEX_UNKNOWN_STARTUP_PROMPT_PATTERN, clean_output, re.IGNORECASE):
+                raise ProviderError(
+                    "Codex startup stopped on an unsupported interactive prompt. "
+                    f"Output:\n{_bounded_startup_diagnostics(clean_output)}"
+                )
+
             time.sleep(1.0)
         logger.warning("Codex trust prompt handler timed out")
 
@@ -492,6 +578,8 @@ class CodexProvider(BaseProvider):
         # has not yet processed a full interactive command cycle.
         tmux_client.send_keys(self.session_name, self.window_name, "echo ready")
         time.sleep(2.0)
+
+        self.run_update_preflight()
 
         # Build command with flags and agent profile (developer_instructions).
         # --no-alt-screen: run in inline mode so output stays in normal scrollback,
@@ -510,7 +598,16 @@ class CodexProvider(BaseProvider):
             timeout=60.0,
             polling_interval=1.0,
         ):
-            raise TimeoutError("Codex initialization timed out after 60 seconds")
+            output = tmux_client.get_history(self.session_name, self.window_name)
+            if _detect_codex_update_prompt(output):
+                raise ProviderError(
+                    "Codex startup stopped on an update/restart prompt after update preflight. "
+                    f"Output:\n{_bounded_startup_diagnostics(output)}"
+                )
+            raise ProviderError(
+                "Codex initialization did not reach an idle state. "
+                f"Output:\n{_bounded_startup_diagnostics(output)}"
+            )
 
         self._initialized = True
         return True

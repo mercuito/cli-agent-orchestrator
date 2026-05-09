@@ -23,10 +23,13 @@ def load_fixture(filename: str) -> str:
 
 
 class TestCodexProviderInitialization:
+    @patch("cli_agent_orchestrator.providers.codex.CodexProvider.run_update_preflight")
     @patch("cli_agent_orchestrator.providers.codex.wait_until_status")
     @patch("cli_agent_orchestrator.providers.codex.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.codex.tmux_client")
-    def test_initialize_success(self, mock_tmux, mock_wait_shell, mock_wait_status):
+    def test_initialize_success(
+        self, mock_tmux, mock_wait_shell, mock_wait_status, mock_update_preflight
+    ):
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = True
         mock_tmux.get_history.return_value = "OpenAI Codex (v0.98.0)"
@@ -35,6 +38,7 @@ class TestCodexProviderInitialization:
         result = provider.initialize()
 
         assert result is True
+        mock_update_preflight.assert_called_once()
         mock_wait_shell.assert_called_once()
         # Two send_keys calls: warm-up echo + codex with tmux-compatible flags
         assert mock_tmux.send_keys.call_count == 2
@@ -56,18 +60,103 @@ class TestCodexProviderInitialization:
         with pytest.raises(TimeoutError, match="Shell initialization timed out"):
             provider.initialize()
 
+    @patch("cli_agent_orchestrator.providers.codex.CodexProvider.run_update_preflight")
     @patch("cli_agent_orchestrator.providers.codex.wait_until_status")
     @patch("cli_agent_orchestrator.providers.codex.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.codex.tmux_client")
-    def test_initialize_codex_timeout(self, mock_tmux, mock_wait_shell, mock_wait_status):
+    def test_initialize_codex_timeout(
+        self, mock_tmux, mock_wait_shell, mock_wait_status, mock_update_preflight
+    ):
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = False
         mock_tmux.get_history.return_value = "OpenAI Codex (v0.98.0)"
 
         provider = CodexProvider("test1234", "test-session", "window-0", None)
 
-        with pytest.raises(TimeoutError, match="Codex initialization timed out"):
+        with pytest.raises(
+            ProviderError,
+            match="Codex initialization did not reach an idle state",
+        ):
             provider.initialize()
+        mock_update_preflight.assert_called_once()
+
+    @patch("cli_agent_orchestrator.providers.codex.CodexProvider.run_update_preflight")
+    @patch("cli_agent_orchestrator.providers.codex.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.codex.wait_for_shell")
+    @patch("cli_agent_orchestrator.providers.codex.tmux_client")
+    def test_initialize_update_prompt_fails_before_waiting_for_idle(
+        self, mock_tmux, mock_wait_shell, mock_wait_status, mock_update_preflight
+    ):
+        mock_wait_shell.return_value = True
+        mock_tmux.get_history.return_value = (
+            "A new Codex update is available.\n"
+            "Run codex update, then please restart Codex.\n"
+        )
+
+        provider = CodexProvider("test1234", "test-session", "window-0", None)
+
+        with pytest.raises(ProviderError, match="update/restart prompt"):
+            provider.initialize()
+
+        mock_update_preflight.assert_called_once()
+        mock_wait_status.assert_not_called()
+
+    @patch("cli_agent_orchestrator.providers.codex.CodexProvider.run_update_preflight")
+    @patch("cli_agent_orchestrator.providers.codex.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.codex.wait_for_shell")
+    @patch("cli_agent_orchestrator.providers.codex.tmux_client")
+    def test_initialize_unknown_startup_prompt_fails_with_diagnostics(
+        self, mock_tmux, mock_wait_shell, mock_wait_status, mock_update_preflight
+    ):
+        mock_wait_shell.return_value = True
+        mock_tmux.get_history.return_value = (
+            "Codex needs one more startup decision.\n"
+            "Press Enter to continue.\n"
+        )
+
+        provider = CodexProvider("test1234", "test-session", "window-0", None)
+
+        with pytest.raises(ProviderError) as exc_info:
+            provider.initialize()
+
+        assert "unsupported interactive prompt" in str(exc_info.value)
+        assert "Press Enter to continue" in str(exc_info.value)
+        mock_update_preflight.assert_called_once()
+        mock_wait_status.assert_not_called()
+
+
+class TestCodexUpdatePreflight:
+    @patch("cli_agent_orchestrator.providers.codex.subprocess.run")
+    @patch("cli_agent_orchestrator.providers.codex.shutil.which", return_value="/bin/codex")
+    def test_update_preflight_runs_codex_update_outside_managed_home(
+        self, mock_which, mock_run, monkeypatch
+    ):
+        monkeypatch.setenv("CODEX_HOME", "/tmp/managed-codex-home")
+        mock_run.return_value = MagicMock(returncode=0, stdout="already up to date")
+
+        CodexProvider.run_update_preflight(timeout=3.0)
+
+        mock_which.assert_called_once_with("codex")
+        args, kwargs = mock_run.call_args
+        assert args[0] == ["/bin/codex", "update"]
+        assert kwargs["timeout"] == 3.0
+        assert "CODEX_HOME" not in kwargs["env"]
+
+    @patch("cli_agent_orchestrator.providers.codex.subprocess.run")
+    @patch("cli_agent_orchestrator.providers.codex.shutil.which", return_value="/bin/codex")
+    def test_update_preflight_failure_is_provider_error(self, mock_which, mock_run):
+        mock_run.return_value = MagicMock(returncode=7, stdout="network unavailable")
+
+        with pytest.raises(ProviderError) as exc_info:
+            CodexProvider.run_update_preflight(timeout=3.0)
+
+        assert "Codex update preflight failed" in str(exc_info.value)
+        assert "network unavailable" in str(exc_info.value)
+
+    @patch("cli_agent_orchestrator.providers.codex.shutil.which", return_value=None)
+    def test_update_preflight_missing_binary_is_provider_error(self, mock_which):
+        with pytest.raises(ProviderError, match="codex binary not found"):
+            CodexProvider.run_update_preflight(timeout=3.0)
 
 
 class TestCodexBuildCommand:
@@ -278,12 +367,18 @@ class TestCodexBuildCommand:
         with pytest.raises(ProviderError, match="Failed to load agent profile"):
             provider._build_codex_command()
 
+    @patch("cli_agent_orchestrator.providers.codex.CodexProvider.run_update_preflight")
     @patch("cli_agent_orchestrator.providers.codex.wait_until_status")
     @patch("cli_agent_orchestrator.providers.codex.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
     @patch("cli_agent_orchestrator.providers.codex.tmux_client")
     def test_initialize_with_agent_profile(
-        self, mock_tmux, mock_load_profile, mock_wait_shell, mock_wait_status
+        self,
+        mock_tmux,
+        mock_load_profile,
+        mock_wait_shell,
+        mock_wait_status,
+        mock_update_preflight,
     ):
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = True
@@ -297,6 +392,7 @@ class TestCodexBuildCommand:
         result = provider.initialize()
 
         assert result is True
+        mock_update_preflight.assert_called_once()
         # The second send_keys call should contain developer_instructions
         codex_call = mock_tmux.send_keys.call_args_list[1]
         assert "developer_instructions=" in codex_call.args[2]
@@ -1155,10 +1251,13 @@ class TestCodexProviderTrustPrompt:
         # Should be WAITING_USER_ANSWER (not PROCESSING despite "running" in text)
         assert status == TerminalStatus.WAITING_USER_ANSWER
 
+    @patch("cli_agent_orchestrator.providers.codex.CodexProvider.run_update_preflight")
     @patch("cli_agent_orchestrator.providers.codex.wait_until_status")
     @patch("cli_agent_orchestrator.providers.codex.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.codex.tmux_client")
-    def test_initialize_with_trust_prompt(self, mock_tmux, mock_wait_shell, mock_wait_status):
+    def test_initialize_with_trust_prompt(
+        self, mock_tmux, mock_wait_shell, mock_wait_status, mock_update_preflight
+    ):
         """Test that initialize handles trust prompt during startup."""
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = True
@@ -1176,4 +1275,5 @@ class TestCodexProviderTrustPrompt:
         result = provider.initialize()
 
         assert result is True
+        mock_update_preflight.assert_called_once()
         mock_pane.send_keys.assert_called_with("", enter=True)
