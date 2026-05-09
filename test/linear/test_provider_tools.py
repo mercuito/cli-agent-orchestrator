@@ -1,4 +1,4 @@
-"""Tests for CAO-mediated Linear read-only provider tools."""
+"""Tests for CAO-mediated Linear provider tools."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ from fastmcp.exceptions import ToolError
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
 from cli_agent_orchestrator.linear import app_client
+from cli_agent_orchestrator.linear.provider_tools import (
+    CREATE_COMMENT_TOOL,
+    GET_ISSUE_TOOL,
+    LIST_COMMENTS_TOOL,
+)
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
     LinearWorkspaceProviderConfigError,
@@ -19,6 +24,7 @@ from cli_agent_orchestrator.mcp_server.provider_tools import (
     register_provider_mediated_mcp_tools,
 )
 from cli_agent_orchestrator.workspace_providers.invocation import (
+    ProviderMediatedToolAccessDenied,
     ProviderMediatedToolHandlerError,
     ProviderMediatedToolInvocationService,
 )
@@ -161,12 +167,428 @@ def _comments_payload() -> dict[str, Any]:
     }
 
 
+def _created_comment_payload() -> dict[str, Any]:
+    return {
+        "id": "comment-created",
+        "url": "https://linear.app/yards-framework/issue/CAO-50/example#comment-created",
+        "body": "Implementation complete.",
+        "createdAt": "2026-05-09T04:10:00.000Z",
+        "updatedAt": "2026-05-09T04:10:00.000Z",
+        "issue": {
+            "id": "issue-50",
+            "identifier": "CAO-50",
+            "url": "https://linear.app/yards-framework/issue/CAO-50/example",
+        },
+    }
+
+
 def _service(provider: LinearWorkspaceProvider) -> ProviderMediatedToolInvocationService:
     return ProviderMediatedToolInvocationService(
         policies={"linear": provider.provider_tool_access()},
         agent_registry=_agents(),
         terminal_metadata_resolver=_terminal_metadata,
     )
+
+
+@pytest.mark.asyncio
+async def test_linear_comment_tool_registers_and_creates_authorized_comment(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50", "issue-50"]
+""",
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        calls.append({"query": query, "variables": variables, "app_key": app_key})
+        assert app_key == "implementation_partner"
+        if "commentCreate" in query:
+            assert variables == {
+                "input": {"issueId": "issue-50", "body": "  Implementation complete.  "}
+            }
+            return {
+                "data": {"commentCreate": {"success": True, "comment": _created_comment_payload()}}
+            }
+        assert variables == {"id": "CAO-50"}
+        return {"data": {"issue": _issue_payload(id="issue-50", identifier="CAO-50")}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+
+    # Given the Linear provider grants comment-write access to one issue.
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    # When the identity-managed terminal creates a comment on that issue.
+    result = await mcp.call_tool(
+        CREATE_COMMENT_TOOL,
+        {"issue": "CAO-50", "body": "  Implementation complete.  "},
+    )
+
+    # Then the governed write tool is registered and returns a compact success payload.
+    payload = json.loads(result.content[0].text)
+    assert registered == [CREATE_COMMENT_TOOL]
+    assert payload == {
+        "status": "created",
+        "id": "comment-created",
+        "url": "https://linear.app/yards-framework/issue/CAO-50/example#comment-created",
+        "issue": {
+            "id": "issue-50",
+            "identifier": "CAO-50",
+            "url": "https://linear.app/yards-framework/issue/CAO-50/example",
+        },
+        "created_at": "2026-05-09T04:10:00.000Z",
+        "updated_at": "2026-05-09T04:10:00.000Z",
+    }
+    assert ["commentCreate" in call["query"] for call in calls] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_linear_comment_tool_creates_authorized_comment_from_issue_ref(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["issue-50"]
+""",
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        calls.append({"query": query, "variables": variables})
+        if "commentCreate" in query:
+            assert variables == {"input": {"issueId": "issue-50", "body": "Ref path."}}
+            return {
+                "data": {"commentCreate": {"success": True, "comment": _created_comment_payload()}}
+            }
+        assert variables == {"id": "issue-50"}
+        return {"data": {"issue": _issue_payload(id="issue-50", identifier="CAO-50")}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    result = await mcp.call_tool(
+        CREATE_COMMENT_TOOL,
+        {
+            "issue_ref": {"provider": "linear", "id": "issue-50"},
+            "body": "Ref path.",
+        },
+    )
+
+    assert registered == [CREATE_COMMENT_TOOL]
+    assert json.loads(result.content[0].text)["id"] == "comment-created"
+    assert ["commentCreate" in call["query"] for call in calls] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_linear_comment_tool_denies_unauthorized_issue_before_graphql(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50"]
+""",
+    )
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    assert registered == [CREATE_COMMENT_TOOL]
+    with pytest.raises(ToolError, match="unauthorized_linear_issue"):
+        await mcp.call_tool(
+            CREATE_COMMENT_TOOL,
+            {"issue": "CAO-51", "body": "This should be denied."},
+        )
+    with pytest.raises(ToolError, match="wrong_provider_ref"):
+        await mcp.call_tool(
+            CREATE_COMMENT_TOOL,
+            {
+                "issue_ref": {"provider": "github", "id": "CAO-50"},
+                "body": "This should be denied.",
+            },
+        )
+
+
+@pytest.mark.parametrize("body", ("", "   ", 123))
+def test_linear_comment_tool_rejects_invalid_body_before_graphql(
+    tmp_path,
+    monkeypatch,
+    body,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50"]
+""",
+    )
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+
+    with pytest.raises(ProviderMediatedToolAccessDenied, match="invalid_linear_comment_body"):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=CREATE_COMMENT_TOOL,
+            arguments={"issue": "CAO-50", "body": body},
+        )
+
+
+@pytest.mark.parametrize("terminal_id", ("terminal-discovery", "raw-terminal", "missing"))
+def test_linear_comment_tool_fail_closed_for_unmapped_or_unauthorized_terminals(
+    tmp_path,
+    terminal_id,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50"]
+""",
+    )
+
+    _mcp, registered = _mcp_for_provider(provider, terminal_id)
+
+    assert registered == []
+    with pytest.raises(ProviderMediatedToolAccessDenied):
+        _service(provider).invoke(
+            terminal_id=terminal_id,
+            provider_name="linear",
+            tool_name=CREATE_COMMENT_TOOL,
+            arguments={"issue": "CAO-50", "body": "Denied."},
+        )
+
+
+@pytest.mark.parametrize(
+    ("presence_patch", "expected"),
+    (
+        ({"access_token": None, "refresh_token": None}, "linear_credentials_missing"),
+        (
+            {
+                "access_token": "expired-token",
+                "refresh_token": None,
+                "token_expires_at": "2026-05-01T00:00:00+00:00",
+            },
+            "linear_credentials_expired",
+        ),
+    ),
+)
+def test_linear_comment_tool_reports_missing_or_expired_credentials_before_graphql(
+    tmp_path,
+    monkeypatch,
+    presence_patch,
+    expected,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50"]
+""",
+    )
+    config = provider.config
+    assert config is not None
+    presence = config.presences["implementation_partner"]
+    config.presences["implementation_partner"] = type(presence)(
+        **{**presence.__dict__, **presence_patch}
+    )
+    monkeypatch.setattr(
+        app_client,
+        "linear_graphql",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("GraphQL called")),
+    )
+
+    with pytest.raises(ProviderMediatedToolHandlerError, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=CREATE_COMMENT_TOOL,
+            arguments={"issue": "CAO-50", "body": "Credential check."},
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation_response", "raised", "expected"),
+    (
+        (
+            {"data": {"commentCreate": {"success": False, "comment": None}}},
+            None,
+            "linear_comment_create_failed",
+        ),
+        (
+            None,
+            RuntimeError("Linear GraphQL request failed: upstream exploded"),
+            "linear_api_failure",
+        ),
+    ),
+)
+def test_linear_comment_tool_reports_provider_api_failures(
+    tmp_path,
+    monkeypatch,
+    mutation_response,
+    raised,
+    expected,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50"]
+""",
+    )
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        if "commentCreate" in query:
+            if raised is not None:
+                raise raised
+            return mutation_response
+        return {"data": {"issue": _issue_payload(id="issue-50", identifier="CAO-50")}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+
+    with pytest.raises(ProviderMediatedToolHandlerError, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=CREATE_COMMENT_TOOL,
+            arguments={"issue": "CAO-50", "body": "Failure path."},
+        )
+
+
+@pytest.mark.parametrize(
+    ("resolved_issue", "expected"),
+    (
+        (None, "linear_issue_not_found"),
+        (
+            _issue_payload(id="issue-50", identifier="CAO-50", archived_at="2026-05-01T00:00:00Z"),
+            "linear_issue_archived",
+        ),
+        (_issue_payload(id="issue-51", identifier="CAO-51"), "linear_issue_outside_policy"),
+    ),
+)
+def test_linear_comment_tool_resolves_issue_failures_before_mutation(
+    tmp_path,
+    monkeypatch,
+    resolved_issue,
+    expected,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50", "issue-50"]
+""",
+    )
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        assert "commentCreate" not in query
+        return {"data": {"issue": resolved_issue}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+
+    with pytest.raises(ProviderMediatedToolHandlerError, match=expected):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=CREATE_COMMENT_TOOL,
+            arguments={"issue": "CAO-50", "body": "Must not mutate."},
+        )
+
+
+def test_linear_comment_tool_rejects_mutation_success_without_comment_id(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_comments]
+agent_id = "implementation_partner"
+tools = ["{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-50"]
+""",
+    )
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        if "commentCreate" in query:
+            return {
+                "data": {
+                    "commentCreate": {
+                        "success": True,
+                        "comment": {"url": "https://linear.app/comment-without-id"},
+                    }
+                }
+            }
+        return {"data": {"issue": _issue_payload(id="issue-50", identifier="CAO-50")}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+
+    with pytest.raises(ProviderMediatedToolHandlerError, match="linear_comment_create_failed"):
+        _service(provider).invoke(
+            terminal_id="terminal-impl",
+            provider_name="linear",
+            tool_name=CREATE_COMMENT_TOOL,
+            arguments={"issue": "CAO-50", "body": "No id."},
+        )
+
+
+@pytest.mark.asyncio
+async def test_linear_comment_tool_leaves_read_only_tools_unaffected(tmp_path, monkeypatch):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_linear_tools]
+agent_id = "implementation_partner"
+tools = ["{GET_ISSUE_TOOL}", "{LIST_COMMENTS_TOOL}", "{CREATE_COMMENT_TOOL}"]
+issues = ["CAO-28", "issue-28"]
+""",
+    )
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        assert "commentCreate" not in query
+        issue = _comments_payload() if "comments" in query else _issue_payload()
+        return {"data": {"issue": issue}}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+    mcp, registered = _mcp_for_provider(provider, "terminal-impl")
+
+    issue_result = await mcp.call_tool(GET_ISSUE_TOOL, {"issue": "CAO-28"})
+    comments_result = await mcp.call_tool(LIST_COMMENTS_TOOL, {"issue": "CAO-28"})
+
+    assert registered == [CREATE_COMMENT_TOOL, GET_ISSUE_TOOL, LIST_COMMENTS_TOOL]
+    assert json.loads(issue_result.content[0].text)["identifier"] == "CAO-28"
+    assert json.loads(comments_result.content[0].text)["comments"][0]["id"] == "comment-1"
 
 
 @pytest.mark.asyncio
@@ -546,7 +968,7 @@ agent_id = "implementation_partner"
 tools = ["cao_linear.mutate_issue"]
 issues = ["CAO-28"]
 """,
-            "tool_access.bad.tools[0] unknown Linear read tool: cao_linear.mutate_issue",
+            "tool_access.bad.tools[0] unknown Linear tool: cao_linear.mutate_issue",
         ),
         (
             """

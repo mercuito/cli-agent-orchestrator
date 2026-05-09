@@ -20,9 +20,9 @@ from cli_agent_orchestrator.agent_identity import (
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER, SESSION_PREFIX
 from cli_agent_orchestrator.linear.provider_tools import (
-    LINEAR_READ_TOOLS,
-    LinearReadToolProvider,
+    LINEAR_PROVIDER_TOOLS,
     LinearToolAccess,
+    LinearToolProvider,
 )
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.env import load_env_vars, set_env_var
@@ -300,9 +300,9 @@ def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAcc
         tools = _optional_str_list(raw_config, "tools", location=location, required=True)
         issues = _optional_str_list(raw_config, "issues", location=location, required=True)
         for index, tool in enumerate(tools):
-            if tool not in LINEAR_READ_TOOLS:
+            if tool not in LINEAR_PROVIDER_TOOLS:
                 raise LinearWorkspaceProviderConfigError(
-                    f"{location}.tools[{index}] unknown Linear read tool: {tool}"
+                    f"{location}.tools[{index}] unknown Linear tool: {tool}"
                 )
         tool_access[access_id] = LinearToolAccess(
             access_id=access_id,
@@ -834,9 +834,9 @@ class LinearWorkspaceProvider:
             )
 
     def provider_tool_access(self) -> ProviderToolAccessPolicy:
-        """Return Linear read-only CAO-mediated MCP tool access."""
+        """Return Linear CAO-mediated MCP tool access."""
         config = self._load_config()
-        return LinearReadToolProvider(
+        return LinearToolProvider(
             config=config,
             agent_registry=self._agent_registry,
             profile_exists=_agent_profile_exists,

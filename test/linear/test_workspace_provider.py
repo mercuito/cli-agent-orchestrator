@@ -445,7 +445,7 @@ access_token = "old-token"
 
 [tool_access.implementation_partner_reads]
 agent_id = "implementation_partner"
-tools = ["cao_linear.get_issue", "cao_linear.list_comments"]
+tools = ["cao_linear.get_issue", "cao_linear.list_comments", "cao_linear.create_comment"]
 issues = ["CAO-28", "issue-28"]
 """,
     )
@@ -471,6 +471,7 @@ issues = ["CAO-28", "issue-28"]
     assert reloaded.tool_access["implementation_partner_reads"].tools == (
         "cao_linear.get_issue",
         "cao_linear.list_comments",
+        "cao_linear.create_comment",
     )
     assert reloaded.tool_access["implementation_partner_reads"].issues == (
         "CAO-28",
