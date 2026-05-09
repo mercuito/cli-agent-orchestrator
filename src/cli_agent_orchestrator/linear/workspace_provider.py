@@ -1011,17 +1011,24 @@ class LinearWorkspaceProvider:
                 raise LinearWorkspaceProviderConfigError(f"Unknown Linear app key: {app_key}")
         if app_user_id:
             by_user = config.presence_by_app_user_id(app_user_id)
-            if by_user is None:
+            if by_user is None and presence is None:
                 raise LinearWorkspaceProviderConfigError(
                     f"Unknown Linear app user id: {app_user_id}"
                 )
-            if presence is not None and presence != by_user:
+            if by_user is not None and presence is not None and presence != by_user:
                 raise LinearWorkspaceProviderConfigError(
                     "Linear app key and app user id resolve to different CAO identities"
                 )
-            presence = by_user
-        if presence is None and app_user_name:
-            presence = config.presence_by_app_user_name(app_user_name)
+            if by_user is not None:
+                presence = by_user
+        if app_user_name:
+            by_name = config.presence_by_app_user_name(app_user_name)
+            if by_name is not None and presence is not None and presence != by_name:
+                raise LinearWorkspaceProviderConfigError(
+                    "Linear app key and app user name resolve to different CAO identities"
+                )
+            if presence is None:
+                presence = by_name
         if (
             presence is None
             and config.source == "legacy_env"

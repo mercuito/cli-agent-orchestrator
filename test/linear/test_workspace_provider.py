@@ -98,6 +98,67 @@ app_user_id = "app-user-impl"
     assert resolved.identity.id == "implementation_partner"
 
 
+def test_configured_linear_app_key_tolerates_unstored_app_user_id(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+""",
+    )
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        preflight_credentials=False,
+    )
+    provider.initialize()
+
+    resolved = provider.resolve_event(
+        {
+            "_cao_linear_app_key": "implementation_partner",
+            "appUserId": "fresh-linear-app-user-id",
+        }
+    )
+
+    assert resolved.presence.app_key == "implementation_partner"
+    assert resolved.identity.id == "implementation_partner"
+
+
+def test_configured_linear_app_key_rejects_conflicting_app_user_id(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+app_user_id = "app-user-impl"
+
+[presences.discovery_partner]
+agent_id = "discovery_partner"
+app_key = "discovery_partner"
+app_user_id = "app-user-discovery"
+""",
+    )
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        preflight_credentials=False,
+    )
+    provider.initialize()
+
+    with pytest.raises(
+        LinearWorkspaceProviderConfigError,
+        match="app key and app user id resolve to different CAO identities",
+    ):
+        provider.resolve_event(
+            {
+                "_cao_linear_app_key": "implementation_partner",
+                "appUserId": "app-user-discovery",
+            }
+        )
+
+
 def test_unknown_linear_app_key_is_rejected(tmp_path):
     config = _linear_config(
         tmp_path,

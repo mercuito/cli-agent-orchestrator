@@ -99,6 +99,7 @@ def _linear_agent_session_payload() -> dict:
         "type": "AgentSessionEvent",
         "action": "prompted",
         "_cao_linear_app_key": "implementation_partner",
+        "appUserId": "fresh-linear-app-user-id",
         "data": {
             "promptContext": '<issue identifier="CAO-43"><title>Durable identity</title></issue>',
             "agentSession": {
