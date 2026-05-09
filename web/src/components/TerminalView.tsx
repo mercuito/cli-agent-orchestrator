@@ -62,8 +62,11 @@ export function TerminalView({ terminalId, provider, agentProfile, terminalToken
       }
     }
 
-    ws.onclose = () => {
-      term.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n')
+    ws.onclose = (event) => {
+      const detail = event.code
+        ? ` code=${event.code}${event.reason ? ` reason=${event.reason}` : ''}`
+        : ''
+      term.write(`\r\n\x1b[33m[Connection closed${detail}]\x1b[0m\r\n`)
     }
 
     // Copy selection to clipboard on mouse-up

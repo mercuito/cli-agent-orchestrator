@@ -22,7 +22,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
   const [profileCount, setProfileCount] = useState(0)
   const [sessionData, setSessionData] = useState<SessionWithTerminals[]>([])
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set())
-  const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentProfile?: string | null } | null>(null)
+  const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentProfile?: string | null; terminalToken?: string | null } | null>(null)
   const [pendingClose, setPendingClose] = useState<TerminalMeta | null>(null)
   const [closingTerminal, setClosingTerminal] = useState<string | null>(null)
   const [inboxTerminalId, setInboxTerminalId] = useState<string | null>(null)
@@ -265,7 +265,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
                             <FileText size={14} />
                           </button>
                           <button
-                            onClick={() => setLiveTerminal({ id: t.id, provider: t.provider, agentProfile: t.agent_profile })}
+                            onClick={() => setLiveTerminal({ id: t.id, provider: t.provider, agentProfile: t.agent_profile, terminalToken: t.terminal_token })}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-colors"
                           >
                             <Monitor size={12} />
@@ -329,7 +329,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
       {/* Modals */}
       {inboxTerminalId && <InboxPanel terminalId={inboxTerminalId} onClose={() => setInboxTerminalId(null)} />}
       {liveTerminal && (
-        <TerminalView terminalId={liveTerminal.id} provider={liveTerminal.provider} agentProfile={liveTerminal.agentProfile} onClose={() => setLiveTerminal(null)} />
+        <TerminalView terminalId={liveTerminal.id} provider={liveTerminal.provider} agentProfile={liveTerminal.agentProfile} terminalToken={liveTerminal.terminalToken} onClose={() => setLiveTerminal(null)} />
       )}
       {outputTerminalId && <OutputViewer terminalId={outputTerminalId} onClose={() => setOutputTerminalId(null)} />}
       <ConfirmModal

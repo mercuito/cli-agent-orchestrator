@@ -41,6 +41,7 @@ export interface TerminalMeta {
   provider: string
   agent_profile: string | null
   agent_identity_id: string | null
+  terminal_token?: string | null
   last_active: string | null
 }
 

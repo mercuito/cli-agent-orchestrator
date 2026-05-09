@@ -429,7 +429,7 @@ export function AgentPanel({
                       Inbox
                     </button>
                     <button
-                      onClick={() => openTerminal(t.id, t.provider, t.agent_profile)}
+                      onClick={() => openTerminal(t.id, t.provider, t.agent_profile, t.terminal_token)}
                       className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-colors"
                       title="Open live terminal"
                     >

@@ -357,17 +357,24 @@ class TestGetSession:
     def test_get_session_success(self, client):
         """GET /sessions/{name} returns session details."""
         mock_session = {
-            "id": "test-session",
-            "windows": [{"name": "window-1", "id": "abcd1234"}],
+            "session": {"id": "test-session"},
+            "terminals": [{"id": "abcd1234", "tmux_session": "test-session"}],
         }
-        with patch("cli_agent_orchestrator.api.main.session_service") as mock_svc:
+        with (
+            patch("cli_agent_orchestrator.api.main.session_service") as mock_svc,
+            patch(
+                "cli_agent_orchestrator.api.main.create_terminal_dashboard_token",
+                return_value="signed-terminal-token",
+            ),
+        ):
             mock_svc.get_session.return_value = mock_session
 
             response = client.get("/sessions/test-session")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == "test-session"
+        assert data["session"]["id"] == "test-session"
+        assert data["terminals"][0]["terminal_token"] == "signed-terminal-token"
         mock_svc.get_session.assert_called_once_with("test-session")
 
     def test_get_session_not_found(self, client):
@@ -517,9 +524,15 @@ class TestListTerminalsInSession:
                 "agent_identity_id": None,
             },
         ]
-        with patch(
-            "cli_agent_orchestrator.clients.database.list_terminals_by_session",
-            return_value=mock_terminals,
+        with (
+            patch(
+                "cli_agent_orchestrator.clients.database.list_terminals_by_session",
+                return_value=mock_terminals,
+            ),
+            patch(
+                "cli_agent_orchestrator.api.main.create_terminal_dashboard_token",
+                side_effect=lambda terminal_id: f"token-{terminal_id}",
+            ),
         ):
             response = client.get("/sessions/s1/terminals")
 
@@ -527,7 +540,9 @@ class TestListTerminalsInSession:
         data = response.json()
         assert len(data) == 2
         assert data[0]["agent_identity_id"] == "implementation_partner"
+        assert data[0]["terminal_token"] == "token-abcd1234"
         assert data[1]["agent_identity_id"] is None
+        assert data[1]["terminal_token"] == "token-abcd5678"
 
     def test_list_terminals_empty(self, client):
         """GET /sessions/{name}/terminals returns empty list."""

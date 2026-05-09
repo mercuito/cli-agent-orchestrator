@@ -120,6 +120,43 @@ def _agent_dashboard_request_authorized(
     )
 
 
+def _with_terminal_dashboard_tokens(session_data: Dict) -> Dict:
+    """Attach websocket tokens to terminal rows returned to the dashboard.
+
+    The dashboard may be opened through a Tailscale/Funnel host, where terminal
+    websockets are not loopback requests. Session detail is the UI's source for
+    "Open Terminal" buttons, so each listed terminal needs the same signed token
+    that deep links already use.
+    """
+
+    terminals = session_data.get("terminals")
+    if not isinstance(terminals, list):
+        return session_data
+    enriched = []
+    for terminal in terminals:
+        if isinstance(terminal, dict) and terminal.get("id"):
+            terminal = {
+                **terminal,
+                "terminal_token": create_terminal_dashboard_token(str(terminal["id"])),
+            }
+        enriched.append(terminal)
+    return {**session_data, "terminals": enriched}
+
+
+def _terminal_rows_with_dashboard_tokens(terminals: List[Dict]) -> List[Dict]:
+    """Attach websocket tokens to raw terminal-list rows for dashboard clients."""
+
+    return [
+        {
+            **terminal,
+            "terminal_token": create_terminal_dashboard_token(str(terminal["id"])),
+        }
+        if isinstance(terminal, dict) and terminal.get("id")
+        else terminal
+        for terminal in terminals
+    ]
+
+
 async def flow_daemon():
     """Background task to check and execute flows."""
     logger.info("Flow daemon started")
@@ -490,7 +527,7 @@ async def list_sessions() -> List[Dict]:
 @app.get("/sessions/{session_name}")
 async def get_session(session_name: str) -> Dict:
     try:
-        return session_service.get_session(session_name)
+        return _with_terminal_dashboard_tokens(session_service.get_session(session_name))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -557,7 +594,7 @@ async def list_terminals_in_session(session_name: str) -> List[Dict]:
     try:
         from cli_agent_orchestrator.clients.database import list_terminals_by_session
 
-        return list_terminals_by_session(session_name)
+        return _terminal_rows_with_dashboard_tokens(list_terminals_by_session(session_name))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -815,6 +852,11 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
     """
     # Reject non-loopback clients unless they came through a signed dashboard link.
     if not _terminal_ws_authorized(websocket, terminal_id):
+        logger.warning(
+            "Rejected terminal websocket for %s from %s without a valid dashboard token",
+            terminal_id,
+            websocket.client.host if websocket.client else None,
+        )
         await websocket.close(code=4003, reason="WebSocket access is restricted to localhost")
         return
 
@@ -822,6 +864,7 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
 
     metadata = get_terminal_metadata(terminal_id)
     if not metadata:
+        logger.warning("Rejected terminal websocket for missing terminal %s", terminal_id)
         await websocket.close(code=4004, reason="Terminal not found")
         return
 
@@ -888,8 +931,26 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
                 await websocket.send_bytes(data)
             except asyncio.TimeoutError:
                 if proc.poll() is not None:
+                    logger.info(
+                        "Terminal websocket output ended for %s because tmux attach exited with %s",
+                        terminal_id,
+                        proc.returncode,
+                    )
                     break
-            except (Exception, asyncio.CancelledError):
+            except asyncio.CancelledError:
+                logger.info("Terminal websocket output cancelled for %s", terminal_id)
+                break
+            except RuntimeError as exc:
+                if "websocket.close" in str(exc):
+                    logger.info(
+                        "Terminal websocket output stopped for %s after client close",
+                        terminal_id,
+                    )
+                else:
+                    logger.exception("Terminal websocket output failed for %s", terminal_id)
+                break
+            except Exception:
+                logger.exception("Terminal websocket output failed for %s", terminal_id)
                 break
 
     async def _forward_input():
@@ -918,9 +979,18 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
                         os.kill(proc.pid, signal.SIGWINCH)
                     except OSError:
                         pass
-        except WebSocketDisconnect:
+        except WebSocketDisconnect as exc:
+            logger.info(
+                "Terminal websocket client disconnected for %s with code %s",
+                terminal_id,
+                getattr(exc, "code", None),
+            )
             pass
-        except (Exception, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            logger.info("Terminal websocket input cancelled for %s", terminal_id)
+            pass
+        except Exception:
+            logger.exception("Terminal websocket input failed for %s", terminal_id)
             pass
         finally:
             done.set()
@@ -1408,8 +1478,22 @@ from importlib.resources import files as _pkg_files
 WEB_DIST = Path(str(_pkg_files("cli_agent_orchestrator") / "web_ui"))
 if (WEB_DIST / "index.html").exists():
     from starlette.staticfiles import StaticFiles
+    from starlette.types import Scope
 
-    app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
+    class NoCacheStaticFiles(StaticFiles):
+        """Serve the dashboard without browser caching.
+
+        The dashboard is often rebuilt while the local CAO server is running.
+        Safari can otherwise keep an older HTML/JS pair alive and continue using
+        stale websocket behavior even after the server and bundle are patched.
+        """
+
+        async def get_response(self, path: str, scope: Scope) -> Response:
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+    app.mount("/", NoCacheStaticFiles(directory=str(WEB_DIST), html=True), name="web")
 
 
 def main():

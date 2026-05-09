@@ -1059,7 +1059,7 @@ def _issue_input_schema() -> dict[str, Any]:
                 "additionalProperties": True,
             },
         },
-        "anyOf": [{"required": ["issue"]}, {"required": ["issue_ref"]}],
+        "additionalProperties": False,
     }
 
 
@@ -1197,7 +1197,7 @@ def _create_comment_input_schema() -> dict[str, Any]:
             },
         },
         "required": ["body"],
-        "anyOf": issue_schema["anyOf"],
+        "additionalProperties": False,
     }
 
 
@@ -1235,7 +1235,6 @@ def _update_issue_input_schema() -> dict[str, Any]:
             "label_ids": {"type": "array", "items": {"type": "string"}},
             "priority": {"type": "integer", "minimum": 0, "maximum": 4},
         },
-        "anyOf": issue_schema["anyOf"],
         "additionalProperties": False,
     }
 
@@ -1636,14 +1635,25 @@ def _validate_linear_reference(field: str, value: str, presence: Any) -> None:
     from cli_agent_orchestrator.linear import app_client
 
     _preflight_presence_credentials(presence)
+    query_field = {
+        "project_id": "project",
+        "state_id": "workflowState",
+        "assignee_id": "user",
+        "label_ids": "issueLabel",
+    }.get(field)
+    if query_field is None:
+        raise LinearToolError(
+            "invalid_linear_reference",
+            f"unsupported Linear reference field: {field}",
+        )
     try:
         payload = app_client.linear_graphql(
-            """
-            query CaoLinearReference($id: String!) {
-              node(id: $id) {
+            f"""
+            query CaoLinearReference($id: String!) {{
+              {query_field}(id: $id) {{
                 id
-              }
-            }
+              }}
+            }}
             """,
             {"id": value},
             access_token=app_client.access_token_for_presence(presence),
@@ -1652,7 +1662,7 @@ def _validate_linear_reference(field: str, value: str, presence: Any) -> None:
     except Exception as exc:
         raise _linear_api_error(exc) from exc
     data = payload.get("data")
-    node = data.get("node") if isinstance(data, Mapping) else None
+    node = data.get(query_field) if isinstance(data, Mapping) else None
     if not isinstance(node, Mapping) or not node.get("id"):
         raise LinearToolError(
             "invalid_linear_reference",

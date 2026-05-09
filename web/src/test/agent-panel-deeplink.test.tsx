@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, waitFor, cleanup } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react'
 import { AgentPanel } from '../components/AgentPanel'
 
 const terminalViewMock = vi.hoisted(() => vi.fn(() => <div data-testid="terminal-view" />))
 const selectSession = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const showSnackbar = vi.hoisted(() => vi.fn())
+const storeState = vi.hoisted(() => ({
+  sessions: [] as Array<{ id: string; name: string; status: string }>,
+  activeSession: null as string | null,
+  activeSessionDetail: null as any,
+}))
 const getTerminal = vi.hoisted(() =>
   vi.fn(() =>
     Promise.resolve({
@@ -53,26 +58,34 @@ vi.mock('../api', () => ({
 }))
 
 vi.mock('../store', () => ({
-  useStore: vi.fn(() => ({
-    sessions: [],
-    fetchSessions: vi.fn(),
-    activeSession: null,
-    activeSessionDetail: null,
-    selectSession,
-    createSession: vi.fn(),
-    deleteSession: vi.fn(),
-    terminalStatuses: {},
-    setTerminalStatus: vi.fn(),
-    setActiveMonitoringSessions: vi.fn(),
-    setActiveBatons: vi.fn(),
-    showSnackbar,
-  })),
+  useStore: vi.fn((selector?: (state: any) => any) => {
+    const state = {
+      sessions: storeState.sessions,
+      fetchSessions: vi.fn(),
+      activeSession: storeState.activeSession,
+      activeSessionDetail: storeState.activeSessionDetail,
+      selectSession,
+      createSession: vi.fn(),
+      deleteSession: vi.fn(),
+      terminalStatuses: {},
+      activeMonitoringByTerminal: {},
+      activeBatonsByHolder: {},
+      setTerminalStatus: vi.fn(),
+      setActiveMonitoringSessions: vi.fn(),
+      setActiveBatons: vi.fn(),
+      showSnackbar,
+    }
+    return selector ? selector(state) : state
+  }),
 }))
 
 describe('AgentPanel terminal deep links', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    storeState.sessions = []
+    storeState.activeSession = null
+    storeState.activeSessionDetail = null
   })
 
   it('passes the initial terminal token through to TerminalView', async () => {
@@ -111,5 +124,40 @@ describe('AgentPanel terminal deep links', () => {
 
     expect(getAgentRuntimeTerminal).toHaveBeenCalledWith('discovery_partner', 'agent-token')
     expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
+  })
+
+  it('passes the session terminal token through when opening a listed terminal', async () => {
+    storeState.activeSession = 'cao-linear-smoke-tester'
+    storeState.activeSessionDetail = {
+      session: { id: 'cao-linear-smoke-tester', name: 'cao-linear-smoke-tester', status: 'active' },
+      terminals: [
+        {
+          id: 'term-3',
+          tmux_session: 'cao-linear-smoke-tester',
+          tmux_window: '0',
+          provider: 'codex',
+          agent_profile: 'linear_smoke_tester',
+          agent_identity_id: 'linear_smoke_tester',
+          terminal_token: 'session-terminal-token',
+          last_active: null,
+        },
+      ],
+    }
+
+    render(<AgentPanel />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /open terminal/i }))
+
+    await waitFor(() => {
+      expect(terminalViewMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalId: 'term-3',
+          provider: 'codex',
+          agentProfile: 'linear_smoke_tester',
+          terminalToken: 'session-terminal-token',
+        }),
+        {},
+      )
+    })
   })
 })

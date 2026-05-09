@@ -25,6 +25,7 @@ from cli_agent_orchestrator.linear.provider_tools import (
     GET_TEAM_TOOL,
     GET_USER_TOOL,
     LINEAR_EXPLORATION_READ_TOOLS,
+    LINEAR_PROVIDER_TOOLS,
     LIST_AGENT_SESSION_ACTIVITIES_TOOL,
     LIST_COMMENTS_TOOL,
     LIST_DOCUMENTS_TOOL,
@@ -37,6 +38,7 @@ from cli_agent_orchestrator.linear.provider_tools import (
     SEARCH_DOCUMENTS_TOOL,
     SEARCH_ISSUES_TOOL,
     UPDATE_ISSUE_TOOL,
+    UPDATE_ISSUE_FIELDS,
 )
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
@@ -140,6 +142,42 @@ def _mcp_for_provider(provider: LinearWorkspaceProvider, terminal_id: str):
         terminal_metadata_resolver=_terminal_metadata,
     )
     return mcp, registered
+
+
+def _linear_reference_payload(object_id: str | None) -> dict[str, Any]:
+    node = {"id": object_id} if object_id else None
+    return {
+        "data": {
+            "project": node,
+            "workflowState": node,
+            "user": node,
+            "issueLabel": node,
+        }
+    }
+
+
+def test_linear_provider_tool_schemas_are_codex_compatible(tmp_path):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_all]
+agent_id = "implementation_partner"
+tools = {json.dumps(sorted(LINEAR_PROVIDER_TOOLS))}
+issues = ["CAO-28"]
+create_team_ids = ["team-cao"]
+create_project_ids = ["project-smoke"]
+create_parent_issues = ["CAO-28"]
+allow_top_level_create = true
+update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
+""",
+    )
+    policy = provider.provider_tool_access()
+
+    forbidden_top_level_keywords = {"anyOf", "oneOf", "allOf", "enum", "not"}
+    assert set(policy.tools) == LINEAR_PROVIDER_TOOLS
+    for tool in policy.tools.values():
+        assert tool.input_schema.get("type") == "object"
+        assert not forbidden_top_level_keywords.intersection(tool.input_schema)
 
 
 def _issue_payload(
@@ -401,7 +439,7 @@ create_parent_issues = ["CAO-25", "parent-25"]
             }
             return {"data": {"issueCreate": {"success": True, "issue": _mutated_issue_payload()}}}
         if "CaoLinearReference" in query:
-            return {"data": {"node": {"id": variables["id"]}}}
+            return _linear_reference_payload(variables["id"])
         assert variables == {"id": "CAO-25"}
         return {"data": {"issue": _issue_payload(id="parent-25", identifier="CAO-25")}}
 
@@ -480,7 +518,7 @@ update_fields = ["title", "state_id", "parent_issue", "label_ids"]
                 }
             }
         if "CaoLinearReference" in query:
-            return {"data": {"node": {"id": variables["id"]}}}
+            return _linear_reference_payload(variables["id"])
         if variables == {"id": "CAO-25"}:
             return {"data": {"issue": _issue_payload(id="parent-25", identifier="CAO-25")}}
         assert variables == {"id": "CAO-51"}
@@ -737,7 +775,7 @@ allow_top_level_create = true
         if "CaoLinearTeams" in query:
             return {"data": {"teams": _teams_payload()}}
         assert "CaoLinearReference" in query
-        return {"data": {"node": None}}
+        return _linear_reference_payload(None)
 
     monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
 
@@ -892,7 +930,7 @@ update_fields = ["title"]
                 raise raised
             return mutation_response
         if "CaoLinearReference" in query:
-            return {"data": {"node": {"id": variables["id"]}}}
+            return _linear_reference_payload(variables["id"])
         return {"data": {"issue": _mutated_issue_payload()}}
 
     monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
