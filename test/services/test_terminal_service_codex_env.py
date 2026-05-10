@@ -298,3 +298,4 @@ def test_create_terminal_deserializes_provider_runtime_and_passes_resume_args(
         "--resume-thread",
         "session-a",
     ]
+    assert create_provider.call_args.kwargs["provider_data_dir"] == str(provider_data_dir)

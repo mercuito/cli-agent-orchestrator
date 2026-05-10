@@ -88,6 +88,40 @@ The provider builds the command via `_build_claude_command()`:
 claude --dangerously-skip-permissions [--append-system-prompt "..."] [--mcp-config "..."]
 ```
 
+For CAO agent identity launches, the command also includes provider-owned
+runtime material:
+
+```
+claude --dangerously-skip-permissions \
+  --settings <identity-provider-dir>/settings.json \
+  --plugin-dir <identity-provider-dir>/plugins/cao-profile-skills \
+  --strict-mcp-config \
+  --session-id <identity-session-id>
+```
+
+When CAO refreshes an identity runtime and Claude has a persisted session, it
+uses Claude's native resume path:
+
+```
+claude ... --resume <identity-session-id>
+```
+
+### Identity Runtime Storage
+
+Claude Code identity launches keep CAO-generated runtime files under the
+agent identity's provider data directory:
+
+- `settings.json`: CAO-owned Claude settings for this identity launch.
+- `plugins/cao-profile-skills/`: profile-scoped skills materialized as a
+  Claude plugin.
+- `session-id`: CAO's durable Claude session UUID for the identity.
+
+Claude login is intentionally not copied into this directory. Claude Code's
+OAuth state is tied to the normal user/keychain path, and copying
+`~/.claude.json` into an isolated home directory is not sufficient. CAO
+therefore preflights `claude auth status` and uses the current user's Claude
+login while keeping generated settings, plugins, and session ids identity-local.
+
 ## Implementation Notes
 
 - **Prompt patterns**: `IDLE_PROMPT_PATTERN` matches both old `>` and new `❯` prompt styles, including non-breaking space (`\xa0`)
@@ -95,6 +129,9 @@ claude --dangerously-skip-permissions [--append-system-prompt "..."] [--mcp-conf
 - **Processing detection**: `PROCESSING_PATTERN` matches both old format (`✽ Cooking… (esc to interrupt)`) and new Claude Code 2.x format (`✽ Cooking… (6s · ↓ 174 tokens · thinking)`)
 - **Trust prompt exclusion**: `TRUST_PROMPT_PATTERN` ("Yes, I trust this folder") is excluded from `WAITING_USER_ANSWER` detection to avoid false positives during initialization
 - **Shell escaping**: Uses `shlex.join()` for safe command construction with multiline prompts
+- **Startup preflight**: Identity launches run `claude update` and
+  `claude auth status` before starting the terminal so update/auth prompts fail
+  early instead of hanging inside tmux.
 - **Exit command**: `/exit` via `POST /terminals/{terminal_id}/exit`
 
 ### Status Values

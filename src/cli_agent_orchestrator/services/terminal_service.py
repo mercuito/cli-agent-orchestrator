@@ -229,6 +229,9 @@ def create_terminal(
             agent_profile,
             allowed_tools,
             runtime_resume_args=runtime_resume_args,
+            provider_data_dir=(
+                None if launch_context is None else str(launch_context.provider_data_dir)
+            ),
         )
         provider_instance.initialize()
 

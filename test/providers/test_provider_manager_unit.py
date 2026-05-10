@@ -156,6 +156,26 @@ def test_create_provider_claude_code():
     assert manager.get_provider("t1") is provider
 
 
+def test_create_provider_claude_code_passes_runtime_resume_args(tmp_path):
+    """Claude resume args must flow through ProviderManager, not stay Codex-only."""
+    from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
+
+    manager = ProviderManager()
+    provider = manager.create_provider(
+        ProviderType.CLAUDE_CODE.value,
+        terminal_id="t1",
+        tmux_session="s1",
+        tmux_window="w1",
+        agent_profile=None,
+        provider_data_dir=str(tmp_path / "claude_code"),
+        runtime_resume_args=["--resume", "11111111-1111-4111-8111-111111111111"],
+    )
+
+    assert isinstance(provider, ClaudeCodeProvider)
+    assert provider._runtime_resume_args == ["--resume", "11111111-1111-4111-8111-111111111111"]
+    assert provider._provider_data_dir == tmp_path / "claude_code"
+
+
 def test_get_provider_not_in_database_raises():
     """Test get_provider raises when terminal not found in database."""
     manager = ProviderManager()

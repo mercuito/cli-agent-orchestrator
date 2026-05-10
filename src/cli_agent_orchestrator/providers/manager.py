@@ -1,6 +1,7 @@
 """Provider manager as module singleton with direct terminal_id → provider mapping."""
 
 import logging
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Type, cast
 
 from cli_agent_orchestrator.clients.database import get_terminal_metadata
@@ -115,6 +116,7 @@ class ProviderManager:
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[List[str]] = None,
         runtime_resume_args: Optional[List[str]] = None,
+        provider_data_dir: Optional[str] = None,
     ) -> BaseProvider:
         """Create and store provider instance."""
         try:
@@ -146,6 +148,10 @@ class ProviderManager:
                     tmux_window,
                     agent_profile,
                     allowed_tools,
+                    provider_data_dir=(
+                        None if provider_data_dir is None else Path(provider_data_dir)
+                    ),
+                    runtime_resume_args=runtime_resume_args,
                 )
             elif provider_type == ProviderType.CODEX.value:
                 provider = CodexProvider(

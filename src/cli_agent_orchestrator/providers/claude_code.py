@@ -4,16 +4,34 @@ import json
 import logging
 import re
 import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.base import (
+    AgentRuntimeLaunchContext,
+    BaseProvider,
+    ProviderRuntimeDescriptor,
+    ProviderRuntimePreparation,
+    ProviderRuntimeState,
+    ProviderRuntimeStateCapability,
+)
+from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.utils.claude_runtime import (
+    CLAUDE_RUNTIME_MATERIALIZATION_SCHEMA_VERSION,
+    CLAUDE_RUNTIME_STATE_SCHEMA_VERSION,
+    build_claude_runtime_materialization,
+    claude_login_ok,
+    claude_runtime_paths,
+    ensure_claude_session_id,
+    prepare_identity_claude_runtime,
+)
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -58,12 +76,201 @@ WAITING_USER_ANSWER_PATTERN = (
 TRUST_PROMPT_PATTERN = r"Yes, I trust this folder"  # Workspace trust dialog
 BYPASS_PROMPT_PATTERN = r"Yes, I accept"  # Bypass permissions confirmation dialog
 IDLE_PROMPT_PATTERN_LOG = r"[>❯][\s\xa0]"  # Same pattern for log files
+CLAUDE_UPDATE_TIMEOUT_SECONDS = 120.0
+CLAUDE_STARTUP_DIAGNOSTIC_MAX_CHARS = 800
+
+
+def _bounded_startup_diagnostics(output: str) -> str:
+    """Return short terminal diagnostics suitable for logs and Linear errors."""
+    clean_output = re.sub(ANSI_CODE_PATTERN, "", output or "").strip()
+    if not clean_output:
+        return "<no terminal output captured>"
+    lines = [line.rstrip() for line in clean_output.splitlines() if line.strip()]
+    diagnostic = "\n".join(lines[-20:]).strip()
+    if len(diagnostic) > CLAUDE_STARTUP_DIAGNOSTIC_MAX_CHARS:
+        diagnostic = "..." + diagnostic[-CLAUDE_STARTUP_DIAGNOSTIC_MAX_CHARS:]
+    return diagnostic
+
+
+class ClaudeRuntimeStateCapability(ProviderRuntimeStateCapability):
+    """Claude-owned runtime/session restoration capability."""
+
+    provider_type = ProviderType.CLAUDE_CODE.value
+
+    def discover_current_runtime_state(
+        self,
+        *,
+        terminal_id: str,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState | None:
+        """Return the provider-owned Claude session id for this identity.
+
+        CAO launches identity-managed Claude sessions with a provider-owned
+        UUID via ``--session-id``. Claude then persists the conversation under
+        its normal authenticated user state, and relaunch can use
+        ``--resume <session-id>``. This intentionally avoids scraping Claude's
+        TUI output. If Claude changes the ``--session-id``/``--resume``
+        contract, update this capability and its tests together.
+        """
+        session_id = ensure_claude_session_id(provider_data_dir)
+        return ProviderRuntimeState(
+            provider_type=self.provider_type,
+            provider_data_dir=provider_data_dir,
+            payload={
+                "schema_version": CLAUDE_RUNTIME_STATE_SCHEMA_VERSION,
+                "session_id": session_id,
+            },
+        )
+
+    def deserialize_runtime_state(
+        self,
+        payload: Mapping[str, object],
+        *,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState:
+        """Validate a durable Claude runtime payload."""
+        schema_version = payload.get("schema_version")
+        session_id = payload.get("session_id")
+        if schema_version != CLAUDE_RUNTIME_STATE_SCHEMA_VERSION:
+            raise ValueError("Claude runtime state has unsupported schema_version")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("Claude runtime state requires a non-empty session_id")
+        return ProviderRuntimeState(
+            provider_type=self.provider_type,
+            provider_data_dir=provider_data_dir,
+            payload={
+                "schema_version": CLAUDE_RUNTIME_STATE_SCHEMA_VERSION,
+                "session_id": session_id.strip(),
+            },
+        )
+
+    def serialize_runtime_state(
+        self,
+        state: ProviderRuntimeState,
+    ) -> Mapping[str, object]:
+        """Serialize Claude runtime state as the minimal durable payload."""
+        if state.provider_type != self.provider_type:
+            raise ValueError("Claude cannot serialize runtime state for another provider")
+        return self.deserialize_runtime_state(
+            state.payload,
+            provider_data_dir=state.provider_data_dir,
+        ).payload
+
+    def launch_resume_args(
+        self,
+        state: ProviderRuntimeState,
+        *,
+        provider_data_dir: Path,
+    ) -> list[str]:
+        """Return Claude CLI args that resume the captured session."""
+        validated = self.deserialize_runtime_state(
+            state.payload, provider_data_dir=provider_data_dir
+        )
+        return ["--resume", str(validated.payload["session_id"])]
 
 
 class ClaudeCodeProvider(BaseProvider):
     """Provider for Claude Code CLI tool integration."""
 
     provider_type = ProviderType.CLAUDE_CODE.value
+
+    @classmethod
+    def runtime_state_capability(cls) -> ClaudeRuntimeStateCapability:
+        """Expose Claude's runtime/session restoration capability."""
+        return ClaudeRuntimeStateCapability()
+
+    @staticmethod
+    def prepare_terminal_runtime(
+        *,
+        terminal_id: str,
+        agent_profile: str,
+        working_directory: str,
+        launch_context: Optional[AgentRuntimeLaunchContext] = None,
+    ) -> ProviderRuntimePreparation:
+        """Prepare Claude-owned identity runtime material."""
+        if launch_context is None:
+            return ProviderRuntimePreparation()
+
+        provider_data_dir = prepare_identity_claude_runtime(
+            launch_context.provider_data_dir,
+            terminal_id,
+            agent_profile,
+            working_directory,
+        )
+        return ProviderRuntimePreparation(
+            environment={
+                "CAO_CLAUDE_PROVIDER_DATA_DIR": str(provider_data_dir),
+            },
+            identity_scoped=True,
+        )
+
+    @classmethod
+    def runtime_fingerprint_contribution(
+        cls,
+        *,
+        launch_context: AgentRuntimeLaunchContext,
+    ) -> ProviderRuntimeDescriptor:
+        """Describe Claude-owned runtime inputs that require terminal replacement."""
+        materialization = build_claude_runtime_materialization(launch_context.agent_profile)
+        startup_command = cls(
+            terminal_id="<fingerprint>",
+            session_name=launch_context.session_name,
+            window_name=launch_context.window_name,
+            agent_profile=launch_context.agent_profile,
+            allowed_tools=launch_context.allowed_tools,
+            provider_data_dir=launch_context.provider_data_dir,
+            include_runtime_session=False,
+        )._build_claude_command()
+        return ProviderRuntimeDescriptor(
+            schema_version="claude-runtime-descriptor.v1",
+            material={
+                "claude_runtime_schema_version": CLAUDE_RUNTIME_MATERIALIZATION_SCHEMA_VERSION,
+                "claude_runtime_settings": materialization.settings,
+                "claude_runtime_plugin_manifest": materialization.plugin_manifest,
+                "claude_runtime_skills": materialization.skill_fingerprints,
+                "startup_command": startup_command,
+                "provider_runtime_config": get_provider_runtime_config(cls.provider_type),
+            },
+        )
+
+    @staticmethod
+    def run_update_preflight(*, timeout: float = CLAUDE_UPDATE_TIMEOUT_SECONDS) -> None:
+        """Run Claude's updater before launching an identity-managed runtime."""
+        claude_bin = shutil.which("claude")
+        if not claude_bin:
+            raise ProviderError("Claude update preflight failed: claude binary not found in PATH")
+        try:
+            proc = subprocess.run(
+                [claude_bin, "update"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            raise ProviderError(
+                "Claude update preflight timed out. "
+                f"Output:\n{_bounded_startup_diagnostics(str(output))}"
+            ) from exc
+        except OSError as exc:
+            raise ProviderError(f"Claude update preflight failed to start: {exc}") from exc
+        if proc.returncode != 0:
+            raise ProviderError(
+                "Claude update preflight failed "
+                f"(exit {proc.returncode}). Output:\n"
+                f"{_bounded_startup_diagnostics(proc.stdout or '')}"
+            )
+
+    @staticmethod
+    def run_auth_preflight() -> None:
+        """Fail fast when Claude cannot use the current user's login state."""
+        if not claude_login_ok():
+            raise ProviderError(
+                "Claude auth preflight failed: Claude Code is not logged in. "
+                "Run `claude auth login` first."
+            )
 
     def __init__(
         self,
@@ -72,11 +279,18 @@ class ClaudeCodeProvider(BaseProvider):
         window_name: str,
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[list] = None,
+        *,
+        provider_data_dir: Optional[Path | str] = None,
+        runtime_resume_args: Optional[list[str]] = None,
+        include_runtime_session: bool = True,
     ):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
         self._agent_profile = agent_profile
+        self._provider_data_dir = None if provider_data_dir is None else Path(provider_data_dir)
+        self._runtime_resume_args = list(runtime_resume_args or [])
+        self._include_runtime_session = include_runtime_session
 
     def _build_claude_command(self) -> str:
         """Build Claude Code command with agent profile if provided.
@@ -90,12 +304,18 @@ class ClaudeCodeProvider(BaseProvider):
         # (supervisor and worker) is redundant and blocks handoff/assign flows.
         command_parts = ["claude", "--dangerously-skip-permissions"]
 
+        if self._provider_data_dir is not None:
+            paths = claude_runtime_paths(self._provider_data_dir)
+            command_parts.extend(["--settings", str(paths["settings"])])
+            command_parts.extend(["--plugin-dir", str(paths["plugin_dir"])])
+            command_parts.append("--strict-mcp-config")
+
         if self._agent_profile is not None:
             try:
                 profile = load_agent_profile(self._agent_profile)
 
                 if profile.reasoning_effort is not None:
-                    command_parts.extend(["--reasoning-effort", str(profile.reasoning_effort)])
+                    command_parts.extend(["--effort", str(profile.reasoning_effort)])
 
                 # Add system prompt - escape newlines to prevent tmux chunking issues
                 system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
@@ -138,6 +358,13 @@ class ClaudeCodeProvider(BaseProvider):
             disallowed = get_disallowed_tools("claude_code", self._allowed_tools)
             for tool in disallowed:
                 command_parts.extend(["--disallowedTools", tool])
+
+        if self._runtime_resume_args:
+            command_parts.extend(self._runtime_resume_args)
+        elif self._provider_data_dir is not None and self._include_runtime_session:
+            command_parts.extend(
+                ["--session-id", ensure_claude_session_id(self._provider_data_dir)]
+            )
 
         # Use shlex.join() for proper shell escaping of all arguments
         # This correctly handles multiline strings, quotes, and special characters
@@ -226,9 +453,11 @@ class ClaudeCodeProvider(BaseProvider):
             if re.search(TRUST_PROMPT_PATTERN, clean_output):
                 logger.info("Workspace trust prompt detected, auto-accepting")
                 session = tmux_client.server.sessions.get(session_name=self.session_name)
-                window = session.windows.get(window_name=self.window_name)
-                pane = window.active_pane
-                if pane:
+                window = (
+                    None if session is None else session.windows.get(window_name=self.window_name)
+                )
+                pane = None if window is None else window.active_pane
+                if pane is not None:
                     pane.send_keys("", enter=True)
                 return
 
@@ -249,8 +478,12 @@ class ClaudeCodeProvider(BaseProvider):
         if not wait_for_shell(tmux_client, self.session_name, self.window_name, timeout=10.0):
             raise TimeoutError("Shell initialization timed out after 10 seconds")
 
-        # Prevent bypass permissions dialog from appearing (settings-based fix).
-        self._ensure_skip_bypass_prompt_setting()
+        if self._provider_data_dir is None:
+            # Prevent bypass permissions dialog from appearing (settings-based fix).
+            self._ensure_skip_bypass_prompt_setting()
+        else:
+            self.run_update_preflight()
+            self.run_auth_preflight()
 
         # Build properly escaped command string
         command = self._build_claude_command()
@@ -270,7 +503,11 @@ class ClaudeCodeProvider(BaseProvider):
             timeout=30.0,
             polling_interval=1.0,
         ):
-            raise TimeoutError("Claude Code initialization timed out after 30 seconds")
+            output = tmux_client.get_history(self.session_name, self.window_name)
+            raise ProviderError(
+                "Claude Code initialization did not reach an idle state. "
+                f"Output:\n{_bounded_startup_diagnostics(output)}"
+            )
 
         self._initialized = True
         return True

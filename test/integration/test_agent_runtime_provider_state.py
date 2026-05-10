@@ -191,6 +191,7 @@ def tmux_runtime_provider_world(monkeypatch: pytest.MonkeyPatch) -> TmuxRuntimeP
         agent_profile=None,
         allowed_tools=None,
         runtime_resume_args=None,
+        provider_data_dir=None,
     ):
         provider = TmuxTestProvider(
             terminal_id,

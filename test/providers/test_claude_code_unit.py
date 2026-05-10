@@ -9,7 +9,12 @@ import pytest
 
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider, ProviderError
+from cli_agent_orchestrator.providers.base import ProviderRuntimeState
+from cli_agent_orchestrator.providers.claude_code import (
+    ClaudeCodeProvider,
+    ClaudeRuntimeStateCapability,
+    ProviderError,
+)
 
 # All initialization tests need to patch _ensure_skip_bypass_prompt_setting
 # to avoid writing to the real ~/.claude/settings.json.
@@ -62,7 +67,7 @@ class TestClaudeCodeProviderInitialization:
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
 
-        with pytest.raises(TimeoutError, match="Claude Code initialization timed out"):
+        with pytest.raises(ProviderError, match="Claude Code initialization did not reach"):
             provider.initialize()
 
     @_PATCH_SETTINGS
@@ -491,6 +496,50 @@ class TestClaudeCodeProviderMisc:
 
         assert "claude --dangerously-skip-permissions" in command
 
+    def test_build_claude_command_with_identity_runtime_paths(self, tmp_path: Path):
+        """Identity launches use CAO-owned Claude settings/plugins and a stable session id."""
+        provider_data_dir = tmp_path / "identity" / "claude_code"
+        provider_data_dir.mkdir(parents=True)
+        (provider_data_dir / "settings.json").write_text("{}\n")
+        (provider_data_dir / "plugins" / "cao-profile-skills").mkdir(parents=True)
+        (provider_data_dir / "session-id").write_text("11111111-1111-4111-8111-111111111111\n")
+
+        provider = ClaudeCodeProvider(
+            "test123",
+            "test-session",
+            "window-0",
+            provider_data_dir=provider_data_dir,
+        )
+        argv = shlex.split(provider._build_claude_command())
+
+        assert "--settings" in argv
+        assert argv[argv.index("--settings") + 1] == str(provider_data_dir / "settings.json")
+        assert "--plugin-dir" in argv
+        assert argv[argv.index("--plugin-dir") + 1] == str(
+            provider_data_dir / "plugins" / "cao-profile-skills"
+        )
+        assert "--strict-mcp-config" in argv
+        assert "--session-id" in argv
+        assert argv[argv.index("--session-id") + 1] == "11111111-1111-4111-8111-111111111111"
+
+    def test_build_claude_command_uses_resume_args_instead_of_session_id(self, tmp_path: Path):
+        """Resume launches should not also request a new explicit session id."""
+        provider_data_dir = tmp_path / "identity" / "claude_code"
+        provider_data_dir.mkdir(parents=True)
+        (provider_data_dir / "session-id").write_text("11111111-1111-4111-8111-111111111111\n")
+
+        provider = ClaudeCodeProvider(
+            "test123",
+            "test-session",
+            "window-0",
+            provider_data_dir=provider_data_dir,
+            runtime_resume_args=["--resume", "11111111-1111-4111-8111-111111111111"],
+        )
+        argv = shlex.split(provider._build_claude_command())
+
+        assert "--resume" in argv
+        assert "--session-id" not in argv
+
     @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
     def test_build_claude_command_with_system_prompt(self, mock_load):
         """Test building Claude command with system prompt."""
@@ -840,8 +889,8 @@ def test_build_command_includes_reasoning_effort_when_set():
 
     argv = shlex.split(command)
     assert "claude" in argv
-    assert "--reasoning-effort" in argv
-    assert argv[argv.index("--reasoning-effort") + 1] == "high"
+    assert "--effort" in argv
+    assert argv[argv.index("--effort") + 1] == "high"
 
 
 def test_build_command_omits_reasoning_effort_when_unset():
@@ -860,4 +909,133 @@ def test_build_command_omits_reasoning_effort_when_unset():
 
     argv = shlex.split(command)
     assert "claude" in argv
-    assert "--reasoning-effort" not in argv
+    assert "--effort" not in argv
+
+
+def test_prepare_terminal_runtime_returns_identity_scoped_environment(tmp_path: Path):
+    from cli_agent_orchestrator.agent_identity import AgentIdentity
+    from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
+
+    identity = AgentIdentity(
+        id="claude_identity",
+        display_name="Claude Identity",
+        cli_provider="claude_code",
+        agent_profile="worker",
+        workdir=str(tmp_path / "work"),
+        session_name="claude-identity",
+    )
+    context = AgentRuntimeLaunchContext(
+        identity=identity,
+        identity_data_dir=tmp_path / "identity",
+        provider_data_dir=tmp_path / "identity" / "claude_code",
+        terminal_id="terminal-1",
+        session_name="cao-claude-identity",
+        window_name="worker",
+        working_directory=str(tmp_path / "work"),
+        agent_profile="worker",
+        allowed_tools=None,
+    )
+
+    with patch(
+        "cli_agent_orchestrator.providers.claude_code.prepare_identity_claude_runtime",
+        return_value=context.provider_data_dir,
+    ) as prepare:
+        runtime = ClaudeCodeProvider.prepare_terminal_runtime(
+            terminal_id="terminal-1",
+            agent_profile="worker",
+            working_directory=str(tmp_path / "work"),
+            launch_context=context,
+        )
+
+    assert runtime.identity_scoped is True
+    assert runtime.environment == {"CAO_CLAUDE_PROVIDER_DATA_DIR": str(context.provider_data_dir)}
+    prepare.assert_called_once_with(
+        context.provider_data_dir,
+        "terminal-1",
+        "worker",
+        str(tmp_path / "work"),
+    )
+
+
+def test_runtime_fingerprint_excludes_concrete_terminal_id(tmp_path: Path):
+    from cli_agent_orchestrator.agent_identity import AgentIdentity
+    from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
+
+    identity = AgentIdentity(
+        id="claude_identity",
+        display_name="Claude Identity",
+        cli_provider="claude_code",
+        agent_profile="worker",
+        workdir=str(tmp_path / "work"),
+        session_name="claude-identity",
+    )
+
+    def context(terminal_id: str) -> AgentRuntimeLaunchContext:
+        return AgentRuntimeLaunchContext(
+            identity=identity,
+            identity_data_dir=tmp_path / "identity",
+            provider_data_dir=tmp_path / "identity" / "claude_code",
+            terminal_id=terminal_id,
+            session_name="cao-claude-identity",
+            window_name="worker",
+            working_directory=str(tmp_path / "work"),
+            agent_profile="worker",
+            allowed_tools=["fs_read"],
+        )
+
+    with (
+        patch(
+            "cli_agent_orchestrator.providers.claude_code.build_claude_runtime_materialization",
+            return_value=type(
+                "Materialization",
+                (),
+                {
+                    "settings": {"skipDangerousModePermissionPrompt": True},
+                    "plugin_manifest": {"name": "cao-profile-skills"},
+                    "skill_fingerprints": {},
+                },
+            )(),
+        ),
+        patch(
+            "cli_agent_orchestrator.providers.claude_code.load_agent_profile",
+            return_value=AgentProfile(name="worker", description="Worker"),
+        ),
+    ):
+        first = ClaudeCodeProvider.runtime_fingerprint_contribution(
+            launch_context=context("terminal-a")
+        )
+        second = ClaudeCodeProvider.runtime_fingerprint_contribution(
+            launch_context=context("terminal-b")
+        )
+
+    assert first.material == second.material
+    assert "terminal-a" not in json.dumps(first.material)
+    assert "terminal-b" not in json.dumps(first.material)
+
+
+def test_claude_runtime_state_capability_serializes_and_builds_resume_args(tmp_path: Path):
+    capability = ClaudeRuntimeStateCapability()
+    state = ProviderRuntimeState(
+        provider_type="claude_code",
+        provider_data_dir=tmp_path,
+        payload={
+            "schema_version": "claude-runtime-state.v1",
+            "session_id": "11111111-1111-4111-8111-111111111111",
+        },
+    )
+
+    assert capability.serialize_runtime_state(state) == state.payload
+    assert capability.launch_resume_args(state, provider_data_dir=tmp_path) == [
+        "--resume",
+        "11111111-1111-4111-8111-111111111111",
+    ]
+
+
+def test_claude_runtime_state_capability_rejects_invalid_payload(tmp_path: Path):
+    capability = ClaudeRuntimeStateCapability()
+
+    with pytest.raises(ValueError, match="unsupported schema_version"):
+        capability.deserialize_runtime_state(
+            {"schema_version": "old", "session_id": "session"},
+            provider_data_dir=tmp_path,
+        )
