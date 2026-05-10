@@ -79,12 +79,13 @@ PY
 
 ## Agent Profiles
 
-Nothing in this example ships its own agent profiles — profiles describe a
-role (developer, reviewer, supervisor), and the provider is a runtime choice.
+Nothing in this example ships its own agent profiles — profiles describe an
+agent identity and its permitted runtime/MCP surfaces, while the provider is a
+runtime choice.
 Use the built-in profiles CAO ships with and select `--provider codex` at
 launch time:
 
-| Profile | Role |
+| Profile | Purpose |
 |---|---|
 | `developer` | General programming and development tasks |
 | `reviewer` | Code review, security analysis, best practices |
@@ -95,7 +96,7 @@ profile with `cao install ./my-profile.md` and pick any provider at launch.
 
 ## Setup
 
-When using the `codex` provider with `--agents`, CAO loads the specified agent profile and injects its system prompt into Codex as `developer_instructions`. This means Codex will adopt the role defined in the agent profile (e.g., supervisor, developer, reviewer).
+When using the `codex` provider with `--agents`, CAO loads the specified agent profile and injects its system prompt into Codex as `developer_instructions`. This means Codex adopts the identity and instructions defined in the agent profile.
 
 Agent profiles are loaded from:
 1. Local store: `~/.aws/cli-agent-orchestrator/agent_store/<name>.md`

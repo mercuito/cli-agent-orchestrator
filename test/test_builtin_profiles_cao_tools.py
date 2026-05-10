@@ -1,8 +1,9 @@
 """Smoke tests for the caoTools declarations in CAO's built-in agent profiles.
 
-Built-in profiles ship with explicit caoTools so the LLM only sees what
-each role is supposed to use. A supervisor gets the orchestration tools;
-developers and reviewers get only callback, baton-holder, and inbox tools.
+Built-in profiles ship with explicit caoTools so the LLM only sees the CAO
+MCP tools each profile is supposed to use. The supervisor profile gets the
+orchestration tools; developers and reviewers get only callback,
+baton-holder, and inbox tools.
 
 These tests load profiles directly from the package's built-in store so
 they assert on what CAO *ships*, not on whatever the current user has

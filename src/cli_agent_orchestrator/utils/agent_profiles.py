@@ -29,7 +29,7 @@ def _profile_entry_from_metadata(
         "description": metadata.get("description", ""),
         "model": metadata.get("model"),
         "provider": metadata.get("provider"),
-        "role": metadata.get("role"),
+        "runtimeCapabilities": metadata.get("runtimeCapabilities"),
         "tags": metadata.get("tags"),
         "reasoning_effort": metadata.get("reasoning_effort"),
         "source": source_label,

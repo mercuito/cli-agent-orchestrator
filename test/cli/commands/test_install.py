@@ -108,7 +108,7 @@ class TestInstallCommand:
         profile.name = "test-agent"
         profile.description = "Test agent description"
         profile.tools = ["*"]
-        profile.allowedTools = None
+        profile.runtimeCapabilities = None
         profile.mcpServers = None
         profile.system_prompt = "Test system prompt"
         profile.prompt = "Test prompt"
@@ -283,7 +283,7 @@ class TestInstallCommand:
             profile.name = "test-agent"
             profile.description = "Test agent"
             profile.tools = ["*"]
-            profile.allowedTools = None  # Will trigger default with MCP servers
+            profile.runtimeCapabilities = None  # Will trigger default with MCP servers
             profile.mcpServers = {"server1": {"command": "test"}, "server2": {"command": "test2"}}
             profile.prompt = "Test prompt"
             profile.toolAliases = None
@@ -701,8 +701,8 @@ class TestInstallCommandEnvFlags:
         assert "integration-secret" not in installed_text
 
 
-class TestInstallSkillCatalogBaking:
-    """Tests for baked skill catalog injection during install."""
+class TestInstallNativeSkillConfiguration:
+    """Tests for provider-native skill configuration during install."""
 
     @pytest.fixture
     def runner(self):
@@ -778,8 +778,8 @@ class TestInstallSkillCatalogBaking:
         assert len(skill_resources) == 1
         assert skill_resources[0].endswith("/**/SKILL.md")
 
-    def test_install_q_bakes_catalog_into_prompt(self, runner, install_workspace):
-        """Q installs should bake the global skill catalog into the JSON prompt."""
+    def test_install_q_keeps_prompt_free_of_cao_skill_catalog(self, runner, install_workspace):
+        """Q installs should not bake the CAO skill catalog into the JSON prompt."""
         _create_skill(
             install_workspace["skills_dir"] / "python-testing",
             "python-testing",
@@ -795,8 +795,9 @@ class TestInstallSkillCatalogBaking:
 
         assert result.exit_code == 0
         agent_json = json.loads((install_workspace["q_dir"] / "test-agent.json").read_text())
-        assert agent_json["prompt"].startswith("Build things\n\n## Available Skills")
-        assert "python-testing" in agent_json["prompt"]
+        assert agent_json["prompt"] == "Build things"
+        assert "Available Skills" not in agent_json["prompt"]
+        assert "python-testing" not in agent_json["prompt"]
 
     def test_install_kiro_omits_prompt_field_when_profile_prompt_is_empty(
         self, runner, install_workspace

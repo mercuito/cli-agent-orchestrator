@@ -25,7 +25,7 @@ class TerminalModel(Base):
     provider = Column(String, nullable=False)  # "q_cli", "claude_code"
     agent_profile = Column(String)  # "developer", "reviewer" (optional)
     agent_identity_id = Column(String, nullable=True)  # Durable CAO identity id when managed
-    allowed_tools = Column(String, nullable=True)  # JSON-encoded list of CAO tool names
+    allowed_tools = Column(String, nullable=True)  # JSON-encoded runtime capability list
     last_active = Column(DateTime, default=datetime.now)
 
 

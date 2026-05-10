@@ -141,7 +141,7 @@ class BaseProvider(ABC):
             terminal_id: Unique identifier for this terminal instance
             session_name: Name of the tmux session
             window_name: Name of the tmux window
-            allowed_tools: Optional list of CAO tool names the agent is allowed to use
+            allowed_tools: Optional list of runtime capabilities the agent is allowed to use.
         """
         self.terminal_id = terminal_id
         self.session_name = session_name

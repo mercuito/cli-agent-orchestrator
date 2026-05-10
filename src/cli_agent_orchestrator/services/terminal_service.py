@@ -77,11 +77,11 @@ def resolve_terminal_runtime_inputs(
     resolved_allowed_tools = allowed_tools
     if resolved_allowed_tools is None:
         try:
-            from cli_agent_orchestrator.utils.tool_mapping import resolve_allowed_tools
+            from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
 
             mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
-            resolved_allowed_tools = resolve_allowed_tools(
-                profile.allowedTools, profile.role, mcp_server_names
+            resolved_allowed_tools = resolve_runtime_capabilities(
+                profile.runtimeCapabilities, mcp_server_names
             )
         except FileNotFoundError:
             pass  # Profile not found; no tool restrictions

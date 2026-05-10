@@ -13,7 +13,7 @@ All skills live in a single directory: `~/.aws/cli-agent-orchestrator/skills/`. 
 Use skills when:
 
 - **Multiple agents need the same knowledge.** Testing conventions, coding standards, deployment procedures, or communication protocols that apply across agent profiles.
-- **You want to keep agent profiles focused.** Profiles should define *who* the agent is (role, tools, MCP servers). Skills define *what* the agent knows how to do.
+- **You want to keep agent profiles focused.** Profiles should define *who* the agent is, which runtime/MCP surfaces it may use, and which MCP servers it can see. Skills define *what* the agent knows how to do.
 - **You want to save context window budget.** An agent working on a simple file rename doesn't need a 2,000-word database migration guide loaded upfront. With skills, the agent loads the full content only when it's relevant.
 - **You need organization-specific knowledge.** Custom skills for your team's internal tooling, review processes, or domain-specific workflows.
 

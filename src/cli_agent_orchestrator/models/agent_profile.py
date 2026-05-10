@@ -25,14 +25,13 @@ class AgentProfile(BaseModel):
     description: str
     provider: Optional[str] = None  # Provider override (e.g. "claude_code", "kiro_cli")
     system_prompt: Optional[str] = None  # The markdown content
-    role: Optional[str] = None  # "supervisor", "developer", "reviewer"
     tags: Optional[List[str]] = None
     skills: Optional[List[str]] = None
 
     # Allowlist of cao-mcp-server tool names this agent is permitted to call
     # (e.g. ["assign", "handoff", "send_message"]). Empty list explicitly
-    # denies all cao-mcp-server tools. None defers to role-based settings
-    # (see utils/cao_tool_allowlist.resolve_cao_tool_allowlist).
+    # denies all cao-mcp-server tools. None means no profile-specific CAO MCP
+    # tool allowlist is configured.
     caoTools: Optional[List[str]] = None
 
     class ReasoningEffort(str, Enum):
@@ -47,7 +46,7 @@ class AgentProfile(BaseModel):
     mcpServers: Optional[Dict[str, Any]] = None
     tools: Optional[List[str]] = Field(default=None)
     toolAliases: Optional[Dict[str, str]] = None
-    allowedTools: Optional[List[str]] = None
+    runtimeCapabilities: Optional[List[str]] = None
     toolsSettings: Optional[Dict[str, Any]] = None
     resources: Optional[List[str]] = None
     hooks: Optional[Dict[str, Any]] = None

@@ -49,7 +49,7 @@ def test_local_profile_overrides_builtin(monkeypatch, tmp_path):
             name: developer
             description: Local developer override
             provider: codex
-            role: developer
+            runtimeCapabilities: [fs_read]
             tags: [python]
             reasoning_effort: medium
             model: my-model
@@ -67,7 +67,7 @@ def test_local_profile_overrides_builtin(monkeypatch, tmp_path):
     assert developer["description"] == "Local developer override"
     assert developer["model"] == "my-model"
     assert developer["provider"] == "codex"
-    assert developer["role"] == "developer"
+    assert developer["runtimeCapabilities"] == ["fs_read"]
     assert developer["tags"] == ["python"]
     assert developer["reasoning_effort"] == "medium"
 
@@ -78,7 +78,7 @@ def test_local_profile_overrides_builtin(monkeypatch, tmp_path):
     assert profile["description"] == "Local developer override"
     assert profile["model"] == "my-model"
     assert profile["provider"] == "codex"
-    assert profile["role"] == "developer"
+    assert profile["runtimeCapabilities"] == ["fs_read"]
     assert profile["tags"] == ["python"]
     assert profile["reasoning_effort"] == "medium"
     assert profile["system_prompt"] == "LOCAL PROMPT"

@@ -119,7 +119,7 @@ def _register_tools(
     Args:
         pending: Items from the deferred registry.
         allowlist: Tool names to register. ``None`` = register all (permissive
-            fallback for agents without per-profile or per-role configuration).
+            fallback for agents without per-profile CAO MCP tool configuration).
             ``[]`` = register nothing (explicit deny-all).
         mcp_instance: The FastMCP instance to register against.
 
@@ -156,7 +156,7 @@ def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
     """Ask cao-server which tools this terminal's agent profile permits.
 
     Fail-open on any error: a None return means "don't filter, register all
-    tools." This keeps existing agents (no caoTools, no role mapping) working
+    tools." This keeps existing agents with no caoTools working
     unchanged while users opt in to filtering by configuring their profiles.
     Fail-closed behavior is a later, opt-in choice (Phase 5).
 
@@ -297,30 +297,30 @@ def _built_in_mcp_runtime_generation_material() -> Dict[str, Any]:
 def _resolve_child_allowed_tools(
     parent_allowed_tools: Optional[list], child_profile_name: str
 ) -> Optional[str]:
-    """Resolve allowed_tools for a child terminal via intersection.
+    """Resolve runtime capabilities for a child terminal via intersection.
 
     The child gets at most the union of: what the parent allows + what the
     child profile specifies. If the parent is unrestricted ("*"), the child
-    profile's allowedTools are used as-is.
+    profile's runtime capabilities are used as-is.
 
     Returns:
-        Comma-separated string of allowed tools, or None for unrestricted.
+        Comma-separated runtime capabilities, or None for unrestricted.
     """
     from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
-    from cli_agent_orchestrator.utils.tool_mapping import resolve_allowed_tools
+    from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
 
     try:
         child_profile = load_agent_profile(child_profile_name)
         mcp_server_names = (
             list(child_profile.mcpServers.keys()) if child_profile.mcpServers else None
         )
-        child_allowed = resolve_allowed_tools(
-            child_profile.allowedTools, child_profile.role, mcp_server_names
+        child_allowed = resolve_runtime_capabilities(
+            child_profile.runtimeCapabilities, mcp_server_names
         )
     except FileNotFoundError:
         child_allowed = None
 
-    # If parent is unrestricted or has no restrictions, use child's tools
+    # If parent is unrestricted or has no restrictions, use child's runtime capabilities.
     if parent_allowed_tools is None or "*" in parent_allowed_tools:
         if child_allowed:
             return ",".join(child_allowed)
@@ -334,7 +334,7 @@ def _resolve_child_allowed_tools(
     if "*" in child_allowed:
         return None
 
-    # Both have restrictions: child gets its own profile tools
+    # Both have restrictions: child gets its own profile runtime capabilities
     # (the child profile defines what it needs; parent's restrictions
     # are enforced by the parent not delegating unauthorized work)
     return ",".join(child_allowed)

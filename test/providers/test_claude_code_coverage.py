@@ -37,7 +37,7 @@ class TestBuildCommandMcpServerModelDump:
         mock_profile = MagicMock()
         mock_profile.system_prompt = "Test prompt"
         mock_profile.mcpServers = {"my-mcp": mock_mcp}
-        mock_profile.allowedTools = None
+        mock_profile.runtimeCapabilities = None
         mock_load.return_value = mock_profile
 
         cmd = provider._build_claude_command()

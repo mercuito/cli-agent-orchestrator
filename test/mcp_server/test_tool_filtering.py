@@ -52,8 +52,7 @@ class TestRegisterTools:
         return mock
 
     def test_none_allowlist_registers_every_pending_tool(self):
-        """Permissive default. Backward-compatible with agents that have
-        no caoTools and no matching role."""
+        """Permissive default for agents that have no caoTools configured."""
         pending = [("a", lambda: None, {}), ("b", lambda: None, {}), ("c", lambda: None, {})]
         mcp_instance = self._mock_mcp()
 

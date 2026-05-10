@@ -148,7 +148,7 @@ def test_launch_workspace_confirmation_accepted():
         assert result.exit_code == 0
         # New prompt format shows tool summary
         assert "launching on claude_code" in result.output
-        assert "Allowed:" in result.output
+        assert "Runtime capabilities:" in result.output
         assert "Proceed?" in result.output
         mock_post.assert_called_once()
 
@@ -235,8 +235,8 @@ def test_launch_yolo_sets_unrestricted_allowed_tools():
         assert params["allowed_tools"] == "*"
 
 
-def test_launch_allowed_tools_override():
-    """Test --allowed-tools CLI flag overrides profile defaults."""
+def test_launch_runtime_capability_override():
+    """Test --runtime-capability CLI flag overrides profile defaults."""
     runner = CliRunner()
 
     with (
@@ -254,9 +254,9 @@ def test_launch_allowed_tools_override():
             [
                 "--agents",
                 "test-agent",
-                "--allowed-tools",
+                "--runtime-capability",
                 "@cao-mcp-server",
-                "--allowed-tools",
+                "--runtime-capability",
                 "fs_read",
                 "--headless",
             ],
@@ -269,8 +269,8 @@ def test_launch_allowed_tools_override():
         assert params["allowed_tools"] == "@cao-mcp-server,fs_read"
 
 
-def test_launch_builtin_profile_resolves_role_defaults():
-    """Test that launching a built-in profile resolves role-based allowedTools."""
+def test_launch_builtin_profile_resolves_runtime_capabilities():
+    """Test that launching a built-in profile resolves runtimeCapabilities."""
     runner = CliRunner()
 
     with (
@@ -283,7 +283,7 @@ def test_launch_builtin_profile_resolves_role_defaults():
         }
         mock_post.return_value.raise_for_status.return_value = None
 
-        # code_supervisor is a built-in profile with role=supervisor
+        # code_supervisor is a built-in profile with explicit runtimeCapabilities.
         result = runner.invoke(
             launch,
             ["--agents", "code_supervisor", "--headless"],
@@ -293,5 +293,5 @@ def test_launch_builtin_profile_resolves_role_defaults():
         assert result.exit_code == 0
         call_args = mock_post.call_args
         params = call_args.kwargs["params"]
-        # Supervisor should only have MCP server tools
+        # Supervisor should include the CAO MCP server marker in runtime capabilities.
         assert "@cao-mcp-server" in params["allowed_tools"]

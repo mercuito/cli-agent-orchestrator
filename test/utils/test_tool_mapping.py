@@ -5,57 +5,36 @@ import pytest
 from cli_agent_orchestrator.utils.tool_mapping import (
     format_tool_summary,
     get_disallowed_tools,
-    resolve_allowed_tools,
+    resolve_runtime_capabilities,
 )
 
 
-class TestResolveAllowedTools:
-    """Tests for resolve_allowed_tools."""
+class TestResolveRuntimeCapabilities:
+    """Tests for runtime capability resolution."""
 
-    def test_explicit_profile_tools_used(self):
-        """Profile's explicit allowedTools take precedence."""
-        result = resolve_allowed_tools(["fs_read", "@cao-mcp-server"], "developer")
-        assert result == ["fs_read", "@cao-mcp-server"]
+    def test_explicit_runtime_capabilities_used(self):
+        result = resolve_runtime_capabilities(["fs_read"])
+        assert result == ["fs_read"]
 
-    def test_role_defaults_when_no_profile_tools(self):
-        """Role-based defaults used when profile has no allowedTools."""
-        result = resolve_allowed_tools(None, "supervisor")
-        assert result == ["@cao-mcp-server", "fs_read", "fs_list"]
-
-    def test_reviewer_role_defaults(self):
-        result = resolve_allowed_tools(None, "reviewer")
-        assert "@builtin" in result
-        assert "fs_read" in result
-        assert "fs_list" in result
-        assert "execute_bash" not in result
-
-    def test_developer_role_defaults(self):
-        result = resolve_allowed_tools(None, "developer")
+    def test_developer_default_when_no_profile_capabilities(self):
+        result = resolve_runtime_capabilities(None)
         assert "execute_bash" in result
         assert "fs_*" in result
-
-    def test_developer_default_when_no_role_no_tools(self):
-        """No role + no allowedTools = developer defaults (secure default)."""
-        result = resolve_allowed_tools(None, None)
-        assert "execute_bash" in result
-        assert "fs_*" in result
-        assert "@cao-mcp-server" in result
         assert "*" not in result
 
     def test_mcp_servers_appended(self):
         """MCP server names appended as @server_name."""
-        result = resolve_allowed_tools(None, "supervisor", ["my-server"])
-        assert "@cao-mcp-server" in result
+        result = resolve_runtime_capabilities(["fs_read"], ["my-server"])
         assert "@my-server" in result
 
     def test_mcp_servers_not_duplicated(self):
         """Already present MCP server refs not duplicated."""
-        result = resolve_allowed_tools(["@cao-mcp-server"], "supervisor", ["cao-mcp-server"])
+        result = resolve_runtime_capabilities(["@cao-mcp-server"], ["cao-mcp-server"])
         assert result.count("@cao-mcp-server") == 1
 
     def test_wildcard_preserved(self):
         """Wildcard '*' in profile tools is preserved."""
-        result = resolve_allowed_tools(["*"], "supervisor")
+        result = resolve_runtime_capabilities(["*"])
         assert result == ["*"]
 
 

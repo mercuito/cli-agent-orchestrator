@@ -131,16 +131,12 @@ ALLOWED_HOSTS = [
 ]
 
 # =============================================================================
-# Tool Restriction Configuration
+# Runtime Capability Configuration
 # =============================================================================
-# Built-in role defaults. A role is a named bundle of allowedTools.
-# Users can define custom roles in settings.json under "roles".
-# CAO vocabulary: execute_bash, fs_read, fs_write, fs_list, fs_*, @builtin, @cao-mcp-server
-ROLE_TOOL_DEFAULTS = {
-    "supervisor": ["@cao-mcp-server", "fs_read", "fs_list"],
-    "reviewer": ["@builtin", "fs_read", "fs_list", "@cao-mcp-server"],
-    "developer": ["@builtin", "fs_*", "execute_bash", "@cao-mcp-server"],
-}
+# Runtime capabilities are coarse provider-native capability categories. They
+# are distinct from named MCP tools, which are governed by provider/tool access
+# allowlists such as ``caoTools`` and Linear provider access configuration.
+DEFAULT_RUNTIME_CAPABILITIES = ["@builtin", "fs_*", "execute_bash"]
 
 # Security constraints prepended to system prompts for providers without
 # native tool restriction mechanisms (kimi_cli, codex).

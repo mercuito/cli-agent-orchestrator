@@ -163,11 +163,11 @@ def install(agent_source: str, provider: str, env_vars: tuple[str, ...]):
         dest_file = AGENT_CONTEXT_DIR / f"{profile.name}.md"
         dest_file.write_text(raw_content)
 
-        # Resolve allowedTools from profile → role defaults → developer defaults
-        from cli_agent_orchestrator.utils.tool_mapping import resolve_allowed_tools
+        # Resolve provider runtime capabilities from profile → defaults.
+        from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
 
         mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
-        allowed_tools = resolve_allowed_tools(profile.allowedTools, profile.role, mcp_server_names)
+        allowed_tools = resolve_runtime_capabilities(profile.runtimeCapabilities, mcp_server_names)
 
         # Create agent config based on provider
         agent_file = None

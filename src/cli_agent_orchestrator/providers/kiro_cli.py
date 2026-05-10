@@ -118,7 +118,7 @@ class KiroCliProvider(BaseProvider):
             session_name: Name of the tmux session
             window_name: Name of the tmux window
             agent_profile: Name of the Kiro agent profile to use (e.g., "developer")
-            allowed_tools: Optional list of CAO tool names the agent is allowed to use
+            allowed_tools: Optional list of runtime capabilities the agent is allowed to use.
         """
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False

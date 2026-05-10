@@ -27,9 +27,10 @@ PROVIDERS_REQUIRING_WORKSPACE_ACCESS = {
     "--provider", default=DEFAULT_PROVIDER, help=f"Provider to use (default: {DEFAULT_PROVIDER})"
 )
 @click.option(
-    "--allowed-tools",
+    "--runtime-capability",
+    "runtime_capabilities",
     multiple=True,
-    help="Override allowedTools (CAO format: execute_bash, fs_read, @cao-mcp-server). Repeatable.",
+    help="Override profile runtimeCapabilities (e.g. execute_bash, fs_read). Repeatable.",
 )
 @click.option(
     "--auto-approve",
@@ -42,7 +43,15 @@ PROVIDERS_REQUIRING_WORKSPACE_ACCESS = {
     help="[DANGEROUS] Unrestricted tool access AND skip confirmation prompts. "
     "Agent can execute ANY command including aws, rm, curl.",
 )
-def launch(agents, session_name, headless, provider, allowed_tools, auto_approve, yolo):
+def launch(
+    agents,
+    session_name,
+    headless,
+    provider,
+    runtime_capabilities,
+    auto_approve,
+    yolo,
+):
     """Launch cao session with specified agent profile."""
     try:
         # Validate provider
@@ -52,34 +61,32 @@ def launch(agents, session_name, headless, provider, allowed_tools, auto_approve
             )
         working_directory = os.path.realpath(os.getcwd())
 
-        # Resolve allowedTools: --yolo > --allowed-tools CLI > profile/role defaults
+        # Resolve runtime capabilities: --yolo > CLI override > profile > defaults.
         from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
         from cli_agent_orchestrator.utils.tool_mapping import (
             format_tool_summary,
-            resolve_allowed_tools,
+            resolve_runtime_capabilities,
         )
 
-        resolved_allowed_tools = None
-        no_role_set = False
-        resolved_role = None
+        resolved_runtime_capabilities = None
+        no_runtime_capabilities_set = False
         if yolo:
-            resolved_allowed_tools = ["*"]
-        elif allowed_tools:
-            resolved_allowed_tools = list(allowed_tools)
+            resolved_runtime_capabilities = ["*"]
+        elif runtime_capabilities:
+            resolved_runtime_capabilities = list(runtime_capabilities)
         else:
-            # Load profile to get role-based defaults
+            # Load profile to get explicit runtime capabilities.
             try:
                 profile = load_agent_profile(agents)
                 mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
-                no_role_set = not profile.role and not profile.allowedTools
-                resolved_role = profile.role
-                resolved_allowed_tools = resolve_allowed_tools(
-                    profile.allowedTools, profile.role, mcp_server_names
+                no_runtime_capabilities_set = not profile.runtimeCapabilities
+                resolved_runtime_capabilities = resolve_runtime_capabilities(
+                    profile.runtimeCapabilities, mcp_server_names
                 )
             except (FileNotFoundError, RuntimeError):
-                # Profile not found — use developer defaults (backward compatible)
-                no_role_set = True
-                resolved_allowed_tools = resolve_allowed_tools(None, None, None)
+                # Profile not found — use developer-like defaults.
+                no_runtime_capabilities_set = True
+                resolved_runtime_capabilities = resolve_runtime_capabilities(None)
 
         # Confirmation / warning prompts
         if provider in PROVIDERS_REQUIRING_WORKSPACE_ACCESS:
@@ -93,21 +100,17 @@ def launch(agents, session_name, headless, provider, allowed_tools, auto_approve
                 )
             else:
                 # Normal launch: show tool summary and confirm
-                tool_summary = format_tool_summary(resolved_allowed_tools)
-                role_display = (
-                    resolved_role if resolved_role else "(not set — using developer defaults)"
-                )
+                tool_summary = format_tool_summary(resolved_runtime_capabilities)
 
                 click.echo(
                     f"\nAgent '{agents}' launching on {provider}:\n"
-                    f"  Role:      {role_display}\n"
-                    f"  Allowed:   {tool_summary}\n"
+                    f"  Runtime capabilities: {tool_summary}\n"
                     f"  Directory: {working_directory}\n"
                 )
-                if no_role_set:
+                if no_runtime_capabilities_set:
                     click.echo(
-                        "  Note: No role or allowedTools set — defaulting to 'developer'.\n"
-                        "  Add 'role' or 'allowedTools' to your agent profile to control tool access.\n"
+                        "  Note: No runtimeCapabilities set — defaulting to developer-like native access.\n"
+                        "  Add runtimeCapabilities to your agent profile to control native CLI access.\n"
                         "  Docs: https://github.com/awslabs/cli-agent-orchestrator/blob/main/docs/tool-restrictions.md\n"
                     )
                 click.echo(
@@ -126,9 +129,10 @@ def launch(agents, session_name, headless, provider, allowed_tools, auto_approve
         }
         if session_name:
             params["session_name"] = session_name
-        if resolved_allowed_tools:
-            # Pass as comma-separated string for query param
-            params["allowed_tools"] = ",".join(resolved_allowed_tools)
+        if resolved_runtime_capabilities:
+            # The server API still names this query parameter allowed_tools.
+            # The value is the resolved runtime capability list.
+            params["allowed_tools"] = ",".join(resolved_runtime_capabilities)
 
         response = requests.post(url, params=params)
         response.raise_for_status()

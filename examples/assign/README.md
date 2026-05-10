@@ -51,12 +51,15 @@ graph TD
 
 ## Agent Profiles
 
-All agents require the **cao-mcp-server** configuration in their frontmatter to access orchestration tools:
+Agents that need CAO orchestration must declare both the **cao-mcp-server**
+MCP server and the specific `caoTools` they may call:
 
 ```yaml
 ---
 name: your_agent_name
 description: Your agent description
+runtimeCapabilities: ["@builtin", "fs_read", "fs_list"]
+caoTools: [assign, handoff, send_message]
 mcpServers:
   cao-mcp-server:
     type: stdio
@@ -68,7 +71,8 @@ mcpServers:
 ---
 ```
 
-This configuration provides three orchestration tools:
+The MCP server exposes CAO orchestration tools; `caoTools` chooses which of
+those named MCP tools this profile may use:
 
 ### 1. `handoff` - Sequential/Blocking Pattern
 **When to use:** Need results before continuing

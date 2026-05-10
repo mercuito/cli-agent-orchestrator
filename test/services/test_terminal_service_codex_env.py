@@ -192,7 +192,7 @@ def test_create_terminal_identity_launch_context_uses_resolved_launch_values(
             return_value=AgentProfile(
                 name="developer",
                 description="Developer",
-                allowedTools=["fs_read"],
+                runtimeCapabilities=["fs_read"],
             ),
         ),
         patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal"),

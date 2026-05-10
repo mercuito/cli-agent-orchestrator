@@ -191,10 +191,10 @@ class TestSkillMaterialization:
     ):
         monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", tmp_path / "missing")
 
-        files = dict(iter_skill_files("yards-discovery-intake"))
+        files = dict(iter_skill_files("discovery-partner"))
 
         assert "SKILL.md" in files
-        assert b"Yards Discovery Intake" in files["SKILL.md"]
+        assert b"Discovery Partner" in files["SKILL.md"]
 
 
 class TestListSkills:

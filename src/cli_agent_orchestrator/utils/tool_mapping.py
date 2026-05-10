@@ -1,18 +1,14 @@
-"""Tool mapping from CAO vocabulary to provider-native tool names.
+"""Runtime capability mapping from CAO vocabulary to provider-native tool names.
 
-CAO defines a universal tool vocabulary (execute_bash, fs_read, fs_write, fs_list, fs_*,
-@builtin, @cao-mcp-server) that is translated to each provider's native tool names.
-This module provides the mapping and a function to compute which native tools to BLOCK
-given a set of allowed CAO tools.
+CAO defines a small runtime capability vocabulary (execute_bash, fs_read,
+fs_write, fs_list, fs_*, @builtin) that is translated to each provider's native
+tool names. This is intentionally separate from named MCP tool access.
 """
 
-import logging
 from typing import Dict, List, Set
 
-logger = logging.getLogger(__name__)
-
-# All CAO tool categories and what they map to in each provider.
-# Keys are provider names, values map CAO tool names to lists of native tool names.
+# All CAO runtime capability categories and what they map to in each provider.
+# Keys are provider names, values map CAO capability names to native tool names.
 TOOL_MAPPING: Dict[str, Dict[str, List[str]]] = {
     "claude_code": {
         "execute_bash": ["Bash"],
@@ -53,57 +49,26 @@ for _provider, _mapping in TOOL_MAPPING.items():
     ALL_NATIVE_TOOLS[_provider] = tools
 
 
-def _get_role_defaults(role: str) -> List[str] | None:
-    """Look up allowedTools for a role (built-in or custom from settings)."""
-    from cli_agent_orchestrator.constants import ROLE_TOOL_DEFAULTS
-
-    # Check built-in roles first
-    if role in ROLE_TOOL_DEFAULTS:
-        return list(ROLE_TOOL_DEFAULTS[role])
-
-    # Check custom roles from settings.json
-    from cli_agent_orchestrator.services.settings_service import _load
-
-    settings = _load()
-    custom_roles = settings.get("roles", {})
-    if role in custom_roles:
-        return list(custom_roles[role])
-
-    return None
-
-
-def resolve_allowed_tools(
-    profile_allowed_tools: List[str] | None,
-    role: str | None,
+def resolve_runtime_capabilities(
+    profile_runtime_capabilities: List[str] | None,
     mcp_server_names: List[str] | None = None,
 ) -> List[str]:
-    """Resolve the effective allowedTools for an agent.
+    """Resolve coarse runtime capabilities for an agent.
 
     Resolution order:
-    1. profile_allowed_tools (explicit in profile or --allowed-tools CLI)
-    2. Role-based defaults (built-in or custom from settings.json)
-    3. Unrestricted ["*"] (backward compatible — no role/allowedTools = no restrictions)
+    1. ``runtimeCapabilities`` in the profile.
+    2. Default developer-like runtime capabilities.
 
-    MCP server names from the profile are appended as @server_name.
+    MCP server names from the profile are appended as ``@server_name`` markers
+    for existing provider integrations. Those markers are not named MCP tool
+    allowlists; they only preserve current runtime configuration behavior.
     """
-    if profile_allowed_tools is not None:
-        allowed = list(profile_allowed_tools)
-    elif role:
-        role_defaults = _get_role_defaults(role)
-        if role_defaults is not None:
-            allowed = role_defaults
-        else:
-            logger.warning(
-                "Unknown role '%s' — falling back to unrestricted. "
-                "Define custom roles in settings.json under 'roles'.",
-                role,
-            )
-            allowed = ["*"]
+    if profile_runtime_capabilities is not None:
+        allowed = list(profile_runtime_capabilities)
     else:
-        # No role, no allowedTools — default to developer (secure default)
-        from cli_agent_orchestrator.constants import ROLE_TOOL_DEFAULTS
+        from cli_agent_orchestrator.constants import DEFAULT_RUNTIME_CAPABILITIES
 
-        allowed = list(ROLE_TOOL_DEFAULTS["developer"])
+        allowed = list(DEFAULT_RUNTIME_CAPABILITIES)
 
     # Append MCP server tools if not already present
     if mcp_server_names and "*" not in allowed:
@@ -116,11 +81,11 @@ def resolve_allowed_tools(
 
 
 def get_disallowed_tools(provider: str, allowed: List[str]) -> List[str]:
-    """Given CAO allowedTools, return provider-native tool names to BLOCK.
+    """Given runtime capabilities, return provider-native tool names to BLOCK.
 
     Args:
         provider: Provider name (e.g., "claude_code", "copilot_cli", "gemini_cli")
-        allowed: List of CAO tool names that are ALLOWED
+        allowed: List of CAO runtime capability names that are ALLOWED
 
     Returns:
         List of provider-native tool names that should be BLOCKED
@@ -148,7 +113,7 @@ def get_disallowed_tools(provider: str, allowed: List[str]) -> List[str]:
 
 
 def format_tool_summary(allowed: List[str]) -> str:
-    """Format allowedTools into a human-readable summary for the confirmation prompt.
+    """Format runtime capabilities into a human-readable confirmation prompt.
 
     Returns:
         A string like "execute_bash, fs_read, @cao-mcp-server"

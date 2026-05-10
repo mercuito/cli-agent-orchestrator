@@ -1,20 +1,21 @@
-"""End-to-end tests for allowedTools enforcement across providers.
+"""End-to-end tests for runtime capability enforcement across providers.
 
-Tests that tool restrictions set via ``allowed_tools`` API parameter are
+Tests that runtime capability restrictions set via the ``allowed_tools`` API
+parameter are
 correctly translated to each provider's native mechanism and enforced at
 runtime.
 
 Test strategy:
-1. Create a terminal with restricted allowedTools (supervisor role: @cao-mcp-server only)
+1. Create a terminal with restricted runtime capabilities.
 2. Send the agent a task that requires bash execution (e.g., "run echo hello")
 3. Verify the agent CANNOT execute bash — output should indicate refusal/blocked
-4. Create a terminal with unrestricted allowedTools (wildcard *)
+4. Create a terminal with unrestricted runtime capabilities (wildcard *)
 5. Send the same bash task
 6. Verify the agent CAN execute bash — output should contain the command result
 
 Provider coverage:
 - Kiro CLI: Hard enforcement via agent JSON allowedTools (set at install time).
-  Tests use the built-in code_supervisor profile (role=supervisor, no execute_bash).
+  Tests use the built-in code_supervisor profile (no execute_bash).
 - Claude Code: Hard enforcement via --disallowedTools flags.
   Tests pass allowed_tools=@cao-mcp-server to trigger Bash blocking.
 - Gemini CLI: Hard enforcement via Policy Engine TOML deny rules.
@@ -172,7 +173,7 @@ def _send_task_and_get_output(terminal_id: str, message: str) -> str:
 
 
 def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: str):
-    """Test that a terminal with restricted allowedTools cannot execute bash.
+    """Test that a terminal with restricted runtime capabilities cannot execute bash.
 
     Creates a terminal with the given allowed_tools restriction, sends a task
     that requires bash, and verifies the agent refuses or is blocked.
@@ -220,7 +221,7 @@ def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: 
         # This cannot be faked by the agent's text output.
         time.sleep(2)
         assert not marker_file.exists(), (
-            f"Agent executed bash despite restricted allowedTools! "
+            f"Agent executed bash despite restricted runtime capabilities! "
             f"Provider={provider}, allowed_tools={allowed_tools}. "
             f"Marker file {BASH_MARKER_FILE} was created on disk."
         )
@@ -232,7 +233,7 @@ def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: 
 
 
 def _run_unrestricted_tool_test(provider: str, agent_profile: str):
-    """Test that a terminal with wildcard allowedTools CAN execute bash.
+    """Test that a terminal with wildcard runtime capabilities CAN execute bash.
 
     Creates a terminal with allowed_tools=* (unrestricted), sends a bash task,
     and verifies the agent executes it successfully.
@@ -263,7 +264,7 @@ def _run_unrestricted_tool_test(provider: str, agent_profile: str):
 
         # Ground truth: the file should have been created on disk
         assert marker_file.exists(), (
-            f"Agent did not execute bash despite unrestricted allowedTools. "
+            f"Agent did not execute bash despite unrestricted runtime capabilities. "
             f"Expected marker file {BASH_MARKER_FILE} to be created. "
             f"Provider={provider}, output: {output[:500]}"
         )
@@ -326,7 +327,7 @@ def _run_allowed_tools_stored_test(provider: str, agent_profile: str, allowed_to
 
 @pytest.mark.e2e
 class TestKiroCliAllowedTools:
-    """E2E allowedTools tests for the Kiro CLI provider.
+    """E2E runtime capability tests for the Kiro CLI provider.
 
     Kiro CLI enforces tool restrictions at INSTALL time via the agent JSON's
     allowedTools field. Runtime allowed_tools API params are stored in the DB
@@ -335,11 +336,11 @@ class TestKiroCliAllowedTools:
 
     To test Kiro's actual tool blocking, first run:
         cao install src/cli_agent_orchestrator/agent_store/code_supervisor.md --provider kiro_cli
-    This writes allowedTools: ["@cao-mcp-server"] into the agent JSON.
+    This writes the provider-native agent JSON that Kiro uses for enforcement.
     """
 
     def test_unrestricted_developer_can_bash(self, require_kiro):
-        """Developer with wildcard allowedTools can execute bash."""
+        """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="kiro_cli",
             agent_profile="developer",
@@ -358,9 +359,9 @@ class TestKiroCliAllowedTools:
 
         NOTE: This test only passes if code_supervisor was installed with:
             cao install code_supervisor --provider kiro_cli
-        which writes allowedTools: ["@cao-mcp-server"] to the agent JSON.
-        If the profile was installed before the allowedTools feature, the
-        agent JSON won't have restrictions and this test will fail.
+        which writes the provider-native agent JSON used for restrictions.
+        If the profile was installed before runtime capability restrictions,
+        the agent JSON won't have restrictions and this test will fail.
         Reinstall the profile to fix.
         """
         _run_restricted_tool_test(
@@ -377,7 +378,7 @@ class TestKiroCliAllowedTools:
 
 @pytest.mark.e2e
 class TestClaudeCodeAllowedTools:
-    """E2E allowedTools tests for the Claude Code provider.
+    """E2E runtime capability tests for the Claude Code provider.
 
     Claude Code enforces restrictions via --disallowedTools flags alongside
     --dangerously-skip-permissions. When allowed_tools=@cao-mcp-server,
@@ -393,7 +394,7 @@ class TestClaudeCodeAllowedTools:
         )
 
     def test_unrestricted_developer_can_bash(self, require_claude):
-        """Developer with wildcard allowedTools can execute bash."""
+        """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="claude_code",
             agent_profile="developer",
@@ -452,7 +453,7 @@ class TestClaudeCodeAllowedTools:
 
 @pytest.mark.e2e
 class TestCodexAllowedTools:
-    """E2E allowedTools tests for the Codex provider.
+    """E2E runtime capability tests for the Codex provider.
 
     Codex has no native tool restriction mechanism. Enforcement is via
     security system prompt prepended to the agent's instructions. This is
@@ -481,7 +482,7 @@ class TestCodexAllowedTools:
         )
 
     def test_unrestricted_developer_can_bash(self, require_codex):
-        """Developer with wildcard allowedTools can execute bash."""
+        """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="codex",
             agent_profile="developer",
@@ -503,7 +504,7 @@ class TestCodexAllowedTools:
 
 @pytest.mark.e2e
 class TestKimiCliAllowedTools:
-    """E2E allowedTools tests for the Kimi CLI provider.
+    """E2E runtime capability tests for the Kimi CLI provider.
 
     Kimi CLI has no native tool restriction mechanism. Enforcement is via
     security system prompt prepended to the agent's instructions. This is
@@ -532,7 +533,7 @@ class TestKimiCliAllowedTools:
         )
 
     def test_unrestricted_developer_can_bash(self, require_kimi):
-        """Developer with wildcard allowedTools can execute bash."""
+        """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="kimi_cli",
             agent_profile="developer",
@@ -554,7 +555,7 @@ class TestKimiCliAllowedTools:
 
 @pytest.mark.e2e
 class TestGeminiCliAllowedTools:
-    """E2E allowedTools tests for the Gemini CLI provider.
+    """E2E runtime capability tests for the Gemini CLI provider.
 
     Gemini CLI enforces restrictions via Policy Engine TOML deny rules
     written to ~/.gemini/policies/cao-{terminal_id}.toml. Deny rules
@@ -577,7 +578,7 @@ class TestGeminiCliAllowedTools:
         )
 
     def test_unrestricted_developer_can_bash(self, require_gemini):
-        """Developer with wildcard allowedTools can execute bash."""
+        """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="gemini_cli",
             agent_profile="developer",
