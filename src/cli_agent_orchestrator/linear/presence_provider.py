@@ -6,6 +6,13 @@ import re
 from typing import Any, List, Mapping, Optional, cast
 
 from cli_agent_orchestrator.linear import app_client
+from cli_agent_orchestrator.linear.agent_session_classifier import (
+    LINEAR_AGENT_SESSION_CLASSIFICATION_KEY,
+)
+from cli_agent_orchestrator.linear.webhook_ingestion import (
+    LINEAR_WEBHOOK_PACKET_METADATA_KEY,
+    parse_linear_webhook_packet,
+)
 from cli_agent_orchestrator.presence.models import (
     ConversationMessage,
     ConversationThread,
@@ -167,7 +174,9 @@ def _linear_message_read_presentation_metadata(
 
     return inbox_read_presentation_metadata(
         workspace=_linear_workspace_hint(agent_session),
-        source_label=_linear_actor_label(activity) or _linear_actor_label(agent_session) or "Linear",
+        source_label=_linear_actor_label(activity)
+        or _linear_actor_label(agent_session)
+        or "Linear",
     )
 
 
@@ -243,6 +252,16 @@ class LinearPresenceProvider:
         if not _is_agent_session_event(payload, effective_header_event):
             return None
 
+        packet = parse_linear_webhook_packet(
+            payload,
+            header_event=effective_header_event,
+        )
+        if packet.resource_family != "agent_session" or not packet.supported:
+            return None
+        classification = packet.agent_session_classification
+        if classification is None:
+            return None
+
         agent_session = self._client.agent_session_from_payload(payload)
         prompt_context = self._client.prompt_context_from_payload(payload)
         thread = _thread_from_session(
@@ -262,15 +281,20 @@ class LinearPresenceProvider:
             refs=self._refs,
         )
         if message is None:
-            message = _message_from_session_comment(
-                agent_session,
-                metadata=_linear_message_read_presentation_metadata(
+            if classification.should_notify_agent:
+                message = _message_from_session_comment(
                     agent_session,
-                    activity,
-                ),
-                refs=self._refs,
-            )
+                    metadata=_linear_message_read_presentation_metadata(
+                        agent_session,
+                        agent_session,
+                    ),
+                    refs=self._refs,
+                )
+            else:
+                message = None
 
+        payload[LINEAR_WEBHOOK_PACKET_METADATA_KEY] = packet.as_metadata()
+        payload[LINEAR_AGENT_SESSION_CLASSIFICATION_KEY] = classification.as_metadata()
         return PresenceEvent(
             provider=PROVIDER,
             event_type=_event_type(payload, effective_header_event) or "AgentSessionEvent",

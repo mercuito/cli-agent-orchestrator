@@ -184,6 +184,62 @@ def test_created_payload_with_comment_but_no_activity_creates_replyable_user_mes
     assert "context" not in event.message.metadata[INBOX_READ_PRESENTATION_METADATA_KEY]
 
 
+def test_app_created_session_comment_bootstrap_does_not_create_user_message():
+    payload = {
+        "type": "AgentSessionEvent",
+        "action": "created",
+        "data": {
+            "agentSession": {
+                "id": "session-proactive",
+                "creator": None,
+                "sourceMetadata": None,
+                "comment": {
+                    "id": "comment-linear",
+                    "body": "RJ Wilson connected Discovery Partner to this issue.",
+                },
+                "issue": {"id": "issue-67", "identifier": "CAO-67"},
+            },
+        },
+    }
+
+    event = LinearPresenceProvider().normalize_event(payload)
+
+    assert event is not None
+    assert event.thread is not None
+    assert event.thread.ref.id == "session-proactive"
+    assert event.message is None
+
+
+def test_human_delegated_session_comment_still_creates_user_message():
+    payload = {
+        "type": "AgentSessionEvent",
+        "action": "created",
+        "data": {
+            "agentSession": {
+                "id": "session-delegated",
+                "creator": {"id": "user-1", "name": "RJ Wilson"},
+                "sourceMetadata": None,
+                "comment": {
+                    "id": "comment-delegated",
+                    "body": "RJ Wilson delegated this issue to Discovery Partner.",
+                },
+                "issue": {
+                    "id": "issue-67",
+                    "identifier": "CAO-67",
+                    "delegate": {"id": "app-user-1", "name": "Discovery Partner"},
+                },
+            },
+        },
+    }
+
+    event = LinearPresenceProvider().normalize_event(payload)
+
+    assert event is not None
+    assert event.message is not None
+    assert event.message.ref == ExternalRef(provider="linear", id="comment-delegated")
+    assert event.message.body == "RJ Wilson delegated this issue to Discovery Partner."
+
+
 def test_created_payload_without_user_message_does_not_invent_prompt_context_message():
     prompt_context = "<issue>Current scope</issue>\n" + ("prior comment " * 800)
     payload = {

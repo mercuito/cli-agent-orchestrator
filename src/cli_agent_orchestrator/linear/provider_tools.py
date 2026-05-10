@@ -26,6 +26,7 @@ PROVIDER_NAME = "linear"
 GET_ISSUE_TOOL = "cao_linear.get_issue"
 LIST_COMMENTS_TOOL = "cao_linear.list_comments"
 CREATE_COMMENT_TOOL = "cao_linear.create_comment"
+OPEN_AGENT_SESSION_ON_ISSUE_TOOL = "cao_linear.open_agent_session_on_issue"
 CREATE_ISSUE_TOOL = "cao_linear.create_issue"
 UPDATE_ISSUE_TOOL = "cao_linear.update_issue"
 LIST_TEAMS_TOOL = "cao_linear.list_teams"
@@ -50,10 +51,12 @@ SEARCH_DOCUMENTS_TOOL = "cao_linear.search_documents"
 READ_POLICY_HOOK = "linear_read_policy"
 EXPLORATION_READ_POLICY_HOOK = "linear_exploration_read_policy"
 COMMENT_WRITE_POLICY_HOOK = "linear_comment_write_policy"
+AGENT_SESSION_WRITE_POLICY_HOOK = "linear_agent_session_write_policy"
 CREATE_ISSUE_POLICY_HOOK = "linear_create_issue_policy"
 UPDATE_ISSUE_POLICY_HOOK = "linear_update_issue_policy"
 LINEAR_READ_TOOLS = frozenset({GET_ISSUE_TOOL, LIST_COMMENTS_TOOL})
 LINEAR_COMMENT_WRITE_TOOLS = frozenset({CREATE_COMMENT_TOOL})
+LINEAR_AGENT_SESSION_WRITE_TOOLS = frozenset({OPEN_AGENT_SESSION_ON_ISSUE_TOOL})
 LINEAR_ISSUE_MUTATION_TOOLS = frozenset({CREATE_ISSUE_TOOL, UPDATE_ISSUE_TOOL})
 LINEAR_EXPLORATION_READ_TOOLS = frozenset(
     {
@@ -82,9 +85,15 @@ LINEAR_PROVIDER_TOOLS = (
     LINEAR_READ_TOOLS
     | LINEAR_EXPLORATION_READ_TOOLS
     | LINEAR_COMMENT_WRITE_TOOLS
+    | LINEAR_AGENT_SESSION_WRITE_TOOLS
     | LINEAR_ISSUE_MUTATION_TOOLS
 )
-ISSUE_TARGETING_TOOLS = LINEAR_READ_TOOLS | LINEAR_COMMENT_WRITE_TOOLS | {UPDATE_ISSUE_TOOL}
+ISSUE_TARGETING_TOOLS = (
+    LINEAR_READ_TOOLS
+    | LINEAR_COMMENT_WRITE_TOOLS
+    | LINEAR_AGENT_SESSION_WRITE_TOOLS
+    | {UPDATE_ISSUE_TOOL}
+)
 LIST_LIMIT_TOOLS = frozenset(
     {
         LIST_TEAMS_TOOL,
@@ -249,6 +258,9 @@ def _linear_runtime_dependency_callables(
         GET_DOCUMENT_TOOL: linear_queries.get_document,
         SEARCH_DOCUMENTS_TOOL: linear_queries.search_documents,
     }
+    from cli_agent_orchestrator.linear import app_client
+    from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+
     issue_read_dependencies: tuple[LinearRuntimeDependency, ...] = (
         ("LinearToolProvider._authorize_before_call", provider._authorize_before_call, False),
         ("LinearToolProvider._authorized_issue_request", provider._authorized_issue_request, True),
@@ -296,6 +308,44 @@ def _linear_runtime_dependency_callables(
             ("_create_linear_comment", _create_linear_comment, True),
             ("_created_comment_from_payload", _created_comment_from_payload, True),
             ("_compact_created_comment_payload", _compact_created_comment_payload, True),
+        ),
+        OPEN_AGENT_SESSION_ON_ISSUE_TOOL: (
+            (
+                "LinearToolProvider._authorize_agent_session_before_call",
+                provider._authorize_agent_session_before_call,
+                False,
+            ),
+            (
+                "LinearToolProvider._authorized_issue_request",
+                provider._authorized_issue_request,
+                True,
+            ),
+            ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+            (
+                "LinearToolProvider._require_returned_issue_allowed",
+                provider._require_returned_issue_allowed,
+                True,
+            ),
+            (
+                "_agent_session_initial_body_from_arguments",
+                _agent_session_initial_body_from_arguments,
+                True,
+            ),
+            ("_fetch_issue", _fetch_issue, True),
+            ("_issue_from_payload", _issue_from_payload, True),
+            ("_open_linear_agent_session_on_issue", _open_linear_agent_session_on_issue, True),
+            (
+                "app_client.create_agent_session_on_issue",
+                app_client.create_agent_session_on_issue,
+                True,
+            ),
+            ("app_client.create_agent_activity", app_client.create_agent_activity, True),
+            ("app_client.public_cao_agent_url", app_client.public_cao_agent_url, True),
+            (
+                "_compact_created_agent_session_payload",
+                _compact_created_agent_session_payload,
+                True,
+            ),
         ),
         CREATE_ISSUE_TOOL: (
             (
@@ -354,9 +404,6 @@ def _linear_runtime_dependency_callables(
         ),
     }
     result: list[LinearRuntimeDependency] = []
-    from cli_agent_orchestrator.linear import app_client
-    from cli_agent_orchestrator.linear import workspace_provider as linear_provider
-
     if tool_name in query_dependencies:
         result.append(
             (
@@ -440,6 +487,8 @@ def _linear_runtime_constant_material(tool_name: str) -> Mapping[str, Any]:
         values["MAX_DESCRIPTION_CHARS"] = MAX_DESCRIPTION_CHARS
         values["_TRUNCATED"] = _TRUNCATED
     if tool_name in {LIST_COMMENTS_TOOL, CREATE_COMMENT_TOOL}:
+        values["MAX_COMMENT_BODY_CHARS"] = MAX_COMMENT_BODY_CHARS
+    if tool_name == OPEN_AGENT_SESSION_ON_ISSUE_TOOL:
         values["MAX_COMMENT_BODY_CHARS"] = MAX_COMMENT_BODY_CHARS
     if tool_name == CREATE_ISSUE_TOOL:
         values["CREATE_ISSUE_FIELDS"] = sorted(CREATE_ISSUE_FIELDS)
@@ -537,6 +586,15 @@ class LinearToolProvider:
                     description="Create a Linear issue comment on an authorized issue.",
                     input_schema=_create_comment_input_schema(),
                     handler=self._create_comment,
+                ),
+                ProviderMediatedToolDefinition(
+                    name=OPEN_AGENT_SESSION_ON_ISSUE_TOOL,
+                    description=(
+                        "Open a Linear AgentSession on an authorized issue and post an "
+                        "initial elicitation activity."
+                    ),
+                    input_schema=_open_agent_session_on_issue_input_schema(),
+                    handler=self._open_agent_session_on_issue,
                 ),
                 ProviderMediatedToolDefinition(
                     name=CREATE_ISSUE_TOOL,
@@ -685,6 +743,11 @@ class LinearToolProvider:
                 handler=self._authorize_comment_before_call,
             ),
             ProviderToolHookDefinition(
+                name=AGENT_SESSION_WRITE_POLICY_HOOK,
+                phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
+                handler=self._authorize_agent_session_before_call,
+            ),
+            ProviderToolHookDefinition(
                 name=CREATE_ISSUE_POLICY_HOOK,
                 phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
                 handler=self._authorize_create_issue_before_call,
@@ -702,6 +765,8 @@ class LinearToolProvider:
             for tool_name in access.tools:
                 if tool_name == CREATE_COMMENT_TOOL:
                     pre_hook = COMMENT_WRITE_POLICY_HOOK
+                elif tool_name == OPEN_AGENT_SESSION_ON_ISSUE_TOOL:
+                    pre_hook = AGENT_SESSION_WRITE_POLICY_HOOK
                 elif tool_name == CREATE_ISSUE_TOOL:
                     pre_hook = CREATE_ISSUE_POLICY_HOOK
                 elif tool_name == UPDATE_ISSUE_TOOL:
@@ -768,6 +833,16 @@ class LinearToolProvider:
             return self._deny_with_policy_context(context, exc)
         return ProviderToolPreCallResult.allow()
 
+    def _authorize_agent_session_before_call(
+        self, context: ProviderToolInvocationContext
+    ) -> ProviderToolPreCallResult:
+        try:
+            self._authorized_issue_request(context)
+            _agent_session_initial_body_from_arguments(context.arguments)
+        except LinearToolError as exc:
+            return self._deny_with_policy_context(context, exc)
+        return ProviderToolPreCallResult.allow()
+
     def _deny_with_policy_context(
         self,
         context: ProviderToolInvocationContext,
@@ -828,6 +903,24 @@ class LinearToolProvider:
         self._require_returned_issue_allowed(issue, context.access.source_location)
         comment = _create_linear_comment(issue, body, presence)
         return _compact_created_comment_payload(comment, issue)
+
+    def _open_agent_session_on_issue(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        issue_key = self._authorized_issue_request(context)
+        initial_body = _agent_session_initial_body_from_arguments(arguments)
+        presence = self._presence_for_identity(context.agent_identity.id)
+        issue = _fetch_issue(issue_key, presence)
+        self._require_returned_issue_allowed(issue, context.access.source_location)
+        agent_session = _open_linear_agent_session_on_issue(
+            issue,
+            initial_body,
+            presence,
+            agent_id=context.agent_identity.id,
+        )
+        return _compact_created_agent_session_payload(agent_session, issue)
 
     def _create_issue(
         self,
@@ -1513,6 +1606,22 @@ def _create_comment_input_schema() -> dict[str, Any]:
     }
 
 
+def _open_agent_session_on_issue_input_schema() -> dict[str, Any]:
+    issue_schema = _issue_input_schema()
+    return {
+        "type": "object",
+        "properties": {
+            **issue_schema["properties"],
+            "initial_body": {
+                "type": "string",
+                "description": "Initial elicitation text to post into the new AgentSession.",
+            },
+        },
+        "required": ["initial_body"],
+        "additionalProperties": False,
+    }
+
+
 def _create_issue_input_schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -1816,6 +1925,27 @@ def _comment_body_from_arguments(arguments: Mapping[str, Any]) -> str:
     return body
 
 
+def _agent_session_initial_body_from_arguments(arguments: Mapping[str, Any]) -> str:
+    body = arguments.get("initial_body")
+    if not isinstance(body, str):
+        raise LinearToolError(
+            "invalid_linear_agent_session_body",
+            "initial_body must be a non-empty string",
+        )
+    stripped = body.strip()
+    if not stripped:
+        raise LinearToolError(
+            "invalid_linear_agent_session_body",
+            "initial_body must not be blank",
+        )
+    if len(body) > MAX_COMMENT_BODY_CHARS:
+        raise LinearToolError(
+            "invalid_linear_agent_session_body",
+            f"initial_body must be at most {MAX_COMMENT_BODY_CHARS} characters",
+        )
+    return body
+
+
 def _required_string(value: Any, *, field: str, reason: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise LinearToolError(reason, f"{field} must be a non-empty string")
@@ -1994,6 +2124,45 @@ def _create_linear_comment(
     except Exception as exc:
         raise _linear_api_error(exc) from exc
     return _created_comment_from_payload(payload, issue_id)
+
+
+def _open_linear_agent_session_on_issue(
+    issue: Mapping[str, Any],
+    initial_body: str,
+    presence: Any,
+    *,
+    agent_id: str,
+) -> Mapping[str, Any]:
+    from cli_agent_orchestrator.linear import app_client
+
+    issue_id = _string_or_none(issue.get("id"))
+    if not issue_id:
+        raise LinearToolError(
+            "linear_issue_not_found",
+            "Linear issue id missing before AgentSession creation",
+        )
+    _preflight_presence_credentials(presence)
+    external_url = app_client.public_cao_agent_url(agent_id)
+    external_urls = [{"label": "Open CAO", "url": external_url}] if external_url else None
+    try:
+        agent_session = app_client.create_agent_session_on_issue(
+            issue_id,
+            external_urls=external_urls,
+            app_key=presence.app_key,
+        )
+        session_id = _required_string(
+            agent_session.get("id"),
+            field="agent_session_id",
+            reason="linear_agent_session_not_created",
+        )
+        app_client.create_agent_activity(
+            session_id,
+            {"type": "elicitation", "body": initial_body},
+            app_key=presence.app_key,
+        )
+    except Exception as exc:
+        raise _linear_api_error(exc) from exc
+    return agent_session
 
 
 def _validate_linear_reference(field: str, value: str, presence: Any) -> None:
@@ -2325,6 +2494,31 @@ def _compact_created_comment_payload(
     }
 
 
+def _compact_created_agent_session_payload(
+    agent_session: Mapping[str, Any],
+    fallback_issue: Mapping[str, Any],
+) -> dict[str, Any]:
+    issue = (
+        agent_session.get("issue")
+        if isinstance(agent_session.get("issue"), Mapping)
+        else fallback_issue
+    )
+    return {
+        "status": "created",
+        "id": _string_or_none(agent_session.get("id")),
+        "url": _string_or_none(agent_session.get("url")),
+        "issue": {
+            "id": _string_or_none(issue.get("id")) if isinstance(issue, Mapping) else None,
+            "identifier": (
+                _string_or_none(issue.get("identifier")) if isinstance(issue, Mapping) else None
+            ),
+            "title": _string_or_none(issue.get("title")) if isinstance(issue, Mapping) else None,
+            "url": _string_or_none(issue.get("url")) if isinstance(issue, Mapping) else None,
+        },
+        "initial_activity": {"type": "elicitation", "status": "created"},
+    }
+
+
 def _compact_issue_mutation_payload(
     issue: Mapping[str, Any],
     *,
@@ -2385,11 +2579,13 @@ __all__ = [
     "CREATE_ISSUE_FIELDS",
     "CREATE_ISSUE_TOOL",
     "GET_ISSUE_TOOL",
+    "LINEAR_AGENT_SESSION_WRITE_TOOLS",
     "LINEAR_COMMENT_WRITE_TOOLS",
     "LINEAR_ISSUE_MUTATION_TOOLS",
     "LINEAR_PROVIDER_TOOLS",
     "LINEAR_READ_TOOLS",
     "LIST_COMMENTS_TOOL",
+    "OPEN_AGENT_SESSION_ON_ISSUE_TOOL",
     "ISSUE_TARGETING_TOOLS",
     "UPDATE_ISSUE_FIELDS",
     "UPDATE_ISSUE_TOOL",

@@ -749,6 +749,66 @@ def test_linear_agent_webhook_does_not_route_created_session_with_prompt_context
     presence_provider_manager.clear_providers()
 
 
+def test_linear_agent_webhook_suppresses_app_created_bootstrap_then_routes_user_prompt(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _use_mapped_linear_runtime(monkeypatch)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: _verified_linear_app(),
+    )
+    base_session = {
+        "id": "session-proactive",
+        "url": "https://linear.app/session/session-proactive",
+        "creator": None,
+        "sourceMetadata": None,
+        "comment": {
+            "id": "comment-linear",
+            "body": "RJ Wilson connected Discovery Partner to this issue.",
+        },
+        "issue": {
+            "id": "issue-67",
+            "identifier": "CAO-67",
+            "title": "Allow proactive sessions",
+        },
+    }
+
+    bootstrap = client.post(
+        "/linear/webhooks/agent",
+        json={"action": "created", "data": {"agentSession": base_session}},
+        headers=_linear_headers("delivery-bootstrap"),
+    )
+    prompt = client.post(
+        "/linear/webhooks/agent",
+        json={
+            "action": "created",
+            "data": {
+                "agentSession": base_session,
+                "agentActivity": {
+                    "id": "activity-user-prompt",
+                    "content": {"type": "prompt", "body": "testing"},
+                },
+            },
+        },
+        headers=_linear_headers("delivery-prompt"),
+    )
+
+    assert bootstrap.status_code == 200
+    assert bootstrap.json()["routed"] is False
+    assert prompt.status_code == 200
+    assert prompt.json()["routed"] is True
+    assert len(handle.accepted) == 1
+    thread = get_thread("linear", "session-proactive")
+    assert thread is not None
+    messages = list_messages(thread.id)
+    assert [message.body for message in messages] == ["testing"]
+    assert _pending_linear_notifications()[0].message.body == "testing"
+    presence_provider_manager.clear_providers()
+
+
 def test_linear_agent_webhook_posts_accepted_activity_and_external_url_once(
     client,
     monkeypatch,

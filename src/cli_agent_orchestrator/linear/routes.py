@@ -14,6 +14,7 @@ from cli_agent_orchestrator.linear.presence_provider import (
     LinearPresenceProvider,
     payload_with_header_event,
 )
+from cli_agent_orchestrator.linear.webhook_ingestion import parse_linear_webhook_packet
 from cli_agent_orchestrator.presence.manager import (
     UnknownPresenceProviderError,
     presence_provider_manager,
@@ -153,11 +154,9 @@ async def agent_webhook(
     if verification.app_user_name:
         payload["_cao_linear_app_user_name"] = verification.app_user_name
 
-    event = app_client.webhook_event_type(
-        payload,
-        header_event=header_event,
-    )
-    action = payload.get("action")
+    packet = parse_linear_webhook_packet(payload, header_event=header_event)
+    event = packet.event_type
+    action = packet.action
     if not _has_trusted_routing_source(verification):
         logger.warning(
             "Ignoring Linear webhook without trusted app/source metadata "
@@ -174,7 +173,7 @@ async def agent_webhook(
             action=action,
             delivery=delivery,
             app_key=verification.app_key,
-            agent_session_id=app_client.agent_session_id_from_payload(payload),
+            agent_session_id=packet.agent_session_id,
             routed=False,
         )
 
@@ -192,7 +191,7 @@ async def agent_webhook(
     presence_event = presence_event if presence_event is not None else None
     agent_session_id = (
         presence_event.thread.ref.id if presence_event and presence_event.thread else None
-    )
+    ) or packet.agent_session_id
 
     logger.info(
         "Received Linear webhook event=%s action=%s delivery=%s agent_session_id=%s verified=%s",

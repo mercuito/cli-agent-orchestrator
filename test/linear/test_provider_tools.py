@@ -37,6 +37,7 @@ from cli_agent_orchestrator.linear.provider_tools import (
     LIST_PROJECTS_TOOL,
     LIST_TEAMS_TOOL,
     LIST_USERS_TOOL,
+    OPEN_AGENT_SESSION_ON_ISSUE_TOOL,
     SEARCH_DOCUMENTS_TOOL,
     SEARCH_ISSUES_TOOL,
     UPDATE_ISSUE_FIELDS,
@@ -411,6 +412,19 @@ def _created_comment_payload() -> dict[str, Any]:
             "id": "issue-50",
             "identifier": "CAO-50",
             "url": "https://linear.app/yards-framework/issue/CAO-50/example",
+        },
+    }
+
+
+def _created_agent_session_payload() -> dict[str, Any]:
+    return {
+        "id": "agent-session-created",
+        "url": "https://linear.app/yards-framework/issue/CAO-67/example#agent-session",
+        "issue": {
+            "id": "issue-67",
+            "identifier": "CAO-67",
+            "title": "Allow proactive sessions",
+            "url": "https://linear.app/yards-framework/issue/CAO-67/example",
         },
     }
 
@@ -1178,6 +1192,101 @@ issues = ["CAO-50", "issue-50"]
         "updated_at": "2026-05-09T04:10:00.000Z",
     }
     assert ["commentCreate" in call["query"] for call in calls] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_linear_agent_session_tool_opens_authorized_issue_session(
+    tmp_path,
+    monkeypatch,
+):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.discovery_partner_agent_sessions]
+agent_id = "discovery_partner"
+tools = ["{OPEN_AGENT_SESSION_ON_ISSUE_TOOL}"]
+issues = ["CAO-67", "issue-67"]
+""",
+    )
+    graphql_calls: list[dict[str, Any]] = []
+    created_sessions: list[dict[str, Any]] = []
+    created_activities: list[dict[str, Any]] = []
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        graphql_calls.append({"query": query, "variables": variables, "app_key": app_key})
+        assert app_key == "discovery_partner"
+        assert variables == {"id": "CAO-67"}
+        return {
+            "data": {
+                "issue": _issue_payload(
+                    id="issue-67",
+                    identifier="CAO-67",
+                    description="Allow proactive sessions.",
+                )
+            }
+        }
+
+    def fake_create_session(issue_id, *, external_urls=None, app_key=None):
+        created_sessions.append(
+            {"issue_id": issue_id, "external_urls": external_urls, "app_key": app_key}
+        )
+        return _created_agent_session_payload()
+
+    def fake_create_activity(agent_session_id, content, *, app_key=None):
+        created_activities.append(
+            {"agent_session_id": agent_session_id, "content": content, "app_key": app_key}
+        )
+        return {"id": "activity-elicitation"}
+
+    monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
+    monkeypatch.setattr(app_client, "create_agent_session_on_issue", fake_create_session)
+    monkeypatch.setattr(app_client, "create_agent_activity", fake_create_activity)
+    monkeypatch.setattr(
+        app_client,
+        "public_cao_agent_url",
+        lambda agent_id: f"https://cao.test/?agent_id={agent_id}",
+    )
+
+    mcp, registered = _mcp_for_provider(provider, "terminal-discovery")
+
+    result = await mcp.call_tool(
+        OPEN_AGENT_SESSION_ON_ISSUE_TOOL,
+        {"issue": "CAO-67", "initial_body": "What outcome are we trying to shape?"},
+    )
+
+    payload = json.loads(result.content[0].text)
+    assert registered == [OPEN_AGENT_SESSION_ON_ISSUE_TOOL]
+    assert payload == {
+        "status": "created",
+        "id": "agent-session-created",
+        "url": "https://linear.app/yards-framework/issue/CAO-67/example#agent-session",
+        "issue": {
+            "id": "issue-67",
+            "identifier": "CAO-67",
+            "title": "Allow proactive sessions",
+            "url": "https://linear.app/yards-framework/issue/CAO-67/example",
+        },
+        "initial_activity": {"type": "elicitation", "status": "created"},
+    }
+    assert len(graphql_calls) == 1
+    assert graphql_calls[0]["variables"] == {"id": "CAO-67"}
+    assert graphql_calls[0]["app_key"] == "discovery_partner"
+    assert created_sessions == [
+        {
+            "issue_id": "issue-67",
+            "external_urls": [
+                {"label": "Open CAO", "url": "https://cao.test/?agent_id=discovery_partner"}
+            ],
+            "app_key": "discovery_partner",
+        }
+    ]
+    assert created_activities == [
+        {
+            "agent_session_id": "agent-session-created",
+            "content": {"type": "elicitation", "body": "What outcome are we trying to shape?"},
+            "app_key": "discovery_partner",
+        }
+    ]
 
 
 @pytest.mark.asyncio

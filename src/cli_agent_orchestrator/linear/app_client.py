@@ -530,8 +530,9 @@ def create_agent_session_on_issue(
     issue_id: str,
     *,
     external_urls: Optional[list[Dict[str, str]]] = None,
+    app_key: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create a real Linear AgentSession on an issue for smoke testing."""
+    """Create a Linear AgentSession on an issue."""
     input_data: Dict[str, Any] = {"issueId": issue_id}
     if external_urls:
         input_data["externalUrls"] = external_urls
@@ -544,6 +545,7 @@ def create_agent_session_on_issue(
             agentSession {
               id
               url
+              status
               issue {
                 id
                 identifier
@@ -555,8 +557,54 @@ def create_agent_session_on_issue(
         }
         """,
         {"input": input_data},
+        app_key=app_key,
     )
     agent_session = payload.get("data", {}).get("agentSessionCreateOnIssue", {}).get("agentSession")
+    if not isinstance(agent_session, dict) or not agent_session.get("id"):
+        raise LinearAppError("Linear did not return an AgentSession")
+    return agent_session
+
+
+def create_agent_session_on_comment(
+    comment_id: str,
+    *,
+    external_urls: Optional[list[Dict[str, str]]] = None,
+    app_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a Linear AgentSession on a comment."""
+    input_data: Dict[str, Any] = {"commentId": comment_id}
+    if external_urls:
+        input_data["externalUrls"] = external_urls
+
+    payload = linear_graphql(
+        """
+        mutation AgentSessionCreateOnComment($input: AgentSessionCreateOnComment!) {
+          agentSessionCreateOnComment(input: $input) {
+            success
+            agentSession {
+              id
+              url
+              status
+              issue {
+                id
+                identifier
+                title
+                url
+              }
+              comment {
+                id
+                body
+              }
+            }
+          }
+        }
+        """,
+        {"input": input_data},
+        app_key=app_key,
+    )
+    agent_session = (
+        payload.get("data", {}).get("agentSessionCreateOnComment", {}).get("agentSession")
+    )
     if not isinstance(agent_session, dict) or not agent_session.get("id"):
         raise LinearAppError("Linear did not return an AgentSession")
     return agent_session

@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.linear import app_client, translator
+from cli_agent_orchestrator.linear.agent_session_classifier import should_notify_agent
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearResolvedPresence,
     LinearWorkspaceProviderConfigError,
@@ -390,6 +391,8 @@ def notify_agent_for_persisted_event(
     if persisted_event.thread is None or persisted_event.message is None:
         return None
     if not persisted_event.message.body:
+        return None
+    if not should_notify_agent(event):
         return None
 
     try:
