@@ -173,8 +173,7 @@ def parse_codex_thread_id_probe_output(output: str, *, nonce: str) -> str | None
     """Return the nonce-tagged Codex thread id from tmux output, if present."""
     normalized = re.sub(r"(?<=[A-Za-z0-9_.:-])\n[ \t]+(?=[A-Za-z0-9_.:-])", "", output)
     pattern = re.compile(
-        rf"{re.escape(CODEX_THREAD_ID_PROBE_PREFIX + nonce)}="
-        r"([A-Za-z0-9_.:-]{8,})"
+        rf"{re.escape(CODEX_THREAD_ID_PROBE_PREFIX + nonce)}=" r"([A-Za-z0-9_.:-]{8,})"
     )
     matches = pattern.findall(normalized)
     if not matches:
@@ -335,7 +334,6 @@ class CodexProvider(BaseProvider):
             window_name=launch_context.window_name,
             agent_profile=launch_context.agent_profile,
             allowed_tools=launch_context.allowed_tools,
-            skill_prompt=launch_context.skill_prompt,
         )._build_codex_command()
         return ProviderRuntimeDescriptor(
             schema_version="codex-runtime-descriptor.v1",
@@ -343,6 +341,7 @@ class CodexProvider(BaseProvider):
                 "codex_home_schema_version": CODEX_HOME_MATERIALIZATION_SCHEMA_VERSION,
                 "codex_home_config": materialization.config,
                 "codex_home_agents_md": materialization.agents_md,
+                "codex_home_skills": materialization.skill_fingerprints,
                 "startup_command": startup_command,
                 "provider_runtime_config": get_provider_runtime_config(cls.provider_type),
             },
@@ -404,11 +403,10 @@ class CodexProvider(BaseProvider):
         window_name: str,
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[list] = None,
-        skill_prompt: Optional[str] = None,
         runtime_resume_args: Optional[list[str]] = None,
     ):
         """Initialize provider state."""
-        super().__init__(terminal_id, session_name, window_name, allowed_tools, skill_prompt)
+        super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
         self._agent_profile = agent_profile
         self._runtime_resume_args = list(runtime_resume_args or [])
@@ -450,7 +448,6 @@ class CodexProvider(BaseProvider):
                 profile = load_agent_profile(self._agent_profile)
 
                 system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
-                system_prompt = self._apply_skill_prompt(system_prompt)
 
                 # Prepend security constraints for soft enforcement (Codex has no
                 # native tool restriction mechanism). Only applied when tool

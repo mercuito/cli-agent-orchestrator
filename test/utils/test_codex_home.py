@@ -129,6 +129,111 @@ class TestPrepareCodexHome:
         assert agents_md.exists()
         assert agents_md.read_text().strip() == profile.system_prompt
 
+    def test_prepare_codex_home_materializes_profile_scoped_skills(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
+        (global_codex_home / "auth.json").write_text('{"ok":true}\n')
+        skill_store = tmp_path / "skills"
+        skill_dir = skill_store / "discovery-intake"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: discovery-intake\n"
+            "description: Discovery intake\n"
+            "---\n\n"
+            "# Discovery Intake\n"
+        )
+        (skill_dir / "references").mkdir()
+        (skill_dir / "references" / "brief.md").write_text("Brief template\n")
+        monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", skill_store)
+
+        profile = type(
+            "Profile",
+            (),
+            {
+                "name": "codex_developer",
+                "description": "desc",
+                "system_prompt": "Use your role skills.",
+                "skills": ["discovery-intake"],
+                "mcpServers": None,
+                "model": None,
+                "codexConfig": None,
+            },
+        )()
+
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            ),
+        ):
+            codex_home = prepare_codex_home(
+                terminal_id="abcd1234",
+                agent_profile="codex_developer",
+                working_directory=str(tmp_path / "work"),
+                cao_home_dir=tmp_path / "cao",
+                global_codex_home_dir=global_codex_home,
+            )
+
+        native_skill = codex_home / "skills" / "discovery-intake"
+        assert (native_skill / "SKILL.md").read_text().startswith("---\nname: discovery-intake")
+        assert (native_skill / "references" / "brief.md").read_text() == "Brief template\n"
+
+    def test_codex_home_materialization_fingerprints_profile_scoped_skills(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from cli_agent_orchestrator.utils.codex_home import build_codex_home_materialization
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
+        skill_store = tmp_path / "skills"
+        skill_dir = skill_store / "discovery-intake"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("first version\n")
+        monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", skill_store)
+
+        profile = type(
+            "Profile",
+            (),
+            {
+                "name": "codex_developer",
+                "description": "desc",
+                "system_prompt": "Use your role skills.",
+                "skills": ["discovery-intake"],
+                "mcpServers": None,
+                "model": None,
+                "codexConfig": None,
+            },
+        )()
+
+        with patch(
+            "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+        ):
+            first = build_codex_home_materialization(
+                "codex_developer",
+                str(tmp_path / "work"),
+                global_codex_home_dir=global_codex_home,
+            )
+            (skill_dir / "SKILL.md").write_text("second version\n")
+            second = build_codex_home_materialization(
+                "codex_developer",
+                str(tmp_path / "work"),
+                global_codex_home_dir=global_codex_home,
+            )
+
+        assert first.skill_fingerprints["discovery-intake"]["SKILL.md"] != (
+            second.skill_fingerprints["discovery-intake"]["SKILL.md"]
+        )
+
     def test_prepare_codex_home_copies_codex_auth_state(self, tmp_path: Path):
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
 

@@ -136,12 +136,10 @@ class TestCreateTerminal:
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.build_skill_catalog")
     @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
-    def test_create_terminal_appends_skill_catalog(
+    def test_create_terminal_does_not_append_cao_skill_catalog(
         self,
         mock_load_profile,
-        mock_build_skill_catalog,
         mock_gen_id,
         mock_gen_session,
         mock_gen_window,
@@ -150,65 +148,7 @@ class TestCreateTerminal:
         mock_provider_manager,
         mock_log_dir,
     ):
-        """Providers that consume runtime prompts should receive the global skill catalog."""
-        mock_gen_id.return_value = "test1234"
-        mock_gen_session.return_value = "cao-session"
-        mock_gen_window.return_value = "developer-abcd"
-        mock_tmux.session_exists.return_value = False
-        mock_load_profile.return_value = AgentProfile(
-            name="developer",
-            description="Developer",
-            system_prompt="You are the developer.",
-        )
-        mock_build_skill_catalog.return_value = (
-            "## Available Skills\n\n"
-            "The following skills are available exclusively in this CAO orchestration context. "
-            "To load a skill's full content, use the `load_skill` MCP tool provided by the "
-            "CAO MCP server. These skills are not accessible through provider-native skill "
-            "commands or directories.\n\n"
-            "- **cao-worker-protocols**: Worker communication\n"
-            "- **python-testing**: Pytest conventions"
-        )
-        mock_provider = MagicMock()
-        mock_provider_manager.create_provider.return_value = mock_provider
-        mock_log_path = MagicMock()
-        mock_log_dir.__truediv__.return_value = mock_log_path
-
-        create_terminal("codex", "developer", new_session=True)
-
-        skill_prompt = mock_provider_manager.create_provider.call_args.kwargs["skill_prompt"]
-        assert skill_prompt == (
-            "## Available Skills\n\n"
-            "The following skills are available exclusively in this CAO orchestration context. "
-            "To load a skill's full content, use the `load_skill` MCP tool provided by the "
-            "CAO MCP server. These skills are not accessible through provider-native skill "
-            "commands or directories.\n\n"
-            "- **cao-worker-protocols**: Worker communication\n"
-            "- **python-testing**: Pytest conventions"
-        )
-
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
-    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
-    @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
-    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
-    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
-    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.build_skill_catalog")
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
-    def test_create_terminal_without_skills_is_unchanged(
-        self,
-        mock_load_profile,
-        mock_build_skill_catalog,
-        mock_gen_id,
-        mock_gen_session,
-        mock_gen_window,
-        mock_tmux,
-        mock_db_create,
-        mock_provider_manager,
-        mock_log_dir,
-    ):
-        """Providers should receive an empty skill prompt when no skills are installed."""
+        """Skills are provider-native now, so CAO does not pass skill prompt text."""
         mock_gen_id.return_value = "test1234"
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
@@ -218,7 +158,6 @@ class TestCreateTerminal:
             description="Developer",
             system_prompt="Base prompt",
         )
-        mock_build_skill_catalog.return_value = ""
         mock_provider = MagicMock()
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_log_path = MagicMock()
@@ -226,11 +165,9 @@ class TestCreateTerminal:
 
         create_terminal("codex", "developer", new_session=True)
 
-        skill_prompt = mock_provider_manager.create_provider.call_args.kwargs["skill_prompt"]
-        assert skill_prompt == ""
-        mock_build_skill_catalog.assert_called_once_with()
+        assert "skill_prompt" not in mock_provider_manager.create_provider.call_args.kwargs
 
-    @pytest.mark.parametrize("provider_name", ["kiro_cli", "q_cli", "copilot_cli"])
+    @pytest.mark.parametrize("provider_name", ["kiro_cli", "q_cli", "copilot_cli", "codex"])
     @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
@@ -238,12 +175,10 @@ class TestCreateTerminal:
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.build_skill_catalog")
     @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
-    def test_create_terminal_does_not_pass_skill_prompt_to_non_runtime_provider(
+    def test_create_terminal_does_not_pass_skill_prompt_to_provider(
         self,
         mock_load_profile,
-        mock_build_skill_catalog,
         mock_gen_id,
         mock_gen_session,
         mock_gen_window,
@@ -253,7 +188,7 @@ class TestCreateTerminal:
         mock_log_dir,
         provider_name,
     ):
-        """Kiro, Q, and Copilot should receive skill_prompt=None."""
+        """CAO should not expose provider-neutral skills as prompt text."""
         mock_gen_id.return_value = "test1234"
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
@@ -263,14 +198,6 @@ class TestCreateTerminal:
             description="Developer",
             system_prompt="Base prompt",
         )
-        mock_build_skill_catalog.return_value = (
-            "## Available Skills\n\n"
-            "The following skills are available exclusively in this CAO orchestration context. "
-            "To load a skill's full content, use the `load_skill` MCP tool provided by the "
-            "CAO MCP server. These skills are not accessible through provider-native skill "
-            "commands or directories.\n\n"
-            "- **python-testing**: Pytest conventions"
-        )
         mock_provider = MagicMock()
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_log_path = MagicMock()
@@ -278,7 +205,7 @@ class TestCreateTerminal:
 
         create_terminal(provider_name, "developer", new_session=True)
 
-        assert mock_provider_manager.create_provider.call_args.kwargs["skill_prompt"] is None
+        assert "skill_prompt" not in mock_provider_manager.create_provider.call_args.kwargs
 
 
 class TestGetTerminal:

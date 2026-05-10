@@ -1,8 +1,4 @@
-"""Skill catalog injection helpers for installed Q and Copilot agent files.
-
-Kiro CLI uses native ``skill://`` resources with progressive loading, so it
-does not need prompt-based catalog baking or refresh-on-skill-change.
-"""
+"""Prompt refresh helpers for installed Q and Copilot agent files."""
 
 import json
 import logging
@@ -20,36 +16,26 @@ from cli_agent_orchestrator.constants import (
 )
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
-from cli_agent_orchestrator.utils.skills import build_skill_catalog
 
 logger = logging.getLogger(__name__)
 
 
 def compose_agent_prompt(profile: AgentProfile, base_prompt: Optional[str] = None) -> Optional[str]:
-    """Compose the baked prompt from profile prompt and global skill catalog.
+    """Compose the baked prompt from profile prompt only.
 
     When *base_prompt* is provided it is used instead of ``profile.prompt``.
     This is needed for providers like Copilot where the effective prompt is
     resolved from ``system_prompt`` falling back to ``prompt``.
-    """
-    parts: list[str] = []
 
+    Provider-neutral skills are delivered through provider-native skill storage,
+    not appended as CAO prompt text.
+    """
     if base_prompt is not None:
         effective = base_prompt.strip()
     else:
         effective = profile.prompt.strip() if profile.prompt else ""
 
-    if effective:
-        parts.append(effective)
-
-    catalog = build_skill_catalog()
-    if catalog:
-        parts.append(catalog)
-
-    if not parts:
-        return None
-
-    return "\n\n".join(parts)
+    return effective or None
 
 
 def refresh_agent_json_prompt(json_path: Path, profile: AgentProfile) -> bool:

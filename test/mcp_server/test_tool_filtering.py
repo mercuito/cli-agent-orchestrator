@@ -33,7 +33,6 @@ class TestDeferredToolRegistry:
             "handoff",
             "assign",
             "send_message",
-            "load_skill",
             "list_agent_profiles",
             "get_agent_profile",
             "terminate",
@@ -107,7 +106,7 @@ class TestRegisterTools:
         assert "reply_to_inbox_message" in registered
 
     def test_tool_kwargs_are_forwarded_to_mcp_tool_decorator(self):
-        """E.g. load_skill passes description=<long string>; terminate
+        """Tools with decorator kwargs pass them through; tools without kwargs
         passes nothing. Both paths must work."""
         pending = [("with_desc", lambda: None, {"description": "doc"})]
         mcp_instance = self._mock_mcp()

@@ -72,10 +72,9 @@ class ClaudeCodeProvider(BaseProvider):
         window_name: str,
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[list] = None,
-        skill_prompt: Optional[str] = None,
     ):
         """Initialize provider state."""
-        super().__init__(terminal_id, session_name, window_name, allowed_tools, skill_prompt)
+        super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
         self._agent_profile = agent_profile
 
@@ -100,7 +99,6 @@ class ClaudeCodeProvider(BaseProvider):
 
                 # Add system prompt - escape newlines to prevent tmux chunking issues
                 system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
-                system_prompt = self._apply_skill_prompt(system_prompt)
                 if system_prompt:
                     # Replace actual newlines with \n escape sequences
                     # This prevents tmux send_keys chunking from breaking the command

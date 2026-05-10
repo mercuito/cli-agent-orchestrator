@@ -195,10 +195,6 @@ def test_create_terminal_identity_launch_context_uses_resolved_launch_values(
                 allowedTools=["fs_read"],
             ),
         ),
-        patch(
-            "cli_agent_orchestrator.services.terminal_service.build_skill_catalog",
-            return_value="",
-        ),
         patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal"),
         patch(
             "cli_agent_orchestrator.services.terminal_service.provider_manager.create_provider",

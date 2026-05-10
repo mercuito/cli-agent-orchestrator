@@ -41,42 +41,17 @@ class TestComposeAgentPrompt:
     """Tests for compose_agent_prompt."""
 
     @pytest.mark.parametrize("prompt", [None, "", "   ", "\n"])
-    @patch("cli_agent_orchestrator.utils.skill_injection.build_skill_catalog", return_value="")
-    def test_returns_none_when_prompt_and_catalog_are_empty(self, _mock_catalog, prompt):
+    def test_returns_none_when_prompt_is_empty(self, prompt):
         profile = AgentProfile(name="developer", description="Developer", prompt=prompt)
 
         assert skill_injection.compose_agent_prompt(profile) is None
 
-    @patch("cli_agent_orchestrator.utils.skill_injection.build_skill_catalog", return_value="")
-    def test_returns_profile_prompt_when_only_prompt_is_set(self, _mock_catalog):
+    def test_returns_profile_prompt_when_prompt_is_set(self):
         profile = AgentProfile(name="developer", description="Developer", prompt="Profile prompt")
 
         assert skill_injection.compose_agent_prompt(profile) == "Profile prompt"
 
-    @patch(
-        "cli_agent_orchestrator.utils.skill_injection.build_skill_catalog",
-        return_value="## Available Skills\n\n- **python-testing**: Pytest conventions",
-    )
-    def test_returns_catalog_when_only_skills_exist(self, _mock_catalog):
-        profile = AgentProfile(name="developer", description="Developer")
-
-        assert skill_injection.compose_agent_prompt(profile) == (
-            "## Available Skills\n\n- **python-testing**: Pytest conventions"
-        )
-
-    @patch(
-        "cli_agent_orchestrator.utils.skill_injection.build_skill_catalog",
-        return_value="## Available Skills\n\n- **python-testing**: Pytest conventions",
-    )
-    def test_joins_prompt_and_catalog_with_blank_line(self, _mock_catalog):
-        profile = AgentProfile(name="developer", description="Developer", prompt="Profile prompt")
-
-        assert skill_injection.compose_agent_prompt(profile) == (
-            "Profile prompt\n\n## Available Skills\n\n- **python-testing**: Pytest conventions"
-        )
-
-    @patch("cli_agent_orchestrator.utils.skill_injection.build_skill_catalog", return_value="")
-    def test_uses_base_prompt_when_provided(self, _mock_catalog):
+    def test_uses_base_prompt_when_provided(self):
         profile = AgentProfile(
             name="developer", description="Developer", prompt="Should be ignored"
         )
@@ -84,18 +59,7 @@ class TestComposeAgentPrompt:
         result = skill_injection.compose_agent_prompt(profile, base_prompt="Custom base")
         assert result == "Custom base"
 
-    @patch(
-        "cli_agent_orchestrator.utils.skill_injection.build_skill_catalog",
-        return_value="## Available Skills",
-    )
-    def test_joins_base_prompt_and_catalog(self, _mock_catalog):
-        profile = AgentProfile(name="developer", description="Developer", prompt="Ignored")
-
-        result = skill_injection.compose_agent_prompt(profile, base_prompt="Custom base")
-        assert result == "Custom base\n\n## Available Skills"
-
-    @patch("cli_agent_orchestrator.utils.skill_injection.build_skill_catalog", return_value="")
-    def test_base_prompt_empty_string_returns_none(self, _mock_catalog):
+    def test_base_prompt_empty_string_returns_none(self):
         profile = AgentProfile(name="developer", description="Developer", prompt="Has content")
 
         assert skill_injection.compose_agent_prompt(profile, base_prompt="   ") is None
@@ -207,11 +171,7 @@ class TestRefreshAgentMdPrompt:
         assert skill_injection.refresh_agent_md_prompt(missing_path, profile) is False
         assert not missing_path.exists()
 
-    @patch(
-        "cli_agent_orchestrator.utils.skill_injection.build_skill_catalog",
-        return_value="## Available Skills",
-    )
-    def test_rewrites_body_preserving_frontmatter(self, _mock_catalog, tmp_path):
+    def test_rewrites_body_preserving_frontmatter(self, tmp_path):
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer agent", "Old prompt body")
 
@@ -224,10 +184,9 @@ class TestRefreshAgentMdPrompt:
         post = frontmatter.load(md_path)
         assert post.metadata["name"] == "developer"
         assert post.metadata["description"] == "Developer agent"
-        assert post.content == "New system prompt\n\n## Available Skills"
+        assert post.content == "New system prompt"
 
-    @patch("cli_agent_orchestrator.utils.skill_injection.build_skill_catalog", return_value="")
-    def test_uses_system_prompt_over_profile_prompt(self, _mock_catalog, tmp_path):
+    def test_uses_system_prompt_over_profile_prompt(self, tmp_path):
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer", "Old body")
 
@@ -241,8 +200,7 @@ class TestRefreshAgentMdPrompt:
         skill_injection.refresh_agent_md_prompt(md_path, profile)
         assert _read_agent_md_body(md_path) == "System prompt wins"
 
-    @patch("cli_agent_orchestrator.utils.skill_injection.build_skill_catalog", return_value="")
-    def test_falls_back_to_profile_prompt_when_no_system_prompt(self, _mock_catalog, tmp_path):
+    def test_falls_back_to_profile_prompt_when_no_system_prompt(self, tmp_path):
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer", "Old body")
 
@@ -251,11 +209,7 @@ class TestRefreshAgentMdPrompt:
         skill_injection.refresh_agent_md_prompt(md_path, profile)
         assert _read_agent_md_body(md_path) == "Fallback prompt"
 
-    @patch(
-        "cli_agent_orchestrator.utils.skill_injection.build_skill_catalog",
-        return_value="## Skills",
-    )
-    def test_writes_atomically_with_os_replace(self, _mock_catalog, tmp_path):
+    def test_writes_atomically_with_os_replace(self, tmp_path):
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer", "Body")
         temp_path = md_path.with_suffix(".md.tmp")
@@ -270,11 +224,7 @@ class TestRefreshAgentMdPrompt:
         mock_replace.assert_called_once_with(temp_path, md_path)
         assert not temp_path.exists()
 
-    @patch(
-        "cli_agent_orchestrator.utils.skill_injection.build_skill_catalog",
-        return_value="## Skills",
-    )
-    def test_is_idempotent_for_same_prompt(self, _mock_catalog, tmp_path):
+    def test_is_idempotent_for_same_prompt(self, tmp_path):
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer", "Body")
         profile = AgentProfile(name="developer", description="Developer", prompt="Prompt")
@@ -306,8 +256,6 @@ class TestRefreshInstalledAgentForProfile:
                 name="team/developer", description="Developer", prompt="Prompt"
             ),
         )
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "")
-
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == [q_path]
 
     def test_returns_copilot_path_when_copilot_agent_exists(self, tmp_path, monkeypatch):
@@ -325,8 +273,6 @@ class TestRefreshInstalledAgentForProfile:
                 name="team/developer", description="Developer", prompt="Prompt"
             ),
         )
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "")
-
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == [
             copilot_path
         ]
@@ -348,8 +294,6 @@ class TestRefreshInstalledAgentForProfile:
                 name="team/developer", description="Developer", prompt="Prompt"
             ),
         )
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "")
-
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == [
             q_path,
             copilot_path,
@@ -365,8 +309,6 @@ class TestRefreshInstalledAgentForProfile:
                 name="team/developer", description="Developer", prompt="Prompt"
             ),
         )
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "")
-
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == []
 
 
@@ -398,12 +340,11 @@ class TestRefreshAllCaoManagedAgents:
             "load_agent_profile",
             lambda name: AgentProfile(name="developer", description="Developer", prompt="Prompt"),
         )
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "## Available Skills")
 
         refreshed = skill_injection.refresh_all_cao_managed_agents()
 
         assert refreshed == [managed_path]
-        assert _read_json(managed_path)["prompt"] == "Prompt\n\n## Available Skills"
+        assert _read_json(managed_path)["prompt"] == "Prompt"
 
     def test_refreshes_copilot_agent_with_matching_context_file(self, tmp_path, monkeypatch):
         context_dir = tmp_path / "agent-context"
@@ -427,12 +368,11 @@ class TestRefreshAllCaoManagedAgents:
             "load_agent_profile",
             lambda name: AgentProfile(name="developer", description="Developer", prompt="Prompt"),
         )
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "## Available Skills")
 
         refreshed = skill_injection.refresh_all_cao_managed_agents()
 
         assert refreshed == [copilot_path]
-        assert _read_agent_md_body(copilot_path) == "Prompt\n\n## Available Skills"
+        assert _read_agent_md_body(copilot_path) == "Prompt"
 
     def test_skips_copilot_agent_without_context_file(self, tmp_path, monkeypatch):
         context_dir = tmp_path / "agent-context"
@@ -549,7 +489,6 @@ class TestRefreshAllCaoManagedAgents:
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(skill_injection, "load_agent_profile", load_profile)
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "## Available Skills")
 
         with caplog.at_level(logging.WARNING):
             refreshed = skill_injection.refresh_all_cao_managed_agents()
@@ -605,13 +544,10 @@ class TestRefreshAllCaoManagedAgents:
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(skill_injection, "load_agent_profile", load_profile)
-        monkeypatch.setattr(skill_injection, "build_skill_catalog", lambda: "## Available Skills")
 
         refreshed = skill_injection.refresh_all_cao_managed_agents()
 
         assert refreshed == [managed_q, managed_copilot]
-        assert _read_json(managed_q)["prompt"] == "managed-q prompt\n\n## Available Skills"
-        assert (
-            _read_agent_md_body(managed_copilot) == "managed-copilot prompt\n\n## Available Skills"
-        )
+        assert _read_json(managed_q)["prompt"] == "managed-q prompt"
+        assert _read_agent_md_body(managed_copilot) == "managed-copilot prompt"
         assert "prompt" not in _read_json(unmanaged_q)

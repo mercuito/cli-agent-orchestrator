@@ -78,6 +78,24 @@ def test_classifies_human_mention_session_as_notifiable():
     assert classification.should_notify_agent is True
 
 
+def test_classifies_monitor_recovered_mention_comment_as_notifiable_without_creator_metadata():
+    payload = _session_payload(
+        {
+            "id": "session-monitor",
+            "creator": None,
+            "sourceMetadata": None,
+            "comment": {"id": "comment-1", "body": "@CAO Please recover this"},
+            "issue": {"id": "issue-67", "identifier": "CAO-67"},
+        }
+    )
+
+    classification = classify_agent_session_payload(payload)
+
+    assert classification is not None
+    assert classification.kind == "human_mention_or_prompt"
+    assert classification.should_notify_agent is True
+
+
 def test_classifies_human_delegation_session_as_notifiable():
     payload = _session_payload(
         {

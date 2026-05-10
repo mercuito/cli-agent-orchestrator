@@ -157,10 +157,9 @@ class GeminiCliProvider(BaseProvider):
         window_name: str,
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[list] = None,
-        skill_prompt: Optional[str] = None,
     ):
         """Initialize provider state."""
-        super().__init__(terminal_id, session_name, window_name, allowed_tools, skill_prompt)
+        super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
         self._agent_profile = agent_profile
         # Track whether -i (prompt-interactive) flag is used so initialize()
@@ -234,7 +233,6 @@ class GeminiCliProvider(BaseProvider):
                 # A short ``-i`` role acknowledgment ensures the model adopts the role
                 # strongly without triggering exploration behavior.
                 system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
-                system_prompt = self._apply_skill_prompt(system_prompt)
                 if system_prompt:
                     # Write full system prompt to GEMINI.md for persistent context.
                     working_dir = tmux_client.get_pane_working_directory(

@@ -2,8 +2,7 @@
 
 Built-in profiles ship with explicit caoTools so the LLM only sees what
 each role is supposed to use. A supervisor gets the orchestration tools;
-developers and reviewers get only callback, baton-holder, inbox, and skill
-loaders.
+developers and reviewers get only callback, baton-holder, and inbox tools.
 
 These tests load profiles directly from the package's built-in store so
 they assert on what CAO *ships*, not on whatever the current user has
@@ -50,15 +49,13 @@ def test_code_supervisor_can_orchestrate():
     # Profile discovery for runtime orchestration choices
     assert "list_agent_profiles" in allowlist
     assert "get_agent_profile" in allowlist
-    # Skills for agent behaviour customization
-    assert "load_skill" in allowlist
 
 
 def test_developer_cannot_spawn_or_terminate():
     profile = _load_builtin_profile("developer")
     allowlist = resolve_cao_tool_allowlist(profile)
 
-    # Callback, baton-holder, inbox, and skill loading only — no spawning.
+    # Callback, baton-holder, and inbox only — no spawning.
     assert allowlist == [
         "send_message",
         "pass_baton",
@@ -69,7 +66,6 @@ def test_developer_cannot_spawn_or_terminate():
         "get_baton",
         "read_inbox_message",
         "reply_to_inbox_message",
-        "load_skill",
     ]
     assert "assign" not in allowlist
     assert "handoff" not in allowlist
@@ -91,7 +87,6 @@ def test_reviewer_cannot_spawn_or_terminate():
         "get_baton",
         "read_inbox_message",
         "reply_to_inbox_message",
-        "load_skill",
     ]
     assert "assign" not in allowlist
     assert "handoff" not in allowlist

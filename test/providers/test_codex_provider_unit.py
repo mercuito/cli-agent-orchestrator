@@ -89,8 +89,7 @@ class TestCodexProviderInitialization:
     ):
         mock_wait_shell.return_value = True
         mock_tmux.get_history.return_value = (
-            "A new Codex update is available.\n"
-            "Run codex update, then please restart Codex.\n"
+            "A new Codex update is available.\n" "Run codex update, then please restart Codex.\n"
         )
 
         provider = CodexProvider("test1234", "test-session", "window-0", None)
@@ -110,8 +109,7 @@ class TestCodexProviderInitialization:
     ):
         mock_wait_shell.return_value = True
         mock_tmux.get_history.return_value = (
-            "Codex needs one more startup decision.\n"
-            "Press Enter to continue.\n"
+            "Codex needs one more startup decision.\n" "Press Enter to continue.\n"
         )
 
         provider = CodexProvider("test1234", "test-session", "window-0", None)
@@ -189,27 +187,6 @@ class TestCodexBuildCommand:
                 command = "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
         assert "--disable plugins" in command
         assert "--disable apps" in command
-
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
-    def test_build_command_with_skill_prompt(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "You are a supervisor."
-        mock_profile.mcpServers = None
-        mock_load_profile.return_value = mock_profile
-
-        provider = CodexProvider(
-            "test1234",
-            "test-session",
-            "window-0",
-            "code_supervisor",
-            skill_prompt="## Available Skills\n- **python-testing**: Pytest",
-        )
-        command = provider._build_codex_command()
-
-        mock_load_profile.assert_called_once_with("code_supervisor")
-        assert "developer_instructions=" in command
-        assert "## Available Skills" in command
-        assert "python-testing" in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
     def test_build_command_with_agent_profile(self, mock_load_profile):
@@ -1156,8 +1133,7 @@ class TestCodexRuntimeStateCapability:
 
     def test_probe_parser_tolerates_codex_wrapped_thread_id_output(self):
         output = (
-            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123=019e0b8\n"
-            "    c-0138-7130-885e-9fbf56f88782\n"
+            f"{CODEX_THREAD_ID_PROBE_PREFIX}abc123=019e0b8\n" "    c-0138-7130-885e-9fbf56f88782\n"
         )
 
         assert (

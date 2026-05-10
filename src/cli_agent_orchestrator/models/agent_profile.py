@@ -27,6 +27,7 @@ class AgentProfile(BaseModel):
     system_prompt: Optional[str] = None  # The markdown content
     role: Optional[str] = None  # "supervisor", "developer", "reviewer"
     tags: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
 
     # Allowlist of cao-mcp-server tool names this agent is permitted to call
     # (e.g. ["assign", "handoff", "send_message"]). Empty list explicitly

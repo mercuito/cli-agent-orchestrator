@@ -376,12 +376,10 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     runtime_inputs_v1 = runtime_agent.terminal_service.TerminalRuntimeInputs(
         allowed_tools=["Read"],
-        skill_prompt="## Skills\n- old",
         profile_material={"name": "developer", "system_prompt": "old prompt"},
     )
     runtime_inputs_v2 = runtime_agent.terminal_service.TerminalRuntimeInputs(
         allowed_tools=["Read"],
-        skill_prompt="## Skills\n- new",
         profile_material={"name": "developer", "system_prompt": "new prompt"},
     )
     monkeypatch.setattr(

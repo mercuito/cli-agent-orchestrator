@@ -18,7 +18,6 @@ caoTools:
   - terminate
   - list_agent_profiles
   - get_agent_profile
-  - load_skill
 mcpServers:
   cao-mcp-server:
     type: stdio

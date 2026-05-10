@@ -10,12 +10,22 @@ from typing import Any, Dict, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.linear import app_client, translator
-from cli_agent_orchestrator.linear.agent_session_classifier import should_notify_agent
+from cli_agent_orchestrator.linear.agent_policies import (
+    LinearPolicyAction,
+    LinearPolicyDecision,
+    LinearPolicyRequest,
+    build_default_linear_agent_policy_evaluator,
+)
+from cli_agent_orchestrator.linear.agent_session_classifier import (
+    classification_from_event,
+    should_notify_agent,
+)
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearResolvedPresence,
     LinearWorkspaceProviderConfigError,
     get_linear_workspace_provider,
     normalize_app_key,
+    should_enable_linear_agent_policies,
 )
 from cli_agent_orchestrator.presence.inbox_bridge import create_notification_for_persisted_event
 from cli_agent_orchestrator.presence.models import PersistedPresenceEvent, PresenceEvent
@@ -32,6 +42,7 @@ DEFAULT_TEAM_MEMBER_ID = "cao-discovery-partner"
 LINEAR_RUNTIME_SOURCE_KIND = "linear_agent_session_event"
 LIFECYCLE_ACTIVITY_BODY_CHARS = 220
 LIFECYCLE_ERROR_CHARS = 240
+POLICY_NOTICE_REASON_CHARS = 320
 LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY = "linear_external_url_published"
 LINEAR_EXTERNAL_URL_METADATA_KEY = "linear_external_url"
 
@@ -136,6 +147,46 @@ def _post_startup_failed_activity(
         app_key=app_key,
         description="startup failure",
     )
+
+
+def _post_policy_denial_comment(
+    *,
+    event: PresenceEvent,
+    resolved: LinearResolvedPresence,
+    decision: LinearPolicyDecision,
+) -> None:
+    issue_id = _issue_id_for_policy(event)
+    if not issue_id:
+        return
+    reason = _bounded_policy_reason(decision.reason)
+    actor_name = resolved.identity.display_name or resolved.identity.id
+    body = "\n\n".join(
+        [
+            "**CAO policy notice**",
+            f"CAO rejected this invocation of {actor_name}.",
+            reason,
+            f"CAO did not notify or start {actor_name}.",
+        ]
+    )
+    try:
+        app_client.create_comment_on_issue(
+            issue_id,
+            body,
+            app_key=resolved.presence.app_key,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to create Linear policy denial comment: %s",
+            _safe_lifecycle_error(exc),
+        )
+
+
+def _bounded_policy_reason(reason: str) -> str:
+    compact = _compact(reason or "The requested agent invocation is not allowed by policy.")
+    if len(compact) <= POLICY_NOTICE_REASON_CHARS:
+        return compact
+    suffix = "..."
+    return compact[: POLICY_NOTICE_REASON_CHARS - len(suffix)].rstrip() + suffix
 
 
 def _update_external_url_once(
@@ -260,6 +311,51 @@ def _resolve_linear_event(event: PresenceEvent) -> LinearResolvedPresence:
     if app_key:
         payload["_cao_linear_app_key"] = app_key
     return get_linear_workspace_provider().resolve_event(payload)
+
+
+def _policy_action_for_event(event: PresenceEvent) -> Optional[LinearPolicyAction]:
+    classification = classification_from_event(event)
+    if classification is None:
+        return None
+    if classification.kind == "human_issue_delegation":
+        return "delegate"
+    if classification.kind == "human_mention_or_prompt":
+        return "mention"
+    return None
+
+
+def _issue_id_for_policy(event: PresenceEvent) -> Optional[str]:
+    if event.thread and event.thread.work_item and event.thread.work_item.ref:
+        return event.thread.work_item.ref.id
+    agent_session = app_client.agent_session_from_payload(event.raw_payload or {})
+    issue = agent_session.get("issue") if isinstance(agent_session, dict) else None
+    if isinstance(issue, dict):
+        issue_id = issue.get("id") or issue.get("identifier")
+        return str(issue_id) if issue_id else None
+    return None
+
+
+def _incoming_policy_decision(
+    *,
+    event: PresenceEvent,
+    resolved: LinearResolvedPresence,
+) -> LinearPolicyDecision:
+    # WIP guardrail layer: default off while the Linear workflow shape is still being explored.
+    if not should_enable_linear_agent_policies():
+        return LinearPolicyDecision.allow()
+    action = _policy_action_for_event(event)
+    if action is None:
+        return LinearPolicyDecision.allow()
+    request = LinearPolicyRequest(
+        agent_id=resolved.identity.id,
+        direction="incoming",
+        action=action,
+        origin="webhook",
+        actor_kind="human",
+        issue_id=_issue_id_for_policy(event),
+    )
+    evaluator = build_default_linear_agent_policy_evaluator(resolved.presence)
+    return evaluator.evaluate(request)
 
 
 def _runtime_handle_for_resolved_presence(resolved: LinearResolvedPresence) -> AgentRuntimeHandle:
@@ -399,6 +495,17 @@ def notify_agent_for_persisted_event(
         resolved = _resolve_linear_event(event)
     except LinearWorkspaceProviderConfigError as exc:
         logger.warning("Linear AgentSession notification was not routed: %s", exc)
+        return None
+
+    decision = _incoming_policy_decision(event=event, resolved=resolved)
+    if not decision.allowed:
+        logger.info(
+            "Suppressed Linear AgentSession notification for CAO agent %s by policy %s: %s",
+            resolved.identity.id,
+            decision.policy_name or "unknown",
+            decision.reason,
+        )
+        _post_policy_denial_comment(event=event, resolved=resolved, decision=decision)
         return None
 
     handle = _runtime_handle_for_resolved_presence(resolved)

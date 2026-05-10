@@ -38,6 +38,7 @@ packages = ["src/cli_agent_orchestrator"]
 artifacts = [
     "src/cli_agent_orchestrator/web_ui/**",
     "src/cli_agent_orchestrator/providers/runtime_defaults.json",
+    "src/cli_agent_orchestrator/skills/**",
 ]
 
 [dependency-groups]

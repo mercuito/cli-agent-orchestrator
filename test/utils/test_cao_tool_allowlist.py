@@ -31,9 +31,9 @@ def _profile(**kwargs) -> AgentProfile:
 
 class TestProfileExplicitAllowlistWins:
     def test_profile_cao_tools_is_returned_as_is(self):
-        profile = _profile(caoTools=["send_message", "load_skill"])
+        profile = _profile(caoTools=["send_message", "read_inbox_message"])
         result = resolve_cao_tool_allowlist(profile)
-        assert result == ["send_message", "load_skill"]
+        assert result == ["send_message", "read_inbox_message"]
 
     def test_empty_list_on_profile_is_respected_not_treated_as_none(self):
         """``caoTools: []`` explicitly means 'no tools allowed' — do not
@@ -108,9 +108,7 @@ class TestGetRoleCaoToolsFromSettings:
         import cli_agent_orchestrator.services.settings_service as svc
 
         settings_file = tmp_path / "settings.json"
-        settings_file.write_text(
-            '{"role_cao_tools": {"supervisor": ["assign", "handoff"]}}'
-        )
+        settings_file.write_text('{"role_cao_tools": {"supervisor": ["assign", "handoff"]}}')
         monkeypatch.setattr(svc, "SETTINGS_FILE", settings_file)
 
         from cli_agent_orchestrator.services.settings_service import get_role_cao_tools
@@ -121,9 +119,7 @@ class TestGetRoleCaoToolsFromSettings:
         import cli_agent_orchestrator.services.settings_service as svc
 
         settings_file = tmp_path / "settings.json"
-        settings_file.write_text(
-            '{"role_cao_tools": {"supervisor": ["assign"]}}'
-        )
+        settings_file.write_text('{"role_cao_tools": {"supervisor": ["assign"]}}')
         monkeypatch.setattr(svc, "SETTINGS_FILE", settings_file)
 
         from cli_agent_orchestrator.services.settings_service import get_role_cao_tools
@@ -157,9 +153,7 @@ class TestGetRoleCaoToolsFromSettings:
         import cli_agent_orchestrator.services.settings_service as svc
 
         settings_file = tmp_path / "settings.json"
-        settings_file.write_text(
-            '{"role_cao_tools": {"supervisor": "not-a-list"}}'
-        )
+        settings_file.write_text('{"role_cao_tools": {"supervisor": "not-a-list"}}')
         monkeypatch.setattr(svc, "SETTINGS_FILE", settings_file)
 
         from cli_agent_orchestrator.services.settings_service import get_role_cao_tools
@@ -171,9 +165,7 @@ class TestAgentProfileFieldSchema:
     """caoTools must be an optional list-of-strings field on AgentProfile."""
 
     def test_profile_accepts_cao_tools_list(self):
-        profile = AgentProfile(
-            name="x", description="y", caoTools=["send_message"]
-        )
+        profile = AgentProfile(name="x", description="y", caoTools=["send_message"])
         assert profile.caoTools == ["send_message"]
 
     def test_profile_cao_tools_defaults_to_none(self):

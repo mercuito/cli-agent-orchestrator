@@ -8,9 +8,12 @@ import pytest
 from cli_agent_orchestrator.models.skill import SkillMetadata
 from cli_agent_orchestrator.utils.skills import (
     build_skill_catalog,
+    iter_skill_files,
     list_skills,
     load_skill_content,
     load_skill_metadata,
+    materialize_skill,
+    skill_file_fingerprints,
     validate_skill_folder,
 )
 
@@ -140,6 +143,60 @@ class TestLoadSkillContent:
             load_skill_content("missing-skill")
 
 
+class TestSkillMaterialization:
+    """Tests for provider-neutral skill materialization helpers."""
+
+    def test_materializes_skill_tree_from_neutral_store(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", tmp_path / "store")
+        _write_skill(
+            tmp_path / "store" / "discovery-intake",
+            "discovery-intake",
+            "Discovery intake",
+        )
+        (tmp_path / "store" / "discovery-intake" / "references").mkdir()
+        (tmp_path / "store" / "discovery-intake" / "references" / "brief.md").write_text(
+            "Brief template\n"
+        )
+
+        materialize_skill("discovery-intake", tmp_path / "provider" / "discovery-intake")
+
+        assert (tmp_path / "provider" / "discovery-intake" / "SKILL.md").exists()
+        assert (
+            tmp_path / "provider" / "discovery-intake" / "references" / "brief.md"
+        ).read_text() == "Brief template\n"
+
+    def test_fingerprints_change_when_skill_content_changes(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", tmp_path)
+        skill_file = _write_skill(
+            tmp_path / "discovery-intake",
+            "discovery-intake",
+            "Discovery intake",
+            body="first version",
+        )
+
+        first = skill_file_fingerprints("discovery-intake")
+        skill_file.write_text(
+            "---\n"
+            "name: discovery-intake\n"
+            "description: Discovery intake\n"
+            "---\n\n"
+            "second version\n"
+        )
+        second = skill_file_fingerprints("discovery-intake")
+
+        assert first["SKILL.md"] != second["SKILL.md"]
+
+    def test_iter_skill_files_resolves_packaged_skills_when_local_missing(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", tmp_path / "missing")
+
+        files = dict(iter_skill_files("yards-discovery-intake"))
+
+        assert "SKILL.md" in files
+        assert b"Yards Discovery Intake" in files["SKILL.md"]
+
+
 class TestListSkills:
     """Tests for list_skills."""
 
@@ -267,10 +324,8 @@ class TestBuildSkillCatalog:
 
         assert build_skill_catalog() == (
             "## Available Skills\n\n"
-            "The following skills are available exclusively in this CAO orchestration context. "
-            "To load a skill's full content, use the `load_skill` MCP tool provided by the "
-            "CAO MCP server. These skills are not accessible through provider-native skill "
-            "commands or directories.\n\n"
+            "The following skills are CAO-neutral source artifacts. Runtime providers may "
+            "materialize profile-selected skills into their native skill storage.\n\n"
             "- **cao-worker-protocols**: Worker communication\n"
             "- **python-testing**: Pytest conventions"
         )

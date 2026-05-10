@@ -66,28 +66,8 @@ class TestBaseProvider:
             provider._update_status(status)
             assert provider.status == status
 
-    def test_apply_skill_prompt_appends(self):
-        """Test _apply_skill_prompt appends skill text to base prompt."""
-        provider = ConcreteProvider(
-            "term-123", "session-1", "window-0", skill_prompt="## Skills\n- skill1"
-        )
-        result = provider._apply_skill_prompt("Base prompt")
-        assert result == "Base prompt\n\n## Skills\n- skill1"
-
-    def test_apply_skill_prompt_no_skill(self):
-        """Test _apply_skill_prompt returns original when no skill_prompt."""
-        provider = ConcreteProvider("term-123", "session-1", "window-0")
-        result = provider._apply_skill_prompt("Base prompt")
-        assert result == "Base prompt"
-
-    def test_apply_skill_prompt_empty_base(self):
-        """Test _apply_skill_prompt with empty base and skill_prompt present."""
-        provider = ConcreteProvider("term-123", "session-1", "window-0", skill_prompt="## Skills")
-        result = provider._apply_skill_prompt("")
-        assert result == "## Skills"
-
-    def test_runtime_fingerprint_contribution_includes_skill_prompt_content(self, tmp_path):
-        """Test default provider freshness changes when runtime skill catalog changes."""
+    def test_runtime_fingerprint_contribution_includes_provider_runtime_config(self, tmp_path):
+        """Test default provider freshness includes provider runtime configuration."""
         context = AgentRuntimeLaunchContext(
             identity=AgentIdentity(
                 id="agent-1",
@@ -105,12 +85,12 @@ class TestBaseProvider:
             working_directory=str(tmp_path / "repo"),
             agent_profile="developer",
             allowed_tools=["Read"],
-            skill_prompt="## Available Skills\n- test-skill",
         )
 
         descriptor = ConcreteProvider.runtime_fingerprint_contribution(launch_context=context)
 
-        assert descriptor.material["skill_prompt"] == "## Available Skills\n- test-skill"
+        assert descriptor.material["provider_type"] is None
+        assert "provider_runtime_config" in descriptor.material
 
     def test_abstract_methods_implemented(self):
         """Test that concrete implementation works."""

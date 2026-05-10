@@ -89,7 +89,7 @@ def get_role_cao_tools(role: str) -> Optional[List[str]]:
     Reads ``settings.role_cao_tools`` — a user-owned mapping like::
 
         {"supervisor": ["assign", "handoff", "send_message", "terminate"],
-         "developer": ["send_message", "load_skill"]}
+         "developer": ["send_message"]}
 
     CAO ships no built-in role→tool mapping; the framework intentionally
     does not know which role names exist. Users define roles and their

@@ -265,6 +265,26 @@ def _resolved_presence() -> LinearResolvedPresence:
     )
 
 
+def _resolved_discovery_presence() -> LinearResolvedPresence:
+    return LinearResolvedPresence(
+        presence=LinearPresence(
+            presence_id="discovery_partner",
+            agent_id="discovery_partner",
+            app_key="discovery_partner",
+            app_user_name="Discovery Partner",
+            access_token="linear-token",
+        ),
+        identity=AgentIdentity(
+            id="discovery_partner",
+            display_name="Discovery Partner",
+            agent_profile="yards-discovery-partner",
+            cli_provider="codex",
+            workdir="/repo",
+            session_name="discovery-partner",
+        ),
+    )
+
+
 def _use_mapped_linear_runtime(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -292,6 +312,30 @@ def _use_mapped_linear_runtime(
         handle.create_activity,
     )
     return handle
+
+
+def _delegated_discovery_payload() -> dict:
+    return {
+        "action": "created",
+        "data": {
+            "agentSession": {
+                "id": "session-discovery-denied",
+                "url": "https://linear.app/session/session-discovery-denied",
+                "creator": {"id": "user-1", "name": "RJ Wilson"},
+                "sourceMetadata": None,
+                "comment": {
+                    "id": "comment-delegated",
+                    "body": "RJ Wilson delegated this issue to Discovery Partner.",
+                },
+                "issue": {
+                    "id": "issue-implementation",
+                    "identifier": "CAO-69",
+                    "title": "Implement bounded work",
+                    "delegate": {"id": "app-user-1", "name": "Discovery Partner"},
+                },
+            },
+        },
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -806,6 +850,141 @@ def test_linear_agent_webhook_suppresses_app_created_bootstrap_then_routes_user_
     messages = list_messages(thread.id)
     assert [message.body for message in messages] == ["testing"]
     assert _pending_linear_notifications()[0].message.body == "testing"
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_policy_denial_suppresses_discovery_runtime_and_comments(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _FakeRuntimeHandle(receiver_id="agent:discovery_partner")
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._resolve_linear_event",
+        lambda event: _resolved_discovery_presence(),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
+        lambda resolved: handle,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.should_enable_linear_agent_policies",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(
+            True,
+            app_key="discovery_partner",
+        ),
+    )
+    comments = []
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.app_client.create_comment_on_issue",
+        lambda issue_id, body, *, app_key=None: comments.append(
+            {"issue_id": issue_id, "body": body, "app_key": app_key}
+        )
+        or {"id": "comment-policy"},
+    )
+
+    def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
+        assert variables == {"id": "issue-implementation"}
+        assert access_token == "linear-token"
+        assert app_key == "discovery_partner"
+        return {
+            "data": {
+                "issue": {
+                    "id": "issue-implementation",
+                    "identifier": "CAO-69",
+                    "title": "Implement bounded work",
+                    "description": "This has a Coding Implementation Plan.",
+                    "state": {"name": "Todo", "type": "unstarted"},
+                    "team": {"key": "CAO", "name": "CAO"},
+                    "labels": {"nodes": []},
+                }
+            }
+        }
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.agent_policies.app_client.linear_graphql",
+        fake_graphql,
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_delegated_discovery_payload(),
+        headers=_linear_headers("delivery-discovery-denied"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["routed"] is False
+    assert handle.accepted == []
+    assert comments == [
+        {
+            "issue_id": "issue-implementation",
+            "app_key": "discovery_partner",
+            "body": (
+                "**CAO policy notice**\n\n"
+                "CAO rejected this invocation of Discovery Partner.\n\n"
+                "Discovery Partner does not take already-bounded implementation or review "
+                "handoffs.\n\n"
+                "CAO did not notify or start Discovery Partner."
+            ),
+        }
+    ]
+    presence_provider_manager.clear_providers()
+
+
+def test_linear_agent_webhook_policy_disabled_routes_discovery_runtime_without_comment(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    presence_provider_manager.clear_providers()
+    handle = _FakeRuntimeHandle(receiver_id="agent:discovery_partner")
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._resolve_linear_event",
+        lambda event: _resolved_discovery_presence(),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
+        lambda resolved: handle,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.should_enable_linear_agent_policies",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(
+            True,
+            app_key="discovery_partner",
+        ),
+    )
+    comments = []
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.app_client.create_comment_on_issue",
+        lambda issue_id, body, *, app_key=None: comments.append(
+            {"issue_id": issue_id, "body": body, "app_key": app_key}
+        )
+        or {"id": "comment-policy"},
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.agent_policies.app_client.linear_graphql",
+        Mock(side_effect=AssertionError("disabled policies must not query Linear policy data")),
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_delegated_discovery_payload(),
+        headers=_linear_headers("delivery-discovery-policy-disabled"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["routed"] is True
+    assert len(handle.accepted) == 1
+    assert comments == []
     presence_provider_manager.clear_providers()
 
 

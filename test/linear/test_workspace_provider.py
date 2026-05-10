@@ -75,6 +75,49 @@ app_user_name = "Implementation Partner"
     assert resolved.identity.session_name == "implementation-partner"
 
 
+def test_linear_agent_policies_default_disabled(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+""",
+    )
+
+    loaded = load_linear_provider_config(
+        config_path=config,
+        agent_registry=_agents(),
+        allow_legacy_env=False,
+    )
+
+    assert loaded is not None
+    assert loaded.agent_policies_enabled is False
+
+
+def test_linear_agent_policies_can_be_enabled(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[agent_policies]
+enabled = true
+
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+""",
+    )
+
+    loaded = load_linear_provider_config(
+        config_path=config,
+        agent_registry=_agents(),
+        allow_legacy_env=False,
+    )
+
+    assert loaded is not None
+    assert loaded.agent_policies_enabled is True
+
+
 def test_configured_linear_app_user_id_resolves_to_cao_identity(tmp_path):
     config = _linear_config(
         tmp_path,

@@ -12,7 +12,6 @@ caoTools:
   - get_baton
   - read_inbox_message
   - reply_to_inbox_message
-  - load_skill
 mcpServers:
   cao-mcp-server:
     type: stdio

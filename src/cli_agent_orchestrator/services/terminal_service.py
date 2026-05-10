@@ -38,7 +38,6 @@ from cli_agent_orchestrator.models.terminal import Terminal, TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
-from cli_agent_orchestrator.utils.skills import build_skill_catalog
 from cli_agent_orchestrator.utils.terminal import (
     generate_session_name,
     generate_terminal_id,
@@ -59,23 +58,11 @@ class OutputMode(str, Enum):
     LAST = "last"
 
 
-# Providers that accept a runtime skill_prompt kwarg and append it to the
-# system prompt at launch time.  Kiro receives skills via native skill://
-# resources; Q and Copilot receive skills via baked prompts at install time.
-RUNTIME_SKILL_PROMPT_PROVIDERS = {
-    ProviderType.CLAUDE_CODE.value,
-    ProviderType.CODEX.value,
-    ProviderType.GEMINI_CLI.value,
-    ProviderType.KIMI_CLI.value,
-}
-
-
 @dataclass(frozen=True)
 class TerminalRuntimeInputs:
     """Resolved profile-derived inputs shared by terminal launch and freshness."""
 
     allowed_tools: Optional[list]
-    skill_prompt: str
     profile_material: dict
 
 
@@ -86,7 +73,6 @@ def resolve_terminal_runtime_inputs(
 ) -> TerminalRuntimeInputs:
     """Resolve launch inputs that affect terminal runtime behavior."""
     profile = load_agent_profile(agent_profile)
-    skill_prompt = build_skill_catalog()
 
     resolved_allowed_tools = allowed_tools
     if resolved_allowed_tools is None:
@@ -102,7 +88,6 @@ def resolve_terminal_runtime_inputs(
 
     return TerminalRuntimeInputs(
         allowed_tools=resolved_allowed_tools,
-        skill_prompt=skill_prompt,
         profile_material=profile.model_dump(exclude_none=True),
     )
 
@@ -173,7 +158,6 @@ def create_terminal(
                 working_directory=working_directory or "",
                 agent_profile=agent_profile,
                 allowed_tools=allowed_tools,
-                skill_prompt=runtime_inputs.skill_prompt,
             )
         runtime = provider_manager.prepare_terminal_runtime(
             provider,
@@ -235,9 +219,8 @@ def create_terminal(
 
         # Step 4: Create and initialize the CLI provider
         # This starts the agent (e.g., runs "kiro-cli chat --agent developer")
-        # Only runtime-prompt providers (Claude Code, Codex, Gemini, Kimi) receive
-        # the skill catalog; Kiro uses native skill:// resources, Q and Copilot
-        # get it baked at install time.
+        # Profile-scoped skills are delivered through provider-native runtime
+        # storage during prepare_terminal_runtime, not appended as CAO prompt text.
         provider_instance = provider_manager.create_provider(
             provider,
             terminal_id,
@@ -245,9 +228,6 @@ def create_terminal(
             window_name,
             agent_profile,
             allowed_tools,
-            skill_prompt=(
-                runtime_inputs.skill_prompt if provider in RUNTIME_SKILL_PROMPT_PROVIDERS else None
-            ),
             runtime_resume_args=runtime_resume_args,
         )
         provider_instance.initialize()

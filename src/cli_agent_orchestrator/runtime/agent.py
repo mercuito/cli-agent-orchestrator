@@ -647,7 +647,6 @@ class AgentRuntimeHandle:
             working_directory=self.identity.workdir,
             agent_profile=self.identity.agent_profile,
             allowed_tools=runtime_inputs.allowed_tools,
-            skill_prompt=runtime_inputs.skill_prompt,
         )
         provider_descriptor = provider_manager.runtime_fingerprint_contribution(
             self.identity.cli_provider,

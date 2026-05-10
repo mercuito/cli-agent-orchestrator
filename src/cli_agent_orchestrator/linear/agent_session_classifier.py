@@ -8,11 +8,16 @@ delivery paths see them.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Literal, Mapping, Optional
 
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.presence.models import PresenceEvent
 
+LEADING_LINEAR_MENTION_PATTERN = re.compile(
+    r"^\s*(?:@\S+|<user\b[^>]*>.*?</user>)\s+",
+    re.IGNORECASE | re.DOTALL,
+)
 LINEAR_AGENT_SESSION_CLASSIFICATION_KEY = "_cao_linear_agent_session_classification"
 
 LinearAgentSessionEventKind = Literal[
@@ -75,6 +80,12 @@ def classify_agent_session_payload(
             kind="unknown",
             should_notify_agent=False,
             suppression_reason="missing_agent_session",
+        )
+
+    if _has_explicit_session_comment_mention(agent_session):
+        return LinearAgentSessionClassification(
+            kind="human_mention_or_prompt",
+            should_notify_agent=True,
         )
 
     if _looks_like_app_created_session_bootstrap(agent_session):
@@ -162,6 +173,16 @@ def _has_issue_delegate(agent_session: Mapping[str, Any]) -> bool:
     issue = _dict_value(agent_session.get("issue"))
     delegate = issue.get("delegate")
     return isinstance(delegate, Mapping) and bool(delegate.get("id") or delegate.get("name"))
+
+
+def _has_explicit_session_comment_mention(agent_session: Mapping[str, Any]) -> bool:
+    # Monitor-recovered AgentSession comments may not include Linear's creator
+    # or sourceMetadata fields. Treat an explicit leading Linear mention as the
+    # human invocation signal so monitor recovery does not suppress the comment
+    # as an app-created bootstrap.
+    comment = _dict_value(agent_session.get("comment"))
+    body = _string_value(comment.get("body"))
+    return bool(body and LEADING_LINEAR_MENTION_PATTERN.match(body))
 
 
 def _dict_value(value: Any) -> Mapping[str, Any]:

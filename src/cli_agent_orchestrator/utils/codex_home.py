@@ -24,6 +24,11 @@ from cli_agent_orchestrator.utils.config_inheritance import (
     apply_inherit_policy,
     deep_merge,
 )
+from cli_agent_orchestrator.utils.skills import (
+    materialize_skill,
+    skill_file_fingerprints,
+    validate_skill_name,
+)
 
 # Policy for what CAO inherits from the user's ~/.codex/config.toml into the
 # per-terminal CODEX_HOME. See :mod:`utils.config_inheritance` for the shape.
@@ -62,6 +67,7 @@ class CodexHomeMaterialization:
 
     config: Dict[str, Any]
     agents_md: str
+    skill_fingerprints: Dict[str, Dict[str, str]]
 
 
 def _format_toml_key(key: str) -> str:
@@ -224,6 +230,26 @@ def _copy_codex_auth_state(global_codex_home_dir: Path, terminal_codex_home: Pat
     return copied
 
 
+def _profile_skill_names(profile: Any) -> tuple[str, ...]:
+    raw_names = getattr(profile, "skills", None)
+    if raw_names is None:
+        return ()
+    if not isinstance(raw_names, list) or not all(isinstance(item, str) for item in raw_names):
+        raise ValueError("Agent profile skills must be a list of skill names")
+    return tuple(validate_skill_name(item) for item in raw_names)
+
+
+def _skill_fingerprints(skill_names: Iterable[str]) -> Dict[str, Dict[str, str]]:
+    return {skill_name: skill_file_fingerprints(skill_name) for skill_name in skill_names}
+
+
+def _materialize_profile_skills(codex_home: Path, skill_names: Iterable[str]) -> None:
+    skills_root = codex_home / "skills"
+    shutil.rmtree(skills_root, ignore_errors=True)
+    for skill_name in skill_names:
+        materialize_skill(skill_name, skills_root / skill_name)
+
+
 def build_codex_home_materialization(
     agent_profile: str,
     working_directory: str,
@@ -235,6 +261,7 @@ def build_codex_home_materialization(
         (Path.home() / ".codex") if global_codex_home_dir is None else global_codex_home_dir
     )
     profile = load_agent_profile(agent_profile)
+    skill_names = _profile_skill_names(profile)
 
     # Start from a filtered slice of the user's global ~/.codex/config.toml.
     # The inheritance policy (see CODEX_INHERIT_POLICY) allowlists the few
@@ -296,6 +323,7 @@ def build_codex_home_materialization(
     return CodexHomeMaterialization(
         config=base_config,
         agents_md=(profile.system_prompt or "").rstrip() + "\n",  # type: ignore[attr-defined]
+        skill_fingerprints=_skill_fingerprints(skill_names),
     )
 
 
@@ -388,6 +416,7 @@ def _prepare_codex_home_at(
     # Write AGENTS.md from the profile markdown body
     agents_md = codex_home / "AGENTS.md"
     agents_md.write_text(materialization.agents_md)
+    _materialize_profile_skills(codex_home, materialization.skill_fingerprints.keys())
 
     # Also write a tiny marker for debugging/cleanup tooling.
     (codex_home / ".cao-terminal-id").write_text(f"{terminal_id}\n")

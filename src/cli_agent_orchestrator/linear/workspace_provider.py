@@ -45,6 +45,8 @@ TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY = "create_parent_issues"
 TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY = "allow_top_level_create"
 TOOL_ACCESS_UPDATE_FIELDS_KEY = "update_fields"
 TOOL_ACCESS_REASON_KEY = "reason"
+AGENT_POLICIES_SECTION = "agent_policies"
+AGENT_POLICIES_ENABLED_KEY = "enabled"
 _default_linear_workspace_provider: Optional["LinearWorkspaceProvider"] = None
 
 
@@ -81,6 +83,7 @@ class LinearProviderConfig:
     public_url: Optional[str]
     presences: dict[str, LinearPresence]
     tool_access: dict[str, LinearToolAccess]
+    agent_policies_enabled: bool = False
     source: str = "structured"
 
     def presence_by_app_key(self, app_key: str) -> Optional[LinearPresence]:
@@ -295,6 +298,19 @@ def _optional_bool(table: Mapping[str, Any], key: str, *, location: str) -> bool
     return value
 
 
+def _load_linear_agent_policies_enabled(data: Mapping[str, Any]) -> bool:
+    raw_table = data.get(AGENT_POLICIES_SECTION, {})
+    if raw_table is None:
+        return False
+    if not isinstance(raw_table, Mapping):
+        raise LinearWorkspaceProviderConfigError(f"{AGENT_POLICIES_SECTION} must be a table")
+    return _optional_bool(
+        raw_table,
+        AGENT_POLICIES_ENABLED_KEY,
+        location=AGENT_POLICIES_SECTION,
+    )
+
+
 def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAccess]:
     raw_table = data.get("tool_access", {})
     if raw_table is None:
@@ -421,6 +437,7 @@ def _load_structured_linear_config(path: Path) -> LinearProviderConfig:
         public_url=public_url,
         presences=presences,
         tool_access=_load_linear_tool_access(data),
+        agent_policies_enabled=_load_linear_agent_policies_enabled(data),
         source="structured",
     )
 
@@ -481,6 +498,7 @@ def _load_legacy_linear_config(
         public_url=public_url,
         presences=presences,
         tool_access={},
+        agent_policies_enabled=False,
         source="legacy_env",
     )
 
@@ -661,6 +679,16 @@ def save_linear_provider_config(
     if config.public_url:
         lines.append(f"public_url = {_format_toml_value(config.public_url)}")
         lines.append("")
+    lines.append(
+        "# WIP agent-presence policy guardrails. Keep disabled while workflow shape is "
+        "being explored."
+    )
+    lines.append(f"[{AGENT_POLICIES_SECTION}]")
+    lines.append(
+        f"{AGENT_POLICIES_ENABLED_KEY} = "
+        f"{_format_toml_value(config.agent_policies_enabled)}"
+    )
+    lines.append("")
     for presence_id in sorted(config.presences):
         presence = config.presences[presence_id]
         lines.append(f"[presences.{presence_id}]")
@@ -963,6 +991,10 @@ class LinearWorkspaceProvider:
             return True
         return bool(config and config.tool_access)
 
+    def agent_policies_enabled(self) -> bool:
+        """Return whether Linear's WIP agent-presence policy guardrails are enabled."""
+        return self._load_config().agent_policies_enabled
+
     def initialize(self) -> None:
         self._config = load_linear_provider_config(
             config_path=self._config_path,
@@ -1100,6 +1132,14 @@ def get_linear_workspace_provider() -> LinearWorkspaceProvider:
     if _default_linear_workspace_provider is not None:
         return _default_linear_workspace_provider
     return LinearWorkspaceProvider()
+
+
+def should_enable_linear_agent_policies() -> bool:
+    """Return whether Linear's WIP agent-presence policy guardrails should run."""
+    try:
+        return get_linear_workspace_provider().agent_policies_enabled()
+    except LinearWorkspaceProviderConfigError:
+        return False
 
 
 def webhook_secret_presences(

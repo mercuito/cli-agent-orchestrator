@@ -114,7 +114,6 @@ class ProviderManager:
         tmux_window: str,
         agent_profile: Optional[str] = None,
         allowed_tools: Optional[List[str]] = None,
-        skill_prompt: Optional[str] = None,
         runtime_resume_args: Optional[List[str]] = None,
     ) -> BaseProvider:
         """Create and store provider instance."""
@@ -147,7 +146,6 @@ class ProviderManager:
                     tmux_window,
                     agent_profile,
                     allowed_tools,
-                    skill_prompt=skill_prompt,
                 )
             elif provider_type == ProviderType.CODEX.value:
                 provider = CodexProvider(
@@ -156,7 +154,6 @@ class ProviderManager:
                     tmux_window,
                     agent_profile,
                     allowed_tools,
-                    skill_prompt=skill_prompt,
                     runtime_resume_args=runtime_resume_args,
                 )
             elif provider_type == ProviderType.COPILOT_CLI.value:
@@ -174,7 +171,6 @@ class ProviderManager:
                     tmux_window,
                     agent_profile,
                     allowed_tools,
-                    skill_prompt=skill_prompt,
                 )
             elif provider_type == ProviderType.KIMI_CLI.value:
                 provider = KimiCliProvider(
@@ -183,7 +179,6 @@ class ProviderManager:
                     tmux_window,
                     agent_profile,
                     allowed_tools,
-                    skill_prompt=skill_prompt,
                 )
             else:
                 raise ValueError(f"Unknown provider type: {provider_type}")

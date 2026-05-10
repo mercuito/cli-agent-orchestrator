@@ -642,6 +642,34 @@ def create_agent_activity(
     return agent_activity
 
 
+def create_comment_on_issue(
+    issue_id: str,
+    body: str,
+    *,
+    app_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a normal Linear issue comment."""
+    payload = linear_graphql(
+        """
+        mutation CaoLinearPolicyComment($input: CommentCreateInput!) {
+          commentCreate(input: $input) {
+            success
+            comment {
+              id
+              url
+            }
+          }
+        }
+        """,
+        {"input": {"issueId": issue_id, "body": body}},
+        app_key=app_key,
+    )
+    comment = payload.get("data", {}).get("commentCreate", {}).get("comment")
+    if not isinstance(comment, dict) or not comment.get("id"):
+        raise LinearAppError("Linear did not return a created comment")
+    return comment
+
+
 def get_agent_session(agent_session_id: str) -> Dict[str, Any]:
     """Fetch Linear AgentSession fields used by the presence provider."""
     payload = linear_graphql(

@@ -448,7 +448,6 @@ app_user_name = "Implementation Partner"
         "load_agent_profile",
         lambda profile: AgentProfile(name=profile, description="Developer"),
     )
-    monkeypatch.setattr(runtime_agent.terminal_service, "build_skill_catalog", lambda: "")
     monkeypatch.setattr(
         runtime_agent.terminal_service.provider_manager,
         "prepare_terminal_runtime",
