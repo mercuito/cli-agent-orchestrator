@@ -19,8 +19,8 @@ from cli_agent_orchestrator.clients.database import (
     InboxMessageModel,
     InboxNotificationModel,
     InboxNotificationTargetModel,
-    PresenceMessageModel,
-    PresenceThreadModel,
+    ProviderConversationMessageModel,
+    ProviderConversationThreadModel,
     TerminalModel,
     create_flow,
     create_inbox_delivery,
@@ -46,7 +46,7 @@ from cli_agent_orchestrator.clients.database import (
     update_last_active,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.presence.inbox_bridge import create_notification_for_message
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import create_notification_for_message
 
 
 def _notification_fk_targets(connection, table_name: str) -> list[str]:
@@ -294,14 +294,14 @@ class TestInboxOperations:
             source_kind="linear_thread",
             source_id="thread-9",
             origin={"identifier": "CAO-37"},
-            route_kind="presence_thread",
+            route_kind="provider_conversation_thread",
             route_id="linear:thread-9",
         )
 
         assert delivery.message.body == "Hello"
         assert delivery.message.source_kind == "linear_thread"
         assert delivery.message.origin == {"identifier": "CAO-37"}
-        assert delivery.message.route_kind == "presence_thread"
+        assert delivery.message.route_kind == "provider_conversation_thread"
         assert delivery.notification.body == "Hello"
         assert delivery.notification.source_kind == "linear_thread"
         assert delivery.notification.source_id == "thread-9"
@@ -387,7 +387,7 @@ class TestInboxOperations:
             "agent:linear",
             "agent:implementation_partner",
             "Please inspect the failing job.",
-            source_kind="presence_message",
+            source_kind="provider_message",
             source_id="linear:comment-1",
             origin={"breadcrumb": "Linear / CAO-37"},
             route_kind="linear_comment",
@@ -472,7 +472,7 @@ class TestInboxOperations:
                 "sender-123",
                 "receiver-456",
                 "Hello",
-                route_kind="presence_thread",
+                route_kind="provider_conversation_thread",
             )
 
     def test_status_updates_mutate_notification_not_durable_message(self, live_inbox_db):
@@ -540,14 +540,14 @@ class TestInboxOperations:
             "linear",
             "supervisor",
             "provider first",
-            source_kind="presence_message",
+            source_kind="provider_message",
             source_id="linear-thread-1",
         )
         create_inbox_delivery(
             "linear",
             "supervisor",
             "provider second",
-            source_kind="presence_message",
+            source_kind="provider_message",
             source_id="linear-thread-1",
         )
 
@@ -989,19 +989,19 @@ class TestInitDb:
         Base.metadata.create_all(bind=test_engine)
         with test_engine.begin() as connection:
             connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
-            connection.exec_driver_sql("DROP TABLE presence_inbox_notifications")
+            connection.exec_driver_sql("DROP TABLE provider_conversation_inbox_notifications")
             connection.exec_driver_sql("DROP TABLE agent_runtime_notifications")
             connection.exec_driver_sql("""
-                CREATE TABLE presence_inbox_notifications (
+                CREATE TABLE provider_conversation_inbox_notifications (
                     id INTEGER NOT NULL,
                     receiver_id VARCHAR NOT NULL,
-                    presence_message_id INTEGER NOT NULL,
+                    provider_message_id INTEGER NOT NULL,
                     inbox_notification_id INTEGER NOT NULL,
                     created_at DATETIME NOT NULL,
                     PRIMARY KEY (id),
-                    UNIQUE (receiver_id, presence_message_id),
-                    FOREIGN KEY(presence_message_id)
-                        REFERENCES presence_messages (id) ON DELETE CASCADE,
+                    UNIQUE (receiver_id, provider_message_id),
+                    FOREIGN KEY(provider_message_id)
+                        REFERENCES provider_conversation_messages (id) ON DELETE CASCADE,
                     FOREIGN KEY(inbox_notification_id)
                         REFERENCES "inbox_notifications_old" (id) ON DELETE CASCADE
                 )
@@ -1023,11 +1023,11 @@ class TestInitDb:
         with test_engine.connect() as connection:
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
 
-        db_module._migrate_ensure_presence_tables()
+        db_module._migrate_ensure_provider_conversation_tables()
         db_module._migrate_ensure_agent_runtime_tables()
 
         with test_engine.connect() as connection:
-            assert _notification_fk_targets(connection, "presence_inbox_notifications") == [
+            assert _notification_fk_targets(connection, "provider_conversation_inbox_notifications") == [
                 "inbox_notifications"
             ]
             assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
@@ -1035,7 +1035,7 @@ class TestInitDb:
             ]
 
         with TestSession() as session:
-            thread = PresenceThreadModel(
+            thread = ProviderConversationThreadModel(
                 provider="linear",
                 external_id="session-1",
                 kind="conversation",
@@ -1043,7 +1043,7 @@ class TestInitDb:
             )
             session.add(thread)
             session.flush()
-            message = PresenceMessageModel(
+            message = ProviderConversationMessageModel(
                 thread_id=thread.id,
                 provider="linear",
                 external_id="activity-1",
@@ -1057,7 +1057,7 @@ class TestInitDb:
             message_id = message.id
 
         result = create_notification_for_message(
-            presence_message_id=message_id,
+            provider_message_id=message_id,
             receiver_id="agent:implementation_partner",
         )
 
@@ -1073,8 +1073,8 @@ class TestInitDb:
 
         InboxMessageModel.__table__.create(bind=test_engine)
         InboxNotificationTargetModel.__table__.create(bind=test_engine)
-        PresenceThreadModel.__table__.create(bind=test_engine)
-        PresenceMessageModel.__table__.create(bind=test_engine)
+        ProviderConversationThreadModel.__table__.create(bind=test_engine)
+        ProviderConversationMessageModel.__table__.create(bind=test_engine)
         with test_engine.begin() as connection:
             connection.exec_driver_sql("""
                 CREATE TABLE inbox_notifications (
@@ -1106,7 +1106,7 @@ class TestInitDb:
                 VALUES (301, 201, 'agent-123', 'pending', '2026-05-07 12:00:00', 101)
             """)
             connection.exec_driver_sql("""
-                INSERT INTO presence_threads (
+                INSERT INTO provider_conversation_threads (
                     id, provider, external_id, kind, state, created_at, updated_at
                 )
                 VALUES (
@@ -1115,7 +1115,7 @@ class TestInitDb:
                 )
             """)
             connection.exec_driver_sql("""
-                INSERT INTO presence_messages (
+                INSERT INTO provider_conversation_messages (
                     id, thread_id, provider, external_id, direction, kind,
                     body, state, created_at, updated_at
                 )
@@ -1126,23 +1126,23 @@ class TestInitDb:
                 )
             """)
             connection.exec_driver_sql("""
-                CREATE TABLE presence_inbox_notifications (
+                CREATE TABLE provider_conversation_inbox_notifications (
                     id INTEGER NOT NULL,
                     receiver_id VARCHAR NOT NULL,
-                    presence_message_id INTEGER NOT NULL,
+                    provider_message_id INTEGER NOT NULL,
                     inbox_notification_id INTEGER NOT NULL,
                     created_at DATETIME NOT NULL,
                     PRIMARY KEY (id),
-                    UNIQUE (receiver_id, presence_message_id),
-                    FOREIGN KEY(presence_message_id)
-                        REFERENCES presence_messages (id) ON DELETE CASCADE,
+                    UNIQUE (receiver_id, provider_message_id),
+                    FOREIGN KEY(provider_message_id)
+                        REFERENCES provider_conversation_messages (id) ON DELETE CASCADE,
                     FOREIGN KEY(inbox_notification_id)
                         REFERENCES inbox_notifications (id) ON DELETE CASCADE
                 )
             """)
             connection.exec_driver_sql("""
-                INSERT INTO presence_inbox_notifications (
-                    id, receiver_id, presence_message_id, inbox_notification_id, created_at
+                INSERT INTO provider_conversation_inbox_notifications (
+                    id, receiver_id, provider_message_id, inbox_notification_id, created_at
                 )
                 VALUES (401, 'agent-123', 601, 301, '2026-05-07 12:00:00')
             """)
@@ -1171,10 +1171,10 @@ class TestInitDb:
             """)
 
         db_module._migrate_ensure_semantic_inbox_tables()
-        db_module._migrate_ensure_presence_tables()
+        db_module._migrate_ensure_provider_conversation_tables()
         db_module._migrate_ensure_agent_runtime_tables()
         db_module._migrate_drop_legacy_inbox_notification_ids()
-        db_module._migrate_ensure_presence_tables()
+        db_module._migrate_ensure_provider_conversation_tables()
         db_module._migrate_ensure_agent_runtime_tables()
 
         with test_engine.connect() as connection:
@@ -1184,7 +1184,7 @@ class TestInitDb:
             }
             assert "message_id" not in notification_columns
             assert "legacy_inbox_id" not in notification_columns
-            assert _notification_fk_targets(connection, "presence_inbox_notifications") == [
+            assert _notification_fk_targets(connection, "provider_conversation_inbox_notifications") == [
                 "inbox_notifications"
             ]
             assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
@@ -1199,8 +1199,8 @@ class TestInitDb:
         monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
 
         InboxMessageModel.__table__.create(bind=test_engine)
-        PresenceThreadModel.__table__.create(bind=test_engine)
-        PresenceMessageModel.__table__.create(bind=test_engine)
+        ProviderConversationThreadModel.__table__.create(bind=test_engine)
+        ProviderConversationMessageModel.__table__.create(bind=test_engine)
         with test_engine.begin() as connection:
             connection.exec_driver_sql("""
                 CREATE TABLE inbox_notifications (
@@ -1246,7 +1246,7 @@ class TestInitDb:
                 VALUES (301, 201, 'agent-123', 'pending', '2026-05-07 12:00:00', 101)
             """)
             connection.exec_driver_sql("""
-                INSERT INTO presence_threads (
+                INSERT INTO provider_conversation_threads (
                     id,
                     provider,
                     external_id,
@@ -1266,7 +1266,7 @@ class TestInitDb:
                 )
             """)
             connection.exec_driver_sql("""
-                INSERT INTO presence_messages (
+                INSERT INTO provider_conversation_messages (
                     id,
                     thread_id,
                     provider,
@@ -1292,21 +1292,21 @@ class TestInitDb:
                 )
             """)
             connection.exec_driver_sql("""
-                CREATE TABLE presence_inbox_notifications (
+                CREATE TABLE provider_conversation_inbox_notifications (
                     id INTEGER NOT NULL,
                     receiver_id VARCHAR NOT NULL,
-                    presence_message_id INTEGER NOT NULL,
+                    provider_message_id INTEGER NOT NULL,
                     inbox_message_id INTEGER NOT NULL,
                     created_at DATETIME NOT NULL,
                     PRIMARY KEY (id),
-                    UNIQUE (receiver_id, presence_message_id)
+                    UNIQUE (receiver_id, provider_message_id)
                 )
             """)
             connection.exec_driver_sql("""
-                INSERT INTO presence_inbox_notifications (
+                INSERT INTO provider_conversation_inbox_notifications (
                     id,
                     receiver_id,
-                    presence_message_id,
+                    provider_message_id,
                     inbox_message_id,
                     created_at
                 )
@@ -1344,15 +1344,15 @@ class TestInitDb:
             """)
 
         db_module._migrate_ensure_semantic_inbox_tables()
-        db_module._migrate_ensure_presence_tables()
+        db_module._migrate_ensure_provider_conversation_tables()
         db_module._migrate_ensure_agent_runtime_tables()
         db_module._migrate_drop_legacy_inbox_notification_ids()
 
         with test_engine.connect() as connection:
-            presence_columns = {
+            provider_conversation_columns = {
                 row[1]: row
                 for row in connection.exec_driver_sql(
-                    "PRAGMA table_info(presence_inbox_notifications)"
+                    "PRAGMA table_info(provider_conversation_inbox_notifications)"
                 )
             }
             runtime_columns = {
@@ -1369,26 +1369,26 @@ class TestInitDb:
                 SELECT notification_id, target_kind, target_id, role
                 FROM inbox_notification_targets
                 """).fetchone()
-            presence_notification_id = connection.exec_driver_sql(
-                "SELECT inbox_notification_id FROM presence_inbox_notifications"
+            provider_conversation_notification_id = connection.exec_driver_sql(
+                "SELECT inbox_notification_id FROM provider_conversation_inbox_notifications"
             ).scalar_one()
             runtime_notification_id = connection.exec_driver_sql(
                 "SELECT inbox_notification_id FROM agent_runtime_notifications"
             ).scalar_one()
-            presence_fk_targets = _notification_fk_targets(
-                connection, "presence_inbox_notifications"
+            provider_conversation_fk_targets = _notification_fk_targets(
+                connection, "provider_conversation_inbox_notifications"
             )
             runtime_fk_targets = _notification_fk_targets(connection, "agent_runtime_notifications")
 
-        assert "inbox_notification_id" in presence_columns
-        assert "inbox_message_id" not in presence_columns
-        assert presence_columns["inbox_notification_id"][3] == 1
+        assert "inbox_notification_id" in provider_conversation_columns
+        assert "inbox_message_id" not in provider_conversation_columns
+        assert provider_conversation_columns["inbox_notification_id"][3] == 1
         assert "inbox_notification_id" in runtime_columns
         assert "inbox_message_id" not in runtime_columns
         assert runtime_columns["inbox_notification_id"][3] == 1
-        assert presence_fk_targets == ["inbox_notifications"]
+        assert provider_conversation_fk_targets == ["inbox_notifications"]
         assert runtime_fk_targets == ["inbox_notifications"]
-        assert presence_notification_id == 301
+        assert provider_conversation_notification_id == 301
         assert runtime_notification_id == 301
         assert target == (
             301,

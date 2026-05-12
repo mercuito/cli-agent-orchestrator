@@ -14,6 +14,10 @@ from cli_agent_orchestrator.agent_identity import (
     load_agent_identity_registry,
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
+from cli_agent_orchestrator.workspace_providers.events import (
+    WorkspaceProviderEvent,
+    default_workspace_provider_event_dispatcher,
+)
 from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
 
 WORKSPACE_PROVIDERS_CONFIG_PATH = CAO_HOME_DIR / "workspace-providers.toml"
@@ -61,6 +65,14 @@ class ProviderToolAccessConfigurableWorkspaceProvider(
 
     def has_provider_tool_access_config(self) -> bool:
         """Return whether this provider has configured mediated tool access."""
+
+
+@runtime_checkable
+class EventPublishingWorkspaceProvider(WorkspaceProvider, Protocol):
+    """Optional provider surface for declaring subscribable workspace events."""
+
+    def published_events(self) -> tuple[type[WorkspaceProviderEvent], ...]:
+        """Return event types published by this provider."""
 
 
 WorkspaceProviderFactory = Callable[[AgentIdentityRegistry], WorkspaceProvider]
@@ -157,6 +169,7 @@ def initialize_enabled_workspace_providers(
     for name in enabled:
         provider = provider_registry.create(name, agent_registry)
         provider.initialize()
+        _register_provider_events(provider)
         if name == "linear":
             from cli_agent_orchestrator.linear.workspace_provider import (
                 LinearWorkspaceProvider,
@@ -176,6 +189,7 @@ def initialize_enabled_workspace_providers(
         if has_legacy_linear_provider_config():
             provider = LinearWorkspaceProvider(agent_registry=agent_registry)
             provider.initialize()
+            _register_provider_events(provider)
             set_default_linear_workspace_provider(provider)
             providers.append(provider)
     return providers
@@ -221,6 +235,7 @@ def load_enabled_provider_tool_access_policies(
         ):
             continue
         provider.initialize()
+        _register_provider_events(provider)
         providers_with_tools.append(provider)
     return load_provider_tool_access_policies(providers_with_tools)
 
@@ -263,3 +278,9 @@ def _candidate_identity_workspace_providers() -> list[WorkspaceProvider]:
             except LinearWorkspaceProviderConfigError:
                 pass
     return providers
+
+
+def _register_provider_events(provider: WorkspaceProvider) -> None:
+    if not isinstance(provider, EventPublishingWorkspaceProvider):
+        return
+    default_workspace_provider_event_dispatcher().register_events(provider.published_events())

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List, Mapping, Optional
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine, event as sa_event
+from sqlalchemy import create_engine
+from sqlalchemy import event as sa_event
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -24,22 +24,12 @@ from cli_agent_orchestrator.mcp_server.server import (
     _reply_to_inbox_message_impl,
     read_inbox_message,
 )
-from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
-from cli_agent_orchestrator.presence.inbox_bridge import (
-    PRESENCE_INBOX_SOURCE_KIND,
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
 )
-from cli_agent_orchestrator.presence.manager import presence_provider_manager
-from cli_agent_orchestrator.presence.models import (
-    ConversationMessage,
-    ConversationThread,
-    ExternalRef,
-    MessageKind,
-    PresenceEvent,
-    StopAcknowledgement,
-)
-from cli_agent_orchestrator.presence.inbox_read_presentation import inbox_read_presentation_metadata
-from cli_agent_orchestrator.presence.persistence import (
+from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import inbox_read_presentation_metadata
+from cli_agent_orchestrator.provider_conversations.persistence import (
     get_thread,
     list_messages,
     upsert_message,
@@ -64,81 +54,10 @@ def test_session(monkeypatch):
 
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
-    presence_provider_manager.clear_providers()
     yield
-    presence_provider_manager.clear_providers()
 
 
-class FakePresenceProvider:
-    name = "example"
-
-    def __init__(self) -> None:
-        self.replies: List[dict[str, Any]] = []
-
-    def normalize_event(
-        self,
-        raw_event: Mapping[str, Any],
-        *,
-        delivery_id: Optional[str] = None,
-    ) -> Optional[PresenceEvent]:
-        return None
-
-    def fetch_thread(self, thread_ref: ExternalRef) -> ConversationThread:
-        return ConversationThread(ref=thread_ref)
-
-    def fetch_messages(self, thread_ref: ExternalRef) -> List[ConversationMessage]:
-        return []
-
-    def reply_to_thread(
-        self,
-        thread_ref: ExternalRef,
-        body: str,
-        *,
-        kind: MessageKind = "response",
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> ConversationMessage:
-        self.replies.append(
-            {"thread_ref": thread_ref, "body": body, "kind": kind, "metadata": metadata}
-        )
-        return ConversationMessage(
-            kind=kind,
-            body=body,
-            ref=ExternalRef(provider="example", id="reply-1"),
-            direction="outbound",
-            state="delivered",
-        )
-
-    def acknowledge_stop(
-        self,
-        thread_ref: ExternalRef,
-        *,
-        message_ref: Optional[ExternalRef] = None,
-        reason: Optional[str] = None,
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> StopAcknowledgement:
-        return StopAcknowledgement(thread_ref=thread_ref, supported=False)
-
-
-class LeakyFailurePresenceProvider(FakePresenceProvider):
-    def reply_to_thread(
-        self,
-        thread_ref: ExternalRef,
-        body: str,
-        *,
-        kind: MessageKind = "response",
-        metadata: Optional[Mapping[str, Any]] = None,
-    ) -> ConversationMessage:
-        raise RuntimeError(
-            "Linear API failed access_token=secret-token "
-            'password="correct horse battery staple" '
-            "Authorization: Bearer bearer-secret "
-            f"payload={'x' * 5000}\n"
-            '  File "/tmp/provider.py", line 1, in reply\n'
-            "stack locals include refresh_token=refresh-secret"
-        )
-
-
-def _presence_notification() -> int:
+def _provider_conversation_notification() -> int:
     thread = upsert_thread(
         provider="example",
         external_id="thread-1",
@@ -156,12 +75,12 @@ def _presence_notification() -> int:
         raw_snapshot={"provider": {"body": "Full provider body", "extra": "metadata"}},
     )
     return create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
 
 
-def _presence_notification_with_large_raw_snapshot() -> int:
+def _provider_conversation_notification_with_large_raw_snapshot() -> int:
     thread = upsert_thread(
         provider="example",
         external_id="thread-raw",
@@ -179,12 +98,12 @@ def _presence_notification_with_large_raw_snapshot() -> int:
         metadata={"actor": {"name": "Provider Author"}},
     )
     return create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
 
 
-def _linear_presence_notification() -> int:
+def _linear_provider_conversation_notification() -> int:
     thread = upsert_thread(
         provider="linear",
         external_id="session-1",
@@ -200,12 +119,12 @@ def _linear_presence_notification() -> int:
         body="Linear body",
     )
     return create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
     ).delivery.notification.id
 
 
-def _linear_presence_notification_with_work_item_and_metadata() -> int:
+def _linear_provider_conversation_notification_with_work_item_and_metadata() -> int:
     work_item = upsert_work_item(
         provider="linear",
         external_id="issue-uuid-1",
@@ -243,12 +162,12 @@ def _linear_presence_notification_with_work_item_and_metadata() -> int:
         },
     )
     return create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
     ).delivery.notification.id
 
 
-def _linear_presence_notification_with_prompt_context(prompt_context: str) -> int:
+def _linear_provider_conversation_notification_with_prompt_context(prompt_context: str) -> int:
     thread = upsert_thread(
         provider="linear",
         external_id="session-context",
@@ -269,7 +188,7 @@ def _linear_presence_notification_with_prompt_context(prompt_context: str) -> in
         ),
     )
     return create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
     ).delivery.notification.id
 
@@ -305,7 +224,7 @@ async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_work
 
 
 def test_provider_backed_read_returns_slim_payload_without_raw_context(test_session):
-    notification_id = _presence_notification()
+    notification_id = _provider_conversation_notification()
 
     result = _read_inbox_message_impl(notification_id)
 
@@ -324,7 +243,7 @@ def test_provider_backed_read_returns_slim_payload_without_raw_context(test_sess
 
 
 def test_linear_backed_read_returns_provider_owned_workspace_breadcrumb(test_session):
-    notification_id = _linear_presence_notification_with_work_item_and_metadata()
+    notification_id = _linear_provider_conversation_notification_with_work_item_and_metadata()
 
     result = _read_inbox_message_impl(notification_id)
 
@@ -349,7 +268,7 @@ def test_linear_backed_read_does_not_expose_prompt_context(test_session):
     # https://linear.app/developers/agents
     # https://hexdocs.pm/linear_sdk/LinearSDK.Objects.AgentSessionEventWebhookPayload.html
     prompt_context = "<issue>Current scope</issue>\n" + ("prior comment " * 800)
-    notification_id = _linear_presence_notification_with_prompt_context(prompt_context)
+    notification_id = _linear_provider_conversation_notification_with_prompt_context(prompt_context)
 
     result = _read_inbox_message_impl(notification_id)
     encoded = json.dumps(result)
@@ -380,7 +299,7 @@ def test_linear_backed_read_never_uses_prompt_context_as_message_body(test_sessi
         metadata=inbox_read_presentation_metadata(source_label="Linear"),
     )
     notification_id = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
     ).delivery.notification.id
 
@@ -392,7 +311,7 @@ def test_linear_backed_read_never_uses_prompt_context_as_message_body(test_sessi
 
 
 def test_provider_backed_read_body_is_backing_message_not_notification_wrapper(test_session):
-    notification_id = _presence_notification()
+    notification_id = _provider_conversation_notification()
 
     result = _read_inbox_message_impl(notification_id)
 
@@ -402,34 +321,34 @@ def test_provider_backed_read_body_is_backing_message_not_notification_wrapper(t
 
 
 def test_provider_backed_read_missing_backing_message_fails_clearly(test_session):
-    notification_id = _presence_notification()
+    notification_id = _provider_conversation_notification()
 
     with db_module.SessionLocal() as session:
         session.execute(text("PRAGMA foreign_keys=OFF"))
-        session.query(db_module.PresenceMessageModel).delete()
+        session.query(db_module.ProviderConversationMessageModel).delete()
         session.commit()
 
     result = _read_inbox_message_impl(notification_id)
 
     assert result["success"] is False
     assert result["error_type"] == "InboxReadNotFoundError"
-    assert "presence message" in result["error"]
+    assert "provider conversation message" in result["error"]
     assert "not found" in result["error"]
 
 
 def test_provider_backed_read_missing_backing_thread_fails_clearly(test_session):
-    notification_id = _presence_notification()
+    notification_id = _provider_conversation_notification()
 
     with db_module.SessionLocal() as session:
         session.execute(text("PRAGMA foreign_keys=OFF"))
-        session.query(db_module.PresenceThreadModel).delete()
+        session.query(db_module.ProviderConversationThreadModel).delete()
         session.commit()
 
     result = _read_inbox_message_impl(notification_id)
 
     assert result["success"] is False
     assert result["error_type"] == "InboxReadNotFoundError"
-    assert "presence thread" in result["error"]
+    assert "provider conversation thread" in result["error"]
     assert "not found" in result["error"]
 
 
@@ -447,7 +366,7 @@ def test_read_inbox_message_uses_bounded_sender_fallback_without_internal_ids(te
 
 
 def test_large_raw_snapshots_do_not_inflate_default_read_response(test_session):
-    notification_id = _presence_notification_with_large_raw_snapshot()
+    notification_id = _provider_conversation_notification_with_large_raw_snapshot()
 
     result = _read_inbox_message_impl(notification_id)
     encoded = json.dumps(result)
@@ -459,7 +378,7 @@ def test_large_raw_snapshots_do_not_inflate_default_read_response(test_session):
 
 
 def test_large_linear_raw_snapshots_do_not_leak_through_breadcrumb_or_sender_label(test_session):
-    notification_id = _linear_presence_notification_with_work_item_and_metadata()
+    notification_id = _linear_provider_conversation_notification_with_work_item_and_metadata()
 
     result = _read_inbox_message_impl(notification_id)
     encoded = json.dumps(result)
@@ -489,7 +408,7 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
         ),
     )
     notification_id = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
 
@@ -517,7 +436,7 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
         ),
     )
     notification_id = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
 
@@ -553,12 +472,12 @@ def test_provider_backed_read_without_marker_fails_clearly(test_session):
         body="Previous CAO reply",
     )
     delivery = create_inbox_delivery(
-        "presence",
+        "provider_conversation",
         "agent:example",
-        "Presence update",
-        source_kind=PRESENCE_INBOX_SOURCE_KIND,
+        "Provider conversation update",
+        source_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
         source_id=str(thread.id),
-        route_kind=PRESENCE_INBOX_SOURCE_KIND,
+        route_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
         route_id=str(thread.id),
     )
 
@@ -566,45 +485,51 @@ def test_provider_backed_read_without_marker_fails_clearly(test_session):
 
     assert result["success"] is False
     assert result["error_type"] == "InboxReadNotFoundError"
-    assert "presence notification marker" in result["error"]
+    assert "provider conversation notification marker" in result["error"]
 
 
-def test_reply_to_inbox_message_routes_through_provider_presence_registry(test_session):
-    notification_id = _presence_notification()
-    provider = FakePresenceProvider()
-    presence_provider_manager.register_provider("example", provider)
+def test_reply_to_inbox_message_routes_through_linear_provider(test_session, monkeypatch):
+    notification_id = _linear_provider_conversation_notification()
+    create_activity = Mock(return_value={"id": "reply-1"})
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.app_client.create_agent_activity",
+        create_activity,
+    )
 
     result = _reply_to_inbox_message_impl(notification_id, "Reply through CAO")
 
     assert result["success"] is True
-    assert result["provider"] == "example"
-    assert result["thread_id"] == "thread-1"
+    assert result["provider"] == "linear"
+    assert result["thread_id"] == "session-1"
     assert result["outbound_message"]["external_id"] == "reply-1"
-    assert provider.replies[0]["thread_ref"] == ExternalRef(
-        provider="example",
-        id="thread-1",
-        url="https://presence.example/thread-1",
+    create_activity.assert_called_once_with(
+        "session-1",
+        {"type": "response", "body": "Reply through CAO"},
+        app_key="implementation_partner",
     )
-    assert provider.replies[0]["metadata"]["inbox_notification_id"] == notification_id
 
 
-def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(test_session):
+def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(
+    test_session,
+    monkeypatch,
+):
     work_item = upsert_work_item(
-        provider="example",
+        provider="linear",
         external_id="work-breadcrumb",
         identifier="CAO-39",
         title="Breadcrumb is presentation only",
     )
     thread = upsert_thread(
-        provider="example",
+        provider="linear",
         external_id="thread-route",
-        external_url="https://presence.example/thread-route",
+        external_url="https://linear.app/agent-session/thread-route",
         work_item_id=work_item.id,
         kind="conversation",
+        metadata={"linear_app_key": "implementation_partner"},
     )
     message = upsert_message(
         thread_id=thread.id,
-        provider="example",
+        provider="linear",
         external_id="message-route",
         direction="inbound",
         kind="prompt",
@@ -621,32 +546,31 @@ def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(tes
         ),
     )
     notification_id = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="agent:example",
     ).delivery.notification.id
-    provider = FakePresenceProvider()
-    presence_provider_manager.register_provider("example", provider)
+    create_activity = Mock(return_value={"id": "reply-1"})
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.app_client.create_agent_activity",
+        create_activity,
+    )
 
     result = _reply_to_inbox_message_impl(notification_id, "Routed reply")
 
     assert result["success"] is True
-    assert provider.replies[0]["thread_ref"] == ExternalRef(
-        provider="example",
-        id="thread-route",
-        url="https://presence.example/thread-route",
-    )
-    assert "misleading-agent-visible-thread" not in json.dumps(provider.replies[0]["metadata"])
+    assert create_activity.call_args.args[0] == "thread-route"
+    assert "misleading-agent-visible-thread" not in json.dumps(create_activity.call_args.kwargs)
 
 
-def test_reply_to_inbox_message_registers_linear_provider_in_mcp_process(
+def test_reply_to_inbox_message_uses_linear_provider_directly(
     test_session,
     monkeypatch,
 ):
-    notification_id = _linear_presence_notification()
+    notification_id = _linear_provider_conversation_notification()
     create_activity = Mock(return_value={"id": "reply-1"})
     monkeypatch.setattr(
-        "cli_agent_orchestrator.presence.builtins._create_linear_presence_provider",
-        lambda: LinearPresenceProvider(client=Mock(create_agent_activity=create_activity)),
+        "cli_agent_orchestrator.linear.app_client.create_agent_activity",
+        create_activity,
     )
 
     read_result = _read_inbox_message_impl(notification_id)
@@ -678,7 +602,7 @@ def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_sessio
         "reply_error": "no provider reply route",
     }
     assert reply_result["success"] is False
-    assert reply_result["error_type"] == "PresenceReplyUnsupportedSourceError"
+    assert reply_result["error_type"] == "ProviderConversationReplyUnsupportedSourceError"
 
 
 def test_read_inbox_message_distinguishes_notification_without_backing_message(test_session):
@@ -718,36 +642,49 @@ def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):
         "reply_error": "no provider reply route",
     }
     assert reply_result["success"] is False
-    assert reply_result["error_type"] == "PresenceReplyUnsupportedSourceError"
+    assert reply_result["error_type"] == "ProviderConversationReplyUnsupportedSourceError"
     assert len(reply_result["error"]) < 180
 
 
 def test_reply_to_inbox_message_surfaces_provider_failure(test_session):
-    notification_id = _presence_notification()
+    notification_id = _provider_conversation_notification()
 
     result = _reply_to_inbox_message_impl(notification_id, "No registered provider")
 
     assert result["success"] is False
-    assert result["error_type"] == "PresenceReplyDeliveryError"
+    assert result["error_type"] == "ProviderConversationReplyDeliveryError"
     assert result["failed_message_state"] == "failed"
 
 
 def test_provider_reply_failure_response_and_record_do_not_leak_provider_context(
     test_session,
+    monkeypatch,
 ):
-    notification_id = _presence_notification()
-    presence_provider_manager.register_provider("example", LeakyFailurePresenceProvider())
+    notification_id = _linear_provider_conversation_notification()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.app_client.create_agent_activity",
+        Mock(
+            side_effect=RuntimeError(
+                "Linear API failed access_token=secret-token "
+                'password="correct horse battery staple" '
+                "Authorization: Bearer bearer-secret "
+                f"payload={'x' * 5000}\n"
+                '  File "/tmp/provider.py", line 1, in reply\n'
+                "stack locals include refresh_token=refresh-secret"
+            )
+        ),
+    )
 
     result = _reply_to_inbox_message_impl(notification_id, "Reply that fails")
 
-    thread = get_thread("example", "thread-1")
+    thread = get_thread("linear", "session-1")
     assert thread is not None
     failed_message = list_messages(thread.id)[-1]
     encoded_response = json.dumps(result)
     encoded_failed_metadata = json.dumps(failed_message.metadata)
 
     assert result["success"] is False
-    assert result["error_type"] == "PresenceReplyDeliveryError"
+    assert result["error_type"] == "ProviderConversationReplyDeliveryError"
     assert result["failed_message_state"] == "failed"
     assert "secret-token" not in encoded_response
     assert "correct horse battery staple" not in encoded_response

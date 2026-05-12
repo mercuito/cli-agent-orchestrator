@@ -24,9 +24,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Mapping, Optional
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, ensure_agent_identity_runtime_paths
+from cli_agent_orchestrator.agent_identity import (
+    AgentIdentity,
+    AgentWorkspaceContextRuntimePaths,
+    ensure_agent_workspace_context_runtime_paths,
+)
 from cli_agent_orchestrator.clients.database import create_terminal as db_create_terminal
 from cli_agent_orchestrator.clients.database import delete_terminal as db_delete_terminal
+from cli_agent_orchestrator.clients.database import ensure_default_workspace_context
 from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
     update_last_active,
@@ -100,6 +105,7 @@ def create_terminal(
     working_directory: Optional[str] = None,
     allowed_tools: Optional[list] = None,
     agent_identity: Optional[AgentIdentity] = None,
+    workspace_context_id: Optional[str] = None,
     provider_runtime: Optional[Mapping[str, Any]] = None,
 ) -> Terminal:
     """Create a new terminal with an initialized CLI agent.
@@ -147,7 +153,15 @@ def create_terminal(
         env: Optional[Dict[str, str]] = None
         launch_context: Optional[AgentRuntimeLaunchContext] = None
         if agent_identity is not None:
-            runtime_paths = ensure_agent_identity_runtime_paths(agent_identity, provider)
+            if workspace_context_id is None:
+                workspace_context_id = ensure_default_workspace_context(agent_identity.id).id
+            runtime_paths: AgentWorkspaceContextRuntimePaths = (
+                ensure_agent_workspace_context_runtime_paths(
+                    agent_identity,
+                    workspace_context_id,
+                    provider,
+                )
+            )
             launch_context = AgentRuntimeLaunchContext(
                 identity=agent_identity,
                 identity_data_dir=runtime_paths.identity_data_dir,
@@ -215,6 +229,7 @@ def create_terminal(
             agent_profile,
             allowed_tools,
             agent_identity_id=agent_identity.id if agent_identity is not None else None,
+            workspace_context_id=workspace_context_id,
         )
 
         # Step 4: Create and initialize the CLI provider
@@ -249,6 +264,7 @@ def create_terminal(
             session_name=session_name,
             agent_profile=agent_profile,
             agent_identity_id=agent_identity.id if agent_identity is not None else None,
+            workspace_context_id=workspace_context_id,
             allowed_tools=allowed_tools,
             status=TerminalStatus.IDLE,
             last_active=datetime.now(),

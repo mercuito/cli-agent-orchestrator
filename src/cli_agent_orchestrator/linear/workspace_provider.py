@@ -21,6 +21,7 @@ from cli_agent_orchestrator.agent_identity import (
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER, SESSION_PREFIX
 from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_ISSUE_TOOL,
+    CREATE_PROJECT_TOOL,
     ISSUE_TARGETING_TOOLS,
     LINEAR_PROVIDER_TOOLS,
     UPDATE_ISSUE_FIELDS,
@@ -28,6 +29,7 @@ from cli_agent_orchestrator.linear.provider_tools import (
     LinearToolAccess,
     LinearToolProvider,
 )
+from cli_agent_orchestrator.linear.workspace_events import LINEAR_WORKSPACE_PROVIDER_EVENTS
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.env import load_env_vars, set_env_var
 from cli_agent_orchestrator.workspace_providers.registry import (
@@ -349,7 +351,7 @@ def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAcc
             raw_config,
             TOOL_ACCESS_CREATE_TEAM_IDS_KEY,
             location=location,
-            required=CREATE_ISSUE_TOOL in tools,
+            required=CREATE_ISSUE_TOOL in tools or CREATE_PROJECT_TOOL in tools,
         )
         create_project_ids = _optional_str_list(
             raw_config,
@@ -685,8 +687,7 @@ def save_linear_provider_config(
     )
     lines.append(f"[{AGENT_POLICIES_SECTION}]")
     lines.append(
-        f"{AGENT_POLICIES_ENABLED_KEY} = "
-        f"{_format_toml_value(config.agent_policies_enabled)}"
+        f"{AGENT_POLICIES_ENABLED_KEY} = " f"{_format_toml_value(config.agent_policies_enabled)}"
     )
     lines.append("")
     for presence_id in sorted(config.presences):
@@ -990,6 +991,11 @@ class LinearWorkspaceProvider:
         except LinearWorkspaceProviderConfigError:
             return True
         return bool(config and config.tool_access)
+
+    def published_events(self):
+        """Return Linear workspace-provider events subscribers may handle."""
+
+        return LINEAR_WORKSPACE_PROVIDER_EVENTS
 
     def agent_policies_enabled(self) -> bool:
         """Return whether Linear's WIP agent-presence policy guardrails are enabled."""

@@ -1,4 +1,4 @@
-"""Route terminal inbox replies back to provider-neutral presence threads."""
+"""Route terminal inbox replies back to provider-backed conversation threads."""
 
 from __future__ import annotations
 
@@ -8,36 +8,32 @@ from typing import Any, Dict, Mapping, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
-from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_ROUTE_KIND
-from cli_agent_orchestrator.presence.manager import (
-    PresenceProviderManager,
-    presence_provider_manager,
-)
-from cli_agent_orchestrator.presence.models import (
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import PROVIDER_CONVERSATION_INBOX_ROUTE_KIND
+from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessage,
     ConversationMessageRecord,
     ConversationThreadRecord,
     ExternalRef,
 )
-from cli_agent_orchestrator.presence.persistence import (
+from cli_agent_orchestrator.provider_conversations.persistence import (
     get_thread_by_id,
     upsert_message,
 )
 
 
-class PresenceReplyError(ValueError):
-    """Base error for inbox-to-presence reply routing failures."""
+class ProviderConversationReplyError(ValueError):
+    """Base error for provider-conversation reply routing failures."""
 
 
-class PresenceReplyNotFoundError(PresenceReplyError):
-    """Raised when an inbox message or presence thread cannot be resolved."""
+class ProviderConversationReplyNotFoundError(ProviderConversationReplyError):
+    """Raised when an inbox message or provider conversation thread cannot be resolved."""
 
 
-class PresenceReplyUnsupportedSourceError(PresenceReplyError):
-    """Raised when an inbox message is not backed by a presence thread."""
+class ProviderConversationReplyUnsupportedSourceError(ProviderConversationReplyError):
+    """Raised when an inbox message is not backed by a provider conversation thread."""
 
 
-class PresenceReplyDeliveryError(PresenceReplyError):
+class ProviderConversationReplyDeliveryError(ProviderConversationReplyError):
     """Raised after a provider reply failure has been recorded durably."""
 
     def __init__(self, message: str, *, failed_message: ConversationMessageRecord) -> None:
@@ -60,8 +56,8 @@ _SENSITIVE_VALUE_RE = re.compile(
 
 
 @dataclass(frozen=True)
-class PresenceReplyResult:
-    """Durable result of replying to a provider-backed presence thread."""
+class ProviderConversationReplyResult:
+    """Durable result of replying to a provider-backed provider conversation thread."""
 
     delivery: InboxDelivery
     thread: ConversationThreadRecord
@@ -73,51 +69,44 @@ def reply_to_inbox_message(
     notification_id: int,
     body: str,
     *,
-    provider_manager: PresenceProviderManager = presence_provider_manager,
     metadata: Optional[Mapping[str, Any]] = None,
-) -> PresenceReplyResult:
-    """Reply to a presence-thread inbox notification through the provider registry."""
+) -> ProviderConversationReplyResult:
+    """Reply to a provider-thread inbox notification."""
 
     if not body:
-        raise PresenceReplyError("reply body is required")
+        raise ProviderConversationReplyError("reply body is required")
 
     delivery = _read_delivery(notification_id)
     if delivery is None:
-        raise PresenceReplyNotFoundError(f"inbox notification {notification_id} not found")
+        raise ProviderConversationReplyNotFoundError(f"inbox notification {notification_id} not found")
     message_target = _primary_inbox_message_target(delivery)
     if message_target is None:
-        raise PresenceReplyUnsupportedSourceError(
+        raise ProviderConversationReplyUnsupportedSourceError(
             f"inbox notification {notification_id} has no CAO message target"
         )
     message = delivery.message
     if message is None:
-        raise PresenceReplyNotFoundError(
+        raise ProviderConversationReplyNotFoundError(
             f"inbox message target {message_target.target_id} for inbox notification "
             f"{notification_id} not found"
         )
 
-    if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
-        raise PresenceReplyUnsupportedSourceError(
+    if message.route_kind != PROVIDER_CONVERSATION_INBOX_ROUTE_KIND:
+        raise ProviderConversationReplyUnsupportedSourceError(
             f"inbox notification {notification_id} route_kind "
-            f"{message.route_kind!r} is not supported for presence replies"
+            f"{message.route_kind!r} is not supported for provider conversation replies"
         )
 
     thread_id = _parse_thread_route_id(delivery)
     thread = get_thread_by_id(thread_id)
     if thread is None:
-        raise PresenceReplyNotFoundError(
-            f"presence thread {thread_id} for inbox notification {notification_id} not found"
+        raise ProviderConversationReplyNotFoundError(
+            f"provider conversation thread {thread_id} for inbox notification {notification_id} not found"
         )
 
-    thread_ref = ExternalRef(
-        provider=thread.provider,
-        id=thread.external_id,
-        url=thread.external_url,
-    )
-
     try:
-        provider_reply = provider_manager.reply_to_thread(
-            thread_ref,
+        provider_reply = _send_provider_thread_reply(
+            thread,
             body,
             metadata=_reply_metadata(delivery.notification.id, thread=thread, metadata=metadata),
         )
@@ -131,7 +120,7 @@ def reply_to_inbox_message(
             safe_error=safe_error,
             metadata=metadata,
         )
-        raise PresenceReplyDeliveryError(
+        raise ProviderConversationReplyDeliveryError(
             f"provider reply failed for inbox notification {notification_id}: {safe_error}",
             failed_message=failed_message,
         ) from exc
@@ -143,12 +132,94 @@ def reply_to_inbox_message(
         provider_reply=provider_reply,
         metadata=metadata,
     )
-    return PresenceReplyResult(
+    return ProviderConversationReplyResult(
         delivery=delivery,
         thread=thread,
         provider_reply=provider_reply,
         outbound_message=outbound_message,
     )
+
+
+def _send_provider_thread_reply(
+    thread: ConversationThreadRecord,
+    body: str,
+    *,
+    metadata: Mapping[str, Any],
+) -> ConversationMessage:
+    if thread.provider == "linear":
+        return _send_linear_thread_reply(thread, body, metadata=metadata)
+    raise ProviderConversationReplyUnsupportedSourceError(
+        f"provider {thread.provider!r} is not supported for inbox replies"
+    )
+
+
+def _send_linear_thread_reply(
+    thread: ConversationThreadRecord,
+    body: str,
+    *,
+    metadata: Mapping[str, Any],
+) -> ConversationMessage:
+    from cli_agent_orchestrator.linear import app_client
+
+    content = {"type": "response", "body": body}
+    activity = app_client.create_agent_activity(
+        thread.external_id,
+        content,
+        app_key=_linear_app_key_from_reply_metadata(metadata),
+    )
+    activity_id = _string_value(activity.get("id")) if isinstance(activity, Mapping) else None
+    return ConversationMessage(
+        kind="response",
+        body=body,
+        ref=ExternalRef(provider="linear", id=activity_id) if activity_id else None,
+        direction="outbound",
+        state="delivered",
+    )
+
+
+def _linear_app_key_from_reply_metadata(metadata: Mapping[str, Any]) -> Optional[str]:
+    for key in ("_cao_linear_app_key", "app_key", "linear_app_key"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    for key in ("thread_metadata", "thread_raw_snapshot", "raw_snapshot"):
+        found = _linear_app_key_from_nested(metadata.get(key))
+        if found:
+            return found
+    return None
+
+
+def _linear_app_key_from_nested(value: Any) -> Optional[str]:
+    if isinstance(value, Mapping):
+        direct = (
+            value.get("_cao_linear_app_key")
+            or value.get("linear_app_key")
+            or value.get("app_key")
+            or value.get("appKey")
+        )
+        if direct:
+            return str(direct)
+        data = value.get("data")
+        if isinstance(data, Mapping):
+            found = _linear_app_key_from_nested(data)
+            if found:
+                return found
+        for item in value.values():
+            found = _linear_app_key_from_nested(item)
+            if found:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = _linear_app_key_from_nested(item)
+            if found:
+                return found
+    return None
+
+
+def _string_value(value: Any) -> Optional[str]:
+    if value is None or value == "":
+        return None
+    return str(value)
 
 
 def _read_delivery(notification_id: int) -> Optional[InboxDelivery]:
@@ -168,19 +239,19 @@ def _primary_inbox_message_target(delivery: InboxDelivery) -> Optional[InboxNoti
 def _parse_thread_route_id(delivery: InboxDelivery) -> int:
     message = delivery.message
     if message is None:
-        raise PresenceReplyUnsupportedSourceError(
+        raise ProviderConversationReplyUnsupportedSourceError(
             f"inbox notification {delivery.notification.id} is not backed by a CAO message"
         )
     if message.route_id is None:
-        raise PresenceReplyNotFoundError(
-            f"inbox notification {delivery.notification.id} does not include a presence thread route id"
+        raise ProviderConversationReplyNotFoundError(
+            f"inbox notification {delivery.notification.id} does not include a provider conversation thread route id"
         )
 
     try:
         return int(message.route_id)
     except ValueError as exc:
-        raise PresenceReplyNotFoundError(
-            f"inbox notification {delivery.notification.id} has invalid presence thread route id "
+        raise ProviderConversationReplyNotFoundError(
+            f"inbox notification {delivery.notification.id} has invalid provider conversation thread route id "
             f"{message.route_id!r}"
         ) from exc
 

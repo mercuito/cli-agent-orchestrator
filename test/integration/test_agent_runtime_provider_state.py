@@ -14,12 +14,14 @@ import pytest
 from fastmcp import FastMCP
 from fastmcp.exceptions import NotFoundError
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent_identity import (
+    AgentIdentity,
+    AgentIdentityRegistry,
+)
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear import runtime as linear_runtime
-from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
 from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_COMMENT_TOOL,
     CREATE_ISSUE_TOOL,
@@ -27,10 +29,13 @@ from cli_agent_orchestrator.linear.provider_tools import (
     LIST_COMMENTS_TOOL,
     UPDATE_ISSUE_TOOL,
 )
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
+)
 from cli_agent_orchestrator.linear.workspace_provider import LinearWorkspaceProvider
 from cli_agent_orchestrator.mcp_server.provider_tools import register_provider_mediated_mcp_tools
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.presence.manager import PresenceProviderManager
 from cli_agent_orchestrator.providers.base import (
     BaseProvider,
     ProviderRuntimeDescriptor,
@@ -567,15 +572,19 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
             body=prompt_body,
             prompt_context=prompt_context,
         )
-        manager = PresenceProviderManager({"linear": LinearPresenceProvider()})
-        persisted_event = manager.ingest_event(
-            "linear",
+        publication = publish_linear_provider_event(
             payload,
             delivery_id=f"delivery-{uuid.uuid4().hex}",
         )
-        event = manager.normalize_event("linear", payload)
+        assert publication is not None
+        provider_event = publication.event
+        assert isinstance(provider_event, LinearIssueContextEvent)
+        persisted_event = linear_runtime.persist_linear_provider_event(provider_event)
 
-        result = linear_runtime.notify_agent_for_persisted_event(persisted_event, event)
+        result = linear_runtime.notify_agent_for_persisted_event(
+            persisted_event,
+            provider_event,
+        )
 
         assert result is not None
         assert result.freshness is not None
@@ -585,7 +594,7 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
         assert result.terminal_id != initial_terminal.id
         assert result.notification.delivery.message is not None
         assert result.notification.delivery.message.body == prompt_body
-        assert result.notification.delivery.message.sender_id == "presence"
+        assert result.notification.delivery.message.sender_id == "provider_conversation"
 
         refreshed_terminal = handle.current_terminal()
         assert refreshed_terminal is not None
@@ -752,7 +761,6 @@ update_fields = ["title"]
             "<description>This promptContext must stay out of the terminal body.</description>"
             "</issue>"
         )
-        manager = PresenceProviderManager({"linear": LinearPresenceProvider()})
         payload = _linear_agent_session_payload(
             session_id=f"linear-session-{uuid.uuid4().hex}",
             activity_id=f"activity-{uuid.uuid4().hex}",
@@ -762,14 +770,19 @@ update_fields = ["title"]
             issue_identifier="CAO-52",
             issue_title="Prove CAO-mediated Linear tooling end to end",
         )
-        persisted_event = manager.ingest_event(
-            "linear",
+        publication = publish_linear_provider_event(
             payload,
             delivery_id=f"delivery-{uuid.uuid4().hex}",
         )
-        event = manager.normalize_event("linear", payload)
+        assert publication is not None
+        provider_event = publication.event
+        assert isinstance(provider_event, LinearIssueContextEvent)
+        persisted_event = linear_runtime.persist_linear_provider_event(provider_event)
 
-        result = linear_runtime.notify_agent_for_persisted_event(persisted_event, event)
+        result = linear_runtime.notify_agent_for_persisted_event(
+            persisted_event,
+            provider_event,
+        )
 
         assert result is not None
         assert result.freshness is not None
@@ -779,7 +792,7 @@ update_fields = ["title"]
         assert result.terminal_id != initial_terminal.id
         assert result.notification.delivery.message is not None
         assert result.notification.delivery.message.body == prompt_body
-        assert result.notification.delivery.message.sender_id == "presence"
+        assert result.notification.delivery.message.sender_id == "provider_conversation"
 
         refreshed_terminal = handle.current_terminal()
         assert refreshed_terminal is not None

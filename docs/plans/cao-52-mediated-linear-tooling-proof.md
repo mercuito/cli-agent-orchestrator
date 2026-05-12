@@ -12,7 +12,8 @@ transport only at the external API boundary.
 
 - Extend `test/integration/test_agent_runtime_provider_state.py`.
 - Start from a Linear-style `AgentSessionEvent` routed through
-  `PresenceProviderManager` and `linear_runtime.notify_agent_for_persisted_event`.
+  the typed Linear workspace provider event publisher and
+  `linear_runtime.notify_agent_for_persisted_event`.
 - Use `LinearWorkspaceProvider` config to map the Linear presence to the CAO
   identity and grant that same identity all landed CAO-mediated Linear tools.
 - After runtime delivery, register tools for the resulting terminal with
@@ -54,8 +55,9 @@ Coding code criteria:
 - `respect-standing-decisions`: CAO-52 explicitly requires no raw Linear access
   and no real LLM/token-burning turn.
 - `prefer-public-surfaces`: the test uses `LinearWorkspaceProvider`,
-  `PresenceProviderManager`, `linear_runtime.notify_agent_for_persisted_event`,
-  FastMCP, and `register_provider_mediated_mcp_tools`.
+  Linear typed workspace provider events,
+  `linear_runtime.notify_agent_for_persisted_event`, FastMCP, and
+  `register_provider_mediated_mcp_tools`.
 - `no-test-only-production-seams`: no production seam is added for this test.
 - `external-integration-testing`: the fake GraphQL boundary asserts operation
   names, variables, app key, access token, and provider-shaped payloads.
@@ -87,9 +89,9 @@ Coding test criteria:
 
 ## Behavioral Contract Defence
 
-- Linear ingestion starts from a Linear-style `AgentSessionEvent`, goes through
-  `PresenceProviderManager`, persists/normalizes the event, and calls
-  `linear_runtime.notify_agent_for_persisted_event`.
+- Linear ingestion starts from a Linear-style `AgentSessionEvent`, publishes the
+  typed Linear workspace provider event, persists the resulting inbox records,
+  and calls `linear_runtime.notify_agent_for_persisted_event`.
 - The fake tmux provider avoids a real model turn while still proving runtime
   restart/resume and terminal message delivery through tmux output.
 - The delivered message body is exactly the authored user prompt. The sender is

@@ -1,23 +1,18 @@
-"""Tests for provider-neutral presence persistence."""
+"""Tests for provider-owned conversation/work-item persistence."""
 
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine, event as sa_event, inspect
+from sqlalchemy import create_engine
+from sqlalchemy import event as sa_event
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
-from cli_agent_orchestrator.presence.models import (
-    ConversationMessage,
-    ConversationThread,
-    ExternalRef,
-    PresenceEvent,
-    WorkItem,
-)
-from cli_agent_orchestrator.presence.persistence import (
+from cli_agent_orchestrator.provider_conversations.persistence import (
     get_message,
     get_processed_event,
     get_thread,
@@ -25,7 +20,6 @@ from cli_agent_orchestrator.presence.persistence import (
     get_work_item,
     list_messages,
     mark_processed_event,
-    persist_presence_event,
     upsert_message,
     upsert_processed_event,
     upsert_thread,
@@ -52,17 +46,17 @@ def _test_session(monkeypatch):
     return engine
 
 
-def test_presence_tables_are_registered_without_provider_specific_columns():
-    assert "presence_work_items" in Base.metadata.tables
-    assert "presence_threads" in Base.metadata.tables
-    assert "presence_messages" in Base.metadata.tables
+def test_provider_conversation_tables_are_registered_without_provider_specific_columns():
+    assert "provider_work_items" in Base.metadata.tables
+    assert "provider_conversation_threads" in Base.metadata.tables
+    assert "provider_conversation_messages" in Base.metadata.tables
     assert "processed_provider_events" in Base.metadata.tables
 
     all_columns = set()
     for table_name in (
-        "presence_work_items",
-        "presence_threads",
-        "presence_messages",
+        "provider_work_items",
+        "provider_conversation_threads",
+        "provider_conversation_messages",
         "processed_provider_events",
     ):
         all_columns.update(c.name for c in Base.metadata.tables[table_name].columns)
@@ -70,20 +64,188 @@ def test_presence_tables_are_registered_without_provider_specific_columns():
     assert not any(column.startswith(("linear_", "jira_", "discord_")) for column in all_columns)
 
 
-def test_presence_migration_creates_tables_on_existing_database(tmp_path, monkeypatch):
+def test_provider_conversation_migration_creates_tables_on_existing_database(tmp_path, monkeypatch):
     db_path = tmp_path / "existing.db"
     engine = create_engine(f"sqlite:///{db_path}")
     monkeypatch.setattr(db_module, "engine", engine)
+    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
 
-    db_module._migrate_ensure_presence_tables()
+    db_module._migrate_ensure_provider_conversation_tables()
 
     table_names = set(inspect(engine).get_table_names())
     assert {
+        "provider_work_items",
+        "provider_conversation_threads",
+        "provider_conversation_messages",
+        "processed_provider_events",
+    }.issubset(table_names)
+
+
+def test_provider_conversation_migration_moves_legacy_presence_tables(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy-presence.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    monkeypatch.setattr(db_module, "engine", engine)
+    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("""
+            CREATE TABLE inbox_notifications (
+                id INTEGER NOT NULL,
+                receiver_id VARCHAR NOT NULL,
+                body TEXT NOT NULL,
+                source_kind VARCHAR NOT NULL,
+                source_id VARCHAR NOT NULL,
+                metadata_json TEXT,
+                status VARCHAR NOT NULL,
+                created_at DATETIME NOT NULL,
+                delivered_at DATETIME,
+                failed_at DATETIME,
+                error_detail TEXT,
+                PRIMARY KEY (id)
+            )
+        """)
+        connection.exec_driver_sql("""
+            INSERT INTO inbox_notifications (
+                id, receiver_id, body, source_kind, source_id, status, created_at
+            )
+            VALUES (
+                301, 'agent-123', 'Please handle CAO-38', 'linear_issue', 'CAO-38',
+                'pending', '2026-05-07 12:00:00'
+            )
+        """)
+        connection.exec_driver_sql("""
+            CREATE TABLE presence_work_items (
+                id INTEGER NOT NULL,
+                provider VARCHAR NOT NULL,
+                external_id VARCHAR NOT NULL,
+                external_url VARCHAR,
+                identifier VARCHAR,
+                title VARCHAR,
+                state VARCHAR,
+                raw_snapshot_json TEXT,
+                metadata_json TEXT,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE (provider, external_id)
+            )
+        """)
+        connection.exec_driver_sql("""
+            INSERT INTO presence_work_items (
+                id, provider, external_id, external_url, identifier, title, state,
+                raw_snapshot_json, metadata_json, created_at, updated_at
+            )
+            VALUES (
+                401, 'linear', 'issue-1', 'https://linear.example/CAO-38', 'CAO-38',
+                'Legacy planning issue', 'Todo', '{"id": "issue-1"}', '{"team": "CAO"}',
+                '2026-05-07 12:00:00', '2026-05-07 12:00:00'
+            )
+        """)
+        connection.exec_driver_sql("""
+            CREATE TABLE presence_threads (
+                id INTEGER NOT NULL,
+                provider VARCHAR NOT NULL,
+                external_id VARCHAR NOT NULL,
+                external_url VARCHAR,
+                work_item_id INTEGER,
+                kind VARCHAR NOT NULL,
+                state VARCHAR NOT NULL,
+                prompt_context TEXT,
+                raw_snapshot_json TEXT,
+                metadata_json TEXT,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE (provider, external_id)
+            )
+        """)
+        connection.exec_driver_sql("""
+            INSERT INTO presence_threads (
+                id, provider, external_id, external_url, work_item_id, kind, state,
+                prompt_context, raw_snapshot_json, metadata_json, created_at, updated_at
+            )
+            VALUES (
+                501, 'linear', 'thread-1', 'https://linear.example/thread-1', 401,
+                'conversation', 'active', '<issue identifier="CAO-38"/>',
+                '{"id": "thread-1"}', '{"app_key": "implementation_partner"}',
+                '2026-05-07 12:00:00', '2026-05-07 12:00:00'
+            )
+        """)
+        connection.exec_driver_sql("""
+            CREATE TABLE presence_messages (
+                id INTEGER NOT NULL,
+                thread_id INTEGER NOT NULL,
+                provider VARCHAR NOT NULL,
+                external_id VARCHAR,
+                direction VARCHAR NOT NULL,
+                kind VARCHAR NOT NULL,
+                body TEXT,
+                state VARCHAR NOT NULL,
+                raw_snapshot_json TEXT,
+                metadata_json TEXT,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE (provider, external_id)
+            )
+        """)
+        connection.exec_driver_sql("""
+            INSERT INTO presence_messages (
+                id, thread_id, provider, external_id, direction, kind, body, state,
+                raw_snapshot_json, metadata_json, created_at, updated_at
+            )
+            VALUES (
+                601, 501, 'linear', 'message-1', 'inbound', 'prompt',
+                'Please handle CAO-38', 'received', '{"id": "message-1"}',
+                '{"kind": "prompt"}', '2026-05-07 12:00:00', '2026-05-07 12:00:00'
+            )
+        """)
+        connection.exec_driver_sql("""
+            CREATE TABLE presence_inbox_notifications (
+                id INTEGER NOT NULL,
+                receiver_id VARCHAR NOT NULL,
+                presence_message_id INTEGER NOT NULL,
+                inbox_notification_id INTEGER NOT NULL,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY (id),
+                UNIQUE (receiver_id, presence_message_id)
+            )
+        """)
+        connection.exec_driver_sql("""
+            INSERT INTO presence_inbox_notifications (
+                id, receiver_id, presence_message_id, inbox_notification_id, created_at
+            )
+            VALUES (701, 'agent-123', 601, 301, '2026-05-07 12:00:00')
+        """)
+
+    db_module._migrate_ensure_provider_conversation_tables()
+
+    table_names = set(inspect(engine).get_table_names())
+    assert {
+        "provider_work_items",
+        "provider_conversation_threads",
+        "provider_conversation_messages",
+        "provider_conversation_inbox_notifications",
+    }.issubset(table_names)
+    assert not {
         "presence_work_items",
         "presence_threads",
         "presence_messages",
-        "processed_provider_events",
-    }.issubset(table_names)
+        "presence_inbox_notifications",
+    }.intersection(table_names)
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT title FROM provider_work_items WHERE id = 401"
+        ).scalar_one() == "Legacy planning issue"
+        assert connection.exec_driver_sql(
+            "SELECT work_item_id FROM provider_conversation_threads WHERE id = 501"
+        ).scalar_one() == 401
+        assert connection.exec_driver_sql(
+            "SELECT thread_id FROM provider_conversation_messages WHERE id = 601"
+        ).scalar_one() == 501
+        assert connection.exec_driver_sql(
+            "SELECT provider_message_id FROM provider_conversation_inbox_notifications WHERE id = 701"
+        ).scalar_one() == 601
 
 
 def test_linear_shaped_work_thread_message_and_event_are_upserted_idempotently(monkeypatch):
@@ -94,7 +256,7 @@ def test_linear_shaped_work_thread_message_and_event_are_upserted_idempotently(m
         external_id="issue-1",
         external_url="https://linear.app/yards/issue/CAO-16",
         identifier="CAO-16",
-        title="Presence persistence",
+        title="Provider conversation persistence",
         state="Todo",
         raw_snapshot={"id": "issue-1", "identifier": "CAO-16"},
     )
@@ -103,12 +265,12 @@ def test_linear_shaped_work_thread_message_and_event_are_upserted_idempotently(m
         external_id="issue-1",
         external_url="https://linear.app/yards/issue/CAO-16",
         identifier="CAO-16",
-        title="Presence persistence updated",
+        title="Provider conversation persistence updated",
         state="In Progress",
     )
 
     assert updated_work_item.id == work_item.id
-    assert get_work_item("linear", "issue-1").title == "Presence persistence updated"
+    assert get_work_item("linear", "issue-1").title == "Provider conversation persistence updated"
 
     thread = upsert_thread(
         provider="linear",
@@ -179,7 +341,7 @@ def test_jira_shaped_issue_discussion_and_comment_fit_same_schema(monkeypatch):
         external_id="10001",
         external_url="https://jira.example/browse/CAO-16",
         identifier="CAO-16",
-        title="Presence persistence",
+        title="Provider conversation persistence",
         metadata={"project": "CAO"},
     )
     thread = upsert_thread(
@@ -233,46 +395,6 @@ def test_discord_thread_and_message_fit_without_work_item(monkeypatch):
     assert message.state == "delivered"
 
 
-def test_persist_presence_event_stores_normalized_event_once(monkeypatch):
-    _test_session(monkeypatch)
-    event = PresenceEvent(
-        provider="linear",
-        event_type="AgentSessionEvent",
-        action="prompted",
-        delivery_id="delivery-1",
-        thread=ConversationThread(
-            ref=ExternalRef(
-                provider="linear",
-                id="agent-session-1",
-                url="https://linear.app/session/agent-session-1",
-            ),
-            work_item=WorkItem(
-                ref=ExternalRef(provider="linear", id="issue-1"),
-                identifier="CAO-16",
-                title="Presence persistence",
-            ),
-            prompt_context='<issue identifier="CAO-16"/>',
-        ),
-        message=ConversationMessage(
-            kind="prompt",
-            body="Can you implement this?",
-            ref=ExternalRef(provider="linear", id="agent-activity-1"),
-        ),
-        raw_payload={"type": "AgentSessionEvent"},
-    )
-
-    first = persist_presence_event(event)
-    second = persist_presence_event(event)
-
-    assert first.processed_event is not None
-    assert first.work_item is not None
-    assert first.thread is not None
-    assert first.message is not None
-    assert second.processed_event.id == first.processed_event.id
-    assert second.work_item is None
-    assert len(list_messages(first.thread.id)) == 1
-
-
 def test_mark_processed_event_reports_first_observation(monkeypatch):
     _test_session(monkeypatch)
 
@@ -295,14 +417,14 @@ def test_mark_processed_event_reports_first_observation(monkeypatch):
 def test_duplicate_upserts_update_existing_database_rows(monkeypatch):
     _test_session(monkeypatch)
     with db_module.SessionLocal() as session:
-        work_row = db_module.PresenceWorkItemModel(
+        work_row = db_module.ProviderWorkItemModel(
             provider="linear",
             external_id="issue-1",
             title="old title",
         )
         session.add(work_row)
         session.flush()
-        thread_row = db_module.PresenceThreadModel(
+        thread_row = db_module.ProviderConversationThreadModel(
             provider="linear",
             external_id="session-1",
             work_item_id=work_row.id,
@@ -311,7 +433,7 @@ def test_duplicate_upserts_update_existing_database_rows(monkeypatch):
         )
         session.add(thread_row)
         session.flush()
-        message_row = db_module.PresenceMessageModel(
+        message_row = db_module.ProviderConversationMessageModel(
             thread_id=thread_row.id,
             provider="linear",
             external_id="activity-1",
@@ -370,46 +492,10 @@ def test_duplicate_upserts_update_existing_database_rows(monkeypatch):
     assert processed_event.id == event_id
     assert processed_event.metadata == {"action": "prompted"}
     with db_module.SessionLocal() as session:
-        assert session.query(db_module.PresenceWorkItemModel).count() == 1
-        assert session.query(db_module.PresenceThreadModel).count() == 1
-        assert session.query(db_module.PresenceMessageModel).count() == 1
+        assert session.query(db_module.ProviderWorkItemModel).count() == 1
+        assert session.query(db_module.ProviderConversationThreadModel).count() == 1
+        assert session.query(db_module.ProviderConversationMessageModel).count() == 1
         assert session.query(db_module.ProcessedProviderEventModel).count() == 1
-
-
-def test_persist_event_without_delivery_id_still_dedupes_provider_refs(monkeypatch):
-    _test_session(monkeypatch)
-    event = PresenceEvent(
-        provider="linear",
-        event_type="AgentSessionEvent",
-        action="prompted",
-        delivery_id=None,
-        thread=ConversationThread(
-            ref=ExternalRef(provider="linear", id="session-1"),
-            work_item=WorkItem(
-                ref=ExternalRef(provider="linear", id="issue-1"),
-                identifier="CAO-16",
-                title="Presence persistence",
-            ),
-        ),
-        message=ConversationMessage(
-            kind="prompt",
-            body="Can you implement this?",
-            ref=ExternalRef(provider="linear", id="activity-1"),
-        ),
-    )
-
-    first = persist_presence_event(event)
-    second = persist_presence_event(event)
-
-    assert first.processed_event is None
-    assert second.processed_event is None
-    assert second.work_item.id == first.work_item.id
-    assert second.thread.id == first.thread.id
-    assert second.message.id == first.message.id
-    with db_module.SessionLocal() as session:
-        assert session.query(db_module.PresenceWorkItemModel).count() == 1
-        assert session.query(db_module.PresenceThreadModel).count() == 1
-        assert session.query(db_module.PresenceMessageModel).count() == 1
 
 
 def test_messages_without_provider_external_id_are_not_deduped(monkeypatch):
@@ -487,8 +573,8 @@ def test_foreign_keys_reject_missing_thread_and_cascade_thread_delete(monkeypatc
 
     with db_module.SessionLocal() as session:
         row = (
-            session.query(db_module.PresenceWorkItemModel)
-            .filter(db_module.PresenceWorkItemModel.id == work_item.id)
+            session.query(db_module.ProviderWorkItemModel)
+            .filter(db_module.ProviderWorkItemModel.id == work_item.id)
             .one()
         )
         session.delete(row)
@@ -497,24 +583,24 @@ def test_foreign_keys_reject_missing_thread_and_cascade_thread_delete(monkeypatc
 
     with db_module.SessionLocal() as session:
         row = (
-            session.query(db_module.PresenceThreadModel)
-            .filter(db_module.PresenceThreadModel.id == thread.id)
+            session.query(db_module.ProviderConversationThreadModel)
+            .filter(db_module.ProviderConversationThreadModel.id == thread.id)
             .one()
         )
         session.delete(row)
         session.commit()
 
     with db_module.SessionLocal() as session:
-        assert session.query(db_module.PresenceMessageModel).count() == 0
+        assert session.query(db_module.ProviderConversationMessageModel).count() == 0
 
 
-def test_raw_snapshot_and_metadata_round_trip_for_all_presence_records(monkeypatch):
+def test_raw_snapshot_and_metadata_round_trip_for_all_provider_conversation_records(monkeypatch):
     _test_session(monkeypatch)
 
     work_item = upsert_work_item(
         provider="jira",
         external_id="10001",
-        raw_snapshot={"fields": {"summary": "Presence persistence"}, "labels": ["cao"]},
+        raw_snapshot={"fields": {"summary": "Provider conversation persistence"}, "labels": ["cao"]},
         metadata={"project": "CAO", "rank": 1},
     )
     thread = upsert_thread(
@@ -539,7 +625,7 @@ def test_raw_snapshot_and_metadata_round_trip_for_all_presence_records(monkeypat
     )
 
     assert get_work_item("jira", "10001").raw_snapshot == {
-        "fields": {"summary": "Presence persistence"},
+        "fields": {"summary": "Provider conversation persistence"},
         "labels": ["cao"],
     }
     assert get_work_item("jira", "10001").metadata == {"project": "CAO", "rank": 1}

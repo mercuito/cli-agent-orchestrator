@@ -15,6 +15,14 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     load_linear_provider_config,
     persist_linear_oauth_install,
 )
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearAgentMentionedEvent,
+    LinearAgentSessionLifecycleActivityEvent,
+    LinearAgentSessionPromptedEvent,
+    LinearAgentSessionStopRequestedEvent,
+    LinearIssueCreatedEvent,
+    LinearIssueDelegatedToAgentEvent,
+)
 
 
 def _agents() -> AgentIdentityRegistry:
@@ -73,6 +81,35 @@ app_user_name = "Implementation Partner"
 
     assert resolved.presence.agent_id == "implementation_partner"
     assert resolved.identity.session_name == "implementation-partner"
+
+
+def test_linear_workspace_provider_declares_subscribable_events(tmp_path):
+    config = _linear_config(
+        tmp_path,
+        """
+[presences.implementation_partner]
+agent_id = "implementation_partner"
+app_key = "implementation_partner"
+app_user_id = "app-user-impl"
+app_user_name = "Implementation Partner"
+""",
+    )
+    provider = LinearWorkspaceProvider(
+        agent_registry=_agents(),
+        config_path=config,
+        preflight_credentials=False,
+    )
+
+    event_types = set(provider.published_events())
+
+    assert event_types == {
+        LinearAgentMentionedEvent,
+        LinearIssueDelegatedToAgentEvent,
+        LinearAgentSessionPromptedEvent,
+        LinearAgentSessionLifecycleActivityEvent,
+        LinearAgentSessionStopRequestedEvent,
+        LinearIssueCreatedEvent,
+    }
 
 
 def test_linear_agent_policies_default_disabled(tmp_path):
@@ -558,7 +595,7 @@ create_project_ids = ["project-bridge"]
 create_parent_issues = ["CAO-25"]
 allow_top_level_create = true
 update_fields = ["title", "description", "state_id", "assignee_id", "project_id", "parent_issue", "label_ids", "priority"]
-reason = "Implementation Partner is limited to the bridge planning issue during smoke validation."
+reason = "Implementation Partner is limited to the bridge planning issue during policy validation."
 custom_authored_key = "preserve me"
 """,
     )
@@ -614,5 +651,5 @@ custom_authored_key = "preserve me"
     )
     assert (
         reloaded.tool_access["implementation_partner_reads"].reason
-        == "Implementation Partner is limited to the bridge planning issue during smoke validation."
+        == "Implementation Partner is limited to the bridge planning issue during policy validation."
     )

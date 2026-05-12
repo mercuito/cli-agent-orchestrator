@@ -8,8 +8,8 @@ from typing import Any, Dict, Mapping, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
-from cli_agent_orchestrator.presence.inbox_bridge import PRESENCE_INBOX_ROUTE_KIND
-from cli_agent_orchestrator.presence.inbox_read_presentation import (
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import PROVIDER_CONVERSATION_INBOX_ROUTE_KIND
+from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 
@@ -19,7 +19,7 @@ class InboxReadError(ValueError):
 
 
 class InboxReadNotFoundError(InboxReadError):
-    """Raised when the requested inbox notification or backing presence data is missing."""
+    """Raised when the requested inbox notification or backing provider data is missing."""
 
 
 class InboxReadUnsupportedNotificationError(InboxReadError):
@@ -65,7 +65,7 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
                 f"{notification_id} not found"
             )
 
-        if message.route_kind != PRESENCE_INBOX_ROUTE_KIND:
+        if message.route_kind != PROVIDER_CONVERSATION_INBOX_ROUTE_KIND:
             return InboxReadResult(
                 delivery=delivery,
                 from_label=_plain_source_label(session, delivery),
@@ -77,27 +77,27 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
 
         if message.route_id is None:
             raise InboxReadNotFoundError(
-                f"inbox notification {notification_id} does not include a presence thread route id"
+                f"inbox notification {notification_id} does not include a provider conversation thread route id"
             )
         try:
             thread_id = int(message.route_id)
         except ValueError as exc:
             raise InboxReadNotFoundError(
-                f"inbox notification {notification_id} has invalid presence thread route id "
+                f"inbox notification {notification_id} has invalid provider conversation thread route id "
                 f"{message.route_id!r}"
             ) from exc
 
         thread_row = (
-            session.query(db_module.PresenceThreadModel)
-            .filter(db_module.PresenceThreadModel.id == thread_id)
+            session.query(db_module.ProviderConversationThreadModel)
+            .filter(db_module.ProviderConversationThreadModel.id == thread_id)
             .first()
         )
         if thread_row is None:
             raise InboxReadNotFoundError(
-                f"presence thread {thread_id} for inbox notification {notification_id} not found"
+                f"provider conversation thread {thread_id} for inbox notification {notification_id} not found"
             )
 
-        message_row = _selected_presence_message_row(
+        message_row = _selected_provider_message_row(
             session,
             inbox_notification_id=delivery.notification.id,
         )
@@ -112,13 +112,17 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
 
         return InboxReadResult(
             delivery=delivery,
-            from_label=_presence_source_label(origin, message_metadata, message_row, thread_row),
-            body=_presence_body(message_row, thread_row),
+            from_label=_provider_conversation_source_label(
+                origin, message_metadata, message_row, thread_row
+            ),
+            body=_provider_conversation_body(message_row, thread_row),
             replyable=replyable,
             reply_error=reply_error,
-            workspace=_presence_workspace(origin) or _presence_workspace(message_metadata),
+            workspace=_provider_conversation_workspace(origin)
+            or _provider_conversation_workspace(message_metadata),
             thread={"provider": cast(Optional[str], thread_row.provider)},
-            context=_presence_context(origin) or _presence_context(message_metadata),
+            context=_provider_conversation_context(origin)
+            or _provider_conversation_context(message_metadata),
         )
 
 
@@ -155,45 +159,47 @@ def _primary_inbox_message_target(delivery: InboxDelivery) -> Optional[InboxNoti
     return None
 
 
-def _selected_presence_message_row(
+def _selected_provider_message_row(
     session: Any,
     *,
     inbox_notification_id: int,
-) -> Optional[db_module.PresenceMessageModel]:
+) -> Optional[db_module.ProviderConversationMessageModel]:
     marker = (
-        session.query(db_module.PresenceInboxNotificationModel)
+        session.query(db_module.ProviderConversationInboxNotificationModel)
         .filter(
-            db_module.PresenceInboxNotificationModel.inbox_notification_id == inbox_notification_id
+            db_module.ProviderConversationInboxNotificationModel.inbox_notification_id == inbox_notification_id
         )
         .first()
     )
     if marker is not None:
         message_row = (
-            session.query(db_module.PresenceMessageModel)
-            .filter(db_module.PresenceMessageModel.id == marker.presence_message_id)
+            session.query(db_module.ProviderConversationMessageModel)
+            .filter(db_module.ProviderConversationMessageModel.id == marker.provider_message_id)
             .first()
         )
         if message_row is None:
             raise InboxReadNotFoundError(
-                f"presence message {marker.presence_message_id} for inbox notification "
+                f"provider conversation message {marker.provider_message_id} for inbox notification "
                 f"{inbox_notification_id} not found"
             )
-        return cast(Optional[db_module.PresenceMessageModel], message_row)
+        return cast(Optional[db_module.ProviderConversationMessageModel], message_row)
 
     raise InboxReadNotFoundError(
-        f"presence notification marker for inbox notification {inbox_notification_id} not found"
+        f"provider conversation notification marker for inbox notification {inbox_notification_id} not found"
     )
 
 
 def _message_metadata(
-    message_row: Optional[db_module.PresenceMessageModel],
+    message_row: Optional[db_module.ProviderConversationMessageModel],
 ) -> Optional[Dict[str, Any]]:
     if message_row is None:
         return None
     return _load_bounded_json_object(cast(Optional[str], message_row.metadata_json))
 
 
-def _presence_workspace(metadata: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+def _provider_conversation_workspace(
+    metadata: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
     presentation = _presentation(metadata)
     if presentation is None:
         return None
@@ -268,11 +274,11 @@ def _plain_source_label(session: Any, delivery: InboxDelivery) -> str:
     return "Inbox sender"
 
 
-def _presence_source_label(
+def _provider_conversation_source_label(
     origin: Optional[Mapping[str, Any]],
     metadata: Optional[Mapping[str, Any]],
-    message_row: Optional[db_module.PresenceMessageModel],
-    thread_row: db_module.PresenceThreadModel,
+    message_row: Optional[db_module.ProviderConversationMessageModel],
+    thread_row: db_module.ProviderConversationThreadModel,
 ) -> str:
     presentation = _presentation(origin) or _presentation(metadata)
     if presentation is not None:
@@ -285,16 +291,18 @@ def _presence_source_label(
     return _provider_label(cast(Optional[str], thread_row.provider))
 
 
-def _presence_body(
-    message_row: Optional[db_module.PresenceMessageModel],
-    thread_row: db_module.PresenceThreadModel,
+def _provider_conversation_body(
+    message_row: Optional[db_module.ProviderConversationMessageModel],
+    thread_row: db_module.ProviderConversationThreadModel,
 ) -> str:
     if message_row is not None and message_row.body:
         return str(cast(Optional[str], message_row.body))
     return "(no text body)"
 
 
-def _presence_context(metadata: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+def _provider_conversation_context(
+    metadata: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
     presentation = _presentation(metadata)
     if presentation is None:
         return None
@@ -325,7 +333,7 @@ def _bounded_context(value: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
 def _provider_label(provider: Optional[str]) -> str:
     if provider:
         return _display_from_token(provider)
-    return "Provider presence"
+    return "Provider conversation"
 
 
 def _display_from_token(value: str) -> str:

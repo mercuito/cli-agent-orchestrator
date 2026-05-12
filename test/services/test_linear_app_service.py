@@ -515,6 +515,8 @@ def test_get_agent_session_returns_presence_fields(monkeypatch):
     query = graphql.call_args.args[0]
     assert "context" in query
     assert "promptContext" not in query
+    assert "parent" in query
+    assert "identifier" in query
     assert graphql.call_args.args[1] == {"id": "session-1"}
 
 

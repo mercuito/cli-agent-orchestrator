@@ -18,10 +18,9 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.linear import app_client, monitor_store
 from cli_agent_orchestrator.linear import runtime as linear_runtime
 from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
-from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
-from cli_agent_orchestrator.presence.manager import (
-    UnknownPresenceProviderError,
-    presence_provider_manager,
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
 )
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 
@@ -32,7 +31,6 @@ DEFAULT_WATERMARK_OVERLAP = timedelta(seconds=2)
 MAX_BACKFILL_LOOKBACK = timedelta(hours=24)
 PROVIDER = "linear"
 MONITOR_DELIVERY_PREFIX = "linear-monitor"
-_LINEAR_PROVIDER = LinearPresenceProvider()
 
 _STACK_TRACE_RE = re.compile(r"Traceback \(most recent call last\):|\n\s*File \"")
 _BEARER_TOKEN_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
@@ -137,7 +135,6 @@ def run_linear_monitor(
             ),
         )
 
-    _ensure_linear_presence_provider()
     stats = {
         "sessions_seen": 0,
         "sessions_processed": 0,
@@ -447,17 +444,17 @@ def _synthesize_and_deliver(
     )
     delivery_id = f"{MONITOR_DELIVERY_PREFIX}:{presence.presence_id}:{object_id}"
     try:
-        event = presence_provider_manager.normalize_event(
-            PROVIDER,
-            payload,
-            delivery_id=delivery_id,
+        publication = publish_linear_provider_event(payload, delivery_id=delivery_id)
+        provider_event = publication.event if publication is not None else None
+        persisted = (
+            linear_runtime.persist_linear_provider_event(provider_event)
+            if isinstance(provider_event, LinearIssueContextEvent)
+            else None
         )
-        persisted = presence_provider_manager.ingest_event(
-            PROVIDER,
-            payload,
-            delivery_id=delivery_id,
+        linear_runtime.notify_or_retry_agent_for_persisted_event(
+            persisted,
+            provider_event,
         )
-        linear_runtime.notify_or_retry_agent_for_persisted_event(persisted, event)
     except Exception as exc:
         diagnostics.append(
             _diagnostic(
@@ -587,15 +584,6 @@ def _session_belongs_to_presence(
             )
         )
     return False
-
-
-def _ensure_linear_presence_provider() -> None:
-    try:
-        presence_provider_manager.get_provider(PROVIDER)
-        return
-    except UnknownPresenceProviderError:
-        pass
-    presence_provider_manager.register_provider(PROVIDER, _LINEAR_PROVIDER)
 
 
 def _recoverable_comment(comment: Mapping[str, Any]) -> bool:

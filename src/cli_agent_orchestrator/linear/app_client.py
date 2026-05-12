@@ -119,7 +119,7 @@ def required_linear_env(name: str) -> str:
 
 
 def _split_oauth_state(state: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """Return ``(app_key, nonce)`` from a smoke-test OAuth state value."""
+    """Return ``(app_key, nonce)`` from a Linear OAuth state value."""
     if not state:
         return None, None
 
@@ -476,7 +476,7 @@ def update_agent_session_external_url(
     agent_id: Optional[str] = None,
     app_key: Optional[str] = None,
 ) -> bool:
-    """Attach a CAO URL to a Linear AgentSession for smoke-test visibility."""
+    """Attach a CAO URL to a Linear AgentSession."""
     terminal_url = public_cao_runtime_url(terminal_id, agent_id=agent_id)
     if not terminal_url:
         return False
@@ -506,7 +506,7 @@ def update_agent_session_external_url(
 
 
 def get_issue(issue_id: str) -> Dict[str, Any]:
-    """Fetch the Linear issue fields needed by the smoke agent-session flow."""
+    """Fetch Linear issue fields needed by the agent-session flow."""
     payload = linear_graphql(
         """
         query Issue($id: String!) {
@@ -671,7 +671,7 @@ def create_comment_on_issue(
 
 
 def get_agent_session(agent_session_id: str) -> Dict[str, Any]:
-    """Fetch Linear AgentSession fields used by the presence provider."""
+    """Fetch Linear AgentSession fields used by workspace provider event handling."""
     payload = linear_graphql(
         """
         query AgentSession($id: String!) {
@@ -687,6 +687,10 @@ def get_agent_session(agent_session_id: str) -> Dict[str, Any]:
               url
               state {
                 name
+              }
+              parent {
+                id
+                identifier
               }
             }
           }
@@ -810,6 +814,10 @@ def list_recent_agent_sessions(
                     url
                     state {
                       name
+                    }
+                    parent {
+                      id
+                      identifier
                     }
                   }
                   comment {

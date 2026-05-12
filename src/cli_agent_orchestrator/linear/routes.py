@@ -10,35 +10,16 @@ from pydantic import BaseModel
 
 from cli_agent_orchestrator.linear import app_client, runtime
 from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
-from cli_agent_orchestrator.linear.presence_provider import (
-    LinearPresenceProvider,
-    payload_with_header_event,
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
 )
 from cli_agent_orchestrator.linear.webhook_ingestion import parse_linear_webhook_packet
-from cli_agent_orchestrator.presence.manager import (
-    UnknownPresenceProviderError,
-    presence_provider_manager,
-)
-from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
 from cli_agent_orchestrator.workspace_providers import WorkspaceProviderConfigError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/linear", tags=["linear"])
-_linear_presence_provider = LinearPresenceProvider()
-
-
-def _ensure_linear_presence_provider() -> None:
-    try:
-        presence_provider_manager.get_provider(_linear_presence_provider.name)
-        return
-    except UnknownPresenceProviderError:
-        pass
-
-    presence_provider_manager.register_provider(
-        _linear_presence_provider.name,
-        _linear_presence_provider,
-    )
 
 
 def _require_linear_workspace_provider_enabled() -> None:
@@ -144,7 +125,6 @@ async def agent_webhook(
     except app_client.LinearWebhookVerificationError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
 
-    _ensure_linear_presence_provider()
     if verification.app_key:
         payload["_cao_linear_app_key"] = verification.app_key
     if verification.agent_id:
@@ -177,21 +157,22 @@ async def agent_webhook(
             routed=False,
         )
 
-    provider_payload = payload_with_header_event(payload, header_event=header_event)
-    presence_event = presence_provider_manager.normalize_event(
-        "linear",
-        provider_payload,
+    publication = publish_linear_provider_event(
+        payload,
         delivery_id=delivery,
+        header_event=header_event,
     )
-    persisted = presence_provider_manager.ingest_event(
-        "linear",
-        provider_payload,
-        delivery_id=delivery,
+    provider_event = publication.event if publication is not None else None
+    persisted = (
+        runtime.persist_linear_provider_event(provider_event)
+        if isinstance(provider_event, LinearIssueContextEvent)
+        else None
     )
-    presence_event = presence_event if presence_event is not None else None
     agent_session_id = (
-        presence_event.thread.ref.id if presence_event and presence_event.thread else None
-    ) or packet.agent_session_id
+        provider_event.thread_id
+        if isinstance(provider_event, LinearIssueContextEvent)
+        else packet.agent_session_id
+    )
 
     logger.info(
         "Received Linear webhook event=%s action=%s delivery=%s agent_session_id=%s verified=%s",
@@ -204,13 +185,13 @@ async def agent_webhook(
 
     notification_result = runtime.notify_or_retry_agent_for_persisted_event(
         persisted,
-        presence_event,
+        provider_event,
     )
     duplicate_delivery = (
         persisted is not None
         and persisted.processed_event is not None
-        and presence_event is not None
-        and presence_event.thread is not None
+        and isinstance(provider_event, LinearIssueContextEvent)
+        and provider_event.thread_id is not None
         and persisted.thread is None
         and persisted.message is None
     )

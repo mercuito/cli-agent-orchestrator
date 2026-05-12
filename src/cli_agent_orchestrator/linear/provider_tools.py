@@ -29,6 +29,7 @@ CREATE_COMMENT_TOOL = "cao_linear.create_comment"
 OPEN_AGENT_SESSION_ON_ISSUE_TOOL = "cao_linear.open_agent_session_on_issue"
 CREATE_ISSUE_TOOL = "cao_linear.create_issue"
 UPDATE_ISSUE_TOOL = "cao_linear.update_issue"
+CREATE_PROJECT_TOOL = "cao_linear.create_project"
 LIST_TEAMS_TOOL = "cao_linear.list_teams"
 GET_TEAM_TOOL = "cao_linear.get_team"
 LIST_USERS_TOOL = "cao_linear.list_users"
@@ -54,10 +55,14 @@ COMMENT_WRITE_POLICY_HOOK = "linear_comment_write_policy"
 AGENT_SESSION_WRITE_POLICY_HOOK = "linear_agent_session_write_policy"
 CREATE_ISSUE_POLICY_HOOK = "linear_create_issue_policy"
 UPDATE_ISSUE_POLICY_HOOK = "linear_update_issue_policy"
+CREATE_PROJECT_POLICY_HOOK = "linear_create_project_policy"
+LINEAR_WORKSPACE_CONTEXT_RESULT_HOOK = "linear_workspace_context_result"
 LINEAR_READ_TOOLS = frozenset({GET_ISSUE_TOOL, LIST_COMMENTS_TOOL})
 LINEAR_COMMENT_WRITE_TOOLS = frozenset({CREATE_COMMENT_TOOL})
 LINEAR_AGENT_SESSION_WRITE_TOOLS = frozenset({OPEN_AGENT_SESSION_ON_ISSUE_TOOL})
 LINEAR_ISSUE_MUTATION_TOOLS = frozenset({CREATE_ISSUE_TOOL, UPDATE_ISSUE_TOOL})
+LINEAR_CONTEXT_MAPPING_MUTATION_TOOLS = frozenset({CREATE_ISSUE_TOOL})
+LINEAR_PROJECT_MUTATION_TOOLS = frozenset({CREATE_PROJECT_TOOL})
 LINEAR_EXPLORATION_READ_TOOLS = frozenset(
     {
         LIST_TEAMS_TOOL,
@@ -87,6 +92,7 @@ LINEAR_PROVIDER_TOOLS = (
     | LINEAR_COMMENT_WRITE_TOOLS
     | LINEAR_AGENT_SESSION_WRITE_TOOLS
     | LINEAR_ISSUE_MUTATION_TOOLS
+    | LINEAR_PROJECT_MUTATION_TOOLS
 )
 ISSUE_TARGETING_TOOLS = (
     LINEAR_READ_TOOLS
@@ -133,7 +139,21 @@ UPDATE_ISSUE_FIELDS = frozenset(
         "priority",
     }
 )
+CREATE_PROJECT_FIELDS = frozenset(
+    {
+        "team_ids",
+        "name",
+        "description",
+        "content",
+        "lead_id",
+        "member_ids",
+        "start_date",
+        "target_date",
+        "priority",
+    }
+)
 REFERENCE_FIELDS = frozenset({"project_id", "state_id", "assignee_id"})
+PROJECT_REFERENCE_FIELDS = frozenset({"lead_id", "member_ids"})
 MAX_DESCRIPTION_CHARS = 4000
 MAX_COMMENT_BODY_CHARS = 4000
 DEFAULT_COMMENT_LIMIT = 50
@@ -402,6 +422,25 @@ def _linear_runtime_dependency_callables(
             ("_mutated_issue_from_payload", _mutated_issue_from_payload, True),
             ("_compact_issue_mutation_payload", _compact_issue_mutation_payload, True),
         ),
+        CREATE_PROJECT_TOOL: (
+            (
+                "LinearToolProvider._authorize_create_project_before_call",
+                provider._authorize_create_project_before_call,
+                False,
+            ),
+            (
+                "LinearToolProvider._validated_create_project_request",
+                provider._validated_create_project_request,
+                True,
+            ),
+            ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+            ("_fetch_team", _fetch_team, True),
+            ("_team_from_payload", _team_from_payload, True),
+            ("_validate_linear_reference", _validate_linear_reference, True),
+            ("_create_linear_project", _create_linear_project, True),
+            ("_mutated_project_from_payload", _mutated_project_from_payload, True),
+            ("_compact_project_mutation_payload", _compact_project_mutation_payload, True),
+        ),
     }
     result: list[LinearRuntimeDependency] = []
     if tool_name in query_dependencies:
@@ -415,7 +454,11 @@ def _linear_runtime_dependency_callables(
         result.append(("_validated_exploration_request", _validated_exploration_request, False))
         validator = _exploration_request_validator(tool_name)
         result.append(
-            (getattr(validator, "__qualname__", "exploration_validator"), validator, True)
+            (
+                getattr(validator, "__qualname__", "exploration_validator"),
+                cast(Callable[..., Any], validator),
+                True,
+            )
         )
         result.append(("linear_query", query_dependencies[tool_name], True))
         result.append(("LinearToolProvider._run_linear_query", provider._run_linear_query, True))
@@ -483,6 +526,7 @@ def _linear_runtime_constant_material(tool_name: str) -> Mapping[str, Any]:
         CREATE_COMMENT_TOOL,
         CREATE_ISSUE_TOOL,
         UPDATE_ISSUE_TOOL,
+        CREATE_PROJECT_TOOL,
     }:
         values["MAX_DESCRIPTION_CHARS"] = MAX_DESCRIPTION_CHARS
         values["_TRUNCATED"] = _TRUNCATED
@@ -496,6 +540,9 @@ def _linear_runtime_constant_material(tool_name: str) -> Mapping[str, Any]:
     if tool_name == UPDATE_ISSUE_TOOL:
         values["UPDATE_ISSUE_FIELDS"] = sorted(UPDATE_ISSUE_FIELDS)
         values["REFERENCE_FIELDS"] = sorted(REFERENCE_FIELDS)
+    if tool_name == CREATE_PROJECT_TOOL:
+        values["CREATE_PROJECT_FIELDS"] = sorted(CREATE_PROJECT_FIELDS)
+        values["PROJECT_REFERENCE_FIELDS"] = sorted(PROJECT_REFERENCE_FIELDS)
     if tool_name in LINEAR_PROVIDER_TOOLS:
         values["DEFAULT_LINEAR_POLICY_REASON"] = DEFAULT_LINEAR_POLICY_REASON
         from cli_agent_orchestrator.linear import app_client
@@ -607,6 +654,12 @@ class LinearToolProvider:
                     description="Update explicitly allowed fields on an authorized Linear issue.",
                     input_schema=_update_issue_input_schema(),
                     handler=self._update_issue,
+                ),
+                ProviderMediatedToolDefinition(
+                    name=CREATE_PROJECT_TOOL,
+                    description="Create a Linear project inside configured team boundaries.",
+                    input_schema=_create_project_input_schema(),
+                    handler=self._create_project,
                 ),
                 ProviderMediatedToolDefinition(
                     name=LIST_TEAMS_TOOL,
@@ -757,6 +810,16 @@ class LinearToolProvider:
                 phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
                 handler=self._authorize_update_issue_before_call,
             ),
+            ProviderToolHookDefinition(
+                name=CREATE_PROJECT_POLICY_HOOK,
+                phases=frozenset({ProviderToolHookPhase.PRE_CALL}),
+                handler=self._authorize_create_project_before_call,
+            ),
+            ProviderToolHookDefinition(
+                name=LINEAR_WORKSPACE_CONTEXT_RESULT_HOOK,
+                phases=frozenset({ProviderToolHookPhase.POST_CALL}),
+                handler=self._resolve_tool_result_workspace_context,
+            ),
         )
 
     def _access_requests(self) -> tuple[ProviderToolAccessRequest, ...]:
@@ -771,16 +834,22 @@ class LinearToolProvider:
                     pre_hook = CREATE_ISSUE_POLICY_HOOK
                 elif tool_name == UPDATE_ISSUE_TOOL:
                     pre_hook = UPDATE_ISSUE_POLICY_HOOK
+                elif tool_name == CREATE_PROJECT_TOOL:
+                    pre_hook = CREATE_PROJECT_POLICY_HOOK
                 elif tool_name in LINEAR_EXPLORATION_READ_TOOLS:
                     pre_hook = EXPLORATION_READ_POLICY_HOOK
                 else:
                     pre_hook = READ_POLICY_HOOK
+                post_hooks: tuple[str, ...] = ()
+                if tool_name in LINEAR_CONTEXT_MAPPING_MUTATION_TOOLS:
+                    post_hooks = (LINEAR_WORKSPACE_CONTEXT_RESULT_HOOK,)
                 requests.append(
                     ProviderToolAccessRequest(
                         tool_name=tool_name,
                         agent_identity_id=access.agent_id,
                         agent_profile=access.agent_profile,
                         pre_hooks=(pre_hook,),
+                        post_hooks=post_hooks,
                         location=access.location,
                     )
                 )
@@ -822,6 +891,24 @@ class LinearToolProvider:
         except LinearToolError as exc:
             return self._deny_with_policy_context(context, exc)
         return ProviderToolPreCallResult.allow()
+
+    def _authorize_create_project_before_call(
+        self, context: ProviderToolInvocationContext
+    ) -> ProviderToolPreCallResult:
+        try:
+            self._validated_create_project_request(context)
+        except LinearToolError as exc:
+            return self._deny_with_policy_context(context, exc)
+        return ProviderToolPreCallResult.allow()
+
+    def _resolve_tool_result_workspace_context(
+        self, context: ProviderToolInvocationContext
+    ) -> None:
+        from cli_agent_orchestrator.linear.workspace_context_tool_results import (
+            resolve_linear_tool_result_workspace_context,
+        )
+
+        resolve_linear_tool_result_workspace_context(context)
 
     def _authorize_comment_before_call(
         self, context: ProviderToolInvocationContext
@@ -1008,6 +1095,43 @@ class LinearToolProvider:
         return _compact_issue_mutation_payload(
             issue,
             status="updated",
+            changed_fields=tuple(sorted(request)),
+        )
+
+    def _create_project(
+        self,
+        context: ProviderToolInvocationContext,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request = self._validated_create_project_request(context)
+        presence = self._presence_for_identity(context.agent_identity.id)
+        mutation_input: dict[str, Any] = {}
+        for field, value in request.items():
+            if field == "team_ids":
+                team_ids: list[str] = []
+                for team_ref in value:
+                    team = _fetch_team(team_ref, presence)
+                    team_ids.append(
+                        _required_string(
+                            team.get("id"),
+                            field="team_ids",
+                            reason="invalid_linear_team_id",
+                        )
+                    )
+                mutation_input["teamIds"] = team_ids
+            elif field in PROJECT_REFERENCE_FIELDS:
+                values = value if isinstance(value, tuple) else (value,)
+                for reference in values:
+                    _validate_linear_reference(field, reference, presence)
+                mutation_input[_linear_input_field(field)] = (
+                    list(value) if field == "member_ids" else value
+                )
+            else:
+                mutation_input[_linear_input_field(field)] = value
+        project = _create_linear_project(mutation_input, presence)
+        return _compact_project_mutation_payload(
+            project,
+            status="created",
             changed_fields=tuple(sorted(request)),
         )
 
@@ -1223,7 +1347,7 @@ class LinearToolProvider:
     ) -> dict[str, Any]:
         presence = self._presence_for_identity(context.agent_identity.id)
         try:
-            return query_func(presence, **kwargs)
+            return cast(dict[str, Any], query_func(presence, **kwargs))
         except linear_queries.LinearProviderQueryError as exc:
             raise LinearToolError(exc.reason, str(exc)) from exc
 
@@ -1364,6 +1488,48 @@ class LinearToolProvider:
             request["priority"] = _priority(arguments["priority"])
         return issue_key, request
 
+    def _validated_create_project_request(
+        self,
+        context: ProviderToolInvocationContext,
+    ) -> dict[str, Any]:
+        access = self._linear_access_for_context(context)
+        arguments = context.arguments
+        unknown = set(arguments) - CREATE_PROJECT_FIELDS
+        if unknown:
+            raise LinearToolError(
+                "invalid_linear_create_project_field",
+                f"unsupported create_project fields: {', '.join(sorted(unknown))}",
+            )
+        team_ids = _team_ids(arguments.get("team_ids"))
+        allowed_teams = {_canonical_issue_key(item) for item in access.create_team_ids}
+        unauthorized = [
+            team_id for team_id in team_ids if _canonical_issue_key(team_id) not in allowed_teams
+        ]
+        if unauthorized:
+            raise LinearToolError(
+                "unauthorized_linear_team",
+                "team_ids are not authorized by "
+                f"{access.location}: {', '.join(sorted(unauthorized))}",
+            )
+        request: dict[str, Any] = {
+            "team_ids": team_ids,
+            "name": _required_string(
+                arguments.get("name"),
+                field="name",
+                reason="invalid_linear_project_name",
+            ),
+        }
+        _copy_optional_string(arguments, request, "description")
+        _copy_optional_string(arguments, request, "content")
+        _copy_optional_reference(arguments, request, "lead_id")
+        _copy_optional_date(arguments, request, "start_date")
+        _copy_optional_date(arguments, request, "target_date")
+        if "member_ids" in arguments:
+            request["member_ids"] = _member_ids(arguments["member_ids"])
+        if "priority" in arguments:
+            request["priority"] = _priority(arguments["priority"])
+        return request
+
     def _linear_access_for_context(
         self,
         context: ProviderToolInvocationContext,
@@ -1379,6 +1545,8 @@ class LinearToolProvider:
     def _authorized_issue_request(self, context: ProviderToolInvocationContext) -> str:
         access = self._linear_access_for_context(context)
         issue_key = _issue_key_from_arguments(context.arguments)
+        if _allows_any_issue(access.issues):
+            return issue_key
         if _canonical_issue_key(issue_key) not in {
             _canonical_issue_key(item) for item in access.issues
         }:
@@ -1394,6 +1562,8 @@ class LinearToolProvider:
         source_location: str,
     ) -> None:
         access = self._access_by_location[source_location]
+        if _allows_any_issue(access.issues):
+            return
         allowed = {_canonical_issue_key(item) for item in access.issues}
         returned = {
             _canonical_issue_key(value)
@@ -1413,6 +1583,8 @@ class LinearToolProvider:
         source_location: str,
     ) -> None:
         access = self._access_by_location[source_location]
+        if _allows_any_issue(access.create_parent_issues):
+            return
         allowed = {_canonical_issue_key(item) for item in access.create_parent_issues}
         returned = {
             _canonical_issue_key(value)
@@ -1660,6 +1832,31 @@ def _update_issue_input_schema() -> dict[str, Any]:
     }
 
 
+def _create_project_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "team_ids": {"type": "array", "items": {"type": "string"}},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "content": {"type": "string"},
+            "lead_id": {"type": "string"},
+            "member_ids": {"type": "array", "items": {"type": "string"}},
+            "start_date": {
+                "type": "string",
+                "description": "Optional Linear TimelessDate in YYYY-MM-DD format.",
+            },
+            "target_date": {
+                "type": "string",
+                "description": "Optional Linear TimelessDate in YYYY-MM-DD format.",
+            },
+            "priority": {"type": "integer", "minimum": 0, "maximum": 4},
+        },
+        "required": ["team_ids", "name"],
+        "additionalProperties": False,
+    }
+
+
 def _validated_exploration_request(
     tool_name: str,
     arguments: Mapping[str, Any],
@@ -1885,7 +2082,7 @@ def _list_limit(value: Any) -> int:
             "invalid_linear_list_limit",
             f"limit must be between 1 and {MAX_LIST_LIMIT}",
         )
-    return value
+    return cast(int, value)
 
 
 def _issue_key_from_arguments(arguments: Mapping[str, Any]) -> str:
@@ -1985,6 +2182,24 @@ def _copy_optional_reference(
         )
 
 
+def _copy_optional_date(
+    arguments: Mapping[str, Any],
+    request: dict[str, Any],
+    field: str,
+) -> None:
+    if field not in arguments:
+        return
+    value = _required_string(arguments.get(field), field=field, reason=f"invalid_linear_{field}")
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise LinearToolError(
+            f"invalid_linear_{field}",
+            f"{field} must use YYYY-MM-DD format",
+        ) from exc
+    request[field] = value
+
+
 def _label_ids(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise LinearToolError("invalid_linear_label_ids", "label_ids must be a list of strings")
@@ -1995,6 +2210,30 @@ def _label_ids(value: Any) -> tuple[str, ...]:
             "label_ids must be a list of non-empty strings",
         )
     return labels
+
+
+def _team_ids(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise LinearToolError("invalid_linear_team_ids", "team_ids must be a list of strings")
+    team_ids = tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
+    if len(team_ids) != len(value) or not team_ids:
+        raise LinearToolError(
+            "invalid_linear_team_ids",
+            "team_ids must be a non-empty list of non-empty strings",
+        )
+    return team_ids
+
+
+def _member_ids(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise LinearToolError("invalid_linear_member_ids", "member_ids must be a list of strings")
+    member_ids = tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
+    if len(member_ids) != len(value) or not member_ids:
+        raise LinearToolError(
+            "invalid_linear_member_ids",
+            "member_ids must be a non-empty list of non-empty strings",
+        )
+    return member_ids
 
 
 def _priority(value: Any) -> int:
@@ -2008,11 +2247,16 @@ def _priority(value: Any) -> int:
 def _linear_input_field(field: str) -> str:
     return {
         "team_id": "teamId",
+        "team_ids": "teamIds",
         "project_id": "projectId",
         "parent_issue": "parentId",
         "state_id": "stateId",
         "assignee_id": "assigneeId",
         "label_ids": "labelIds",
+        "lead_id": "leadId",
+        "member_ids": "memberIds",
+        "start_date": "startDate",
+        "target_date": "targetDate",
     }.get(field, field)
 
 
@@ -2173,6 +2417,8 @@ def _validate_linear_reference(field: str, value: str, presence: Any) -> None:
         "project_id": "project",
         "state_id": "workflowState",
         "assignee_id": "user",
+        "lead_id": "user",
+        "member_ids": "user",
         "label_ids": "issueLabel",
     }.get(field)
     if query_field is None:
@@ -2251,6 +2497,7 @@ def _create_linear_issue(
                   state { name type }
                   team { key name }
                   project { name }
+                  parent { id identifier }
                 }
               }
             }
@@ -2286,6 +2533,7 @@ def _update_linear_issue(
                   state { name type }
                   team { key name }
                   project { name }
+                  parent { id identifier }
                 }
               }
             }
@@ -2297,6 +2545,44 @@ def _update_linear_issue(
     except Exception as exc:
         raise _linear_api_error(exc) from exc
     return _mutated_issue_from_payload(payload, "issueUpdate")
+
+
+def _create_linear_project(
+    mutation_input: Mapping[str, Any],
+    presence: Any,
+) -> Mapping[str, Any]:
+    from cli_agent_orchestrator.linear import app_client
+
+    _preflight_presence_credentials(presence)
+    try:
+        payload = app_client.linear_graphql(
+            """
+            mutation CaoLinearCreateProject($input: ProjectCreateInput!) {
+              projectCreate(input: $input) {
+                success
+                project {
+                  id
+                  name
+                  description
+                  url
+                  state
+                  startDate
+                  targetDate
+                  lead { id name }
+                  teams(first: 20) { nodes { id key name } }
+                  createdAt
+                  updatedAt
+                }
+              }
+            }
+            """,
+            {"input": dict(mutation_input)},
+            access_token=app_client.access_token_for_presence(presence),
+            app_key=presence.app_key,
+        )
+    except Exception as exc:
+        raise _linear_api_error(exc) from exc
+    return _mutated_project_from_payload(payload, "projectCreate")
 
 
 def _issue_from_payload(payload: Mapping[str, Any], issue_key: str) -> Mapping[str, Any]:
@@ -2384,6 +2670,30 @@ def _mutated_issue_from_payload(
             f"Linear {mutation_name} did not return an issue id",
         )
     return issue
+
+
+def _mutated_project_from_payload(
+    payload: Mapping[str, Any], mutation_name: str
+) -> Mapping[str, Any]:
+    data = payload.get("data")
+    result = data.get(mutation_name) if isinstance(data, Mapping) else None
+    if not isinstance(result, Mapping):
+        raise LinearToolError(
+            f"linear_{mutation_name}_failed",
+            f"Linear {mutation_name} did not return a result object",
+        )
+    if result.get("success") is not True:
+        raise LinearToolError(
+            f"linear_{mutation_name}_failed",
+            f"Linear {mutation_name} did not report success",
+        )
+    project = result.get("project")
+    if not isinstance(project, Mapping) or not project.get("id"):
+        raise LinearToolError(
+            f"linear_{mutation_name}_failed",
+            f"Linear {mutation_name} did not return a project id",
+        )
+    return project
 
 
 def _preflight_presence_credentials(presence: Any) -> None:
@@ -2525,7 +2835,7 @@ def _compact_issue_mutation_payload(
     status: str,
     changed_fields: tuple[str, ...],
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "status": status,
         "id": _string_or_none(issue.get("id")),
         "identifier": _string_or_none(issue.get("identifier")),
@@ -2536,6 +2846,30 @@ def _compact_issue_mutation_payload(
         "state": _named_object(issue.get("state"), ("name", "type")),
         "changed_fields": list(changed_fields),
     }
+    parent = _named_object(issue.get("parent"), ("id", "identifier"))
+    if parent is not None:
+        payload["parent"] = parent
+    return payload
+
+
+def _compact_project_mutation_payload(
+    project: Mapping[str, Any],
+    *,
+    status: str,
+    changed_fields: tuple[str, ...],
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "id": _string_or_none(project.get("id")),
+        "name": _string_or_none(project.get("name")),
+        "url": _string_or_none(project.get("url")),
+        "state": _string_or_none(project.get("state")),
+        "lead": _named_object(project.get("lead"), ("id", "name")),
+        "teams": _compact_nested_named_nodes(project.get("teams"), ("id", "key", "name")),
+        "created_at": _string_or_none(project.get("createdAt")),
+        "updated_at": _string_or_none(project.get("updatedAt")),
+        "changed_fields": list(changed_fields),
+    }
 
 
 def _named_object(value: Any, keys: tuple[str, ...]) -> dict[str, str] | None:
@@ -2543,6 +2877,18 @@ def _named_object(value: Any, keys: tuple[str, ...]) -> dict[str, str] | None:
         return None
     result = {key: str(value[key]) for key in keys if value.get(key) is not None}
     return result or None
+
+
+def _compact_nested_named_nodes(value: Any, keys: tuple[str, ...]) -> list[dict[str, str]]:
+    nodes = value.get("nodes") if isinstance(value, Mapping) else None
+    if not isinstance(nodes, list):
+        return []
+    result: list[dict[str, str]] = []
+    for node in nodes:
+        named = _named_object(node, keys)
+        if named:
+            result.append(named)
+    return result
 
 
 def _string_or_none(value: Any) -> str | None:
@@ -2562,6 +2908,10 @@ def _canonical_issue_key(value: Any) -> str:
     return str(value).strip().lower()
 
 
+def _allows_any_issue(values: tuple[str, ...]) -> bool:
+    return any(value.strip() == "*" for value in values)
+
+
 def _parse_expires_at(value: Any) -> datetime | None:
     if not value:
         return None
@@ -2578,10 +2928,14 @@ __all__ = [
     "CREATE_COMMENT_TOOL",
     "CREATE_ISSUE_FIELDS",
     "CREATE_ISSUE_TOOL",
+    "CREATE_PROJECT_FIELDS",
+    "CREATE_PROJECT_TOOL",
     "GET_ISSUE_TOOL",
     "LINEAR_AGENT_SESSION_WRITE_TOOLS",
     "LINEAR_COMMENT_WRITE_TOOLS",
     "LINEAR_ISSUE_MUTATION_TOOLS",
+    "LINEAR_CONTEXT_MAPPING_MUTATION_TOOLS",
+    "LINEAR_PROJECT_MUTATION_TOOLS",
     "LINEAR_PROVIDER_TOOLS",
     "LINEAR_READ_TOOLS",
     "LIST_COMMENTS_TOOL",

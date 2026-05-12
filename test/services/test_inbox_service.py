@@ -436,7 +436,7 @@ def test_delivery_failure_marks_notification_failed_without_mutating_durable_mes
         "linear",
         "terminal-1",
         "Durable provider body.",
-        source_kind="presence_thread",
+        source_kind="provider_conversation_thread",
         source_id="thread-1",
     )
     _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
@@ -453,7 +453,7 @@ def test_delivery_failure_marks_notification_failed_without_mutating_durable_mes
     assert persisted.notification.failed_at is not None
     assert persisted.notification.error_detail == "tmux send failed"
     assert persisted.message.body == "Durable provider body."
-    assert persisted.message.source_kind == "presence_thread"
+    assert persisted.message.source_kind == "provider_conversation_thread"
     assert persisted.message.source_id == "thread-1"
 
 

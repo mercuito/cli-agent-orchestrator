@@ -1,4 +1,4 @@
-"""Tests for bridging provider-neutral presence messages into the terminal inbox."""
+"""Tests for bridging provider-owned messages into the terminal inbox."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from sqlalchemy.pool import StaticPool
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.presence.inbox_bridge import (
-    PRESENCE_INBOX_ROUTE_KIND,
-    PRESENCE_INBOX_SOURCE_KIND,
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
+    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
     create_notification_for_persisted_event,
 )
-from cli_agent_orchestrator.presence.models import PersistedPresenceEvent
-from cli_agent_orchestrator.presence.persistence import (
+from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
+from cli_agent_orchestrator.provider_conversations.persistence import (
     upsert_message,
     upsert_thread,
     upsert_work_item,
@@ -59,7 +59,7 @@ def _persist_message(
         provider=provider,
         external_id=f"work-{thread_external_id}",
         identifier="WORK-123",
-        title="Bridge durable presence into inbox",
+        title="Bridge durable provider conversation into inbox",
     )
     thread = upsert_thread(
         provider=provider,
@@ -80,19 +80,19 @@ def _persist_message(
     return work_item, thread, message
 
 
-def test_presence_notification_uses_presence_thread_source_and_internal_thread_id(test_session):
+def test_provider_conversation_notification_uses_thread_source_and_internal_thread_id(test_session):
     _, thread, message = _persist_message()
 
     result = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="terminal-a",
     )
 
     assert result.created is True
-    assert result.delivery.message.source_kind == PRESENCE_INBOX_SOURCE_KIND
+    assert result.delivery.message.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
     assert result.delivery.message.source_id == str(thread.id)
     assert result.delivery.message.source_id != thread.external_id
-    assert result.delivery.message.route_kind == PRESENCE_INBOX_ROUTE_KIND
+    assert result.delivery.message.route_kind == PROVIDER_CONVERSATION_INBOX_ROUTE_KIND
     assert result.delivery.message.route_id == str(thread.id)
     assert result.delivery.notification.receiver_id == "terminal-a"
     assert result.delivery.notification.status == MessageStatus.PENDING
@@ -105,7 +105,7 @@ def test_message_backed_notification_body_is_compact_and_message_body_is_durable
     )
 
     result = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="terminal-a",
     )
 
@@ -116,7 +116,7 @@ def test_message_backed_notification_body_is_compact_and_message_body_is_durable
     assert "[CAO inbox notification]" in body
     assert f"ID: {result.delivery.notification.id}" in body
     assert "Source: generic-chat" in body
-    assert "Issue: WORK-123 - Bridge durable presence into inbox" in body
+    assert "Issue: WORK-123 - Bridge durable provider conversation into inbox" in body
     assert f"Read: read_inbox_message(notification_id={result.delivery.notification.id})" in body
     assert (
         f"Reply: reply_to_inbox_message(notification_id={result.delivery.notification.id}" in body
@@ -131,7 +131,7 @@ def test_semantic_notification_body_is_bounded(test_session):
     )
 
     result = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="terminal-a",
         preview_chars=35,
         notification_chars=180,
@@ -143,17 +143,17 @@ def test_semantic_notification_body_is_bounded(test_session):
     assert "older transcript line" in result.delivery.message.body
 
 
-def test_duplicate_notification_for_same_receiver_and_presence_message_is_idempotent(
+def test_duplicate_notification_for_same_receiver_and_provider_message_is_idempotent(
     test_session,
 ):
     _, _, message = _persist_message()
 
     first = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="terminal-a",
     )
     second = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="terminal-a",
     )
 
@@ -169,16 +169,18 @@ def test_persisted_event_wrapper_bridges_its_message(test_session):
     _, thread, message = _persist_message()
 
     result = create_notification_for_persisted_event(
-        PersistedPresenceEvent(processed_event=None, work_item=None, thread=None, message=message),
+        PersistedProviderEventRecords(
+            processed_event=None, work_item=None, thread=None, message=message
+        ),
         receiver_id="terminal-a",
     )
 
     assert result.created is True
-    assert result.delivery.message.source_kind == PRESENCE_INBOX_SOURCE_KIND
+    assert result.delivery.message.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
     assert result.delivery.message.source_id == str(thread.id)
 
 
-def test_different_presence_threads_do_not_coalesce_into_same_source(test_session):
+def test_different_provider_conversation_threads_do_not_coalesce_into_same_source(test_session):
     _, first_thread, first_message = _persist_message(
         thread_external_id="thread-1",
         message_external_id="message-1",
@@ -189,11 +191,11 @@ def test_different_presence_threads_do_not_coalesce_into_same_source(test_sessio
     )
 
     first = create_notification_for_message(
-        presence_message_id=first_message.id,
+        provider_message_id=first_message.id,
         receiver_id="terminal-a",
     )
     second = create_notification_for_message(
-        presence_message_id=second_message.id,
+        provider_message_id=second_message.id,
         receiver_id="terminal-a",
     )
 
@@ -202,22 +204,22 @@ def test_different_presence_threads_do_not_coalesce_into_same_source(test_sessio
     assert first.delivery.message.source_id != second.delivery.message.source_id
 
 
-def test_missing_presence_thread_or_message_fails_clearly(test_session):
-    with pytest.raises(ValueError, match="presence message 999 not found"):
+def test_missing_provider_conversation_thread_or_message_fails_clearly(test_session):
+    with pytest.raises(ValueError, match="provider conversation message 999 not found"):
         create_notification_for_message(
-            presence_message_id=999,
+            provider_message_id=999,
             receiver_id="terminal-a",
         )
 
     _, _, message = _persist_message()
     with db_module.SessionLocal() as session:
         session.execute(text("PRAGMA foreign_keys=OFF"))
-        session.query(db_module.PresenceThreadModel).delete()
+        session.query(db_module.ProviderConversationThreadModel).delete()
         session.commit()
 
-    with pytest.raises(ValueError, match=f"presence thread .* for message {message.id} not found"):
+    with pytest.raises(ValueError, match=f"provider conversation thread .* for message {message.id} not found"):
         create_notification_for_message(
-            presence_message_id=message.id,
+            provider_message_id=message.id,
             receiver_id="terminal-a",
         )
 
@@ -229,7 +231,7 @@ def test_attachment_metadata_does_not_block_semantic_message(test_session):
     )
 
     result = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="terminal-a",
     )
 
@@ -249,14 +251,14 @@ def test_semantic_message_origin_does_not_copy_raw_snapshot(test_session):
     )
 
     result = create_notification_for_message(
-        presence_message_id=message.id,
+        provider_message_id=message.id,
         receiver_id="terminal-a",
     )
 
     assert result.delivery.message.origin is None
 
 
-def test_presence_sources_use_existing_inbox_batching_behavior(test_session):
+def test_provider_conversation_sources_use_existing_inbox_batching_behavior(test_session):
     _, thread, first_message = _persist_message(
         message_external_id="message-1",
         body="First update",
@@ -270,11 +272,11 @@ def test_presence_sources_use_existing_inbox_batching_behavior(test_session):
     )
 
     first = create_notification_for_message(
-        presence_message_id=first_message.id,
+        provider_message_id=first_message.id,
         receiver_id="terminal-a",
     )
     create_notification_for_message(
-        presence_message_id=second_message.id,
+        provider_message_id=second_message.id,
         receiver_id="terminal-a",
     )
 
@@ -283,8 +285,8 @@ def test_presence_sources_use_existing_inbox_batching_behavior(test_session):
     )
 
     assert [delivery.message.source_kind for delivery in batch] == [
-        PRESENCE_INBOX_SOURCE_KIND,
-        PRESENCE_INBOX_SOURCE_KIND,
+        PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
+        PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     ]
     assert [delivery.message.source_id for delivery in batch] == [str(thread.id), str(thread.id)]
     assert [delivery.notification.id for delivery in batch] == [1, 2]

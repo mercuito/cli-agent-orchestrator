@@ -1,6 +1,7 @@
 """Workspace-provider lifecycle and registry support."""
 
 from cli_agent_orchestrator.workspace_providers.registry import (
+    EventPublishingWorkspaceProvider,
     ProviderToolAccessWorkspaceProvider,
     UnknownWorkspaceProviderError,
     WorkspaceProvider,
@@ -14,6 +15,16 @@ from cli_agent_orchestrator.workspace_providers.registry import (
     load_provider_tool_access_policies,
     resolve_agent_identity_for_runtime,
     workspace_provider_config_exists,
+)
+from cli_agent_orchestrator.workspace_providers.events import (
+    UnknownWorkspaceProviderEventError,
+    WorkspaceProviderEvent,
+    WorkspaceProviderEventConfigError,
+    WorkspaceProviderEventDispatcher,
+    WorkspaceProviderEventHandler,
+    WorkspaceProviderEventHandlerResult,
+    WorkspaceProviderEventPublication,
+    default_workspace_provider_event_dispatcher,
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,
@@ -37,6 +48,7 @@ __all__ = [
     "ProviderMediatedToolDefinition",
     "ProviderMediatedToolRuntimeGenerationDescriptor",
     "ProviderMediatedToolSurfaceDescriptor",
+    "EventPublishingWorkspaceProvider",
     "ProviderToolAccess",
     "ProviderToolAccessConfigError",
     "ProviderToolAccessIssue",
@@ -51,9 +63,17 @@ __all__ = [
     "ProviderToolPreCallResult",
     "WorkspaceProvider",
     "WorkspaceProviderConfigError",
+    "UnknownWorkspaceProviderEventError",
+    "WorkspaceProviderEvent",
+    "WorkspaceProviderEventConfigError",
+    "WorkspaceProviderEventDispatcher",
+    "WorkspaceProviderEventHandler",
+    "WorkspaceProviderEventHandlerResult",
+    "WorkspaceProviderEventPublication",
     "WorkspaceProviderRegistry",
     "UnknownWorkspaceProviderError",
     "default_workspace_provider_registry",
+    "default_workspace_provider_event_dispatcher",
     "initialize_enabled_workspace_providers",
     "is_workspace_provider_enabled",
     "load_enabled_workspace_providers",

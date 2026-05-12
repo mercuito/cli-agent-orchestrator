@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from sqlalchemy import Column, DateTime, String
 
 from cli_agent_orchestrator.clients.database_core import Base
+from cli_agent_orchestrator.clients.workspace_context_store import ensure_default_workspace_context
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class TerminalModel(Base):
     provider = Column(String, nullable=False)  # "q_cli", "claude_code"
     agent_profile = Column(String)  # "developer", "reviewer" (optional)
     agent_identity_id = Column(String, nullable=True)  # Durable CAO identity id when managed
+    workspace_context_id = Column(String, nullable=True)  # CAO workspace context when managed
     allowed_tools = Column(String, nullable=True)  # JSON-encoded runtime capability list
     last_active = Column(DateTime, default=datetime.now)
 
@@ -43,8 +45,11 @@ def create_terminal(
     agent_profile: Optional[str] = None,
     allowed_tools: Optional[List[str]] = None,
     agent_identity_id: Optional[str] = None,
+    workspace_context_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create terminal metadata record."""
+    if agent_identity_id is not None and workspace_context_id is None:
+        workspace_context_id = ensure_default_workspace_context(agent_identity_id).id
     with _session_local()() as db:
         terminal = TerminalModel(
             id=terminal_id,
@@ -53,6 +58,7 @@ def create_terminal(
             provider=provider,
             agent_profile=agent_profile,
             agent_identity_id=agent_identity_id,
+            workspace_context_id=workspace_context_id,
             allowed_tools=json.dumps(allowed_tools) if allowed_tools else None,
         )
         db.add(terminal)
@@ -64,6 +70,7 @@ def create_terminal(
             "provider": terminal.provider,
             "agent_profile": terminal.agent_profile,
             "agent_identity_id": terminal.agent_identity_id,
+            "workspace_context_id": terminal.workspace_context_id,
             "allowed_tools": allowed_tools,
         }
 
@@ -86,6 +93,7 @@ def get_terminal_metadata(terminal_id: str) -> Optional[Dict[str, Any]]:
             "provider": terminal.provider,
             "agent_profile": terminal.agent_profile,
             "agent_identity_id": terminal.agent_identity_id,
+            "workspace_context_id": terminal.workspace_context_id,
             "allowed_tools": allowed_tools,
             "last_active": terminal.last_active,
         }
@@ -103,6 +111,7 @@ def list_terminals_by_session(tmux_session: str) -> List[Dict[str, Any]]:
                 "provider": t.provider,
                 "agent_profile": t.agent_profile,
                 "agent_identity_id": t.agent_identity_id,
+                "workspace_context_id": t.workspace_context_id,
                 "last_active": t.last_active,
             }
             for t in terminals
@@ -115,6 +124,23 @@ def list_terminals_by_agent_identity(agent_identity_id: str) -> List[Dict[str, A
         terminals = (
             db.query(TerminalModel)
             .filter(TerminalModel.agent_identity_id == agent_identity_id)
+            .all()
+        )
+        return [_terminal_model_to_metadata(t) for t in terminals]
+
+
+def list_terminals_by_agent_identity_and_context(
+    agent_identity_id: str,
+    workspace_context_id: str,
+) -> List[Dict[str, Any]]:
+    """List terminal manifestations mapped to one identity/context pair."""
+    with _session_local()() as db:
+        terminals = (
+            db.query(TerminalModel)
+            .filter(
+                TerminalModel.agent_identity_id == agent_identity_id,
+                TerminalModel.workspace_context_id == workspace_context_id,
+            )
             .all()
         )
         return [_terminal_model_to_metadata(t) for t in terminals]
@@ -143,6 +169,7 @@ def list_all_terminals() -> List[Dict[str, Any]]:
                 "provider": t.provider,
                 "agent_profile": t.agent_profile,
                 "agent_identity_id": t.agent_identity_id,
+                "workspace_context_id": t.workspace_context_id,
                 "last_active": t.last_active,
             }
             for t in terminals
@@ -154,7 +181,7 @@ def delete_terminal(terminal_id: str) -> bool:
     with _session_local()() as db:
         deleted = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).delete()
         db.commit()
-        return deleted > 0
+        return bool(deleted > 0)
 
 
 def delete_terminals_by_session(tmux_session: str) -> int:
@@ -164,11 +191,12 @@ def delete_terminals_by_session(tmux_session: str) -> int:
             db.query(TerminalModel).filter(TerminalModel.tmux_session == tmux_session).delete()
         )
         db.commit()
-        return deleted
+        return int(deleted)
 
 
 def _terminal_model_to_metadata(terminal: TerminalModel) -> Dict[str, Any]:
-    allowed_tools = json.loads(terminal.allowed_tools) if terminal.allowed_tools else None
+    raw_allowed_tools = cast(Optional[str], terminal.allowed_tools)
+    allowed_tools = json.loads(raw_allowed_tools) if raw_allowed_tools else None
     return {
         "id": terminal.id,
         "tmux_session": terminal.tmux_session,
@@ -176,6 +204,7 @@ def _terminal_model_to_metadata(terminal: TerminalModel) -> Dict[str, Any]:
         "provider": terminal.provider,
         "agent_profile": terminal.agent_profile,
         "agent_identity_id": terminal.agent_identity_id,
+        "workspace_context_id": terminal.workspace_context_id,
         "allowed_tools": allowed_tools,
         "last_active": terminal.last_active,
     }

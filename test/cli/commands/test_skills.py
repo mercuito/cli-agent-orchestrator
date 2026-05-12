@@ -138,7 +138,7 @@ class TestSkillsAddCommand:
 
         assert result.exit_code == 0
         refreshed_json = json.loads(agent_json.read_text())
-        assert "python-testing" in refreshed_json["prompt"]
+        assert refreshed_json["prompt"] == "Base prompt"
         assert "Refreshed 1 installed agent(s)" in result.output
 
     def test_add_rejects_duplicate_without_force(self, runner, tmp_path, monkeypatch):

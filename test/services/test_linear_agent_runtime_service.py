@@ -7,10 +7,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry
+from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry, AgentWorkspaceContextConfig
+from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.linear import runtime
-from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
+)
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearPresence,
     LinearResolvedPresence,
@@ -18,17 +22,12 @@ from cli_agent_orchestrator.linear.workspace_provider import (
 )
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.presence.manager import PresenceProviderManager
-from cli_agent_orchestrator.presence.models import (
-    ConversationMessage,
+from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessageRecord,
-    ConversationThread,
     ConversationThreadRecord,
-    ExternalRef,
-    PersistedPresenceEvent,
-    PresenceEvent,
+    PersistedProviderEventRecords,
 )
-from cli_agent_orchestrator.presence.persistence import get_thread, upsert_thread
+from cli_agent_orchestrator.provider_conversations.persistence import get_thread, upsert_thread
 from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
 from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import (
@@ -74,23 +73,36 @@ def resolved_presence(implementation_partner_identity_factory):
     return _resolved_presence
 
 
-def _presence_event(
+def _linear_provider_event(
     *,
     action: str = "created",
     thread_id: str = "session-1",
     prompt_context: str | None = None,
     prompt_body: str | None = None,
-) -> PresenceEvent:
-    return PresenceEvent(
-        provider="linear",
+    issue_id: str = "issue-1",
+    issue_identifier: str = "CAO-1",
+    parent_issue_id: str | None = None,
+    parent_issue_identifier: str | None = None,
+) -> LinearIssueContextEvent:
+    return LinearIssueContextEvent(
         event_type="AgentSessionEvent",
         action=action,
-        thread=ConversationThread(
-            ref=ExternalRef(provider="linear", id=thread_id),
-            prompt_context=prompt_context,
-        ),
-        message=ConversationMessage(kind="prompt", body=prompt_body) if prompt_body else None,
-        raw_payload={"action": action},
+        app_key="implementation_partner",
+        app_user_name="Implementation Partner",
+        issue_id=issue_id,
+        issue_identifier=issue_identifier,
+        parent_issue_id=parent_issue_id,
+        parent_issue_identifier=parent_issue_identifier,
+        agent_session_id=thread_id,
+        thread_id=thread_id,
+        prompt_context=prompt_context,
+        message_id="activity-1" if prompt_body else None,
+        message_body=prompt_body,
+        message_kind="prompt" if prompt_body else None,
+        raw_payload={
+            "type": "AgentSessionEvent",
+            "action": action,
+        },
     )
 
 
@@ -124,7 +136,7 @@ def _linear_agent_session_payload() -> dict:
 
 
 def test_build_terminal_message_does_not_include_prompt_context():
-    event = _presence_event(prompt_context='<issue identifier="CAO-13"><title>Demo</title></issue>')
+    event = _linear_provider_event(prompt_context='<issue identifier="CAO-13"><title>Demo</title></issue>')
 
     message = runtime.build_terminal_message(event)
 
@@ -135,7 +147,7 @@ def test_build_terminal_message_does_not_include_prompt_context():
 
 
 def test_build_terminal_message_uses_prompted_body():
-    event = _presence_event(action="prompted", prompt_body="Can you scope this?")
+    event = _linear_provider_event(action="prompted", prompt_body="Can you scope this?")
 
     message = runtime.build_terminal_message(event)
 
@@ -148,11 +160,11 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolve
     terminal = {"id": "terminal-1", "tmux_session": "cao-linear-discovery-partner"}
     handle = Mock()
     handle.ensure_started.return_value.as_terminal_metadata.return_value = terminal
-    monkeypatch.setattr(
-        runtime,
-        "_resolve_linear_event",
-        lambda event: resolved_presence(session_name="linear-discovery-partner"),
-    )
+    resolved = resolved_presence(session_name="linear-discovery-partner")
+    provider = Mock()
+    provider.resolve_presence.return_value = resolved.presence
+    provider.resolve_identity_for_presence.return_value = resolved.identity
+    monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: provider)
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
 
     assert runtime.ensure_discovery_terminal() == terminal
@@ -172,7 +184,7 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
     monkeypatch,
     resolved_presence,
 ):
-    event = _presence_event(prompt_context="<issue/>")
+    event = _linear_provider_event(prompt_context="<issue/>")
     calls = []
     handle = Mock()
     handle.notify.return_value = Mock(
@@ -187,7 +199,7 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", update_url)
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", create_activity)
 
-    assert runtime.handle_presence_event(event) == "terminal-1"
+    assert runtime.handle_provider_event(event) == "terminal-1"
     assert calls == ["update_url", "create_activity"]
     handle.notify.assert_called_once()
     assert handle.notify.call_args.kwargs["source_kind"] == runtime.LINEAR_RUNTIME_SOURCE_KIND
@@ -200,9 +212,168 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
     create_activity.assert_called_once()
 
 
-def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch, resolved_presence):
-    event = _presence_event(prompt_context="<issue/>")
-    event.raw_payload["_cao_linear_app_key"] = "implementation_partner"
+def test_context_enabled_linear_event_starts_runtime_in_resolved_issue_context(
+    test_db,
+    monkeypatch,
+    resolved_presence,
+):
+    event = _linear_provider_event(
+        prompt_context="<issue/>",
+        issue_id="issue-79",
+        issue_identifier="CAO-79",
+    )
+    captured = {}
+
+    def resolved_with_context():
+        resolved = resolved_presence()
+        return LinearResolvedPresence(
+            presence=resolved.presence,
+            identity=implementation_partner_identity_factory_with_context(resolved.identity),
+        )
+
+    def fake_handle(identity, workspace_context_id=None):
+        captured["workspace_context_id"] = workspace_context_id
+        handle = Mock()
+        handle.notify.return_value = Mock(
+            terminal_id="terminal-1",
+            status=Mock(value="idle"),
+            notification=Mock(created=True),
+        )
+        return handle
+
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_with_context())
+    monkeypatch.setattr(runtime, "AgentRuntimeHandle", fake_handle)
+    monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
+    monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
+
+    assert runtime.handle_provider_event(event) == "terminal-1"
+    context = db_module.get_workspace_context_for_object(
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-79",
+    )
+    assert context is not None
+    assert captured["workspace_context_id"] == context.id
+
+
+def test_context_enabled_linear_event_fails_closed_for_wrong_resolver_id(
+    test_db,
+    monkeypatch,
+    resolved_presence,
+):
+    event = _linear_provider_event(
+        prompt_context="<issue/>",
+        issue_id="issue-79",
+        issue_identifier="CAO-79",
+    )
+    calls = []
+
+    def resolved_with_context():
+        resolved = resolved_presence()
+        return LinearResolvedPresence(
+            presence=resolved.presence,
+            identity=type(resolved.identity)(
+                id=resolved.identity.id,
+                display_name=resolved.identity.display_name,
+                agent_profile=resolved.identity.agent_profile,
+                cli_provider=resolved.identity.cli_provider,
+                workdir=resolved.identity.workdir,
+                session_name=resolved.identity.session_name,
+                workspace_context=AgentWorkspaceContextConfig(
+                    enabled=True,
+                    resolver_id="future_resolver",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_with_context())
+    monkeypatch.setattr(runtime, "AgentRuntimeHandle", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
+    monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
+
+    with pytest.raises(
+        runtime.LinearWorkspaceProviderConfigError,
+        match="Unknown workspace context resolver",
+    ):
+        runtime.handle_provider_event(event)
+    assert calls == []
+
+
+def test_context_enabled_linear_events_switch_only_across_distinct_boundaries(
+    test_db,
+    monkeypatch,
+    resolved_presence,
+):
+    captured_contexts = []
+
+    def resolved_with_context():
+        resolved = resolved_presence()
+        return LinearResolvedPresence(
+            presence=resolved.presence,
+            identity=implementation_partner_identity_factory_with_context(resolved.identity),
+        )
+
+    def fake_handle(identity, workspace_context_id=None):
+        captured_contexts.append(workspace_context_id)
+        handle = Mock()
+        handle.notify.return_value = Mock(
+            terminal_id=f"terminal-{len(captured_contexts)}",
+            status=Mock(value="idle"),
+            notification=Mock(created=True),
+        )
+        return handle
+
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_with_context())
+    monkeypatch.setattr(runtime, "AgentRuntimeHandle", fake_handle)
+    monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
+    monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
+
+    issue_a = _linear_provider_event(
+        thread_id="session-a",
+        prompt_context="<issue/>",
+        issue_id="issue-a",
+        issue_identifier="CAO-100",
+    )
+    child_of_a = _linear_provider_event(
+        thread_id="session-a-child",
+        prompt_context="<issue/>",
+        issue_id="issue-a-child",
+        issue_identifier="CAO-101",
+        parent_issue_id="issue-a",
+        parent_issue_identifier="CAO-100",
+    )
+    issue_b = _linear_provider_event(
+        thread_id="session-b",
+        prompt_context="<issue/>",
+        issue_id="issue-b",
+        issue_identifier="CAO-200",
+    )
+
+    assert runtime.handle_provider_event(issue_a) == "terminal-1"
+    assert runtime.handle_provider_event(child_of_a) == "terminal-2"
+    assert runtime.handle_provider_event(issue_b) == "terminal-3"
+
+    assert captured_contexts[0] == captured_contexts[1]
+    assert captured_contexts[2] != captured_contexts[0]
+
+
+def implementation_partner_identity_factory_with_context(identity):
+    return type(identity)(
+        id=identity.id,
+        display_name=identity.display_name,
+        agent_profile=identity.agent_profile,
+        cli_provider=identity.cli_provider,
+        workdir=identity.workdir,
+        session_name=identity.session_name,
+        workspace_context=AgentWorkspaceContextConfig(
+            enabled=True,
+            resolver_id="linear_planning",
+        ),
+    )
+
+
+def test_handle_linear_provider_event_uses_verified_linear_app_key(monkeypatch, resolved_presence):
+    event = _linear_provider_event(prompt_context="<issue/>")
     handle = Mock()
     handle.notify.return_value = Mock(
         terminal_id="terminal-implementation_partner",
@@ -212,7 +383,7 @@ def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch, resolve
     monkeypatch.setattr(
         runtime,
         "_resolve_linear_event",
-        lambda event: resolved_presence(app_key=event.raw_payload["_cao_linear_app_key"]),
+        lambda event: resolved_presence(app_key=event.app_key),
     )
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
     monkeypatch.setattr(runtime.app_client, "linear_app_env", lambda app_key, name: None)
@@ -221,7 +392,7 @@ def test_handle_presence_event_uses_verified_linear_app_key(monkeypatch, resolve
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", update_url)
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", create_activity)
 
-    assert runtime.handle_presence_event(event) == "terminal-implementation_partner"
+    assert runtime.handle_provider_event(event) == "terminal-implementation_partner"
 
     update_url.assert_called_once_with(
         "session-1",
@@ -297,7 +468,7 @@ def test_publish_external_url_skips_when_current_url_already_published(test_db, 
     update_url.assert_not_called()
 
 
-def test_publish_external_url_repairs_legacy_published_metadata_without_url(test_db, monkeypatch):
+def test_publish_external_url_repairs_missing_published_url_metadata(test_db, monkeypatch):
     upsert_thread(
         provider="linear",
         external_id="session-1",
@@ -326,8 +497,8 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
     monkeypatch,
     resolved_presence,
 ):
-    event = _presence_event(prompt_body="Can you inspect this?")
-    persisted_event = PersistedPresenceEvent(
+    event = _linear_provider_event(prompt_body="Can you inspect this?")
+    persisted_event = PersistedProviderEventRecords(
         processed_event=None,
         work_item=None,
         thread=ConversationThreadRecord(
@@ -360,12 +531,12 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
         ),
     )
     delivery = create_inbox_delivery(
-        "presence",
+        "provider_conversation",
         "agent:implementation_partner",
         "Can you inspect this?",
-        source_kind="presence_thread",
+        source_kind="provider_conversation_thread",
         source_id="1",
-        route_kind="presence_thread",
+        route_kind="provider_conversation_thread",
         route_id="1",
     )
     bridge_notification = Mock(delivery=delivery, created=True)
@@ -398,7 +569,9 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
 
-    result = runtime.notify_agent_for_persisted_event(persisted_event, event)
+    provider_event = event
+
+    result = runtime.notify_agent_for_persisted_event(persisted_event, provider_event)
 
     assert result is not None
     assert accepted[0].delivery.message.body == "Can you inspect this?"
@@ -473,11 +646,13 @@ app_user_name = "Implementation Partner"
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", create_activity)
 
     payload = _linear_agent_session_payload()
-    manager = PresenceProviderManager({"linear": LinearPresenceProvider()})
-    persisted_event = manager.ingest_event("linear", payload, delivery_id="delivery-1")
-    event = manager.normalize_event("linear", payload, delivery_id="delivery-1")
+    publication = publish_linear_provider_event(payload, delivery_id="delivery-1")
+    assert publication is not None
+    provider_event = publication.event
+    assert isinstance(provider_event, LinearIssueContextEvent)
+    persisted_event = runtime.persist_linear_provider_event(provider_event)
 
-    result = runtime.notify_agent_for_persisted_event(persisted_event, event)
+    result = runtime.notify_agent_for_persisted_event(persisted_event, provider_event)
 
     assert result is not None
     assert result.started is True
@@ -499,10 +674,10 @@ app_user_name = "Implementation Partner"
     create_activity.assert_called()
 
 
-def test_handle_presence_event_still_routes_through_agent_runtime_notify(
+def test_handle_linear_provider_event_routes_through_agent_runtime_notify(
     monkeypatch, resolved_presence
 ):
-    event = _presence_event(prompt_context="<issue/>")
+    event = _linear_provider_event(prompt_context="<issue/>")
     handle = Mock()
     handle.notify.return_value = Mock(
         terminal_id="terminal-1",
@@ -514,17 +689,17 @@ def test_handle_presence_event_still_routes_through_agent_runtime_notify(
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
 
-    assert runtime.handle_presence_event(event) == "terminal-1"
+    assert runtime.handle_provider_event(event) == "terminal-1"
     handle.notify.assert_called_once()
 
 
-def test_notify_agent_for_persisted_event_still_routes_through_runtime_accept_notification(
+def test_notify_agent_for_persisted_event_routes_through_runtime_accept_notification(
     test_db,
     monkeypatch,
     resolved_presence,
 ):
-    event = _presence_event(prompt_body="Can you inspect this?")
-    persisted_event = PersistedPresenceEvent(
+    event = _linear_provider_event(prompt_body="Can you inspect this?")
+    persisted_event = PersistedProviderEventRecords(
         processed_event=None,
         work_item=None,
         thread=ConversationThreadRecord(
@@ -556,7 +731,7 @@ def test_notify_agent_for_persisted_event_still_routes_through_runtime_accept_no
             updated_at=datetime.now(),
         ),
     )
-    delivery = create_inbox_delivery("presence", "agent:implementation_partner", "Can you inspect")
+    delivery = create_inbox_delivery("provider_conversation", "agent:implementation_partner", "Can you inspect")
     bridge_notification = Mock(delivery=delivery, created=True)
     handle = Mock(inbox_receiver_id="agent:implementation_partner")
     handle.accept_notification.return_value = AgentRuntimeNotifyResult(
@@ -581,6 +756,8 @@ def test_notify_agent_for_persisted_event_still_routes_through_runtime_accept_no
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
 
-    runtime.notify_agent_for_persisted_event(persisted_event, event)
+    provider_event = event
+
+    runtime.notify_agent_for_persisted_event(persisted_event, provider_event)
 
     handle.accept_notification.assert_called_once()

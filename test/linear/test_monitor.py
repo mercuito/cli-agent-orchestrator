@@ -16,14 +16,12 @@ from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.linear import app_client, monitor, monitor_store, runtime
 from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
 from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
-from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearPresence,
     LinearResolvedPresence,
     LinearWorkspaceProvider,
 )
-from cli_agent_orchestrator.presence.manager import presence_provider_manager
-from cli_agent_orchestrator.presence.persistence import (
+from cli_agent_orchestrator.provider_conversations.persistence import (
     get_message,
     get_processed_event,
     get_thread,
@@ -123,8 +121,6 @@ app_user_name = "Implementation Partner"
     )
     provider.initialize()
     monkeypatch.setattr(linear_workspace_provider, "_default_linear_workspace_provider", provider)
-    presence_provider_manager.clear_providers()
-    presence_provider_manager.register_provider("linear", LinearPresenceProvider(), replace=True)
     monkeypatch.setattr(
         runtime,
         "_resolve_linear_event",
@@ -146,7 +142,6 @@ app_user_name = "Implementation Partner"
         lambda _resolved: RecordingRuntimeHandle(identity),
     )
     yield provider
-    presence_provider_manager.clear_providers()
 
 
 def _recent_result(*sessions: Mapping[str, Any], has_more: bool = False):
@@ -515,7 +510,7 @@ def test_linear_monitor_retries_pending_local_delivery_through_runtime_handle(
     linear_monitor_world,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    create_inbox_delivery("presence", "agent:implementation_partner", "Pending Linear prompt")
+    create_inbox_delivery("provider_conversation", "agent:implementation_partner", "Pending Linear prompt")
     monkeypatch.setattr(monitor, "AgentRuntimeHandle", RetryRecordingHandle)
     RetryRecordingHandle.calls = 0
     monkeypatch.setattr(
@@ -611,5 +606,6 @@ def test_recent_agent_session_query_is_bounded_and_uses_official_agent_fields(
     assert "agentSessions(first: $first, after: $after, orderBy: updatedAt)" in query
     for field in ("id", "status", "createdAt", "updatedAt", "appUser", "issue", "comment"):
         assert field in query
+    assert "parent" in query
     assert query.count("sourceComment") == 1
     assert calls[0]["variables"] == {"first": 2, "after": None, "activitiesFirst": 3}

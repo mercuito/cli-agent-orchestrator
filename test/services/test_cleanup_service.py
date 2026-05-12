@@ -16,9 +16,9 @@ from cli_agent_orchestrator.clients.database import (
     InboxMessageModel,
     InboxNotificationModel,
     InboxNotificationTargetModel,
-    PresenceInboxNotificationModel,
-    PresenceMessageModel,
-    PresenceThreadModel,
+    ProviderConversationInboxNotificationModel,
+    ProviderConversationMessageModel,
+    ProviderConversationThreadModel,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.services import cleanup_service
@@ -364,11 +364,11 @@ class TestCleanupOldData:
             durable_message = InboxMessageModel(
                 sender_id="sender",
                 body="old delivered",
-                source_kind="presence_message",
+                source_kind="provider_message",
                 source_id="thread-1",
                 created_at=old,
             )
-            thread = PresenceThreadModel(
+            thread = ProviderConversationThreadModel(
                 provider="linear",
                 external_id="thread-1",
                 kind="conversation",
@@ -378,7 +378,7 @@ class TestCleanupOldData:
             )
             session.add_all([durable_message, thread])
             session.flush()
-            presence_message = PresenceMessageModel(
+            provider_message = ProviderConversationMessageModel(
                 thread_id=thread.id,
                 provider="linear",
                 external_id="message-1",
@@ -392,12 +392,12 @@ class TestCleanupOldData:
             notification = InboxNotificationModel(
                 receiver_id="receiver",
                 body="old delivered",
-                source_kind="presence_message",
+                source_kind="provider_message",
                 source_id="thread-1",
                 status=MessageStatus.DELIVERED.value,
                 created_at=old,
             )
-            session.add_all([presence_message, notification])
+            session.add_all([provider_message, notification])
             session.flush()
             session.add_all(
                 [
@@ -407,15 +407,15 @@ class TestCleanupOldData:
                         target_id=str(durable_message.id),
                         role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                     ),
-                    PresenceInboxNotificationModel(
+                    ProviderConversationInboxNotificationModel(
                         receiver_id="receiver",
-                        presence_message_id=presence_message.id,
+                        provider_message_id=provider_message.id,
                         inbox_notification_id=notification.id,
                         created_at=old,
                     ),
                     AgentRuntimeNotificationModel(
                         agent_id="receiver",
-                        source_kind="presence_message",
+                        source_kind="provider_message",
                         source_id="thread-1",
                         inbox_notification_id=notification.id,
                         created_at=old,
@@ -428,8 +428,8 @@ class TestCleanupOldData:
 
         with TestSession() as session:
             assert session.query(InboxNotificationModel).count() == 0
-            assert session.query(PresenceInboxNotificationModel).count() == 0
+            assert session.query(ProviderConversationInboxNotificationModel).count() == 0
             assert session.query(AgentRuntimeNotificationModel).count() == 0
             assert session.query(InboxMessageModel).count() == 0
-            assert session.query(PresenceMessageModel).count() == 1
-            assert session.query(PresenceThreadModel).count() == 1
+            assert session.query(ProviderConversationMessageModel).count() == 1
+            assert session.query(ProviderConversationThreadModel).count() == 1

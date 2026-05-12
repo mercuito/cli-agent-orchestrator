@@ -152,6 +152,22 @@ def test_status_reports_not_started_without_terminal_metadata(test_session, hand
     assert handle.status() == AgentRuntimeStatus.NOT_STARTED
 
 
+def test_identity_runtime_handle_uses_stable_default_workspace_context(test_session, identity):
+    handle = AgentRuntimeHandle(identity)
+    expected_context_id = db_module.default_workspace_context_id("implementation_partner")
+
+    assert handle.workspace_context_id == expected_context_id
+    assert handle.inbox_receiver_id == f"agent:implementation_partner:context:{expected_context_id}"
+    assert (
+        db_module.get_workspace_context_for_object(
+            provider_id="cao",
+            object_type="agent_identity_default",
+            object_id="implementation_partner",
+        ).id
+        == expected_context_id
+    )
+
+
 def test_current_terminal_ignores_raw_terminal_in_identity_session(test_session, handle):
     db_module.create_terminal(
         "terminal-1",
@@ -231,6 +247,7 @@ def test_ensure_started_creates_terminal_from_agent_identity_when_not_started(
         new_session=True,
         working_directory=identity.workdir,
         agent_identity=identity,
+        workspace_context_id=handle.workspace_context_id,
     )
 
 
@@ -254,6 +271,211 @@ def test_current_terminal_rejects_multiple_manifestations_for_identity(test_sess
 
     with pytest.raises(AgentRuntimeInvariantError, match="Multiple terminal manifestations"):
         handle.current_terminal()
+
+
+def test_context_runtime_uses_identity_and_workspace_context_route(
+    test_session,
+    monkeypatch,
+    identity,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    context = db_module.ensure_workspace_context_for_boundary(
+        resolver_id="linear_planning",
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-79",
+    )
+    handle = AgentRuntimeHandle(identity, workspace_context_id=context.id)
+    db_module.create_terminal(
+        "terminal-1",
+        "cao-implementation-partner",
+        "developer-context",
+        "codex",
+        "developer",
+        agent_identity_id="implementation_partner",
+        workspace_context_id=context.id,
+    )
+    _mark_terminal_fresh(handle)
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+
+    result = handle.notify(
+        "Context-routed delivery.",
+        source_kind="linear_event",
+        source_id="event-context-a",
+    )
+
+    assert handle.inbox_receiver_id == f"agent:implementation_partner:context:{context.id}"
+    assert result.terminal_id == "terminal-1"
+    assert result.delivery.delivered is True
+    send_input.assert_called_once_with("terminal-1", "Context-routed delivery.")
+
+
+def test_context_runtime_ignores_terminals_for_other_contexts(test_session, identity):
+    context_a = db_module.ensure_workspace_context_for_boundary(
+        resolver_id="linear_planning",
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-79",
+    )
+    context_b = db_module.ensure_workspace_context_for_boundary(
+        resolver_id="linear_planning",
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-80",
+    )
+    db_module.create_terminal(
+        "terminal-1",
+        "cao-implementation-partner",
+        "developer-context-a",
+        "codex",
+        "developer",
+        agent_identity_id="implementation_partner",
+        workspace_context_id=context_a.id,
+    )
+
+    assert (
+        AgentRuntimeHandle(identity, workspace_context_id=context_b.id).current_terminal() is None
+    )
+
+
+def test_context_runtime_switches_by_stopping_other_identity_terminal(
+    test_session,
+    monkeypatch,
+    identity,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    context_a = db_module.ensure_workspace_context_for_boundary(
+        resolver_id="linear_planning",
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-79",
+    )
+    context_b = db_module.ensure_workspace_context_for_boundary(
+        resolver_id="linear_planning",
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-80",
+    )
+    handle_a = AgentRuntimeHandle(identity, workspace_context_id=context_a.id)
+    handle_b = AgentRuntimeHandle(identity, workspace_context_id=context_b.id)
+    db_module.create_terminal(
+        "terminal-1",
+        "cao-implementation-partner",
+        "developer-context-a",
+        "codex",
+        "developer",
+        agent_identity_id="implementation_partner",
+        workspace_context_id=context_a.id,
+    )
+    _mark_terminal_fresh(handle_a)
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    capability = RecordingRuntimeStateCapability(_provider_runtime_payload("session-a"), None)
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: capability,
+    )
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
+    delete_terminal = Mock(
+        side_effect=lambda terminal_id, **kwargs: db_module.delete_terminal(terminal_id)
+    )
+    monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
+    create_terminal = Mock()
+
+    def create_target(**kwargs):
+        create_terminal(**kwargs)
+        db_module.create_terminal(
+            "terminal-2",
+            "cao-implementation-partner",
+            "developer-context-b",
+            "codex",
+            "developer",
+            agent_identity_id="implementation_partner",
+            workspace_context_id=context_b.id,
+        )
+        return _created_terminal_result("terminal-2", window_name="developer-context-b")
+
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(side_effect=create_target),
+    )
+
+    result = handle_b.notify(
+        "Deliver in context B.",
+        source_kind="linear_event",
+        source_id="event-context-b",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.STARTED
+    assert result.terminal_id == "terminal-2"
+    assert result.delivery.delivered is True
+    delete_terminal.assert_called_once_with("terminal-1", require_window_killed=True)
+    assert capability.discovered_terminal_ids == ["terminal-1", "terminal-2"]
+    assert json.loads(handle_a._runtime_state_path().read_text())["provider_runtime"] == (
+        _provider_runtime_payload("session-a")
+    )
+    assert db_module.get_terminal_metadata("terminal-1") is None
+    assert db_module.get_terminal_metadata("terminal-2") is not None
+    create_terminal.assert_called_once()
+    assert create_terminal.call_args.kwargs["workspace_context_id"] == context_b.id
+    send_input.assert_called_once_with("terminal-2", "Deliver in context B.")
+
+
+def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
+    test_session,
+    monkeypatch,
+    identity,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    context_a = db_module.ensure_workspace_context_for_boundary(
+        resolver_id="linear_planning",
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-79",
+    )
+    context_b = db_module.ensure_workspace_context_for_boundary(
+        resolver_id="linear_planning",
+        provider_id="linear",
+        object_type="issue",
+        object_id="CAO-80",
+    )
+    db_module.create_terminal(
+        "terminal-1",
+        "cao-implementation-partner",
+        "developer-context-a",
+        "codex",
+        "developer",
+        agent_identity_id="implementation_partner",
+        workspace_context_id=context_a.id,
+    )
+    _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
+    send_input = terminal_send_patcher(runtime_agent.terminal_service)
+    delete_terminal = Mock()
+    create_terminal = Mock()
+    monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
+    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal", create_terminal)
+
+    result = AgentRuntimeHandle(identity, workspace_context_id=context_b.id).notify(
+        "Deliver later in context B.",
+        source_kind="linear_event",
+        source_id="event-context-b-busy",
+    )
+
+    assert result.freshness is not None
+    assert result.freshness.action == AgentRuntimeFreshnessAction.DEFERRED
+    assert result.status == AgentRuntimeStatus.BUSY
+    assert result.terminal_id == "terminal-1"
+    assert result.delivery.delivered is False
+    delete_terminal.assert_not_called()
+    create_terminal.assert_not_called()
+    send_input.assert_not_called()
 
 
 def test_current_terminal_reports_resume_unsupported_for_provider_without_resume(
@@ -745,7 +967,7 @@ def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("presence", "terminal-1", "Old terminal pending")
+    create_inbox_delivery("provider_conversation", "terminal-1", "Old terminal pending")
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
@@ -792,8 +1014,14 @@ def test_stale_busy_runtime_defers_and_rehomes_terminal_pending_without_delete(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("presence", "terminal-1", "Do not strand me")
+    create_inbox_delivery("provider_conversation", "terminal-1", "Do not strand me")
     _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
+    capability = RecordingRuntimeStateCapability(RuntimeError("must not probe busy terminal"))
+    monkeypatch.setattr(
+        runtime_agent.provider_manager,
+        "runtime_state_capability",
+        lambda provider: capability,
+    )
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     delete_terminal = Mock()
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
@@ -805,6 +1033,7 @@ def test_stale_busy_runtime_defers_and_rehomes_terminal_pending_without_delete(
     assert handle._last_freshness_result is not None
     assert handle._last_freshness_result.action == AgentRuntimeFreshnessAction.DEFERRED
     assert handle._last_freshness_result.fresh is False
+    assert capability.discovered_terminal_ids == []
     delete_terminal.assert_not_called()
     send_input.assert_not_called()
     assert _pending_deliveries("terminal-1") == []
@@ -819,7 +1048,7 @@ def test_refresh_failure_keeps_notifications_on_agent_receiver(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("presence", "terminal-1", "Keep this durable")
+    create_inbox_delivery("provider_conversation", "terminal-1", "Keep this durable")
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
@@ -847,7 +1076,7 @@ def test_stale_idle_runtime_does_not_restart_when_old_terminal_stop_fails(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("presence", "terminal-1", "Keep on agent while stop fails")
+    create_inbox_delivery("provider_conversation", "terminal-1", "Keep on agent while stop fails")
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     create_terminal = Mock()
@@ -905,10 +1134,10 @@ def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_bus
     _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     delivery = create_inbox_delivery(
-        "presence",
+        "provider_conversation",
         "terminal-1",
         "[CAO inbox notification]\nID: 1",
-        source_kind="presence_thread",
+        source_kind="provider_conversation_thread",
         source_id="1",
     )
 

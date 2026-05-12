@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from typing import ClassVar
 
 import pytest
 
@@ -12,6 +14,9 @@ from cli_agent_orchestrator.linear.workspace_provider import (
 )
 from cli_agent_orchestrator.workspace_providers import (
     UnknownWorkspaceProviderError,
+    WorkspaceProviderEvent,
+    WorkspaceProviderEventDispatcher,
+    WorkspaceProviderRegistry,
     initialize_enabled_workspace_providers,
     load_enabled_provider_tool_access_policies,
 )
@@ -78,6 +83,44 @@ token_expires_at = "{_future_token_expires_at()}"
     )
     assert resolved.presence.app_user_id == "app-user-impl"
     assert resolved.identity.session_name == "implementation-partner"
+
+
+def test_initialize_enabled_workspace_providers_registers_declared_provider_events(
+    tmp_path, monkeypatch
+):
+    enabled = tmp_path / "workspace-providers.toml"
+    enabled.write_text('enabled = ["example"]\n')
+    agents = tmp_path / "agents.toml"
+    agents.write_text("")
+    dispatcher = WorkspaceProviderEventDispatcher()
+
+    @dataclass(frozen=True)
+    class ExampleEvent(WorkspaceProviderEvent):
+        provider_name: ClassVar[str] = "example"
+        event_name: ClassVar[str] = "created"
+
+    class ExampleProvider:
+        name = "example"
+
+        def initialize(self):
+            pass
+
+        def published_events(self):
+            return (ExampleEvent,)
+
+    registry = WorkspaceProviderRegistry({"example": lambda agent_registry: ExampleProvider()})
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_providers.registry.default_workspace_provider_event_dispatcher",
+        lambda: dispatcher,
+    )
+
+    initialize_enabled_workspace_providers(
+        enabled_config_path=enabled,
+        agents_config_path=agents,
+        registry=registry,
+    )
+
+    assert dispatcher.published_events("example") == (ExampleEvent,)
 
 
 def test_initialize_workspace_providers_starts_legacy_linear_provider_when_unconfigured(

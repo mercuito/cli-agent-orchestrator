@@ -1,8 +1,8 @@
 """Linear AgentSession packet classification.
 
 This module is the Linear-owned boundary for interpreting AgentSession
-webhook/monitor packets before CAO's generic presence persistence and inbox
-delivery paths see them.
+webhook/monitor packets before CAO's generic provider-conversation persistence
+and inbox delivery paths see them.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import re
 from typing import Any, Literal, Mapping, Optional
 
 from cli_agent_orchestrator.linear import app_client
-from cli_agent_orchestrator.presence.models import PresenceEvent
 
 LEADING_LINEAR_MENTION_PATTERN = re.compile(
     r"^\s*(?:@\S+|<user\b[^>]*>.*?</user>)\s+",
@@ -105,37 +104,6 @@ def classify_agent_session_payload(
         kind="human_mention_or_prompt",
         should_notify_agent=True,
     )
-
-
-def classification_from_event(
-    event: Optional[PresenceEvent],
-) -> Optional[LinearAgentSessionClassification]:
-    """Read a stored Linear classifier result from a normalized event."""
-
-    if event is None or event.raw_payload is None:
-        return None
-    raw_value = event.raw_payload.get(LINEAR_AGENT_SESSION_CLASSIFICATION_KEY)
-    if not isinstance(raw_value, Mapping):
-        return None
-    kind = raw_value.get("kind")
-    should_notify = raw_value.get("should_notify_agent")
-    if not isinstance(kind, str) or not isinstance(should_notify, bool):
-        return None
-    if kind not in LINEAR_AGENT_SESSION_EVENT_KINDS:
-        return None
-    suppression = raw_value.get("suppression_reason")
-    return LinearAgentSessionClassification(
-        kind=kind,  # type: ignore[arg-type]
-        should_notify_agent=should_notify,
-        suppression_reason=str(suppression) if suppression else None,
-    )
-
-
-def should_notify_agent(event: Optional[PresenceEvent]) -> bool:
-    """Return whether the Linear event should create an agent notification."""
-
-    classification = classification_from_event(event)
-    return True if classification is None else classification.should_notify_agent
 
 
 def _classify_activity(activity: Mapping[str, Any]) -> LinearAgentSessionClassification:

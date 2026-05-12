@@ -6,7 +6,10 @@ from cli_agent_orchestrator.linear.webhook_ingestion import (
     LINEAR_WEBHOOK_PACKET_METADATA_KEY,
     parse_linear_webhook_packet,
 )
-from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    linear_provider_event_from_payload,
+)
 
 
 def test_ingestion_routes_agent_session_packets_to_agent_session_family():
@@ -54,8 +57,8 @@ def test_ingestion_represents_issue_packets_as_unsupported_linear_family():
     assert packet.agent_session_classification is None
 
 
-def test_presence_provider_stores_ingestion_metadata_with_normalized_event():
-    event = LinearPresenceProvider().normalize_event(
+def test_linear_provider_event_stores_ingestion_metadata():
+    event = linear_provider_event_from_payload(
         {
             "type": "AgentSessionEvent",
             "action": "created",
@@ -70,6 +73,7 @@ def test_presence_provider_stores_ingestion_metadata_with_normalized_event():
     )
 
     assert event is not None
+    assert isinstance(event, LinearIssueContextEvent)
     assert event.raw_payload is not None
     assert event.raw_payload[LINEAR_WEBHOOK_PACKET_METADATA_KEY] == {
         "event_type": "AgentSessionEvent",

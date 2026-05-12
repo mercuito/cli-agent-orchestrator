@@ -15,15 +15,20 @@ from cli_agent_orchestrator.clients.inbox_store import (
     InboxNotificationModel,
     InboxNotificationTargetModel,
 )
-from cli_agent_orchestrator.clients.presence_store import (
+from cli_agent_orchestrator.clients.provider_conversation_store import (
     AgentRuntimeNotificationModel,
-    PresenceInboxNotificationModel,
-    PresenceMessageModel,
-    PresenceThreadModel,
-    PresenceWorkItemModel,
+    ProviderConversationInboxNotificationModel,
+    ProviderConversationMessageModel,
+    ProviderConversationThreadModel,
+    ProviderWorkItemModel,
     ProcessedProviderEventModel,
 )
 from cli_agent_orchestrator.linear.monitor_store import LinearMonitorWatermarkModel
+from cli_agent_orchestrator.clients.workspace_context_store import (
+    ContextWorkspaceModel,
+    WorkspaceContextModel,
+    WorkspaceContextObjectMappingModel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +45,19 @@ def init_db() -> None:
     db_module.Base.metadata.create_all(bind=db_module.engine)
     _migrate_ensure_semantic_inbox_tables()
     _migrate_ensure_baton_tables()
-    _migrate_ensure_presence_tables()
+    _migrate_ensure_provider_conversation_tables()
     _migrate_ensure_agent_runtime_tables()
     _migrate_ensure_linear_monitor_tables()
+    _migrate_ensure_workspace_context_tables()
     _migrate_drop_legacy_inbox_notification_ids()
-    _migrate_ensure_presence_tables()
+    _migrate_ensure_provider_conversation_tables()
     _migrate_ensure_agent_runtime_tables()
     _migrate_ensure_linear_monitor_tables()
+    _migrate_ensure_workspace_context_tables()
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
     _migrate_add_terminal_agent_identity_id()
+    _migrate_add_terminal_workspace_context_id()
     _migrate_drop_monitoring_session_peers()
 
 
@@ -287,37 +295,60 @@ def _migrate_ensure_baton_tables() -> None:
         logger.warning(f"Migration check for baton tables failed: {e}")
 
 
-def _migrate_ensure_presence_tables() -> None:
-    """Create provider-neutral presence tables on existing databases."""
+def _migrate_ensure_workspace_context_tables() -> None:
+    """Create workspace context registry tables on existing databases."""
     try:
         engine = _database_module().engine
-        PresenceWorkItemModel.__table__.create(bind=engine, checkfirst=True)
-        PresenceThreadModel.__table__.create(bind=engine, checkfirst=True)
-        PresenceMessageModel.__table__.create(bind=engine, checkfirst=True)
-        ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
-        PresenceInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
+        WorkspaceContextModel.__table__.create(bind=engine, checkfirst=True)
+        WorkspaceContextObjectMappingModel.__table__.create(bind=engine, checkfirst=True)
+        ContextWorkspaceModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
-        logger.warning(f"Migration check for presence tables failed: {e}")
+        logger.warning(f"Migration check for workspace context tables failed: {e}")
+
+
+def _migrate_ensure_provider_conversation_tables() -> None:
+    """Create provider conversation/work-item tables on existing databases."""
+    try:
+        engine = _database_module().engine
+        ProviderWorkItemModel.__table__.create(bind=engine, checkfirst=True)
+        ProviderConversationThreadModel.__table__.create(bind=engine, checkfirst=True)
+        ProviderConversationMessageModel.__table__.create(bind=engine, checkfirst=True)
+        ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
+        ProviderConversationInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for provider conversation tables failed: {e}")
         return
 
     try:
         with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            column_info = sqlite_migrations.table_column_info(conn, "presence_inbox_notifications")
+            _migrate_legacy_provider_conversation_table_names(conn)
+            column_info = sqlite_migrations.table_column_info(
+                conn, "provider_conversation_inbox_notifications"
+            )
             notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
             if not column_info:
                 return
 
             notification_fk_is_current = sqlite_migrations.foreign_key_references_table(
                 conn,
-                "presence_inbox_notifications",
+                "provider_conversation_inbox_notifications",
                 "inbox_notification_id",
                 "inbox_notifications",
             )
+            message_fk_is_current = sqlite_migrations.foreign_key_references_table(
+                conn,
+                "provider_conversation_inbox_notifications",
+                "provider_message_id",
+                "provider_conversation_messages",
+            )
             needs_rebuild = (
-                "inbox_message_id" in column_info
+                "presence_message_id" in column_info
+                or "inbox_message_id" in column_info
                 or "inbox_notification_id" not in column_info
+                or "provider_message_id" not in column_info
                 or not bool(column_info["inbox_notification_id"][3])
                 or not notification_fk_is_current
+                or not message_fk_is_current
             )
             if not needs_rebuild:
                 return
@@ -325,49 +356,215 @@ def _migrate_ensure_presence_tables() -> None:
             notification_id_expr = _notification_id_migration_expr(
                 column_info, notification_columns
             )
+            provider_message_expr = _provider_message_id_migration_expr(column_info)
             sqlite_migrations.rebuild_table(
                 conn,
-                table_name="presence_inbox_notifications",
+                table_name="provider_conversation_inbox_notifications",
                 create_sql="""
-                    CREATE TABLE presence_inbox_notifications (
+                    CREATE TABLE provider_conversation_inbox_notifications (
                         id INTEGER NOT NULL,
                         receiver_id VARCHAR NOT NULL,
-                        presence_message_id INTEGER NOT NULL,
+                        provider_message_id INTEGER NOT NULL,
                         inbox_notification_id INTEGER NOT NULL,
                         created_at DATETIME NOT NULL,
                         PRIMARY KEY (id),
-                        UNIQUE (receiver_id, presence_message_id),
-                        FOREIGN KEY(presence_message_id)
-                            REFERENCES presence_messages (id) ON DELETE CASCADE,
+                        UNIQUE (receiver_id, provider_message_id),
+                        FOREIGN KEY(provider_message_id)
+                            REFERENCES provider_conversation_messages (id) ON DELETE CASCADE,
                         FOREIGN KEY(inbox_notification_id)
                             REFERENCES inbox_notifications (id) ON DELETE CASCADE
                     )
                 """,
                 copy_sql=(
                     f"""
-                    INSERT INTO presence_inbox_notifications (
+                    INSERT INTO provider_conversation_inbox_notifications (
                         id,
                         receiver_id,
-                        presence_message_id,
+                        provider_message_id,
                         inbox_notification_id,
                         created_at
                     )
                     SELECT
                         old.id,
                         old.receiver_id,
-                        old.presence_message_id,
+                        {provider_message_expr},
                         {notification_id_expr},
                         old.created_at
                     FROM {{old_table}} AS old
-                    WHERE {notification_id_expr} IS NOT NULL
+                    WHERE {provider_message_expr} IS NOT NULL
+                      AND {notification_id_expr} IS NOT NULL
                 """
-                    if notification_id_expr is not None
+                    if provider_message_expr is not None and notification_id_expr is not None
                     else None
                 ),
             )
-            logger.info("Migration: rebuilt presence_inbox_notifications with notification ids")
+            logger.info(
+                "Migration: rebuilt provider_conversation_inbox_notifications with notification ids"
+            )
     except Exception as e:
-        logger.warning(f"Migration check for presence notification ids failed: {e}")
+        logger.warning(f"Migration check for provider conversation notification ids failed: {e}")
+
+
+def _provider_message_id_migration_expr(
+    marker_columns: dict[str, sqlite_migrations.ColumnInfo],
+) -> Optional[str]:
+    """Build a migration-only expression for provider conversation message ids."""
+
+    if "provider_message_id" in marker_columns:
+        return "old.provider_message_id"
+    if "presence_message_id" in marker_columns:
+        return "old.presence_message_id"
+    return None
+
+
+def _migrate_legacy_provider_conversation_table_names(sqlite_conn) -> None:
+    """Move old presence-named physical tables into provider-conversation tables."""
+
+    has_legacy_tables = any(
+        sqlite_migrations.table_exists(sqlite_conn, table_name)
+        for table_name in (
+            "presence_work_items",
+            "presence_threads",
+            "presence_messages",
+            "presence_inbox_notifications",
+        )
+    )
+    if not has_legacy_tables:
+        return
+
+    notification_columns = sqlite_migrations.table_columns(sqlite_conn, "inbox_notifications")
+    with sqlite_migrations.foreign_keys_disabled(sqlite_conn):
+        if sqlite_migrations.table_exists(sqlite_conn, "presence_work_items"):
+            sqlite_conn.execute("""
+                INSERT OR IGNORE INTO provider_work_items (
+                    id,
+                    provider,
+                    external_id,
+                    external_url,
+                    identifier,
+                    title,
+                    state,
+                    raw_snapshot_json,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    id,
+                    provider,
+                    external_id,
+                    external_url,
+                    identifier,
+                    title,
+                    state,
+                    raw_snapshot_json,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                FROM presence_work_items
+            """)
+
+        if sqlite_migrations.table_exists(sqlite_conn, "presence_threads"):
+            sqlite_conn.execute("""
+                INSERT OR IGNORE INTO provider_conversation_threads (
+                    id,
+                    provider,
+                    external_id,
+                    external_url,
+                    work_item_id,
+                    kind,
+                    state,
+                    prompt_context,
+                    raw_snapshot_json,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    id,
+                    provider,
+                    external_id,
+                    external_url,
+                    work_item_id,
+                    kind,
+                    state,
+                    prompt_context,
+                    raw_snapshot_json,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                FROM presence_threads
+            """)
+
+        if sqlite_migrations.table_exists(sqlite_conn, "presence_messages"):
+            sqlite_conn.execute("""
+                INSERT OR IGNORE INTO provider_conversation_messages (
+                    id,
+                    thread_id,
+                    provider,
+                    external_id,
+                    direction,
+                    kind,
+                    body,
+                    state,
+                    raw_snapshot_json,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    id,
+                    thread_id,
+                    provider,
+                    external_id,
+                    direction,
+                    kind,
+                    body,
+                    state,
+                    raw_snapshot_json,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                FROM presence_messages
+            """)
+
+        if sqlite_migrations.table_exists(sqlite_conn, "presence_inbox_notifications"):
+            marker_columns = sqlite_migrations.table_column_info(
+                sqlite_conn, "presence_inbox_notifications"
+            )
+            provider_message_expr = _provider_message_id_migration_expr(marker_columns)
+            notification_id_expr = _notification_id_migration_expr(
+                marker_columns, notification_columns
+            )
+            if provider_message_expr is not None and notification_id_expr is not None:
+                sqlite_conn.execute(f"""
+                    INSERT OR IGNORE INTO provider_conversation_inbox_notifications (
+                        id,
+                        receiver_id,
+                        provider_message_id,
+                        inbox_notification_id,
+                        created_at
+                    )
+                    SELECT
+                        old.id,
+                        old.receiver_id,
+                        {provider_message_expr},
+                        {notification_id_expr},
+                        old.created_at
+                    FROM presence_inbox_notifications AS old
+                    WHERE {provider_message_expr} IS NOT NULL
+                      AND {notification_id_expr} IS NOT NULL
+                """)
+
+        for table_name in (
+                "presence_inbox_notifications",
+                "presence_messages",
+                "presence_threads",
+                "presence_work_items",
+        ):
+            if sqlite_migrations.table_exists(sqlite_conn, table_name):
+                sqlite_conn.execute(f"DROP TABLE {table_name}")
+        logger.info("Migration: moved legacy presence tables to provider conversation tables")
 
 
 def _migrate_ensure_agent_runtime_tables() -> None:
@@ -529,3 +726,16 @@ def _migrate_add_terminal_agent_identity_id() -> None:
                 logger.info("Migration: added agent_identity_id column to terminals table")
     except Exception as e:
         logger.warning(f"Migration check for terminal agent_identity_id failed: {e}")
+
+
+def _migrate_add_terminal_workspace_context_id() -> None:
+    """Add workspace_context_id column to terminals table if missing."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            if sqlite_migrations.add_column_if_missing(
+                conn, "terminals", "workspace_context_id", "workspace_context_id TEXT"
+            ):
+                logger.info("Migration: added workspace_context_id column to terminals table")
+    except Exception as e:
+        logger.warning(f"Migration check for terminal workspace_context_id failed: {e}")

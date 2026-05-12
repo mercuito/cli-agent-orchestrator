@@ -105,7 +105,9 @@ def test_create_terminal_identity_codex_runtime_passes_provider_data_dir(
     tmp_path: Path,
     monkeypatch,
     implementation_partner_identity_factory,
+    runtime_inbox_db_session,
 ):
+    from cli_agent_orchestrator.clients import database as db_module
     from cli_agent_orchestrator.services import terminal_service
 
     monkeypatch.setattr(
@@ -114,7 +116,17 @@ def test_create_terminal_identity_codex_runtime_passes_provider_data_dir(
     )
     identity = implementation_partner_identity_factory()
     provider = MagicMock()
-    codex_home = tmp_path / "agents" / "implementation_partner" / "providers" / "codex" / ".codex"
+    default_context_id = db_module.default_workspace_context_id("implementation_partner")
+    provider_dir = (
+        tmp_path
+        / "agents"
+        / "implementation_partner"
+        / "contexts"
+        / default_context_id
+        / "runtime"
+        / "codex"
+    )
+    codex_home = provider_dir / ".codex"
 
     with (
         patch(
@@ -148,15 +160,14 @@ def test_create_terminal_identity_codex_runtime_passes_provider_data_dir(
         )
 
     prepare_identity_codex_home.assert_called_once()
-    assert prepare_identity_codex_home.call_args.args[0] == (
-        tmp_path / "agents" / "implementation_partner" / "providers" / "codex"
-    )
+    assert prepare_identity_codex_home.call_args.args[0] == provider_dir
     assert prepare_identity_codex_home.call_args.args[1:] == (
         "terminal-a",
         "developer",
         str(tmp_path / "repo"),
     )
     assert db_create.call_args.kwargs["agent_identity_id"] == "implementation_partner"
+    assert db_create.call_args.kwargs["workspace_context_id"] == default_context_id
     create_kwargs = mock_tmux.create_session.call_args.kwargs
     assert create_kwargs["environment"]["CODEX_HOME"] == str(codex_home)
 
@@ -165,6 +176,7 @@ def test_create_terminal_identity_launch_context_uses_resolved_launch_values(
     tmp_path: Path,
     monkeypatch,
     implementation_partner_identity_factory,
+    runtime_inbox_db_session,
 ):
     from cli_agent_orchestrator.models.agent_profile import AgentProfile
     from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
@@ -222,15 +234,12 @@ def test_create_terminal_identity_launch_context_uses_resolved_launch_values(
     assert launch_context.allowed_tools == ["fs_read"]
 
 
-def test_create_terminal_deserializes_provider_runtime_and_passes_resume_args(
+def test_create_terminal_context_launch_context_uses_context_provider_data_dir(
     tmp_path: Path,
     monkeypatch,
     implementation_partner_identity_factory,
 ):
-    from cli_agent_orchestrator.providers.base import (
-        ProviderRuntimePreparation,
-        ProviderRuntimeState,
-    )
+    from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
     from cli_agent_orchestrator.services import terminal_service
 
     monkeypatch.setattr(
@@ -239,9 +248,86 @@ def test_create_terminal_deserializes_provider_runtime_and_passes_resume_args(
     )
     identity = implementation_partner_identity_factory()
     provider = MagicMock()
+    prepare_runtime = MagicMock(return_value=ProviderRuntimePreparation())
+
+    with (
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.generate_terminal_id",
+            return_value="terminal-a",
+        ),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.generate_window_name",
+            return_value="developer-0000",
+        ),
+        patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal") as db_create,
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.provider_manager.create_provider",
+            return_value=provider,
+        ),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.provider_manager.prepare_terminal_runtime",
+            prepare_runtime,
+        ),
+        patch("cli_agent_orchestrator.services.terminal_service.tmux_client") as mock_tmux,
+    ):
+        mock_tmux.session_exists.return_value = False
+
+        terminal_service.create_terminal(
+            provider="codex",
+            agent_profile="developer",
+            session_name="implementation-partner",
+            new_session=True,
+            working_directory=str(tmp_path / "repo"),
+            agent_identity=identity,
+            workspace_context_id="wctx_123",
+        )
+
+    launch_context = prepare_runtime.call_args.kwargs["launch_context"]
+    expected_provider_dir = (
+        tmp_path
+        / "agents"
+        / "implementation_partner"
+        / "contexts"
+        / "wctx_123"
+        / "runtime"
+        / "codex"
+    )
+    assert launch_context.provider_data_dir == expected_provider_dir
+    assert db_create.call_args.kwargs["workspace_context_id"] == "wctx_123"
+
+
+def test_create_terminal_deserializes_provider_runtime_and_passes_resume_args(
+    tmp_path: Path,
+    monkeypatch,
+    implementation_partner_identity_factory,
+    runtime_inbox_db_session,
+):
+    from cli_agent_orchestrator.providers.base import (
+        ProviderRuntimePreparation,
+        ProviderRuntimeState,
+    )
+    from cli_agent_orchestrator.services import terminal_service
+    from cli_agent_orchestrator.clients import database as db_module
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
+        tmp_path / "agents",
+    )
+    identity = implementation_partner_identity_factory()
+    provider = MagicMock()
+    default_context_id = db_module.default_workspace_context_id("implementation_partner")
+    provider_data_dir = (
+        tmp_path
+        / "agents"
+        / "implementation_partner"
+        / "contexts"
+        / default_context_id
+        / "runtime"
+        / "codex"
+    )
     runtime_state = ProviderRuntimeState(
         provider_type="codex",
-        provider_data_dir=tmp_path / "agents" / "implementation_partner" / "providers" / "codex",
+        provider_data_dir=provider_data_dir,
         payload={"schema_version": "test-runtime-state.v1", "thread_id": "session-a"},
     )
     capability = MagicMock()
@@ -285,7 +371,6 @@ def test_create_terminal_deserializes_provider_runtime_and_passes_resume_args(
             provider_runtime={"schema_version": "test-runtime-state.v1", "thread_id": "session-a"},
         )
 
-    provider_data_dir = tmp_path / "agents" / "implementation_partner" / "providers" / "codex"
     capability.deserialize_runtime_state.assert_called_once_with(
         {"schema_version": "test-runtime-state.v1", "thread_id": "session-a"},
         provider_data_dir=provider_data_dir,

@@ -1,0 +1,190 @@
+"""Workspace-provider typed event publication and subscription contracts."""
+
+from __future__ import annotations
+
+from abc import ABC
+from dataclasses import dataclass
+from typing import Any, Callable, ClassVar, Mapping, Optional
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceProviderEvent(ABC):
+    """Base class for typed events published by workspace providers."""
+
+    provider_name: ClassVar[str]
+    event_name: ClassVar[str]
+    description: ClassVar[str] = ""
+
+    delivery_id: str | None = None
+    metadata: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class WorkspaceProviderEventHandlerResult:
+    """Result returned by one event subscriber."""
+
+    subscription_id: str
+    result: Any
+
+
+@dataclass(frozen=True)
+class WorkspaceProviderEventPublication:
+    """Published event plus ordered subscriber results."""
+
+    event: WorkspaceProviderEvent
+    handler_results: tuple[WorkspaceProviderEventHandlerResult, ...]
+
+    def first_result_of_type(self, result_type: type) -> Any | None:
+        """Return the first subscriber result matching ``result_type``."""
+
+        for handler_result in self.handler_results:
+            if isinstance(handler_result.result, result_type):
+                return handler_result.result
+        return None
+
+
+WorkspaceProviderEventHandler = Callable[[WorkspaceProviderEvent], Any]
+
+
+class WorkspaceProviderEventConfigError(ValueError):
+    """Raised when provider event configuration is invalid."""
+
+
+class UnknownWorkspaceProviderEventError(WorkspaceProviderEventConfigError):
+    """Raised when publishing or subscribing to an undeclared provider event."""
+
+
+class WorkspaceProviderEventDispatcher:
+    """Synchronous dispatcher for provider-declared typed events."""
+
+    def __init__(
+        self,
+        event_types: Optional[tuple[type[WorkspaceProviderEvent], ...]] = None,
+    ) -> None:
+        self._event_types: dict[type[WorkspaceProviderEvent], type[WorkspaceProviderEvent]] = {}
+        self._subscribers: dict[
+            type[WorkspaceProviderEvent], dict[str, WorkspaceProviderEventHandler]
+        ] = {}
+        if event_types:
+            self.register_events(event_types)
+
+    def register_events(self, event_types: tuple[type[WorkspaceProviderEvent], ...]) -> None:
+        """Register provider-declared event classes."""
+
+        for event_type in event_types:
+            normalized = _validate_event_type(event_type)
+            self._event_types[normalized] = normalized
+
+    def published_events(self, provider_name: str) -> tuple[type[WorkspaceProviderEvent], ...]:
+        """Return registered event classes for one provider."""
+
+        normalized = _normalize_token(provider_name, "provider_name")
+        return tuple(
+            event_type
+            for event_type in sorted(
+                self._event_types,
+                key=lambda item: (_event_type_provider_name(item), _event_type_event_name(item)),
+            )
+            if _event_type_provider_name(event_type) == normalized
+        )
+
+    def subscribe(
+        self,
+        *,
+        event_type: type[WorkspaceProviderEvent],
+        handler: WorkspaceProviderEventHandler,
+        subscription_id: str,
+    ) -> None:
+        """Subscribe to a provider-declared event class."""
+
+        normalized_event_type = _validate_event_type(event_type)
+        if normalized_event_type not in self._event_types:
+            raise UnknownWorkspaceProviderEventError(
+                "Unknown workspace-provider event: "
+                f"{_event_type_provider_name(normalized_event_type)}."
+                f"{_event_type_event_name(normalized_event_type)}"
+            )
+        subscriber_id = _normalize_token(subscription_id, "subscription_id")
+        self._subscribers.setdefault(normalized_event_type, {})[subscriber_id] = handler
+
+    def publish(self, event: WorkspaceProviderEvent) -> WorkspaceProviderEventPublication:
+        """Publish a provider-declared event instance and synchronously run subscribers."""
+
+        event_type = _validate_event_instance(event)
+        if event_type not in self._event_types:
+            raise UnknownWorkspaceProviderEventError(
+                "Unknown workspace-provider event: "
+                f"{_event_type_provider_name(event_type)}.{_event_type_event_name(event_type)}"
+            )
+        results: list[WorkspaceProviderEventHandlerResult] = []
+        for subscription_id, handler in self._subscribers.get(event_type, {}).items():
+            results.append(
+                WorkspaceProviderEventHandlerResult(
+                    subscription_id=subscription_id,
+                    result=handler(event),
+                )
+            )
+        return WorkspaceProviderEventPublication(event=event, handler_results=tuple(results))
+
+
+_DEFAULT_WORKSPACE_PROVIDER_EVENT_DISPATCHER = WorkspaceProviderEventDispatcher()
+
+
+def default_workspace_provider_event_dispatcher() -> WorkspaceProviderEventDispatcher:
+    """Return CAO's process-local workspace-provider event dispatcher."""
+
+    return _DEFAULT_WORKSPACE_PROVIDER_EVENT_DISPATCHER
+
+
+def _normalize_token(value: str, label: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise WorkspaceProviderEventConfigError(f"{label} must be non-empty")
+    return normalized
+
+
+def _event_type_provider_name(event_type: type[WorkspaceProviderEvent]) -> str:
+    value = getattr(event_type, "provider_name", None)
+    if not isinstance(value, str):
+        raise WorkspaceProviderEventConfigError(
+            f"{event_type.__name__} must declare string ClassVar provider_name"
+        )
+    return _normalize_token(value, "provider_name")
+
+
+def _event_type_event_name(event_type: type[WorkspaceProviderEvent]) -> str:
+    value = getattr(event_type, "event_name", None)
+    if not isinstance(value, str):
+        raise WorkspaceProviderEventConfigError(
+            f"{event_type.__name__} must declare string ClassVar event_name"
+        )
+    return _normalize_token(value, "event_name")
+
+
+def _validate_event_type(
+    event_type: type[WorkspaceProviderEvent],
+) -> type[WorkspaceProviderEvent]:
+    if not isinstance(event_type, type) or not issubclass(event_type, WorkspaceProviderEvent):
+        raise WorkspaceProviderEventConfigError(
+            "workspace provider events must extend WorkspaceProviderEvent"
+        )
+    _event_type_provider_name(event_type)
+    _event_type_event_name(event_type)
+    return event_type
+
+
+def _validate_event_instance(event: WorkspaceProviderEvent) -> type[WorkspaceProviderEvent]:
+    if not isinstance(event, WorkspaceProviderEvent):
+        raise WorkspaceProviderEventConfigError(
+            "published workspace provider events must extend WorkspaceProviderEvent"
+        )
+    event_type = _validate_event_type(type(event))
+    if event.delivery_id is not None and not isinstance(event.delivery_id, str):
+        raise WorkspaceProviderEventConfigError(
+            f"{event_type.__name__}.delivery_id must be a string or None"
+        )
+    if event.metadata is not None and not isinstance(event.metadata, Mapping):
+        raise WorkspaceProviderEventConfigError(
+            f"{event_type.__name__}.metadata must be a mapping or None"
+        )
+    return event_type

@@ -5,12 +5,13 @@ from __future__ import annotations
 import pytest
 
 from cli_agent_orchestrator.agent_identity import (
-    AgentIdentityPathError,
     AgentIdentityConfigError,
+    AgentIdentityPathError,
     agent_identity_data_dir,
-    ensure_agent_identity_runtime_paths,
+    ensure_agent_workspace_context_runtime_paths,
     load_agent_identity_registry,
-    provider_identity_data_dir,
+    workspace_context_data_dir,
+    workspace_context_provider_data_dir,
 )
 
 
@@ -23,6 +24,10 @@ agent_profile = "developer"
 cli_provider = "codex"
 workdir = "/repo"
 session_name = "implementation-partner"
+
+[agents.implementation_partner.workspace_context]
+enabled = true
+resolver_id = "linear_planning"
 """)
 
     registry = load_agent_identity_registry(agents)
@@ -33,6 +38,8 @@ session_name = "implementation-partner"
     assert identity.cli_provider == "codex"
     assert identity.workdir == "/repo"
     assert identity.session_name == "implementation-partner"
+    assert identity.workspace_context.enabled is True
+    assert identity.workspace_context.resolver_id == "linear_planning"
 
 
 def test_load_agent_identity_registry_rejects_missing_runtime_field(tmp_path):
@@ -64,22 +71,32 @@ session_name = "implementation-partner"
         load_agent_identity_registry(agents)
 
 
-def test_identity_runtime_paths_are_deterministic_and_provider_scoped(
+def test_workspace_context_runtime_paths_are_deterministic_and_provider_scoped(
     implementation_partner_identity_factory,
     tmp_path,
 ):
     identity = implementation_partner_identity_factory()
-
-    paths = ensure_agent_identity_runtime_paths(identity, "codex", cao_home_dir=tmp_path)
-
-    assert paths.identity_data_dir == tmp_path / "agents" / "implementation_partner"
-    assert paths.provider_data_dir == (
-        tmp_path / "agents" / "implementation_partner" / "providers" / "codex"
+    paths = ensure_agent_workspace_context_runtime_paths(
+        identity,
+        "wctx_123",
+        "codex",
+        cao_home_dir=tmp_path,
     )
+
+    context_root = tmp_path / "agents" / "implementation_partner" / "contexts" / "wctx_123"
+    assert paths.identity_data_dir == tmp_path / "agents" / "implementation_partner"
+    assert paths.context_data_dir == context_root
+    assert paths.provider_data_dir == context_root / "runtime" / "codex"
     assert paths.provider_data_dir.is_dir()
-    assert agent_identity_data_dir(identity, cao_home_dir=tmp_path) == paths.identity_data_dir
-    assert provider_identity_data_dir(identity, "codex", cao_home_dir=tmp_path) == (
-        paths.provider_data_dir
+    assert workspace_context_data_dir(identity, "wctx_123", cao_home_dir=tmp_path) == context_root
+    assert (
+        workspace_context_provider_data_dir(
+            identity,
+            "wctx_123",
+            "codex",
+            cao_home_dir=tmp_path,
+        )
+        == paths.provider_data_dir
     )
 
 
@@ -94,4 +111,6 @@ def test_identity_runtime_paths_reject_nested_agent_or_provider_segments(
 
     identity = implementation_partner_identity_factory()
     with pytest.raises(AgentIdentityPathError, match="single path segment"):
-        provider_identity_data_dir(identity, "../codex", cao_home_dir=tmp_path)
+        workspace_context_data_dir(identity, "../wctx", cao_home_dir=tmp_path)
+    with pytest.raises(AgentIdentityPathError, match="single path segment"):
+        workspace_context_provider_data_dir(identity, "wctx_123", "../codex", cao_home_dir=tmp_path)

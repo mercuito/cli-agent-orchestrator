@@ -34,6 +34,10 @@ class Terminal(BaseModel):
         None,
         description="Durable CAO agent identity id when this terminal is identity-managed",
     )
+    workspace_context_id: Optional[str] = Field(
+        None,
+        description="Workspace context id when this terminal is context-managed",
+    )
     allowed_tools: Optional[List[str]] = Field(None, description="Resolved runtime capabilities")
     status: Optional[TerminalStatus] = Field(
         None, description="Current terminal status (live only)"

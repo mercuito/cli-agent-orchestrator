@@ -5,9 +5,11 @@ from __future__ import annotations
 from cli_agent_orchestrator.linear.agent_session_classifier import (
     LINEAR_AGENT_SESSION_CLASSIFICATION_KEY,
     classify_agent_session_payload,
-    classification_from_event,
 )
-from cli_agent_orchestrator.linear.presence_provider import LinearPresenceProvider
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
+)
 
 
 def _session_payload(agent_session: dict, *, activity: dict | None = None) -> dict:
@@ -133,16 +135,17 @@ def test_classifies_later_user_prompt_activity_as_notifiable():
     assert classification.should_notify_agent is True
 
 
-def test_classification_metadata_survives_normalization():
-    event = LinearPresenceProvider().normalize_event(
+def test_classification_metadata_survives_provider_event_publication():
+    publication = publish_linear_provider_event(
         _session_payload({"id": "session-proactive", "creator": None, "sourceMetadata": None})
     )
 
-    assert event is not None
-    assert event.raw_payload is not None
-    assert event.raw_payload[LINEAR_AGENT_SESSION_CLASSIFICATION_KEY] == {
+    assert publication is not None
+    assert isinstance(publication.event, LinearIssueContextEvent)
+    assert publication.event.raw_payload is not None
+    assert publication.event.raw_payload[LINEAR_AGENT_SESSION_CLASSIFICATION_KEY] == {
         "kind": "app_created_session_bootstrap",
         "should_notify_agent": False,
         "suppression_reason": "linear_app_created_session_bootstrap",
     }
-    assert classification_from_event(event).should_notify_agent is False
+    assert publication.event.should_notify_agent is False

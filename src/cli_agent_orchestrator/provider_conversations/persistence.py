@@ -1,4 +1,4 @@
-"""Provider-neutral persistence helpers for external presence systems."""
+"""Persistence helpers for provider-owned conversation and work-item records."""
 
 from __future__ import annotations
 
@@ -10,11 +10,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.presence.models import (
+from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessageRecord,
     ConversationThreadRecord,
-    PersistedPresenceEvent,
-    PresenceEvent,
+    PersistedProviderEventRecords,
     ProcessedProviderEventRecord,
     WorkItemRecord,
 )
@@ -32,7 +31,7 @@ def _loads(value: Optional[str]) -> Optional[Dict[str, Any]]:
     return json.loads(value)
 
 
-def _work_item_from_row(row: db_module.PresenceWorkItemModel) -> WorkItemRecord:
+def _work_item_from_row(row: db_module.ProviderWorkItemModel) -> WorkItemRecord:
     return WorkItemRecord(
         id=row.id,
         provider=row.provider,
@@ -48,7 +47,7 @@ def _work_item_from_row(row: db_module.PresenceWorkItemModel) -> WorkItemRecord:
     )
 
 
-def _thread_from_row(row: db_module.PresenceThreadModel) -> ConversationThreadRecord:
+def _thread_from_row(row: db_module.ProviderConversationThreadModel) -> ConversationThreadRecord:
     return ConversationThreadRecord(
         id=row.id,
         provider=row.provider,
@@ -65,7 +64,7 @@ def _thread_from_row(row: db_module.PresenceThreadModel) -> ConversationThreadRe
     )
 
 
-def _message_from_row(row: db_module.PresenceMessageModel) -> ConversationMessageRecord:
+def _message_from_row(row: db_module.ProviderConversationMessageModel) -> ConversationMessageRecord:
     return ConversationMessageRecord(
         id=row.id,
         thread_id=row.thread_id,
@@ -138,7 +137,7 @@ def upsert_work_item(
         now = datetime.now()
         _insert_unique_ref_if_missing(
             session,
-            db_module.PresenceWorkItemModel,
+            db_module.ProviderWorkItemModel,
             external_id_field="external_id",
             values={
                 "provider": provider,
@@ -148,15 +147,15 @@ def upsert_work_item(
             },
         )
         row = (
-            session.query(db_module.PresenceWorkItemModel)
+            session.query(db_module.ProviderWorkItemModel)
             .filter(
-                db_module.PresenceWorkItemModel.provider == provider,
-                db_module.PresenceWorkItemModel.external_id == external_id,
+                db_module.ProviderWorkItemModel.provider == provider,
+                db_module.ProviderWorkItemModel.external_id == external_id,
             )
             .first()
         )
         if row is None:
-            raise RuntimeError("presence work item insert did not create or find a row")
+            raise RuntimeError("provider work item insert did not create or find a row")
 
         row.external_url = external_url
         row.identifier = identifier
@@ -186,10 +185,10 @@ def get_work_item(
     def _get(session: Session) -> Optional[WorkItemRecord]:
         _require_ref(provider, external_id)
         row = (
-            session.query(db_module.PresenceWorkItemModel)
+            session.query(db_module.ProviderWorkItemModel)
             .filter(
-                db_module.PresenceWorkItemModel.provider == provider,
-                db_module.PresenceWorkItemModel.external_id == external_id,
+                db_module.ProviderWorkItemModel.provider == provider,
+                db_module.ProviderWorkItemModel.external_id == external_id,
             )
             .first()
         )
@@ -222,7 +221,7 @@ def upsert_thread(
         now = datetime.now()
         _insert_unique_ref_if_missing(
             session,
-            db_module.PresenceThreadModel,
+            db_module.ProviderConversationThreadModel,
             external_id_field="external_id",
             values={
                 "provider": provider,
@@ -232,15 +231,15 @@ def upsert_thread(
             },
         )
         row = (
-            session.query(db_module.PresenceThreadModel)
+            session.query(db_module.ProviderConversationThreadModel)
             .filter(
-                db_module.PresenceThreadModel.provider == provider,
-                db_module.PresenceThreadModel.external_id == external_id,
+                db_module.ProviderConversationThreadModel.provider == provider,
+                db_module.ProviderConversationThreadModel.external_id == external_id,
             )
             .first()
         )
         if row is None:
-            raise RuntimeError("presence thread insert did not create or find a row")
+            raise RuntimeError("provider conversation thread insert did not create or find a row")
 
         row.external_url = external_url
         row.work_item_id = work_item_id
@@ -249,7 +248,9 @@ def upsert_thread(
         row.prompt_context = prompt_context
         row.raw_snapshot_json = _dumps(raw_snapshot)
         if metadata is not None:
-            row.metadata_json = _dumps(metadata)
+            merged_metadata = _loads(row.metadata_json) or {}
+            merged_metadata.update(metadata)
+            row.metadata_json = _dumps(merged_metadata)
         row.updated_at = now
         session.flush()
         session.refresh(row)
@@ -272,10 +273,10 @@ def get_thread(
     def _get(session: Session) -> Optional[ConversationThreadRecord]:
         _require_ref(provider, external_id)
         row = (
-            session.query(db_module.PresenceThreadModel)
+            session.query(db_module.ProviderConversationThreadModel)
             .filter(
-                db_module.PresenceThreadModel.provider == provider,
-                db_module.PresenceThreadModel.external_id == external_id,
+                db_module.ProviderConversationThreadModel.provider == provider,
+                db_module.ProviderConversationThreadModel.external_id == external_id,
             )
             .first()
         )
@@ -295,8 +296,8 @@ def get_thread_by_id(
 
     def _get(session: Session) -> Optional[ConversationThreadRecord]:
         row = (
-            session.query(db_module.PresenceThreadModel)
-            .filter(db_module.PresenceThreadModel.id == thread_id)
+            session.query(db_module.ProviderConversationThreadModel)
+            .filter(db_module.ProviderConversationThreadModel.id == thread_id)
             .first()
         )
         return _thread_from_row(row) if row is not None else None
@@ -331,7 +332,7 @@ def upsert_message(
         if external_id is not None:
             _insert_unique_ref_if_missing(
                 session,
-                db_module.PresenceMessageModel,
+                db_module.ProviderConversationMessageModel,
                 external_id_field="external_id",
                 values={
                     "thread_id": thread_id,
@@ -342,17 +343,17 @@ def upsert_message(
                 },
             )
             row = (
-                session.query(db_module.PresenceMessageModel)
+                session.query(db_module.ProviderConversationMessageModel)
                 .filter(
-                    db_module.PresenceMessageModel.provider == provider,
-                    db_module.PresenceMessageModel.external_id == external_id,
+                    db_module.ProviderConversationMessageModel.provider == provider,
+                    db_module.ProviderConversationMessageModel.external_id == external_id,
                 )
                 .first()
             )
         if row is None:
             if external_id is not None:
-                raise RuntimeError("presence message insert did not create or find a row")
-            row = db_module.PresenceMessageModel(
+                raise RuntimeError("provider conversation message insert did not create or find a row")
+            row = db_module.ProviderConversationMessageModel(
                 thread_id=thread_id,
                 provider=provider,
                 external_id=external_id,
@@ -389,10 +390,10 @@ def get_message(
     def _get(session: Session) -> Optional[ConversationMessageRecord]:
         _require_ref(provider, external_id)
         row = (
-            session.query(db_module.PresenceMessageModel)
+            session.query(db_module.ProviderConversationMessageModel)
             .filter(
-                db_module.PresenceMessageModel.provider == provider,
-                db_module.PresenceMessageModel.external_id == external_id,
+                db_module.ProviderConversationMessageModel.provider == provider,
+                db_module.ProviderConversationMessageModel.external_id == external_id,
             )
             .first()
         )
@@ -412,11 +413,11 @@ def list_messages(
 
     def _list(session: Session) -> List[ConversationMessageRecord]:
         rows = (
-            session.query(db_module.PresenceMessageModel)
-            .filter(db_module.PresenceMessageModel.thread_id == thread_id)
+            session.query(db_module.ProviderConversationMessageModel)
+            .filter(db_module.ProviderConversationMessageModel.thread_id == thread_id)
             .order_by(
-                db_module.PresenceMessageModel.created_at.asc(),
-                db_module.PresenceMessageModel.id.asc(),
+                db_module.ProviderConversationMessageModel.created_at.asc(),
+                db_module.ProviderConversationMessageModel.id.asc(),
             )
             .all()
         )
@@ -552,79 +553,3 @@ def mark_processed_event(
         result = _mark(session)
         session.commit()
         return result
-
-
-def persist_presence_event(event: PresenceEvent) -> PersistedPresenceEvent:
-    """Persist a normalized provider event without invoking any provider behavior."""
-
-    with db_module.SessionLocal() as session:
-        processed_event = None
-        if event.delivery_id:
-            processed_event, created = mark_processed_event(
-                provider=event.provider,
-                external_event_id=event.delivery_id,
-                event_type=event.event_type,
-                metadata={"action": event.action} if event.action else None,
-                db=session,
-            )
-            if not created:
-                session.commit()
-                return PersistedPresenceEvent(
-                    processed_event=processed_event,
-                    work_item=None,
-                    thread=None,
-                    message=None,
-                )
-
-        work_item = None
-        thread = None
-        message = None
-        if event.thread is not None:
-            if event.thread.work_item is not None:
-                ref = event.thread.work_item.ref
-                work_item = upsert_work_item(
-                    provider=ref.provider,
-                    external_id=ref.id,
-                    external_url=ref.url,
-                    identifier=event.thread.work_item.identifier,
-                    title=event.thread.work_item.title,
-                    state=event.thread.work_item.state,
-                    raw_snapshot=event.raw_payload,
-                    db=session,
-                )
-
-            thread_ref = event.thread.ref
-            thread = upsert_thread(
-                provider=thread_ref.provider,
-                external_id=thread_ref.id,
-                external_url=thread_ref.url,
-                work_item_id=work_item.id if work_item is not None else None,
-                kind=event.thread.kind,
-                state=event.thread.state,
-                prompt_context=event.thread.prompt_context,
-                raw_snapshot=event.raw_payload,
-                db=session,
-            )
-
-        if thread is not None and event.message is not None:
-            message_ref = event.message.ref
-            message = upsert_message(
-                thread_id=thread.id,
-                provider=message_ref.provider if message_ref is not None else event.provider,
-                external_id=message_ref.id if message_ref is not None else None,
-                direction=event.message.direction,
-                kind=event.message.kind,
-                body=event.message.body,
-                state=event.message.state,
-                raw_snapshot=event.raw_payload,
-                metadata=event.message.metadata,
-                db=session,
-            )
-
-        session.commit()
-        return PersistedPresenceEvent(
-            processed_event=processed_event,
-            work_item=work_item,
-            thread=thread,
-            message=message,
-        )

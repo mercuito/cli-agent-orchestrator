@@ -1,4 +1,4 @@
-"""Provider-neutral models for external agent presence systems."""
+"""Provider-owned conversation and work-item records."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ ThreadState = Literal["active", "awaiting_input", "complete", "stale", "error", 
 
 @dataclass(frozen=True)
 class ExternalRef:
-    """A stable reference to an object owned by an external presence provider."""
+    """A stable reference to an object owned by an external workspace provider."""
 
     provider: str
     id: str
@@ -65,19 +65,6 @@ class ConversationThread:
 
 
 @dataclass(frozen=True)
-class PresenceEvent:
-    """A normalized event emitted by an external presence provider."""
-
-    provider: str
-    event_type: str
-    action: Optional[str]
-    thread: Optional[ConversationThread] = None
-    message: Optional[ConversationMessage] = None
-    delivery_id: Optional[str] = None
-    raw_payload: Optional[Dict[str, Any]] = None
-
-
-@dataclass(frozen=True)
 class StopAcknowledgement:
     """Result of acknowledging a provider-owned stop or cancel signal."""
 
@@ -89,7 +76,7 @@ class StopAcknowledgement:
 
 @dataclass(frozen=True)
 class WorkItemRecord:
-    """Durable provider-neutral work item stored by CAO."""
+    """Durable provider-owned work item stored by CAO."""
 
     id: int
     provider: str
@@ -106,7 +93,7 @@ class WorkItemRecord:
 
 @dataclass(frozen=True)
 class ConversationThreadRecord:
-    """Durable provider-neutral conversation surface stored by CAO."""
+    """Durable provider-owned conversation surface stored by CAO."""
 
     id: int
     provider: str
@@ -124,7 +111,7 @@ class ConversationThreadRecord:
 
 @dataclass(frozen=True)
 class ConversationMessageRecord:
-    """Durable provider-neutral message or activity stored by CAO."""
+    """Durable provider-owned message or activity stored by CAO."""
 
     id: int
     thread_id: int
@@ -153,8 +140,8 @@ class ProcessedProviderEventRecord:
 
 
 @dataclass(frozen=True)
-class PersistedPresenceEvent:
-    """Records touched while storing a normalized presence event."""
+class PersistedProviderEventRecords:
+    """Records touched while storing a typed workspace provider event."""
 
     processed_event: Optional[ProcessedProviderEventRecord]
     work_item: Optional[WorkItemRecord]

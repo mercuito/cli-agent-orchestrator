@@ -6,19 +6,22 @@ import hashlib
 import json
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.linear import app_client, translator
+from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.agent_policies import (
     LinearPolicyAction,
     LinearPolicyDecision,
     LinearPolicyRequest,
     build_default_linear_agent_policy_evaluator,
 )
-from cli_agent_orchestrator.linear.agent_session_classifier import (
-    classification_from_event,
-    should_notify_agent,
+from cli_agent_orchestrator.linear.workspace_context_resolver import (
+    register_linear_workspace_context_resolver,
+)
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
 )
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearResolvedPresence,
@@ -27,14 +30,27 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     normalize_app_key,
     should_enable_linear_agent_policies,
 )
-from cli_agent_orchestrator.presence.inbox_bridge import create_notification_for_persisted_event
-from cli_agent_orchestrator.presence.models import PersistedPresenceEvent, PresenceEvent
-from cli_agent_orchestrator.presence.persistence import get_message, get_thread
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import create_notification_for_persisted_event
+from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
+from cli_agent_orchestrator.provider_conversations.persistence import (
+    get_message,
+    get_thread,
+    mark_processed_event,
+    upsert_message,
+    upsert_thread,
+    upsert_work_item,
+)
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeHandle,
     AgentRuntimeNotification,
     AgentRuntimeNotifyResult,
 )
+from cli_agent_orchestrator.workspace_contexts import (
+    WorkspaceContextResolution,
+    WorkspaceContextResolverError,
+    resolve_workspace_context_for_identity,
+)
+from cli_agent_orchestrator.workspace_providers.events import WorkspaceProviderEvent
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +167,7 @@ def _post_startup_failed_activity(
 
 def _post_policy_denial_comment(
     *,
-    event: PresenceEvent,
+    event: LinearIssueContextEvent,
     resolved: LinearResolvedPresence,
     decision: LinearPolicyDecision,
 ) -> None:
@@ -237,20 +253,22 @@ def _publish_persisted_external_url_once(
 
     with db_module.SessionLocal() as session:
         thread_row = (
-            session.query(db_module.PresenceThreadModel)
+            session.query(db_module.ProviderConversationThreadModel)
             .filter(
-                db_module.PresenceThreadModel.provider == "linear",
-                db_module.PresenceThreadModel.external_id == thread_id,
+                db_module.ProviderConversationThreadModel.provider == "linear",
+                db_module.ProviderConversationThreadModel.external_id == thread_id,
             )
             .first()
         )
         if thread_row is not None:
-            metadata = _json_object(thread_row.metadata_json)
-            if (
-                metadata.get(LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY)
-                and metadata.get(LINEAR_EXTERNAL_URL_METADATA_KEY) == desired_url
-            ):
-                return False
+            metadata = _json_object(cast(Optional[str], thread_row.metadata_json))
+            if metadata.get(LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY):
+                if metadata.get(LINEAR_EXTERNAL_URL_METADATA_KEY) == desired_url:
+                    return False
+                if metadata.get("linear_external_url_terminal_id") == terminal_id and (
+                    not agent_id or metadata.get("linear_external_url_agent_id") == agent_id
+                ):
+                    return False
 
     if not _update_external_url_once(
         thread_id=thread_id,
@@ -262,22 +280,22 @@ def _publish_persisted_external_url_once(
 
     with db_module.SessionLocal() as session:
         thread_row = (
-            session.query(db_module.PresenceThreadModel)
+            session.query(db_module.ProviderConversationThreadModel)
             .filter(
-                db_module.PresenceThreadModel.provider == "linear",
-                db_module.PresenceThreadModel.external_id == thread_id,
+                db_module.ProviderConversationThreadModel.provider == "linear",
+                db_module.ProviderConversationThreadModel.external_id == thread_id,
             )
             .first()
         )
         if thread_row is None:
             return True
-        metadata = _json_object(thread_row.metadata_json)
+        metadata = _json_object(cast(Optional[str], thread_row.metadata_json))
         metadata[LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY] = True
         metadata[LINEAR_EXTERNAL_URL_METADATA_KEY] = desired_url
         metadata["linear_external_url_terminal_id"] = terminal_id
         if agent_id:
             metadata["linear_external_url_agent_id"] = agent_id
-        thread_row.metadata_json = json.dumps(metadata, sort_keys=True)
+        setattr(thread_row, "metadata_json", json.dumps(metadata, sort_keys=True))
         session.commit()
     return True
 
@@ -285,59 +303,46 @@ def _publish_persisted_external_url_once(
 def _persisted_external_url_was_published(thread_id: str) -> bool:
     with db_module.SessionLocal() as session:
         thread_row = (
-            session.query(db_module.PresenceThreadModel)
+            session.query(db_module.ProviderConversationThreadModel)
             .filter(
-                db_module.PresenceThreadModel.provider == "linear",
-                db_module.PresenceThreadModel.external_id == thread_id,
+                db_module.ProviderConversationThreadModel.provider == "linear",
+                db_module.ProviderConversationThreadModel.external_id == thread_id,
             )
             .first()
         )
         if thread_row is None:
             return False
-        metadata = _json_object(thread_row.metadata_json)
+        metadata = _json_object(cast(Optional[str], thread_row.metadata_json))
         return bool(metadata.get(LINEAR_EXTERNAL_URL_PUBLISHED_METADATA_KEY))
 
 
-def _event_app_key(event: PresenceEvent) -> Optional[str]:
-    if not event.raw_payload:
-        return None
-    value = event.raw_payload.get("_cao_linear_app_key")
-    return normalize_app_key(str(value)) if value else None
+def _resolve_linear_event(event: LinearIssueContextEvent) -> LinearResolvedPresence:
+    presence = get_linear_workspace_provider().resolve_presence(
+        app_key=event.app_key,
+        app_user_id=event.app_user_id,
+        app_user_name=event.app_user_name,
+    )
+    return LinearResolvedPresence(
+        presence=presence,
+        identity=get_linear_workspace_provider().resolve_identity_for_presence(presence),
+    )
 
 
-def _resolve_linear_event(event: PresenceEvent) -> LinearResolvedPresence:
-    payload = dict(event.raw_payload or {})
-    app_key = _event_app_key(event)
-    if app_key:
-        payload["_cao_linear_app_key"] = app_key
-    return get_linear_workspace_provider().resolve_event(payload)
-
-
-def _policy_action_for_event(event: PresenceEvent) -> Optional[LinearPolicyAction]:
-    classification = classification_from_event(event)
-    if classification is None:
-        return None
-    if classification.kind == "human_issue_delegation":
+def _policy_action_for_event(event: LinearIssueContextEvent) -> Optional[LinearPolicyAction]:
+    if event.event_name == "issue_delegated_to_agent":
         return "delegate"
-    if classification.kind == "human_mention_or_prompt":
+    if event.event_name == "agent_mentioned":
         return "mention"
     return None
 
 
-def _issue_id_for_policy(event: PresenceEvent) -> Optional[str]:
-    if event.thread and event.thread.work_item and event.thread.work_item.ref:
-        return event.thread.work_item.ref.id
-    agent_session = app_client.agent_session_from_payload(event.raw_payload or {})
-    issue = agent_session.get("issue") if isinstance(agent_session, dict) else None
-    if isinstance(issue, dict):
-        issue_id = issue.get("id") or issue.get("identifier")
-        return str(issue_id) if issue_id else None
-    return None
+def _issue_id_for_policy(event: LinearIssueContextEvent) -> Optional[str]:
+    return event.issue_id or event.issue_identifier
 
 
 def _incoming_policy_decision(
     *,
-    event: PresenceEvent,
+    event: LinearIssueContextEvent,
     resolved: LinearResolvedPresence,
 ) -> LinearPolicyDecision:
     # WIP guardrail layer: default off while the Linear workflow shape is still being explored.
@@ -358,8 +363,58 @@ def _incoming_policy_decision(
     return evaluator.evaluate(request)
 
 
-def _runtime_handle_for_resolved_presence(resolved: LinearResolvedPresence) -> AgentRuntimeHandle:
-    return AgentRuntimeHandle(resolved.identity)
+def _runtime_handle_for_resolved_presence(
+    resolved: LinearResolvedPresence,
+    workspace_context_resolution: WorkspaceContextResolution | None = None,
+) -> AgentRuntimeHandle:
+    if not resolved.identity.workspace_context.enabled:
+        return AgentRuntimeHandle(resolved.identity)
+    if workspace_context_resolution is None:
+        raise LinearWorkspaceProviderConfigError(
+            "Linear event did not contain an issue that can resolve workspace context"
+        )
+    return AgentRuntimeHandle(
+        resolved.identity,
+        workspace_context_id=workspace_context_resolution.workspace_context_id,
+    )
+
+
+def _runtime_handle_for_resolved_event(
+    resolved: LinearResolvedPresence,
+    event: WorkspaceProviderEvent,
+) -> AgentRuntimeHandle:
+    resolution = _resolve_workspace_context_for_event(resolved, event)
+    if not resolved.identity.workspace_context.enabled:
+        return _runtime_handle_for_resolved_presence(resolved)
+    return _runtime_handle_for_resolved_presence(
+        resolved,
+        workspace_context_resolution=resolution,
+    )
+
+
+def _resolve_workspace_context_for_event(
+    resolved: LinearResolvedPresence,
+    event: WorkspaceProviderEvent,
+) -> WorkspaceContextResolution | None:
+    register_linear_workspace_context_resolver()
+    try:
+        return resolve_workspace_context_for_identity(resolved.identity, event)
+    except WorkspaceContextResolverError as exc:
+        raise LinearWorkspaceProviderConfigError(str(exc)) from exc
+
+
+def _require_linear_issue_context_event(
+    provider_event: WorkspaceProviderEvent,
+) -> LinearIssueContextEvent:
+    if provider_event.provider_name != "linear":
+        raise LinearWorkspaceProviderConfigError(
+            f"Linear notification received non-Linear provider event: {provider_event.provider_name}"
+        )
+    if not isinstance(provider_event, LinearIssueContextEvent):
+        raise LinearWorkspaceProviderConfigError(
+            "Linear notification provider event must be a Linear issue context event"
+        )
+    return provider_event
 
 
 def _terminal_for_resolved_presence(resolved: LinearResolvedPresence) -> Dict[str, Any]:
@@ -368,27 +423,25 @@ def _terminal_for_resolved_presence(resolved: LinearResolvedPresence) -> Dict[st
 
 def ensure_discovery_terminal(*, app_key: Optional[str] = None) -> Dict[str, Any]:
     """Start or reuse the Linear-mapped CAO terminal for compatibility callers."""
-    raw_payload: dict[str, str] = {}
-    if app_key:
-        raw_payload["_cao_linear_app_key"] = app_key
-    event = PresenceEvent(
-        provider="linear",
-        event_type="AgentSessionEvent",
-        action=None,
-        raw_payload=raw_payload,
+    provider = get_linear_workspace_provider()
+    presence = provider.resolve_presence(app_key=normalize_app_key(app_key) if app_key else None)
+    return _terminal_for_resolved_presence(
+        LinearResolvedPresence(
+            presence=presence,
+            identity=provider.resolve_identity_for_presence(presence),
+        )
     )
-    return _terminal_for_resolved_presence(_resolve_linear_event(event))
 
 
 def build_terminal_message(
-    event: PresenceEvent,
+    event: LinearIssueContextEvent,
     *,
     resolved: Optional[LinearResolvedPresence] = None,
 ) -> str:
-    """Build the prompt sent into the CAO terminal for this smoke bridge."""
-    thread_id = event.thread.ref.id if event.thread else None
-    prompt_body = event.message.body if event.message else None
-    app_key = resolved.presence.app_key if resolved is not None else _event_app_key(event)
+    """Build the prompt sent into the CAO terminal for a Linear provider event."""
+    thread_id = event.thread_id
+    prompt_body = event.message_body
+    app_key = resolved.presence.app_key if resolved is not None else event.app_key
     actor_name = (
         resolved.presence.app_user_name
         if resolved is not None and resolved.presence.app_user_name
@@ -396,13 +449,13 @@ def build_terminal_message(
     )
 
     parts = [
-        f"[Linear {actor_name} smoke event]",
+        f"[Linear {actor_name} provider event]",
         "",
         f"You are acting as {actor_name} for a Linear Agent Session.",
-        "This is a smoke integration path: read the Linear context, acknowledge what you received,",
+        "Read the Linear context, acknowledge what you received,",
         "and do not modify repository files unless explicitly asked by the user.",
         "",
-        f"Linear app key: {app_key or 'legacy'}",
+        f"Linear app key: {app_key or 'unknown'}",
         f"Action: {event.action or 'unknown'}",
         f"Conversation thread ID: {thread_id or 'unknown'}",
     ]
@@ -411,38 +464,36 @@ def build_terminal_message(
     return "\n".join(parts)
 
 
-def _runtime_source_id(event: PresenceEvent) -> str:
-    if event.message is not None and event.message.ref is not None:
-        return f"message:{event.message.ref.id}"
+def _runtime_source_id(event: LinearIssueContextEvent) -> str:
+    if event.message_id is not None:
+        return f"message:{event.message_id}"
     if event.delivery_id:
         return f"delivery:{event.delivery_id}"
 
-    thread_id = event.thread.ref.id if event.thread else ""
-    message_body = event.message.body if event.message else ""
     digest = hashlib.sha256(
         "\n".join(
             [
-                event.provider,
-                event.event_type,
+                event.provider_name,
+                event.event_type or "",
                 event.action or "",
-                thread_id,
-                message_body or "",
+                event.thread_id or "",
+                event.message_body or "",
             ]
         ).encode("utf-8")
     ).hexdigest()[:16]
     return f"derived:{digest}"
 
 
-def handle_presence_event(event: PresenceEvent) -> Optional[str]:
-    """Handle a provider-normalized Linear event through the CAO runtime handle."""
-    thread_id = event.thread.ref.id if event.thread else None
+def handle_provider_event(event: LinearIssueContextEvent) -> Optional[str]:
+    """Handle a typed Linear provider event through the CAO runtime handle."""
+    thread_id = event.thread_id
     resolved = _resolve_linear_event(event)
     app_key = resolved.presence.app_key
-    handle = _runtime_handle_for_resolved_presence(resolved)
+    handle = _runtime_handle_for_resolved_event(resolved, event)
     message = build_terminal_message(event, resolved=resolved)
     result = handle.notify(
         message,
-        sender_id=f"linear:{app_key or 'legacy'}",
+        sender_id=f"linear:{app_key or 'unknown'}",
         source_kind=LINEAR_RUNTIME_SOURCE_KIND,
         source_id=_runtime_source_id(event),
     )
@@ -477,18 +528,94 @@ def handle_presence_event(event: PresenceEvent) -> Optional[str]:
     return terminal_id
 
 
+def persist_linear_provider_event(event: LinearIssueContextEvent) -> PersistedProviderEventRecords:
+    """Persist the durable inbox records touched by a Linear provider event."""
+
+    raw_snapshot = dict(event.raw_payload or {})
+    with db_module.SessionLocal() as session:
+        processed_event = None
+        if event.delivery_id:
+            processed_event, created = mark_processed_event(
+                provider=event.provider_name,
+                external_event_id=event.delivery_id,
+                event_type=event.event_name,
+                metadata=dict(event.metadata or {}),
+                db=session,
+            )
+            if not created:
+                session.commit()
+                return PersistedProviderEventRecords(
+                    processed_event=processed_event,
+                    work_item=None,
+                    thread=None,
+                    message=None,
+                )
+
+        work_item = None
+        if event.issue_id:
+            work_item = upsert_work_item(
+                provider=event.provider_name,
+                external_id=event.issue_id,
+                external_url=event.issue_url,
+                identifier=event.issue_identifier,
+                title=event.issue_title,
+                state=event.issue_state,
+                raw_snapshot=raw_snapshot,
+                db=session,
+            )
+
+        thread = None
+        if event.thread_id:
+            thread = upsert_thread(
+                provider=event.provider_name,
+                external_id=event.thread_id,
+                external_url=event.thread_url,
+                work_item_id=work_item.id if work_item is not None else None,
+                kind="conversation",
+                state="active",
+                prompt_context=event.prompt_context,
+                raw_snapshot=raw_snapshot,
+                metadata=_linear_thread_metadata(event),
+                db=session,
+            )
+
+        message = None
+        if thread is not None and event.message_body:
+            message = upsert_message(
+                thread_id=thread.id,
+                provider=event.provider_name,
+                external_id=event.message_id,
+                direction="inbound",
+                kind=event.message_kind or "unknown",
+                body=event.message_body,
+                state="received",
+                raw_snapshot=raw_snapshot,
+                metadata=dict(event.message_metadata or {}),
+                db=session,
+            )
+
+        session.commit()
+        return PersistedProviderEventRecords(
+            processed_event=processed_event,
+            work_item=work_item,
+            thread=thread,
+            message=message,
+        )
+
+
 def notify_agent_for_persisted_event(
-    persisted_event: Optional[PersistedPresenceEvent],
-    event: Optional[PresenceEvent],
+    persisted_event: Optional[PersistedProviderEventRecords],
+    provider_event: WorkspaceProviderEvent,
 ) -> Optional[AgentRuntimeNotifyResult]:
     """Deliver a compact replyable Linear AgentSession notification to its mapped agent."""
-    if persisted_event is None or event is None:
+    event = _require_linear_issue_context_event(provider_event)
+    if persisted_event is None:
         return None
     if persisted_event.thread is None or persisted_event.message is None:
         return None
     if not persisted_event.message.body:
         return None
-    if not should_notify_agent(event):
+    if not event.should_notify_agent:
         return None
 
     try:
@@ -508,7 +635,11 @@ def notify_agent_for_persisted_event(
         _post_policy_denial_comment(event=event, resolved=resolved, decision=decision)
         return None
 
-    handle = _runtime_handle_for_resolved_presence(resolved)
+    try:
+        handle = _runtime_handle_for_resolved_event(resolved, provider_event)
+    except LinearWorkspaceProviderConfigError as exc:
+        logger.warning("Linear AgentSession notification was not routed: %s", exc)
+        return None
     notification = create_notification_for_persisted_event(
         persisted_event,
         receiver_id=handle.inbox_receiver_id,
@@ -549,44 +680,49 @@ def notify_agent_for_persisted_event(
 
 
 def notify_or_retry_agent_for_persisted_event(
-    persisted_event: Optional[PersistedPresenceEvent],
-    event: Optional[PresenceEvent],
+    persisted_event: Optional[PersistedProviderEventRecords],
+    provider_event: WorkspaceProviderEvent | None,
 ) -> Optional[AgentRuntimeNotifyResult]:
     """Deliver a persisted Linear event, retrying when idempotency found local state."""
 
-    notification_result = notify_agent_for_persisted_event(persisted_event, event)
+    if provider_event is None:
+        return None
+    notification_result = notify_agent_for_persisted_event(
+        persisted_event,
+        provider_event,
+    )
     if notification_result is not None:
         return notification_result
     duplicate_delivery = (
         persisted_event is not None
         and persisted_event.processed_event is not None
-        and event is not None
-        and event.thread is not None
+        and isinstance(provider_event, LinearIssueContextEvent)
+        and provider_event.thread_id is not None
         and persisted_event.thread is None
         and persisted_event.message is None
     )
     if not duplicate_delivery:
         return None
-    return retry_agent_for_presence_event(event)
+    if not isinstance(provider_event, LinearIssueContextEvent):
+        return None
+    return retry_agent_for_provider_event(provider_event)
 
 
-def retry_agent_for_presence_event(
-    event: Optional[PresenceEvent],
+def retry_agent_for_provider_event(
+    event: LinearIssueContextEvent,
 ) -> Optional[AgentRuntimeNotifyResult]:
     """Retry delivery/lifecycle for an already persisted Linear AgentSession event."""
-    if event is None or event.thread is None or event.message is None:
+    if event.thread_id is None or event.message_id is None:
         return None
-    if event.message.ref is None:
-        return None
-    if _persisted_external_url_was_published(event.thread.ref.id):
+    if _persisted_external_url_was_published(event.thread_id):
         return None
 
-    thread = get_thread("linear", event.thread.ref.id)
-    message = get_message("linear", event.message.ref.id)
+    thread = get_thread("linear", event.thread_id)
+    message = get_message("linear", event.message_id)
     if thread is None or message is None:
         return None
     return notify_agent_for_persisted_event(
-        PersistedPresenceEvent(
+        PersistedProviderEventRecords(
             processed_event=None,
             work_item=None,
             thread=thread,
@@ -596,10 +732,25 @@ def retry_agent_for_presence_event(
     )
 
 
+def _linear_thread_metadata(event: LinearIssueContextEvent) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+    for key, value in (
+        ("linear_app_key", event.app_key),
+        ("linear_agent_id", event.agent_id),
+        ("linear_app_user_id", event.app_user_id),
+        ("linear_app_user_name", event.app_user_name),
+        ("linear_issue_id", event.issue_id),
+        ("linear_issue_identifier", event.issue_identifier),
+    ):
+        if value:
+            metadata[key] = value
+    return metadata
+
+
 def handle_agent_session_event(payload: Dict[str, Any]) -> Optional[str]:
-    """Handle a Linear AgentSessionEvent payload by normalizing it first."""
-    event = translator.presence_event_from_agent_session_payload(payload)
-    if event is None:
+    """Handle a Linear AgentSessionEvent payload by publishing its provider event first."""
+    publication = publish_linear_provider_event(payload)
+    if publication is None or not isinstance(publication.event, LinearIssueContextEvent):
         logger.info("Ignoring non-AgentSession Linear payload")
         return None
-    return handle_presence_event(event)
+    return handle_provider_event(publication.event)

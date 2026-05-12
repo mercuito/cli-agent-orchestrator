@@ -29,21 +29,19 @@ from cli_agent_orchestrator.mcp_server.provider_tools import (
 )
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.presence.builtins import ensure_builtin_presence_provider
-from cli_agent_orchestrator.presence.inbox_access import (
+from cli_agent_orchestrator.provider_conversations.inbox_access import (
     InboxReadError,
 )
-from cli_agent_orchestrator.presence.inbox_access import (
+from cli_agent_orchestrator.provider_conversations.inbox_access import (
     read_inbox_message as read_provider_inbox_message,
 )
-from cli_agent_orchestrator.presence.inbox_access import (
+from cli_agent_orchestrator.provider_conversations.inbox_access import (
     read_result_to_dict,
 )
-from cli_agent_orchestrator.presence.manager import UnknownPresenceProviderError
-from cli_agent_orchestrator.presence.reply_service import (
-    PresenceReplyError,
+from cli_agent_orchestrator.provider_conversations.reply_service import (
+    ProviderConversationReplyError,
 )
-from cli_agent_orchestrator.presence.reply_service import (
+from cli_agent_orchestrator.provider_conversations.reply_service import (
     reply_to_inbox_message as route_provider_inbox_reply,
 )
 from cli_agent_orchestrator.services import baton_service
@@ -905,10 +903,6 @@ async def read_inbox_message(
 def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, Any]:
     """Implementation of reply_to_inbox_message logic."""
     try:
-        try:
-            _ensure_mcp_presence_provider_for_inbox(notification_id)
-        except (InboxReadError, UnknownPresenceProviderError):
-            pass
         result = route_provider_inbox_reply(notification_id, body)
         return {
             "success": True,
@@ -923,7 +917,7 @@ def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, A
                 "body": result.outbound_message.body,
             },
         }
-    except PresenceReplyError as exc:
+    except ProviderConversationReplyError as exc:
         payload: Dict[str, Any] = {
             "success": False,
             "error": str(exc),
@@ -946,14 +940,6 @@ async def reply_to_inbox_message(
 ) -> Dict[str, Any]:
     """Reply to a provider-backed inbox notification through CAO's inbox path."""
     return _reply_to_inbox_message_impl(notification_id, body)
-
-
-def _ensure_mcp_presence_provider_for_inbox(notification_id: int) -> None:
-    """Register the built-in provider needed by one provider-backed inbox reply."""
-    read_result = read_provider_inbox_message(notification_id)
-    provider = read_result.thread.get("provider") if read_result.thread is not None else None
-    if provider:
-        ensure_builtin_presence_provider(str(provider))
 
 
 def _require_cao_terminal_id() -> str:
