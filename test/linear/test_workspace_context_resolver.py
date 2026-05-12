@@ -8,12 +8,18 @@ from cli_agent_orchestrator.clients.workspace_context_store import (
     WORKSPACE_CONTEXT_ROLE_CHILD_WORK_ITEM,
     WORKSPACE_CONTEXT_ROLE_INTERACTION,
 )
+from cli_agent_orchestrator.events import CaoEvent, agent_participants_for
 from cli_agent_orchestrator.linear.workspace_context_resolver import (
     LINEAR_PLANNING_RESOLVER_ID,
     register_linear_workspace_context_resolver,
-    resolve_workspace_provider_event,
+    resolve_linear_workspace_event,
 )
 from cli_agent_orchestrator.linear.workspace_events import (
+    LINEAR_AGENT_PARTICIPANT_ROLE_DELEGATED,
+    LINEAR_AGENT_PARTICIPANT_ROLE_LIFECYCLE_ACTIVITY,
+    LINEAR_AGENT_PARTICIPANT_ROLE_MENTIONED,
+    LINEAR_AGENT_PARTICIPANT_ROLE_PROMPTED,
+    LINEAR_AGENT_PARTICIPANT_ROLE_STOP_REQUESTED,
     LinearAgentMentionedEvent,
     LinearAgentSessionLifecycleActivityEvent,
     LinearAgentSessionPromptedEvent,
@@ -22,7 +28,6 @@ from cli_agent_orchestrator.linear.workspace_events import (
     publish_linear_provider_event,
 )
 from cli_agent_orchestrator.workspace_contexts import resolve_workspace_context_for_identity
-from cli_agent_orchestrator.workspace_providers.events import WorkspaceProviderEvent
 
 
 def _agent_session_payload(issue: dict | None, *, session_id: str = "session-1") -> dict:
@@ -41,7 +46,7 @@ def _agent_session_payload(issue: dict | None, *, session_id: str = "session-1")
     }
 
 
-def _published_event(payload: dict) -> WorkspaceProviderEvent:
+def _published_event(payload: dict) -> CaoEvent:
     publication = publish_linear_provider_event(payload)
     assert publication is not None
     return publication.event
@@ -63,7 +68,7 @@ def _context_identity() -> AgentIdentity:
 
 
 def test_linear_issue_without_parent_creates_boundary_context(runtime_inbox_db_session):
-    resolution = resolve_workspace_provider_event(
+    resolution = resolve_linear_workspace_event(
         _published_event(_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"}))
     )
 
@@ -82,7 +87,7 @@ def test_linear_issue_without_parent_creates_boundary_context(runtime_inbox_db_s
 
 
 def test_linear_child_issue_groups_under_parent_boundary(runtime_inbox_db_session):
-    resolution = resolve_workspace_provider_event(
+    resolution = resolve_linear_workspace_event(
         _published_event(
             _agent_session_payload(
                 {
@@ -130,7 +135,7 @@ def test_existing_child_boundary_context_takes_precedence_over_parent_grouping(
         object_id="CAO-80",
     )
 
-    resolution = resolve_workspace_provider_event(
+    resolution = resolve_linear_workspace_event(
         _published_event(
             _agent_session_payload(
                 {
@@ -166,7 +171,7 @@ def test_existing_child_boundary_context_takes_precedence_over_parent_grouping(
 
 def test_linear_event_without_issue_does_not_guess_context(runtime_inbox_db_session):
     assert (
-        resolve_workspace_provider_event(
+        resolve_linear_workspace_event(
             _published_event(_agent_session_payload(None, session_id="s"))
         )
         is None
@@ -246,6 +251,95 @@ def test_linear_provider_publication_uses_semantic_event_names():
 
         assert publication is not None
         assert isinstance(publication.event, event_type)
+
+
+def test_linear_provider_publication_carries_cao_metadata_and_agent_participants():
+    payload = {
+        **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"}),
+        "_cao_linear_agent_id": "implementation_partner",
+        "webhookTimestamp": "2026-05-12T12:00:00Z",
+    }
+
+    publication = publish_linear_provider_event(payload, delivery_id="delivery-1")
+
+    assert publication is not None
+    event = publication.event
+    assert isinstance(event, LinearAgentMentionedEvent)
+    assert event.event_id.startswith("linear:agent_mentioned:")
+    assert event.source.source_type == "linear"
+    assert event.source.source_id == "delivery-1"
+    assert event.occurred_at.isoformat() == "2026-05-12T12:00:00+00:00"
+    assert event.correlation_id == "session-1"
+    assert agent_participants_for(event) == (
+        type(event.agent_participants[0])(
+            agent_identity_id="implementation_partner",
+            role=LINEAR_AGENT_PARTICIPANT_ROLE_MENTIONED,
+        ),
+    )
+
+
+def test_linear_provider_publication_assigns_linear_owned_participant_roles():
+    cases = [
+        (
+            {
+                **_agent_session_payload(
+                    {
+                        "id": "issue-79",
+                        "identifier": "CAO-79",
+                        "delegate": {"id": "delegate-1", "name": "CAO"},
+                    }
+                ),
+                "_cao_linear_agent_id": "implementation_partner",
+            },
+            LINEAR_AGENT_PARTICIPANT_ROLE_DELEGATED,
+        ),
+        (
+            {
+                **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"}),
+                "_cao_linear_agent_id": "implementation_partner",
+                "data": {
+                    **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"})["data"],
+                    "agentActivity": {"id": "activity-1", "type": "prompt", "body": "continue"},
+                },
+            },
+            LINEAR_AGENT_PARTICIPANT_ROLE_PROMPTED,
+        ),
+        (
+            {
+                **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"}),
+                "_cao_linear_agent_id": "implementation_partner",
+                "data": {
+                    **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"})["data"],
+                    "agentActivity": {
+                        "id": "activity-1",
+                        "content": {"signal": "stop", "body": "stop"},
+                    },
+                },
+            },
+            LINEAR_AGENT_PARTICIPANT_ROLE_STOP_REQUESTED,
+        ),
+        (
+            {
+                **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"}),
+                "_cao_linear_agent_id": "implementation_partner",
+                "data": {
+                    **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"})["data"],
+                    "agentActivity": {
+                        "id": "activity-1",
+                        "type": "response",
+                        "body": "done",
+                    },
+                },
+            },
+            LINEAR_AGENT_PARTICIPANT_ROLE_LIFECYCLE_ACTIVITY,
+        ),
+    ]
+
+    for payload, role in cases:
+        publication = publish_linear_provider_event(payload)
+
+        assert publication is not None
+        assert agent_participants_for(publication.event)[0].role == role
 
 
 def test_linear_provider_publication_carries_typed_context_fields():

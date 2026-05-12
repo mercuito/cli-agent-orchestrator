@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.agent_policies import (
     LinearPolicyAction,
@@ -30,7 +31,9 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     normalize_app_key,
     should_enable_linear_agent_policies,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import create_notification_for_persisted_event
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    create_notification_for_persisted_event,
+)
 from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
 from cli_agent_orchestrator.provider_conversations.persistence import (
     get_message,
@@ -50,7 +53,6 @@ from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolverError,
     resolve_workspace_context_for_identity,
 )
-from cli_agent_orchestrator.workspace_providers.events import WorkspaceProviderEvent
 
 logger = logging.getLogger(__name__)
 
@@ -381,7 +383,7 @@ def _runtime_handle_for_resolved_presence(
 
 def _runtime_handle_for_resolved_event(
     resolved: LinearResolvedPresence,
-    event: WorkspaceProviderEvent,
+    event: CaoEvent,
 ) -> AgentRuntimeHandle:
     resolution = _resolve_workspace_context_for_event(resolved, event)
     if not resolved.identity.workspace_context.enabled:
@@ -394,7 +396,7 @@ def _runtime_handle_for_resolved_event(
 
 def _resolve_workspace_context_for_event(
     resolved: LinearResolvedPresence,
-    event: WorkspaceProviderEvent,
+    event: CaoEvent,
 ) -> WorkspaceContextResolution | None:
     register_linear_workspace_context_resolver()
     try:
@@ -404,11 +406,12 @@ def _resolve_workspace_context_for_event(
 
 
 def _require_linear_issue_context_event(
-    provider_event: WorkspaceProviderEvent,
+    provider_event: CaoEvent,
 ) -> LinearIssueContextEvent:
-    if provider_event.provider_name != "linear":
+    if getattr(provider_event, "provider_name", None) != "linear":
         raise LinearWorkspaceProviderConfigError(
-            f"Linear notification received non-Linear provider event: {provider_event.provider_name}"
+            "Linear notification received non-Linear CAO event: "
+            f"{getattr(provider_event, 'provider_name', 'unknown')}"
         )
     if not isinstance(provider_event, LinearIssueContextEvent):
         raise LinearWorkspaceProviderConfigError(
@@ -605,7 +608,7 @@ def persist_linear_provider_event(event: LinearIssueContextEvent) -> PersistedPr
 
 def notify_agent_for_persisted_event(
     persisted_event: Optional[PersistedProviderEventRecords],
-    provider_event: WorkspaceProviderEvent,
+    provider_event: CaoEvent,
 ) -> Optional[AgentRuntimeNotifyResult]:
     """Deliver a compact replyable Linear AgentSession notification to its mapped agent."""
     event = _require_linear_issue_context_event(provider_event)
@@ -681,7 +684,7 @@ def notify_agent_for_persisted_event(
 
 def notify_or_retry_agent_for_persisted_event(
     persisted_event: Optional[PersistedProviderEventRecords],
-    provider_event: WorkspaceProviderEvent | None,
+    provider_event: CaoEvent | None,
 ) -> Optional[AgentRuntimeNotifyResult]:
     """Deliver a persisted Linear event, retrying when idempotency found local state."""
 

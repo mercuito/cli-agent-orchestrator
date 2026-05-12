@@ -1,20 +1,38 @@
-"""Linear workspace-provider event declarations and publishers."""
+"""Linear CAO event declarations and publishers."""
 
 from __future__ import annotations
 
+import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, ClassVar, Mapping, Optional
+from uuid import uuid4
 
-from cli_agent_orchestrator.workspace_providers.events import (
-    WorkspaceProviderEvent,
-    WorkspaceProviderEventDispatcher,
-    WorkspaceProviderEventPublication,
-    default_workspace_provider_event_dispatcher,
+from cli_agent_orchestrator.events import (
+    AgentParticipant,
+    CaoCausationId,
+    CaoCorrelationId,
+    CaoEvent,
+    CaoEventDispatcher,
+    CaoEventId,
+    CaoEventOccurredAt,
+    CaoEventPublication,
+    CaoEventSourceId,
+    CaoEventSourceRef,
+    CaoEventSourceType,
+    default_cao_event_dispatcher,
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolInvocationContext
 
 LINEAR_PROVIDER_NAME = "linear"
+LINEAR_CAO_SOURCE_TYPE = CaoEventSourceType(LINEAR_PROVIDER_NAME)
+LINEAR_AGENT_PARTICIPANT_ROLE_MENTIONED = "mentioned"
+LINEAR_AGENT_PARTICIPANT_ROLE_DELEGATED = "delegated"
+LINEAR_AGENT_PARTICIPANT_ROLE_PROMPTED = "prompted"
+LINEAR_AGENT_PARTICIPANT_ROLE_LIFECYCLE_ACTIVITY = "lifecycle_activity"
+LINEAR_AGENT_PARTICIPANT_ROLE_STOP_REQUESTED = "stop_requested"
+LINEAR_AGENT_PARTICIPANT_ROLE_CREATED_ISSUE = "created_issue"
 LINEAR_AGENT_SESSION_CLASSIFICATION_KEY = "_cao_linear_agent_session_classification"
 LINEAR_WEBHOOK_PACKET_METADATA_KEY = "_cao_linear_webhook_packet"
 INBOX_READ_PRESENTATION_METADATA_KEY = "_cao_inbox_read_presentation"
@@ -24,11 +42,34 @@ LEADING_LINEAR_MENTION_PATTERN = re.compile(
 )
 
 
-@dataclass(frozen=True)
-class LinearIssueContextEvent(WorkspaceProviderEvent):
+def _default_event_id() -> CaoEventId:
+    return CaoEventId(f"{LINEAR_PROVIDER_NAME}:event:{uuid4()}")
+
+
+def _default_source() -> CaoEventSourceRef:
+    return CaoEventSourceRef(
+        source_type=LINEAR_CAO_SOURCE_TYPE,
+        source_id=CaoEventSourceId(LINEAR_PROVIDER_NAME),
+    )
+
+
+def _now() -> CaoEventOccurredAt:
+    return CaoEventOccurredAt(datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True, kw_only=True)
+class LinearIssueContextEvent:
     """Linear provider event carrying issue/session facts for workspace context resolution."""
 
     provider_name: ClassVar[str] = LINEAR_PROVIDER_NAME
+    event_name: ClassVar[str] = "issue_context"
+    description: ClassVar[str] = "Linear issue/session facts for workspace context resolution."
+
+    event_id: CaoEventId = field(default_factory=_default_event_id)
+    source: CaoEventSourceRef = field(default_factory=_default_source)
+    occurred_at: CaoEventOccurredAt = field(default_factory=_now)
+    correlation_id: CaoCorrelationId | None = None
+    causation_id: CaoCausationId | None = None
 
     event_type: str | None = None
     app_key: str | None = None
@@ -54,6 +95,9 @@ class LinearIssueContextEvent(WorkspaceProviderEvent):
     should_notify_agent: bool = True
     suppression_reason: str | None = None
     raw_payload: Mapping[str, Any] | None = None
+    delivery_id: str | None = None
+    metadata: Mapping[str, Any] | None = None
+    agent_participants: tuple[AgentParticipant, ...] = ()
 
     @property
     def canonical_issue_id(self) -> str | None:
@@ -106,21 +150,30 @@ class LinearAgentSessionStopRequestedEvent(LinearIssueContextEvent):
     description: ClassVar[str] = "Linear stop/cancel signal for an existing AgentSession."
 
 
-@dataclass(frozen=True)
-class LinearIssueCreatedEvent(WorkspaceProviderEvent):
+@dataclass(frozen=True, kw_only=True)
+class LinearIssueCreatedEvent:
     """Linear create_issue tool result published by the Linear workspace provider."""
 
     provider_name: ClassVar[str] = LINEAR_PROVIDER_NAME
     event_name: ClassVar[str] = "issue_created"
     description: ClassVar[str] = "Linear issue created through a CAO-mediated Linear tool."
 
+    event_id: CaoEventId = field(default_factory=_default_event_id)
+    source: CaoEventSourceRef = field(default_factory=_default_source)
+    occurred_at: CaoEventOccurredAt = field(default_factory=_now)
+    correlation_id: CaoCorrelationId | None = None
+    causation_id: CaoCausationId | None = None
+
     terminal_id: str
     agent_identity_id: str
     tool_name: str
     issue: Mapping[str, Any]
+    delivery_id: str | None = None
+    metadata: Mapping[str, Any] | None = None
+    agent_participants: tuple[AgentParticipant, ...] = ()
 
 
-LINEAR_WORKSPACE_PROVIDER_EVENTS = (
+LINEAR_CAO_EVENTS = (
     LinearAgentMentionedEvent,
     LinearIssueDelegatedToAgentEvent,
     LinearAgentSessionPromptedEvent,
@@ -130,13 +183,13 @@ LINEAR_WORKSPACE_PROVIDER_EVENTS = (
 )
 
 
-def register_linear_workspace_events(
-    dispatcher: WorkspaceProviderEventDispatcher | None = None,
-) -> WorkspaceProviderEventDispatcher:
-    """Register Linear's provider-declared events on ``dispatcher``."""
+def register_linear_cao_events(
+    dispatcher: CaoEventDispatcher | None = None,
+) -> CaoEventDispatcher:
+    """Register Linear's CAO events on ``dispatcher``."""
 
-    event_dispatcher = dispatcher or default_workspace_provider_event_dispatcher()
-    event_dispatcher.register_events(LINEAR_WORKSPACE_PROVIDER_EVENTS)
+    event_dispatcher = dispatcher or default_cao_event_dispatcher()
+    event_dispatcher.register_events(LINEAR_CAO_EVENTS)
     return event_dispatcher
 
 
@@ -145,9 +198,9 @@ def publish_linear_provider_event(
     *,
     delivery_id: str | None = None,
     header_event: str | None = None,
-    dispatcher: WorkspaceProviderEventDispatcher | None = None,
-) -> WorkspaceProviderEventPublication | None:
-    """Publish the semantic Linear provider event for a Linear webhook/monitor packet."""
+    dispatcher: CaoEventDispatcher | None = None,
+) -> CaoEventPublication[LinearIssueContextEvent] | None:
+    """Publish the semantic Linear CAO event for a Linear webhook/monitor packet."""
 
     semantic = linear_provider_event_from_payload(
         payload,
@@ -156,7 +209,7 @@ def publish_linear_provider_event(
     )
     if semantic is None:
         return None
-    event_dispatcher = register_linear_workspace_events(dispatcher)
+    event_dispatcher = register_linear_cao_events(dispatcher)
     return event_dispatcher.publish(semantic)
 
 
@@ -165,8 +218,8 @@ def linear_provider_event_from_payload(
     *,
     delivery_id: str | None = None,
     header_event: str | None = None,
-) -> WorkspaceProviderEvent | None:
-    """Build Linear's typed provider event from a provider-shaped packet."""
+) -> LinearIssueContextEvent | None:
+    """Build Linear's typed CAO event from a provider-shaped packet."""
 
     from cli_agent_orchestrator.linear.webhook_ingestion import parse_linear_webhook_packet
 
@@ -196,14 +249,14 @@ def linear_provider_event_from_payload(
 def publish_linear_issue_created_event(
     context: ProviderToolInvocationContext,
     *,
-    dispatcher: WorkspaceProviderEventDispatcher | None = None,
-) -> WorkspaceProviderEventPublication | None:
+    dispatcher: CaoEventDispatcher | None = None,
+) -> CaoEventPublication[LinearIssueCreatedEvent] | None:
     """Publish a Linear create_issue result from the provider tool lifecycle."""
 
     event = linear_issue_created_event_from_context(context)
     if event is None:
         return None
-    event_dispatcher = register_linear_workspace_events(dispatcher)
+    event_dispatcher = register_linear_cao_events(dispatcher)
     return event_dispatcher.publish(event)
 
 
@@ -215,11 +268,25 @@ def linear_issue_created_event_from_context(
     result = context.handler_result
     if not isinstance(result, Mapping):
         return None
+    issue_id = _string_value(result.get("identifier") or result.get("id"))
     return LinearIssueCreatedEvent(
+        event_id=_cao_event_id(
+            LinearIssueCreatedEvent.event_name,
+            context.terminal_id,
+            context.tool_name,
+            issue_id,
+        ),
+        source=_cao_source_ref(issue_id or context.terminal_id),
+        occurred_at=_now(),
+        correlation_id=CaoCorrelationId(context.terminal_id),
         terminal_id=context.terminal_id,
         agent_identity_id=context.agent_identity.id,
         tool_name=context.tool_name,
         issue=result,
+        agent_participants=_agent_participants(
+            context.agent_identity.id,
+            LINEAR_AGENT_PARTICIPANT_ROLE_CREATED_ISSUE,
+        ),
         metadata={"hook_name": context.hook_name, "phase": str(context.phase)},
     )
 
@@ -240,8 +307,15 @@ def _issue_context_event_kwargs(
     activity = app_client.agent_activity_from_payload(dict(raw_payload))
     message = _message_fields(agent_session, activity, classification)
     agent_session_id = _string_value(app_client.agent_session_id_from_payload(dict(raw_payload)))
+    message_id = message.get("message_id")
+    source_id = delivery_id or _string_value(message_id) or agent_session_id
+    event_name = _event_name_for_classification(classification.kind)
     return {
         **issue_fields,
+        "event_id": _cao_event_id(event_name, source_id, packet.action),
+        "source": _cao_source_ref(source_id or packet.event_type),
+        "occurred_at": _occurred_at_from_payload(raw_payload),
+        "correlation_id": CaoCorrelationId(agent_session_id) if agent_session_id else None,
         "event_type": packet.event_type,
         "app_key": _normalize_app_key(raw_payload.get("_cao_linear_app_key")),
         "agent_id": _string_value(raw_payload.get("_cao_linear_agent_id")),
@@ -261,8 +335,77 @@ def _issue_context_event_kwargs(
         "suppression_reason": classification.suppression_reason,
         "delivery_id": delivery_id,
         "metadata": {"action": packet.action, "classification": classification.kind},
+        "agent_participants": _agent_participants(
+            _string_value(raw_payload.get("_cao_linear_agent_id")),
+            _participant_role_for_classification(classification.kind),
+        ),
         "raw_payload": raw_payload,
     }
+
+
+def _event_name_for_classification(kind: str) -> str:
+    if kind == "human_mention_or_prompt":
+        return LinearAgentMentionedEvent.event_name
+    if kind == "human_issue_delegation":
+        return LinearIssueDelegatedToAgentEvent.event_name
+    if kind == "follow_up_user_prompt":
+        return LinearAgentSessionPromptedEvent.event_name
+    if kind == "stop_or_cancel":
+        return LinearAgentSessionStopRequestedEvent.event_name
+    return LinearAgentSessionLifecycleActivityEvent.event_name
+
+
+def _participant_role_for_classification(kind: str) -> str:
+    if kind == "human_mention_or_prompt":
+        return LINEAR_AGENT_PARTICIPANT_ROLE_MENTIONED
+    if kind == "human_issue_delegation":
+        return LINEAR_AGENT_PARTICIPANT_ROLE_DELEGATED
+    if kind == "follow_up_user_prompt":
+        return LINEAR_AGENT_PARTICIPANT_ROLE_PROMPTED
+    if kind == "stop_or_cancel":
+        return LINEAR_AGENT_PARTICIPANT_ROLE_STOP_REQUESTED
+    return LINEAR_AGENT_PARTICIPANT_ROLE_LIFECYCLE_ACTIVITY
+
+
+def _agent_participants(
+    agent_identity_id: str | None,
+    role: str,
+) -> tuple[AgentParticipant, ...]:
+    if agent_identity_id is None:
+        return ()
+    return (AgentParticipant(agent_identity_id=agent_identity_id, role=role),)
+
+
+def _cao_event_id(event_name: str, *parts: str | None) -> CaoEventId:
+    normalized_parts = [part for part in parts if part]
+    if normalized_parts:
+        source = ":".join(normalized_parts)
+    else:
+        source = str(uuid4())
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:20]
+    return CaoEventId(f"{LINEAR_PROVIDER_NAME}:{event_name}:{digest}")
+
+
+def _cao_source_ref(source_id: str | None) -> CaoEventSourceRef:
+    return CaoEventSourceRef(
+        source_type=LINEAR_CAO_SOURCE_TYPE,
+        source_id=CaoEventSourceId(source_id or LINEAR_PROVIDER_NAME),
+    )
+
+
+def _occurred_at_from_payload(payload: Mapping[str, Any]) -> CaoEventOccurredAt:
+    for key in ("webhookTimestamp", "createdAt", "updatedAt"):
+        value = _string_value(payload.get(key))
+        if value is None:
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return CaoEventOccurredAt(parsed.astimezone(timezone.utc))
+    return _now()
 
 
 def _issue_from_raw_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | None:

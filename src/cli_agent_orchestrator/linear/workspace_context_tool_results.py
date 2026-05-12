@@ -7,7 +7,7 @@ from cli_agent_orchestrator.linear.workspace_context_resolver import (
     register_linear_workspace_context_resolver,
 )
 from cli_agent_orchestrator.linear.workspace_events import (
-    linear_issue_created_event_from_context,
+    publish_linear_issue_created_event,
 )
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
@@ -23,8 +23,8 @@ def resolve_linear_tool_result_workspace_context(
 
     if context.tool_name != CREATE_ISSUE_TOOL:
         return None
-    event = linear_issue_created_event_from_context(context)
-    if event is None:
+    publication = publish_linear_issue_created_event(context)
+    if publication is None:
         return None
     register_linear_workspace_context_resolver()
-    return resolve_workspace_context_for_identity(context.agent_identity, event)
+    return resolve_workspace_context_for_identity(context.agent_identity, publication.event)

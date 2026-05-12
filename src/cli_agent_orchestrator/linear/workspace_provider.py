@@ -29,7 +29,7 @@ from cli_agent_orchestrator.linear.provider_tools import (
     LinearToolAccess,
     LinearToolProvider,
 )
-from cli_agent_orchestrator.linear.workspace_events import LINEAR_WORKSPACE_PROVIDER_EVENTS
+from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.env import load_env_vars, set_env_var
 from cli_agent_orchestrator.workspace_providers.registry import (
@@ -992,10 +992,10 @@ class LinearWorkspaceProvider:
             return True
         return bool(config and config.tool_access)
 
-    def published_events(self):
-        """Return Linear workspace-provider events subscribers may handle."""
+    def published_cao_events(self):
+        """Return Linear CAO events subscribers may handle."""
 
-        return LINEAR_WORKSPACE_PROVIDER_EVENTS
+        return LINEAR_CAO_EVENTS
 
     def agent_policies_enabled(self) -> bool:
         """Return whether Linear's WIP agent-presence policy guardrails are enabled."""

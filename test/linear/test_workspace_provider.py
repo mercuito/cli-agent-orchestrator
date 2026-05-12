@@ -7,14 +7,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
-from cli_agent_orchestrator.linear.workspace_provider import (
-    LinearWorkspaceProvider,
-    LinearWorkspaceProviderConfigError,
-    configured_app_keys,
-    linear_app_env,
-    load_linear_provider_config,
-    persist_linear_oauth_install,
-)
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearAgentMentionedEvent,
     LinearAgentSessionLifecycleActivityEvent,
@@ -22,6 +14,14 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearAgentSessionStopRequestedEvent,
     LinearIssueCreatedEvent,
     LinearIssueDelegatedToAgentEvent,
+)
+from cli_agent_orchestrator.linear.workspace_provider import (
+    LinearWorkspaceProvider,
+    LinearWorkspaceProviderConfigError,
+    configured_app_keys,
+    linear_app_env,
+    load_linear_provider_config,
+    persist_linear_oauth_install,
 )
 
 
@@ -83,7 +83,7 @@ app_user_name = "Implementation Partner"
     assert resolved.identity.session_name == "implementation-partner"
 
 
-def test_linear_workspace_provider_declares_subscribable_events(tmp_path):
+def test_linear_workspace_provider_declares_subscribable_cao_events(tmp_path):
     config = _linear_config(
         tmp_path,
         """
@@ -100,7 +100,7 @@ app_user_name = "Implementation Partner"
         preflight_credentials=False,
     )
 
-    event_types = set(provider.published_events())
+    event_types = set(provider.published_cao_events())
 
     assert event_types == {
         LinearAgentMentionedEvent,

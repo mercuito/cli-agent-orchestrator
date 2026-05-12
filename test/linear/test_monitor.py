@@ -13,9 +13,15 @@ from fastapi.testclient import TestClient
 from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry
 from cli_agent_orchestrator.api.main import app
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
+from cli_agent_orchestrator.events import CaoEventDispatcher
 from cli_agent_orchestrator.linear import app_client, monitor, monitor_store, runtime
 from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
 from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
+    register_linear_cao_events,
+)
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearPresence,
     LinearResolvedPresence,
@@ -275,6 +281,23 @@ def test_linear_monitor_recovers_missed_prompted_activity_inside_bounded_lookbac
     monkeypatch: pytest.MonkeyPatch,
 ):
     _store_watermark("2026-05-09T11:59:58Z")
+    dispatcher = CaoEventDispatcher()
+    register_linear_cao_events(dispatcher)
+    published = []
+    dispatcher.subscribe_all(
+        handler=lambda event: published.append(event),
+        subscription_id="test-linear-monitor",
+    )
+
+    def publish_once(payload, *, delivery_id=None, header_event=None):
+        return publish_linear_provider_event(
+            payload,
+            delivery_id=delivery_id,
+            header_event=header_event,
+            dispatcher=dispatcher,
+        )
+
+    monkeypatch.setattr(monitor, "publish_linear_provider_event", publish_once)
     monkeypatch.setattr(
         app_client,
         "list_recent_agent_sessions",
@@ -289,6 +312,8 @@ def test_linear_monitor_recovers_missed_prompted_activity_inside_bounded_lookbac
     assert message is not None
     assert message.body == "Can you recover this?"
     assert RecordingRuntimeHandle.notifications[0].created is True
+    assert len(published) == 1
+    assert isinstance(published[0], LinearIssueContextEvent)
 
 
 def test_linear_monitor_recovers_missed_created_session_comment_inside_bounded_lookback(
@@ -510,7 +535,9 @@ def test_linear_monitor_retries_pending_local_delivery_through_runtime_handle(
     linear_monitor_world,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    create_inbox_delivery("provider_conversation", "agent:implementation_partner", "Pending Linear prompt")
+    create_inbox_delivery(
+        "provider_conversation", "agent:implementation_partner", "Pending Linear prompt"
+    )
     monkeypatch.setattr(monitor, "AgentRuntimeHandle", RetryRecordingHandle)
     RetryRecordingHandle.calls = 0
     monkeypatch.setattr(

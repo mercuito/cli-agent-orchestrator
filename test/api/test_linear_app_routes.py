@@ -14,13 +14,21 @@ from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.agent_identity import AgentIdentity
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
+from cli_agent_orchestrator.events import CaoEventDispatcher
 from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
+from cli_agent_orchestrator.linear.workspace_events import (
+    LinearIssueContextEvent,
+    publish_linear_provider_event,
+    register_linear_cao_events,
+)
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearPresence,
     LinearResolvedPresence,
     LinearWorkspaceProviderConfigError,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
+)
 from cli_agent_orchestrator.provider_conversations.persistence import (
     get_processed_event,
     get_thread,
@@ -135,7 +143,9 @@ def _disable_linear_inbox_receiver(monkeypatch: pytest.MonkeyPatch) -> None:
 def _enable_linear_inbox_receiver(monkeypatch: pytest.MonkeyPatch, receiver_id: str) -> Mock:
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.inbox_bridge.app_client.linear_env",
-        lambda name: receiver_id if name == "LINEAR_PROVIDER_CONVERSATION_INBOX_RECEIVER_ID" else None,
+        lambda name: (
+            receiver_id if name == "LINEAR_PROVIDER_CONVERSATION_INBOX_RECEIVER_ID" else None
+        ),
     )
     delivery = Mock()
     monkeypatch.setattr(
@@ -472,6 +482,59 @@ def test_linear_agent_webhook_accepts_event(client, monkeypatch):
     )
 
 
+def test_linear_agent_webhook_publishes_exactly_one_cao_event(client, monkeypatch):
+    _test_session(monkeypatch)
+    _use_mapped_linear_runtime(monkeypatch)
+    dispatcher = CaoEventDispatcher()
+    register_linear_cao_events(dispatcher)
+    published = []
+    dispatcher.subscribe_all(
+        handler=lambda event: published.append(event),
+        subscription_id="test-linear-route",
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.parse_webhook_payload",
+        lambda raw: {
+            "action": "created",
+            "data": {
+                "agentSession": {"id": "session-1"},
+                "agentActivity": {"id": "activity-1", "body": "Hello"},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: LinearWebhookVerification(
+            True,
+            app_key="implementation_partner",
+            agent_id="implementation_partner",
+        ),
+    )
+
+    def publish_once(payload, *, delivery_id=None, header_event=None):
+        return publish_linear_provider_event(
+            payload,
+            delivery_id=delivery_id,
+            header_event=header_event,
+            dispatcher=dispatcher,
+        )
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.publish_linear_provider_event",
+        publish_once,
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json={"action": "created"},
+        headers=_linear_headers(),
+    )
+
+    assert response.status_code == 200
+    assert len(published) == 1
+    assert isinstance(published[0], LinearIssueContextEvent)
+
+
 def test_linear_agent_webhook_routes_verified_app_key_to_runtime(client, monkeypatch):
     _test_session(monkeypatch)
     handle = _use_mapped_linear_runtime(monkeypatch)
@@ -502,7 +565,10 @@ def test_linear_agent_webhook_routes_verified_app_key_to_runtime(client, monkeyp
     assert response.status_code == 200
     assert response.json()["app_key"] == "implementation_partner"
     assert len(handle.accepted) == 1
-    assert _pending_linear_notifications()[0].message.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
+    assert (
+        _pending_linear_notifications()[0].message.source_kind
+        == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
+    )
 
 
 def test_linear_agent_webhook_duplicate_delivery_does_not_duplicate_mapped_runtime_notification(
@@ -738,9 +804,9 @@ def test_linear_agent_webhook_delivers_after_migration_repairs_marker_fk_targets
     assert len(handle.accepted) == 1
     assert len(_pending_linear_notifications()) == 1
     with engine.connect() as connection:
-        assert _notification_fk_targets(connection, "provider_conversation_inbox_notifications") == [
-            "inbox_notifications"
-        ]
+        assert _notification_fk_targets(
+            connection, "provider_conversation_inbox_notifications"
+        ) == ["inbox_notifications"]
         assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
             "inbox_notifications"
         ]

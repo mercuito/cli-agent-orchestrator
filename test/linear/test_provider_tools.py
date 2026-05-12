@@ -17,6 +17,7 @@ from cli_agent_orchestrator.agent_identity import (
     AgentWorkspaceContextConfig,
 )
 from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.events import CaoEventDispatcher, agent_participants_for
 from cli_agent_orchestrator.linear import app_client
 from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_COMMENT_TOOL,
@@ -48,6 +49,12 @@ from cli_agent_orchestrator.linear.provider_tools import (
     SEARCH_ISSUES_TOOL,
     UPDATE_ISSUE_FIELDS,
     UPDATE_ISSUE_TOOL,
+)
+from cli_agent_orchestrator.linear.workspace_events import (
+    LINEAR_AGENT_PARTICIPANT_ROLE_CREATED_ISSUE,
+    LinearIssueCreatedEvent,
+    publish_linear_issue_created_event,
+    register_linear_cao_events,
 )
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
@@ -746,6 +753,22 @@ create_parent_issues = ["CAO-25", "parent-25"]
 """,
         workspace_context_enabled=True,
     )
+    dispatcher = CaoEventDispatcher()
+    register_linear_cao_events(dispatcher)
+    published = []
+    dispatcher.subscribe_all(
+        handler=lambda event: published.append(event),
+        subscription_id="test-linear-tool-result",
+    )
+
+    def publish_once(context):
+        return publish_linear_issue_created_event(context, dispatcher=dispatcher)
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_context_tool_results."
+        "publish_linear_issue_created_event",
+        publish_once,
+    )
 
     def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
         if "CaoLinearTeams" in query:
@@ -795,6 +818,11 @@ create_parent_issues = ["CAO-25", "parent-25"]
             .one()
         )
     assert mapping.role == "child_work_item"
+    assert len(published) == 1
+    assert isinstance(published[0], LinearIssueCreatedEvent)
+    assert (
+        agent_participants_for(published[0])[0].role == LINEAR_AGENT_PARTICIPANT_ROLE_CREATED_ISSUE
+    )
 
 
 def test_linear_update_issue_post_hook_does_not_map_unrelated_issue_to_active_context(

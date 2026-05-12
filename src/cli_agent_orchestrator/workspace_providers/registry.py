@@ -14,6 +14,7 @@ from cli_agent_orchestrator.agent_identity import (
     load_agent_identity_registry,
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
+from cli_agent_orchestrator.events import CaoEvent, default_cao_event_dispatcher
 from cli_agent_orchestrator.workspace_providers.events import (
     WorkspaceProviderEvent,
     default_workspace_provider_event_dispatcher,
@@ -69,10 +70,18 @@ class ProviderToolAccessConfigurableWorkspaceProvider(
 
 @runtime_checkable
 class EventPublishingWorkspaceProvider(WorkspaceProvider, Protocol):
-    """Optional provider surface for declaring subscribable workspace events."""
+    """Legacy optional provider surface for declaring non-Linear workspace events."""
 
     def published_events(self) -> tuple[type[WorkspaceProviderEvent], ...]:
         """Return event types published by this provider."""
+
+
+@runtime_checkable
+class CaoEventPublishingWorkspaceProvider(WorkspaceProvider, Protocol):
+    """Optional provider surface for declaring subscribable CAO events."""
+
+    def published_cao_events(self) -> tuple[type[CaoEvent], ...]:
+        """Return CAO event types published by this provider."""
 
 
 WorkspaceProviderFactory = Callable[[AgentIdentityRegistry], WorkspaceProvider]
@@ -281,6 +290,8 @@ def _candidate_identity_workspace_providers() -> list[WorkspaceProvider]:
 
 
 def _register_provider_events(provider: WorkspaceProvider) -> None:
+    if isinstance(provider, CaoEventPublishingWorkspaceProvider):
+        default_cao_event_dispatcher().register_events(provider.published_cao_events())
     if not isinstance(provider, EventPublishingWorkspaceProvider):
         return
     default_workspace_provider_event_dispatcher().register_events(provider.published_events())

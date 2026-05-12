@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
-from cli_agent_orchestrator.workspace_providers.events import WorkspaceProviderEvent
+from cli_agent_orchestrator.events import CaoEvent
 
 
 @dataclass(frozen=True)
@@ -26,11 +26,11 @@ class ContextAwareNotification:
 
     agent_identity_id: str
     message: str
-    event: WorkspaceProviderEvent
+    event: CaoEvent
     resolution: WorkspaceContextResolution
 
 
-WorkspaceContextResolver = Callable[[WorkspaceProviderEvent], WorkspaceContextResolution | None]
+WorkspaceContextResolver = Callable[[CaoEvent], WorkspaceContextResolution | None]
 
 
 class WorkspaceContextResolverError(ValueError):
@@ -57,7 +57,7 @@ def register_workspace_context_resolver(
 
 def resolve_workspace_context_for_identity(
     identity: AgentIdentity,
-    event: WorkspaceProviderEvent,
+    event: CaoEvent,
 ) -> WorkspaceContextResolution | None:
     """Resolve the active workspace context for an identity and traced event."""
 

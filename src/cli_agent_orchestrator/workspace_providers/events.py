@@ -1,4 +1,10 @@
-"""Workspace-provider typed event publication and subscription contracts."""
+"""Legacy workspace-provider typed event publication and subscription contracts.
+
+This module remains owned by ``workspace_providers`` for non-Linear provider
+cleanup phases. Linear production events are owned by
+``cli_agent_orchestrator.linear.workspace_events`` and publish through
+``cli_agent_orchestrator.events`` only.
+"""
 
 from __future__ import annotations
 

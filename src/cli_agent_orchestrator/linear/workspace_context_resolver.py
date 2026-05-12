@@ -9,6 +9,7 @@ from cli_agent_orchestrator.clients.workspace_context_store import (
     WORKSPACE_CONTEXT_ROLE_CHILD_WORK_ITEM,
     WORKSPACE_CONTEXT_ROLE_INTERACTION,
 )
+from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     LinearIssueCreatedEvent,
@@ -17,7 +18,6 @@ from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
     register_workspace_context_resolver,
 )
-from cli_agent_orchestrator.workspace_providers.events import WorkspaceProviderEvent
 
 LINEAR_PLANNING_RESOLVER_ID = "linear_planning"
 LINEAR_PROVIDER_ID = "linear"
@@ -25,10 +25,10 @@ LINEAR_ISSUE_OBJECT_TYPE = "issue"
 LINEAR_AGENT_SESSION_OBJECT_TYPE = "agent_session"
 
 
-def resolve_workspace_provider_event(
-    event: WorkspaceProviderEvent,
+def resolve_linear_workspace_event(
+    event: CaoEvent,
 ) -> WorkspaceContextResolution | None:
-    """Resolve workspace context from a provider-published Linear event."""
+    """Resolve workspace context from a CAO-published Linear event."""
 
     if isinstance(event, LinearIssueContextEvent):
         return resolve_issue_context_event(event)
@@ -42,7 +42,7 @@ def register_linear_workspace_context_resolver() -> None:
 
     register_workspace_context_resolver(
         LINEAR_PLANNING_RESOLVER_ID,
-        resolve_workspace_provider_event,
+        resolve_linear_workspace_event,
     )
 
 
