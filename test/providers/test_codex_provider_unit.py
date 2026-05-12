@@ -1031,6 +1031,19 @@ class TestCodexV0111Extraction:
 
 
 class TestCodexProviderMisc:
+    @patch("cli_agent_orchestrator.providers.base.tmux_client")
+    def test_interrupt_sends_escape_while_processing(self, mock_tmux):
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        provider.get_status = MagicMock(return_value=TerminalStatus.PROCESSING)
+
+        assert provider.interrupt() is True
+        provider.get_status.assert_called_once_with()
+        mock_tmux.send_special_key.assert_called_once_with(
+            "test-session",
+            "window-0",
+            "Escape",
+        )
+
     def test_paste_enter_count_uses_provider_runtime_config(self):
         provider = CodexProvider("test1234", "test-session", "window-0")
 

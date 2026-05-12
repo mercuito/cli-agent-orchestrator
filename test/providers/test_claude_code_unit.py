@@ -466,6 +466,19 @@ More content
 class TestClaudeCodeProviderMisc:
     """Tests for miscellaneous ClaudeCodeProvider methods."""
 
+    @patch("cli_agent_orchestrator.providers.base.tmux_client")
+    def test_interrupt_sends_escape_while_processing(self, mock_tmux):
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+        provider.get_status = MagicMock(return_value=TerminalStatus.PROCESSING)
+
+        assert provider.interrupt() is True
+        provider.get_status.assert_called_once_with()
+        mock_tmux.send_special_key.assert_called_once_with(
+            "test-session",
+            "window-0",
+            "Escape",
+        )
+
     def test_exit_cli(self):
         """Test exit command."""
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")

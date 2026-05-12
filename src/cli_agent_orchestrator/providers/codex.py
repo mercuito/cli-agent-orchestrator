@@ -282,6 +282,7 @@ class CodexProvider(BaseProvider):
     """Provider for Codex CLI tool integration."""
 
     provider_type = ProviderType.CODEX.value
+    interrupt_key = "Escape"
 
     @classmethod
     def runtime_state_capability(cls) -> CodexRuntimeStateCapability:

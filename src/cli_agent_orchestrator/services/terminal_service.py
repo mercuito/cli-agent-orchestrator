@@ -404,6 +404,28 @@ def send_special_key(terminal_id: str, key: str) -> bool:
         raise
 
 
+def interrupt_terminal(terminal_id: str) -> bool:
+    """Ask the terminal's provider to interrupt its active turn."""
+    try:
+        metadata = get_terminal_metadata(terminal_id)
+        if not metadata:
+            raise ValueError(f"Terminal '{terminal_id}' not found")
+
+        provider = provider_manager.get_provider(terminal_id)
+        if provider is None:
+            raise ValueError(f"Provider not found for terminal {terminal_id}")
+
+        interrupted = provider.interrupt()
+        if interrupted:
+            update_last_active(terminal_id)
+        logger.info(f"Interrupted terminal: {terminal_id} (sent={interrupted})")
+        return interrupted
+
+    except Exception as e:
+        logger.error(f"Failed to interrupt terminal {terminal_id}: {e}")
+        raise
+
+
 def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
     """Get terminal output.
 

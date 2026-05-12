@@ -1,6 +1,7 @@
 """Tests for base provider."""
 
 from typing import Optional
+from unittest.mock import patch
 
 import pytest
 
@@ -102,3 +103,21 @@ class TestBaseProvider:
         assert provider.extract_last_message_from_script("test") == "extracted message"
         assert provider.exit_cli() == "/exit"
         provider.cleanup()  # Should not raise
+
+    @patch("cli_agent_orchestrator.providers.base.tmux_client")
+    def test_interrupt_does_not_send_key_when_idle(self, mock_tmux):
+        """Idle providers do not need an interrupt key."""
+        provider = ConcreteProvider("term-123", "session-1", "window-0")
+        provider._update_status(TerminalStatus.IDLE)
+
+        assert provider.interrupt() is False
+        mock_tmux.send_special_key.assert_not_called()
+
+    @patch("cli_agent_orchestrator.providers.base.tmux_client")
+    def test_interrupt_sends_provider_interrupt_key_when_not_idle(self, mock_tmux):
+        """Busy providers receive their configured interrupt key."""
+        provider = ConcreteProvider("term-123", "session-1", "window-0")
+        provider._update_status(TerminalStatus.PROCESSING)
+
+        assert provider.interrupt() is True
+        mock_tmux.send_special_key.assert_called_once_with("session-1", "window-0", "C-c")

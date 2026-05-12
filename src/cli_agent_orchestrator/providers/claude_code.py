@@ -173,6 +173,7 @@ class ClaudeCodeProvider(BaseProvider):
     """Provider for Claude Code CLI tool integration."""
 
     provider_type = ProviderType.CLAUDE_CODE.value
+    interrupt_key = "Escape"
 
     @classmethod
     def runtime_state_capability(cls) -> ClaudeRuntimeStateCapability:

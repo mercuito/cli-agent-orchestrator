@@ -6,6 +6,7 @@ import pytest
 
 from cli_agent_orchestrator.services.terminal_service import (
     get_working_directory,
+    interrupt_terminal,
     send_special_key,
 )
 
@@ -214,3 +215,67 @@ class TestSendSpecialKey:
         mock_tmux_client.send_special_key.assert_called_once_with(
             "cao-session", "developer-mnop", "Escape"
         )
+
+
+class TestTerminalServiceInterrupt:
+    """Tests for terminal-level provider interrupt."""
+
+    @patch("cli_agent_orchestrator.services.terminal_service.update_last_active")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_interrupt_terminal_calls_provider_interrupt(
+        self,
+        mock_get_metadata,
+        mock_provider_manager,
+        mock_update_last_active,
+    ):
+        terminal_id = "test-terminal-005"
+        provider = mock_provider_manager.get_provider.return_value
+        provider.interrupt.return_value = True
+        mock_get_metadata.return_value = {
+            "id": terminal_id,
+            "tmux_session": "cao-session",
+            "tmux_window": "developer-qrst",
+        }
+
+        result = interrupt_terminal(terminal_id)
+
+        assert result is True
+        provider.interrupt.assert_called_once_with()
+        mock_update_last_active.assert_called_once_with(terminal_id)
+
+    @patch("cli_agent_orchestrator.services.terminal_service.update_last_active")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_interrupt_terminal_does_not_update_activity_when_already_idle(
+        self,
+        mock_get_metadata,
+        mock_provider_manager,
+        mock_update_last_active,
+    ):
+        provider = mock_provider_manager.get_provider.return_value
+        provider.interrupt.return_value = False
+        mock_get_metadata.return_value = {
+            "id": "test-terminal-006",
+            "tmux_session": "cao-session",
+            "tmux_window": "developer-uvwx",
+        }
+
+        result = interrupt_terminal("test-terminal-006")
+
+        assert result is False
+        provider.interrupt.assert_called_once_with()
+        mock_update_last_active.assert_not_called()
+
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_interrupt_terminal_requires_provider(self, mock_get_metadata, mock_provider_manager):
+        mock_get_metadata.return_value = {
+            "id": "test-terminal-007",
+            "tmux_session": "cao-session",
+            "tmux_window": "developer-yzab",
+        }
+        mock_provider_manager.get_provider.return_value = None
+
+        with pytest.raises(ValueError, match="Provider not found"):
+            interrupt_terminal("test-terminal-007")

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Protocol
 
 from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 
 
@@ -127,6 +128,7 @@ class BaseProvider(ABC):
     """
 
     provider_type: Optional[str] = None
+    interrupt_key: str = "C-c"
 
     def __init__(
         self,
@@ -265,6 +267,14 @@ class BaseProvider(ABC):
         post-task completed.
         """
         pass
+
+    def interrupt(self) -> bool:
+        """Interrupt the active provider turn when the terminal is not already idle."""
+        status = self.get_status()
+        if status in (TerminalStatus.IDLE, TerminalStatus.COMPLETED):
+            return False
+        tmux_client.send_special_key(self.session_name, self.window_name, self.interrupt_key)
+        return True
 
     def _update_status(self, status: TerminalStatus) -> None:
         """Update internal status."""
