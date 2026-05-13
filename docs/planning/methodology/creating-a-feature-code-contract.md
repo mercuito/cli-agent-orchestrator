@@ -44,6 +44,12 @@ capability contract, or behavioral contract. Those artifacts can reveal
 where implementation steering may be useful, but they do not authorize
 implementation choices by themselves.
 
+Observable system outcomes belong in the Behavioral Contract. The
+feature-level Code Contract may only steer the implementation of those
+behaviors by naming ownership boundaries, storage shape, dependency
+direction, module placement, API ownership, migration discipline, or other
+code architecture decisions.
+
 Author feature-level Code Contract clauses only from:
 
 - explicit user or product direction about implementation shape;
