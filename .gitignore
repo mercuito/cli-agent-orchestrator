@@ -40,6 +40,9 @@ work/
 # AI tool configs
 .claude/
 .codex/
+!.codex/
+!.codex/agents/
+!.codex/agents/*.toml
 .agents/
 .kiro/
 
