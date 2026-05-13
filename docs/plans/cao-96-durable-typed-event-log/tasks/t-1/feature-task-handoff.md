@@ -1,4 +1,4 @@
-# Feature Task Handoff: t-1 - Durable Event Log Readiness
+# Feature Task Handoff: t-1 - Candidate Implementation Review And Revision
 
 ## Applicable Criteria
 
@@ -9,19 +9,27 @@
 
 ## Task Brief
 
-Establish the durable event-log foundation for a CAO workspace. Done means
-the workspace can gain the durable event log and participant-index shape
-through the repo's established initialization or migration path before
-production CAO events are published.
+Commit `c623eb4` (`Add durable typed event log persistence`) is the
+candidate draft implementation for CAO-96. Treat that commit as a first
+draft, not accepted work.
+
+Review the candidate implementation against the full Behavioral Contract,
+Feature Code Contract, Feature Test Contract, and the coding-level
+contracts you draft for this task. Revise production code, tests, and
+task-level artifacts until the implementation meets the quality bar and
+the required reviewers explicitly approve.
 
 ## Slice Reference
 
-See `../tasks.md#t-1---durable-event-log-readiness` for the authoritative
-task entry. Assigned slices:
+See `../tasks.md#t-1---candidate-implementation-review-and-revision` for
+the authoritative task entry. Assigned slices:
 
-- Behavioral slice: `B-1`
-- Code slice: `F-CC-5`
-- Test slice: `F-TC-3`
+- Behavioral slice: `B-1`, `B-2`, `B-3`, `B-4`, `B-5`, `B-6`, `B-7`, `B-8`, `B-9`, `B-10`, `B-11`, `B-12`, `B-13`, `B-14`, `B-15`, `B-16`, `C-1`, `C-2`, `C-3`, `C-4`
+- Code slice: `F-CC-1`, `F-CC-2`, `F-CC-3`, `F-CC-4`, `F-CC-5`, `F-CC-6`, `F-CC-7`
+- Test slice: `F-TC-1`, `F-TC-2`, `F-TC-3`, `F-TC-4`, `F-TC-5`
+
+Candidate implementation source: commit `c623eb4 Add durable typed event
+log persistence`.
 
 The universal `test-validity-preserved` criterion applies regardless.
 
