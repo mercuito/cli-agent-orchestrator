@@ -81,7 +81,7 @@ def test_provider_conversation_migration_creates_tables_on_existing_database(tmp
     }.issubset(table_names)
 
 
-def test_provider_conversation_migration_moves_legacy_presence_tables(tmp_path, monkeypatch):
+def test_provider_conversation_migration_copies_legacy_presence_tables(tmp_path, monkeypatch):
     db_path = tmp_path / "legacy-presence.db"
     engine = create_engine(f"sqlite:///{db_path}")
     monkeypatch.setattr(db_module, "engine", engine)
@@ -227,12 +227,12 @@ def test_provider_conversation_migration_moves_legacy_presence_tables(tmp_path, 
         "provider_conversation_messages",
         "provider_conversation_inbox_notifications",
     }.issubset(table_names)
-    assert not {
+    assert {
         "presence_work_items",
         "presence_threads",
         "presence_messages",
         "presence_inbox_notifications",
-    }.intersection(table_names)
+    }.issubset(table_names)
     with engine.connect() as connection:
         assert connection.exec_driver_sql(
             "SELECT title FROM provider_work_items WHERE id = 401"

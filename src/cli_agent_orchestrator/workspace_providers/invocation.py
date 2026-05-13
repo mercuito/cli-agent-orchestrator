@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry
+from cli_agent_orchestrator.services.agent_identity_manager import (
+    AgentIdentityManager,
+    default_agent_identity_manager,
+)
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,
     ProviderToolAccess,
@@ -56,7 +60,8 @@ class ProviderMediatedToolInvocationService:
     """Resolve identity access and run the provider-mediated call lifecycle."""
 
     policies: Mapping[str, ProviderToolAccessPolicy]
-    agent_registry: AgentIdentityRegistry
+    agent_registry: AgentIdentityRegistry | None = None
+    identity_manager: AgentIdentityManager | None = None
     terminal_metadata_resolver: TerminalMetadataResolver | None = None
 
     def invoke(
@@ -148,7 +153,7 @@ class ProviderMediatedToolInvocationService:
 
         normalized_identity_id = identity_id.strip()
         try:
-            return self.agent_registry.get(normalized_identity_id)
+            return self._identity_manager().resolve_identity(normalized_identity_id)
         except Exception as exc:
             raise ProviderMediatedToolAccessDenied(
                 "Provider-mediated tool call denied: terminal identity is not configured",
@@ -158,6 +163,13 @@ class ProviderMediatedToolInvocationService:
                     "agent_identity_id": normalized_identity_id,
                 },
             ) from exc
+
+    def _identity_manager(self) -> AgentIdentityManager:
+        if self.identity_manager is not None:
+            return self.identity_manager
+        if self.agent_registry is not None:
+            return AgentIdentityManager(configured_identities=self.agent_registry)
+        return default_agent_identity_manager()
 
     def _resolve_access(
         self, policy: ProviderToolAccessPolicy, agent_identity_id: str, tool_name: str

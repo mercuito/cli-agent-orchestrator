@@ -62,6 +62,7 @@ def _persist_contract_terminals() -> None:
         "codex",
         "developer",
         agent_identity_id="identity_a",
+        workspace_context_id=db_module.ensure_default_workspace_context("identity_a").id,
     )
     db_module.create_terminal(
         "terminal-b",
@@ -70,6 +71,7 @@ def _persist_contract_terminals() -> None:
         "codex",
         "reviewer",
         agent_identity_id="identity_b",
+        workspace_context_id=db_module.ensure_default_workspace_context("identity_b").id,
     )
     db_module.create_terminal(
         "raw-terminal",

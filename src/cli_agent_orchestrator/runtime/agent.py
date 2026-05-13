@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -28,6 +28,10 @@ from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.services.agent_identity_manager import (
+    AgentIdentityManager,
+    default_agent_identity_manager,
+)
 from cli_agent_orchestrator.services import inbox_service, terminal_service
 
 logger = logging.getLogger(__name__)
@@ -35,8 +39,6 @@ logger = logging.getLogger(__name__)
 RUNTIME_FINGERPRINT_SCHEMA_VERSION = "cao-identity-runtime-fingerprint.v1"
 RUNTIME_STATE_SCHEMA_VERSION = "cao-identity-runtime-state.v1"
 RUNTIME_STATE_FILENAME = "runtime-state.json"
-_PRESERVE_PROVIDER_RUNTIME = object()
-
 
 class AgentRuntimeStatus(str, Enum):
     """Provider-friendly status for a mapped CAO agent runtime."""
@@ -98,7 +100,6 @@ class AgentIdentityRuntimeState:
     workspace_context_id: str
     provider: str
     terminal_id: str | None
-    provider_runtime: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -108,7 +109,6 @@ class TerminalRuntimeState:
     schema_version: str
     terminal_id: str
     provider: str
-    provider_runtime: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -166,11 +166,21 @@ class AgentRuntimeInvariantError(RuntimeError):
 class AgentRuntimeHandle:
     """Provider-facing operational contract for one durable CAO agent identity."""
 
-    def __init__(self, identity: AgentIdentity, workspace_context_id: str | None = None) -> None:
-        self.identity = identity
+    def __init__(
+        self,
+        identity: AgentIdentity,
+        workspace_context_id: str | None = None,
+        *,
+        identity_manager: AgentIdentityManager | None = None,
+    ) -> None:
+        self._identity_manager = identity_manager or default_agent_identity_manager()
+        registered_identity = self._identity_manager.require_registered_identity(identity)
         if workspace_context_id is None:
-            workspace_context_id = db_module.ensure_default_workspace_context(identity.id).id
+            workspace_context_id = db_module.ensure_default_workspace_context(
+                registered_identity.id
+            ).id
         self.workspace_context_id = workspace_context_id
+        self.identity = registered_identity.for_workspace_context(workspace_context_id)
         self._last_freshness_result: Optional[AgentRuntimeFreshnessResult] = None
 
     @property
@@ -224,11 +234,7 @@ class AgentRuntimeHandle:
         )
         if switch_result is not None:
             raise RuntimeError(switch_result.error or "workspace context switch failed")
-        provider_runtime = self._stored_provider_runtime_payload()
-        started = self._start_with_fingerprint(
-            desired_fingerprint,
-            provider_runtime=provider_runtime,
-        )
+        started = self._start_with_fingerprint(desired_fingerprint)
         self._refresh_provider_runtime_cache_for_terminal(
             started.id,
             desired_fingerprint,
@@ -263,11 +269,7 @@ class AgentRuntimeHandle:
                     publish_event=publish_lifecycle_event,
                 )
             try:
-                provider_runtime = self._stored_provider_runtime_payload()
-                started = self._start_with_fingerprint(
-                    desired_fingerprint,
-                    provider_runtime=provider_runtime,
-                )
+                started = self._start_with_fingerprint(desired_fingerprint)
                 self._refresh_provider_runtime_cache_for_terminal(
                     started.id,
                     desired_fingerprint,
@@ -394,11 +396,10 @@ class AgentRuntimeHandle:
             )
 
         try:
-            provider_runtime = self._discover_live_provider_runtime_payload(terminal.id)
+            self._save_live_provider_runtime_state(terminal.id)
             self._write_applied_runtime_state(
                 terminal.id,
                 self._applied_runtime_fingerprint(terminal.id) or "",
-                provider_runtime=provider_runtime,
             )
         except Exception as exc:
             logger.warning(
@@ -435,10 +436,7 @@ class AgentRuntimeHandle:
 
         try:
             terminal_service.delete_terminal(terminal.id, require_window_killed=True)
-            restarted = self._start_with_fingerprint(
-                desired_fingerprint,
-                provider_runtime=provider_runtime,
-            )
+            restarted = self._start_with_fingerprint(desired_fingerprint)
             self._refresh_provider_runtime_cache_for_terminal(
                 restarted.id,
                 desired_fingerprint,
@@ -750,13 +748,13 @@ class AgentRuntimeHandle:
         other_handle = AgentRuntimeHandle(
             self.identity,
             workspace_context_id=terminal.workspace_context_id,
+            identity_manager=self._identity_manager,
         )
         try:
-            provider_runtime = other_handle._discover_live_provider_runtime_payload(terminal.id)
+            other_handle._save_live_provider_runtime_state(terminal.id)
             other_handle._write_applied_runtime_state(
                 terminal.id,
                 other_handle._applied_runtime_fingerprint(terminal.id) or "",
-                provider_runtime=provider_runtime,
             )
             other_handle._move_pending_terminal_notifications_to_agent(terminal.id)
             terminal_service.delete_terminal(terminal.id, require_window_killed=True)
@@ -801,26 +799,12 @@ class AgentRuntimeHandle:
     def _start_with_fingerprint(
         self,
         desired_fingerprint: str,
-        *,
-        provider_runtime: Mapping[str, Any] | None = None,
     ) -> AgentRuntimeTerminal:
-        create_kwargs: dict[str, Any] = {
-            "provider": self.identity.cli_provider,
-            "agent_profile": self.identity.agent_profile,
-            "session_name": self.session_name,
-            "new_session": not tmux_client.session_exists(self.session_name),
-            "working_directory": self.identity.workdir,
-            "agent_identity": self.identity,
-        }
-        create_kwargs["workspace_context_id"] = self.workspace_context_id
-        if provider_runtime is not None:
-            create_kwargs["provider_runtime"] = provider_runtime
-        created = terminal_service.create_terminal(**create_kwargs)
+        created = terminal_service.create_terminal_for_agent_identity(self.identity)
         self._ensure_context_workspace(active_terminal_id=created.id)
         self._write_applied_runtime_state(
             created.id,
             desired_fingerprint,
-            provider_runtime=provider_runtime,
         )
         provider_value = getattr(created.provider, "value", created.provider)
         provider_name = str(provider_value)
@@ -1019,34 +1003,22 @@ class AgentRuntimeHandle:
         value = data.get("fingerprint")
         return str(value) if isinstance(value, str) else None
 
-    def _stored_provider_runtime_payload(self) -> Mapping[str, Any] | None:
-        if provider_manager.runtime_state_capability(self.identity.cli_provider) is None:
-            return None
-        data = self._read_runtime_state_data()
-        if data is None:
-            return None
-        provider_runtime = data.get("provider_runtime")
-        if provider_runtime is None:
-            return None
-        if not isinstance(provider_runtime, Mapping):
-            raise ValueError("Stored provider_runtime must be a mapping or null")
-        return dict(provider_runtime)
-
-    def _discover_live_provider_runtime_payload(
+    def _save_live_provider_runtime_state(
         self,
         terminal_id: str,
-    ) -> Mapping[str, Any] | None:
+    ) -> None:
         capability = provider_manager.runtime_state_capability(self.identity.cli_provider)
         if capability is None:
-            return None
+            return
         runtime_paths = self._runtime_paths()
         state = capability.discover_current_runtime_state(
             terminal_id=terminal_id,
             provider_data_dir=runtime_paths.provider_data_dir,
         )
         if state is None:
-            return None
-        return dict(capability.serialize_runtime_state(state))
+            capability.clear_runtime_state(provider_data_dir=runtime_paths.provider_data_dir)
+            return
+        capability.save_runtime_state(state)
 
     def _refresh_provider_runtime_cache_for_terminal(
         self,
@@ -1061,13 +1033,13 @@ class AgentRuntimeHandle:
             terminal_id=terminal_id,
             provider_data_dir=runtime_paths.provider_data_dir,
         )
-        provider_runtime = (
-            None if state is None else dict(capability.serialize_runtime_state(state))
-        )
+        if state is None:
+            capability.clear_runtime_state(provider_data_dir=runtime_paths.provider_data_dir)
+        else:
+            capability.save_runtime_state(state)
         self._write_applied_runtime_state(
             terminal_id,
             fingerprint,
-            provider_runtime=provider_runtime,
         )
 
     def _read_runtime_state_data(self) -> dict[str, Any] | None:
@@ -1084,15 +1056,8 @@ class AgentRuntimeHandle:
         self,
         terminal_id: str,
         fingerprint: str,
-        *,
-        provider_runtime: Mapping[str, Any] | None | object = _PRESERVE_PROVIDER_RUNTIME,
     ) -> None:
         path = self._runtime_state_path()
-        if provider_runtime is _PRESERVE_PROVIDER_RUNTIME:
-            existing = self._read_runtime_state_data()
-            runtime_payload = None if existing is None else existing.get("provider_runtime")
-        else:
-            runtime_payload = provider_runtime
         path.write_text(
             json.dumps(
                 {
@@ -1102,7 +1067,6 @@ class AgentRuntimeHandle:
                     "provider": self.identity.cli_provider,
                     "terminal_id": terminal_id,
                     "fingerprint": fingerprint,
-                    "provider_runtime": runtime_payload,
                     "applied_at": datetime.now().isoformat(),
                 },
                 sort_keys=True,

@@ -23,6 +23,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     publish_linear_provider_event,
 )
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
+from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityManager
 
 DEFAULT_PAGE_SIZE = 25
 DEFAULT_MAX_PAGES = 2
@@ -505,8 +506,11 @@ def _retry_pending_delivery(
     diagnostics: list[LinearMonitorDiagnostic],
 ) -> int:
     try:
-        identity = provider.resolve_identity_for_presence(presence)
-        handle = AgentRuntimeHandle(identity)
+        identity_manager = AgentIdentityManager(identity_providers=(provider,))
+        identity = identity_manager.register_identity(
+            provider.resolve_identity_for_presence(presence)
+        )
+        handle = AgentRuntimeHandle(identity, identity_manager=identity_manager)
         if db_module.get_oldest_pending_inbox_delivery(handle.inbox_receiver_id) is None:
             return 0
         result = handle.try_deliver_pending()

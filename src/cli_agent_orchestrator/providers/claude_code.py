@@ -35,6 +35,7 @@ from cli_agent_orchestrator.utils.claude_runtime import (
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
+PROVIDER_RUNTIME_STATE_FILENAME = "runtime_state.json"
 
 
 # Custom exception for provider errors
@@ -167,6 +168,42 @@ class ClaudeRuntimeStateCapability(ProviderRuntimeStateCapability):
             state.payload, provider_data_dir=provider_data_dir
         )
         return ["--resume", str(validated.payload["session_id"])]
+
+    def load_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState | None:
+        """Load Claude-owned runtime state from the provider data directory."""
+        path = provider_data_dir / PROVIDER_RUNTIME_STATE_FILENAME
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        return self.deserialize_runtime_state(payload, provider_data_dir=provider_data_dir)
+
+    def save_runtime_state(self, state: ProviderRuntimeState) -> None:
+        """Persist Claude-owned runtime state in the provider data directory."""
+        payload = self.serialize_runtime_state(state)
+        state.provider_data_dir.mkdir(parents=True, exist_ok=True)
+        (state.provider_data_dir / PROVIDER_RUNTIME_STATE_FILENAME).write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+
+    def clear_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> None:
+        """Clear Claude-owned runtime state in the provider data directory."""
+        try:
+            (provider_data_dir / PROVIDER_RUNTIME_STATE_FILENAME).unlink()
+        except FileNotFoundError:
+            pass
 
 
 class ClaudeCodeProvider(BaseProvider):

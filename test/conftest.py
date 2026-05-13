@@ -10,10 +10,11 @@ from sqlalchemy import create_engine, event as sa_event, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityManager
 
 
 @pytest.fixture
@@ -56,6 +57,31 @@ def implementation_partner_identity_factory():
         return AgentIdentity(**values)
 
     return _identity
+
+
+@pytest.fixture
+def agent_identity_manager_factory():
+    """Sanctioned manager-backed factory for framework-consumed test identities."""
+
+    def _manager(
+        *identities: AgentIdentity,
+        terminals: list[dict[str, object]] | None = None,
+        providers: tuple[object, ...] = (),
+    ) -> AgentIdentityManager:
+        manager = AgentIdentityManager(
+            configured_identities=AgentIdentityRegistry({}),
+            identity_providers=providers,
+            terminal_lister=lambda: list(terminals or []),
+            terminal_metadata_resolver=lambda terminal_id: {
+                terminal["id"]: terminal for terminal in terminals or []
+            }.get(terminal_id),
+            profile_loader=lambda profile: object(),
+        )
+        for identity in identities:
+            manager.register_identity(identity)
+        return manager
+
+    return _manager
 
 
 class FakeTerminalProvider:

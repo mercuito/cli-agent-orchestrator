@@ -8,9 +8,10 @@ from typing import Any, Iterable, Mapping
 from fastmcp.tools.base import Tool, ToolResult
 from pydantic import PrivateAttr
 
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentityRegistry,
-    load_agent_identity_registry,
+from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry
+from cli_agent_orchestrator.services.agent_identity_manager import (
+    AgentIdentityManager,
+    default_agent_identity_manager,
 )
 from cli_agent_orchestrator.workspace_providers.invocation import (
     ProviderMediatedToolAccessDenied,
@@ -75,7 +76,10 @@ def register_provider_mediated_mcp_tools_for_terminal(
     while leaving built-in CAO MCP registration untouched.
     """
     try:
-        agent_registry = load_agent_identity_registry()
+        identity_manager = default_agent_identity_manager()
+        agent_registry = AgentIdentityRegistry(
+            {identity.id: identity for identity in identity_manager.list_identities()}
+        )
         policies = load_enabled_provider_tool_access_policies(agent_registry=agent_registry)
     except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
         logger.exception("Provider-mediated MCP tool configuration is invalid")
@@ -92,6 +96,7 @@ def register_provider_mediated_mcp_tools_for_terminal(
         mcp_instance=mcp_instance,
         policies=policies,
         agent_registry=agent_registry,
+        identity_manager=identity_manager,
         reserved_tool_names=reserved_tool_names,
     )
 
@@ -102,6 +107,7 @@ def register_provider_mediated_mcp_tools(
     mcp_instance: Any,
     policies: Mapping[str, ProviderToolAccessPolicy],
     agent_registry: AgentIdentityRegistry,
+    identity_manager: AgentIdentityManager | None = None,
     reserved_tool_names: Iterable[str] = (),
     terminal_metadata_resolver: TerminalMetadataResolver | None = None,
 ) -> list[str]:
@@ -109,6 +115,7 @@ def register_provider_mediated_mcp_tools(
     service = ProviderMediatedToolInvocationService(
         policies=policies,
         agent_registry=agent_registry,
+        identity_manager=identity_manager,
         terminal_metadata_resolver=terminal_metadata_resolver,
     )
     try:

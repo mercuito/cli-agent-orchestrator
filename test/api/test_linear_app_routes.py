@@ -234,7 +234,7 @@ class _FakeRuntimeHandle:
         self.error = error
         self.accepted = []
 
-    def accept_notification(self, notification):
+    def accept_notification(self, notification, *, causing_event=None):
         self.accepted.append(notification)
         return AgentRuntimeNotifyResult(
             notification=notification,

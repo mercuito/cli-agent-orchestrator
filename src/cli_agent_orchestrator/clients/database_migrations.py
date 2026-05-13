@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from datetime import datetime
 from typing import Optional
 
 from cli_agent_orchestrator import constants
@@ -58,6 +60,7 @@ def init_db() -> None:
     _migrate_add_allowed_tools()
     _migrate_add_terminal_agent_identity_id()
     _migrate_add_terminal_workspace_context_id()
+    _migrate_backfill_terminal_workspace_context_id()
     _migrate_drop_monitoring_session_peers()
 
 
@@ -418,7 +421,7 @@ def _provider_message_id_migration_expr(
 
 
 def _migrate_legacy_provider_conversation_table_names(sqlite_conn) -> None:
-    """Move old presence-named physical tables into provider-conversation tables."""
+    """Copy old presence-named physical tables into provider-conversation tables."""
 
     has_legacy_tables = any(
         sqlite_migrations.table_exists(sqlite_conn, table_name)
@@ -556,15 +559,7 @@ def _migrate_legacy_provider_conversation_table_names(sqlite_conn) -> None:
                       AND {notification_id_expr} IS NOT NULL
                 """)
 
-        for table_name in (
-                "presence_inbox_notifications",
-                "presence_messages",
-                "presence_threads",
-                "presence_work_items",
-        ):
-            if sqlite_migrations.table_exists(sqlite_conn, table_name):
-                sqlite_conn.execute(f"DROP TABLE {table_name}")
-        logger.info("Migration: moved legacy presence tables to provider conversation tables")
+        logger.info("Migration: copied legacy presence tables to provider conversation tables")
 
 
 def _migrate_ensure_agent_runtime_tables() -> None:
@@ -739,3 +734,105 @@ def _migrate_add_terminal_workspace_context_id() -> None:
                 logger.info("Migration: added workspace_context_id column to terminals table")
     except Exception as e:
         logger.warning(f"Migration check for terminal workspace_context_id failed: {e}")
+
+
+def _migrate_backfill_terminal_workspace_context_id() -> None:
+    """Bind legacy identity-managed terminal rows to their identity default context."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            if not sqlite_migrations.table_exists(conn, "terminals"):
+                return
+            terminal_columns = sqlite_migrations.table_columns(conn, "terminals")
+            if not {"agent_identity_id", "workspace_context_id"}.issubset(terminal_columns):
+                return
+
+            rows = conn.execute("""
+                SELECT id, agent_identity_id
+                FROM terminals
+                WHERE agent_identity_id IS NOT NULL
+                  AND TRIM(agent_identity_id) != ''
+                  AND (
+                    workspace_context_id IS NULL
+                    OR TRIM(workspace_context_id) = ''
+                  )
+            """).fetchall()
+            if not rows:
+                return
+
+            now = datetime.now()
+            for _terminal_id, agent_identity_id in rows:
+                context_id = _default_agent_workspace_context_id(str(agent_identity_id))
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO workspace_contexts (
+                        id,
+                        resolver_id,
+                        boundary_provider_id,
+                        boundary_object_type,
+                        boundary_object_id,
+                        status,
+                        metadata_json,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                    """,
+                    (
+                        context_id,
+                        "default",
+                        "cao",
+                        "agent_identity_default",
+                        str(agent_identity_id),
+                        "active",
+                        now,
+                        now,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO workspace_context_object_mappings (
+                        workspace_context_id,
+                        provider_id,
+                        object_type,
+                        object_id,
+                        role,
+                        metadata_json,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, NULL, ?)
+                    """,
+                    (
+                        context_id,
+                        "cao",
+                        "agent_identity_default",
+                        str(agent_identity_id),
+                        "boundary",
+                        now,
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE terminals
+                    SET workspace_context_id = ?
+                    WHERE id = ?
+                    """,
+                    (context_id, _terminal_id),
+                )
+            logger.info(
+                "Migration: backfilled workspace_context_id for %s identity-managed terminals",
+                len(rows),
+            )
+    except Exception as e:
+        logger.warning(f"Migration check for terminal workspace_context_id backfill failed: {e}")
+
+
+def _default_agent_workspace_context_id(agent_identity_id: str) -> str:
+    material = "\n".join(
+        [
+            "cao",
+            "agent_identity_default",
+            agent_identity_id,
+        ]
+    )
+    return "wctx_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]

@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional, cast
 from sqlalchemy import Column, DateTime, String
 
 from cli_agent_orchestrator.clients.database_core import Base
-from cli_agent_orchestrator.clients.workspace_context_store import ensure_default_workspace_context
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +47,11 @@ def create_terminal(
     workspace_context_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create terminal metadata record."""
-    if agent_identity_id is not None and workspace_context_id is None:
-        workspace_context_id = ensure_default_workspace_context(agent_identity_id).id
+    if (agent_identity_id is None) != (workspace_context_id is None):
+        raise ValueError(
+            "Terminal identity metadata must include both agent_identity_id "
+            "and workspace_context_id, or neither"
+        )
     with _session_local()() as db:
         terminal = TerminalModel(
             id=terminal_id,

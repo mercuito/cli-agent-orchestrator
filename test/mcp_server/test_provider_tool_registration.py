@@ -47,6 +47,17 @@ def _agents() -> AgentIdentityRegistry:
     )
 
 
+class _FakeIdentityManager:
+    def __init__(self, registry: AgentIdentityRegistry) -> None:
+        self.registry = registry
+
+    def list_identities(self):
+        return tuple(self.registry.all().values())
+
+    def resolve_identity(self, agent_id: str):
+        return self.registry.get(agent_id)
+
+
 class FakeProviderTool:
     def __init__(self) -> None:
         self.events: list[str] = []
@@ -190,8 +201,8 @@ def test_provider_tools_do_not_override_builtin_tool_names():
 def test_provider_policy_loading_failure_hides_provider_tools(monkeypatch):
     mcp = FastMCP("test-provider-tools")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.mcp_server.provider_tools.load_agent_identity_registry",
-        lambda: _agents(),
+        "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_identity_manager",
+        lambda: _FakeIdentityManager(_agents()),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.mcp_server.provider_tools.load_enabled_provider_tool_access_policies",
@@ -209,8 +220,8 @@ def test_provider_policy_loading_failure_hides_provider_tools(monkeypatch):
 def test_provider_config_failure_is_surfaced(monkeypatch):
     mcp = FastMCP("test-provider-tools")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.mcp_server.provider_tools.load_agent_identity_registry",
-        lambda: _agents(),
+        "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_identity_manager",
+        lambda: _FakeIdentityManager(_agents()),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.mcp_server.provider_tools.load_enabled_provider_tool_access_policies",

@@ -481,6 +481,7 @@ def test_default_terminal_metadata_path_resolves_persisted_agent_identity(
         "codex",
         "developer",
         agent_identity_id="identity_a",
+        workspace_context_id=db_module.ensure_default_workspace_context("identity_a").id,
     )
     service = _service(recorder, use_default_terminal_metadata=True)
 

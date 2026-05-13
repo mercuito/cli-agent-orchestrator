@@ -1112,6 +1112,15 @@ class LinearWorkspaceProvider:
             )
         return self.resolve_identity_for_presence(presence)
 
+    def list_agent_identities(self) -> tuple[AgentIdentity, ...]:
+        """Return provider-backed CAO identities from configured Linear presences."""
+        config = self._load_config()
+        identities: dict[str, AgentIdentity] = {}
+        for presence in config.presences.values():
+            identity = self.resolve_identity_for_presence(presence)
+            identities[identity.id] = identity
+        return tuple(identities[key] for key in sorted(identities))
+
     def resolve_event(self, payload: Mapping[str, Any]) -> LinearResolvedPresence:
         presence = self.resolve_presence_from_payload(payload)
         return LinearResolvedPresence(

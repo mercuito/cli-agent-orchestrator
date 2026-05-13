@@ -57,7 +57,10 @@ from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
 from cli_agent_orchestrator.providers.manager import provider_manager
-from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
+from cli_agent_orchestrator.services.agent_identity_manager import (
+    AgentIdentityStatus,
+    default_agent_identity_manager,
+)
 from cli_agent_orchestrator.services import (
     baton_service,
     baton_watchdog_service,
@@ -87,7 +90,6 @@ from cli_agent_orchestrator.utils.skills import (
 from cli_agent_orchestrator.utils.terminal import generate_session_name
 from cli_agent_orchestrator.workspace_providers import (
     initialize_enabled_workspace_providers,
-    resolve_agent_identity_for_runtime,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,6 +191,32 @@ class AgentRuntimeTerminalResponse(BaseModel):
 
     terminal: Terminal
     terminal_token: str
+
+
+class AgentIdentityStatusResponse(BaseModel):
+    """Current CAO identity summary/status."""
+
+    agent_identity_id: str
+    display_name: str
+    agent_profile: str
+    cli_provider: str
+    active: bool
+    active_terminal_id: Optional[str] = None
+    active_workspace_context_id: Optional[str] = None
+    last_active_at: Optional[datetime] = None
+
+    @classmethod
+    def from_status(cls, status: AgentIdentityStatus) -> "AgentIdentityStatusResponse":
+        return cls(
+            agent_identity_id=status.agent_identity_id,
+            display_name=status.display_name,
+            agent_profile=status.agent_profile,
+            cli_provider=status.cli_provider,
+            active=status.active,
+            active_terminal_id=status.active_terminal_id,
+            active_workspace_context_id=status.active_workspace_context_id,
+            last_active_at=status.last_active_at,
+        )
 
 
 class SkillContentResponse(BaseModel):
@@ -415,6 +443,41 @@ async def list_providers_endpoint() -> List[Dict]:
     return result
 
 
+@app.get("/agents/identities", response_model=List[AgentIdentityStatusResponse])
+async def list_agent_identities_endpoint(
+    active: Optional[bool] = Query(default=None),
+) -> List[AgentIdentityStatusResponse]:
+    """List CAO agent identities and current terminal status."""
+    try:
+        return [
+            AgentIdentityStatusResponse.from_status(identity_status)
+            for identity_status in default_agent_identity_manager().list_statuses(active=active)
+        ]
+    except AgentIdentityConfigError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list agent identities: {str(e)}",
+        )
+
+
+@app.get("/agents/identities/{agent_id}", response_model=AgentIdentityStatusResponse)
+async def get_agent_identity_endpoint(agent_id: str) -> AgentIdentityStatusResponse:
+    """Resolve one CAO agent identity and current terminal status."""
+    try:
+        return AgentIdentityStatusResponse.from_status(
+            default_agent_identity_manager().status_for_identity(agent_id)
+        )
+    except AgentIdentityConfigError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resolve agent identity: {str(e)}",
+        )
+
+
 @app.get("/settings/agent-dirs")
 async def get_agent_dirs_endpoint() -> Dict:
     """Get configured agent directories per provider."""
@@ -629,17 +692,16 @@ async def get_agent_runtime_terminal(
             detail="Agent dashboard link token is required",
         )
     try:
-        identity = resolve_agent_identity_for_runtime(agent_id)
-        runtime_terminal = AgentRuntimeHandle(identity).current_terminal()
-        if runtime_terminal is None:
+        identity_status = default_agent_identity_manager().status_for_identity(agent_id)
+        if not identity_status.active_terminal_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Agent runtime '{agent_id}' has no running terminal",
             )
-        terminal = Terminal(**terminal_service.get_terminal(runtime_terminal.id))
+        terminal = Terminal(**terminal_service.get_terminal(identity_status.active_terminal_id))
         return AgentRuntimeTerminalResponse(
             terminal=terminal,
-            terminal_token=create_terminal_dashboard_token(runtime_terminal.id),
+            terminal_token=create_terminal_dashboard_token(identity_status.active_terminal_id),
         )
     except HTTPException:
         raise

@@ -9,7 +9,6 @@ import tomli
 
 from cli_agent_orchestrator.agent_identity import (
     AgentIdentity,
-    AgentIdentityConfigError,
     AgentIdentityRegistry,
     load_agent_identity_registry,
 )
@@ -48,6 +47,14 @@ class AgentIdentityWorkspaceProvider(WorkspaceProvider, Protocol):
 
     def resolve_identity_for_agent_id(self, agent_id: str) -> AgentIdentity:
         """Resolve a durable CAO agent identity through provider-owned mapping."""
+
+
+@runtime_checkable
+class AgentIdentityListingWorkspaceProvider(AgentIdentityWorkspaceProvider, Protocol):
+    """Optional workspace-provider surface for listing provider-backed identities."""
+
+    def list_agent_identities(self) -> tuple[AgentIdentity, ...]:
+        """Return provider-backed CAO identities known to this provider."""
 
 
 @runtime_checkable
@@ -254,24 +261,17 @@ def resolve_agent_identity_for_runtime(
     *,
     agents_config_path: Optional[Path] = None,
 ) -> AgentIdentity:
-    """Resolve a durable CAO agent identity through CAO config or workspace providers."""
-    try:
-        return load_agent_identity_registry(agents_config_path).get(agent_id)
-    except AgentIdentityConfigError as registry_error:
-        provider_errors: list[Exception] = []
-        for provider in _candidate_identity_workspace_providers():
-            if not isinstance(provider, AgentIdentityWorkspaceProvider):
-                continue
-            try:
-                return provider.resolve_identity_for_agent_id(agent_id)
-            except Exception as exc:
-                provider_errors.append(exc)
-        if provider_errors:
-            raise AgentIdentityConfigError(str(registry_error)) from provider_errors[-1]
-        raise
+    """Resolve a durable CAO agent identity through the central manager."""
+    from cli_agent_orchestrator.services.agent_identity_manager import (
+        create_default_agent_identity_manager,
+    )
+
+    return create_default_agent_identity_manager(
+        agents_config_path=agents_config_path,
+    ).resolve_identity(agent_id)
 
 
-def _candidate_identity_workspace_providers() -> list[WorkspaceProvider]:
+def candidate_identity_workspace_providers() -> list[WorkspaceProvider]:
     """Return initialized/lazy workspace providers that may own agent mappings."""
     providers: list[WorkspaceProvider] = []
     if not workspace_provider_config_exists():

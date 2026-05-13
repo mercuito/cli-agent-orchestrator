@@ -103,6 +103,29 @@ class ProviderRuntimeStateCapability(Protocol):
         """Return provider-owned CLI arguments for session restoration."""
         ...
 
+    def load_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState | None:
+        """Load provider-owned runtime state persisted under the provider data directory."""
+        ...
+
+    def save_runtime_state(
+        self,
+        state: ProviderRuntimeState,
+    ) -> None:
+        """Persist provider-owned runtime state under the provider data directory."""
+        ...
+
+    def clear_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> None:
+        """Remove provider-owned runtime state persisted under the provider data directory."""
+        ...
+
 
 @dataclass(frozen=True)
 class ProviderRuntimePreparation:

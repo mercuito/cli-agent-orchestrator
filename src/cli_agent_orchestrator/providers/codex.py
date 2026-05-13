@@ -1,5 +1,6 @@
 """Codex CLI provider implementation."""
 
+import json
 import logging
 import os
 import re
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 # Regex patterns for Codex output analysis
 ANSI_CODE_PATTERN = r"\x1b\[[0-9;]*m"
+PROVIDER_RUNTIME_STATE_FILENAME = "runtime_state.json"
 IDLE_PROMPT_PATTERN = r"(?:❯|›|codex>)"
 # Number of lines from the bottom of capture to check for the idle prompt.
 # With --no-alt-screen, codex output is inline (scrollback contains history),
@@ -276,6 +278,42 @@ class CodexRuntimeStateCapability(ProviderRuntimeStateCapability):
             state.payload, provider_data_dir=provider_data_dir
         )
         return ["resume", str(validated.payload["thread_id"])]
+
+    def load_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState | None:
+        """Load Codex-owned runtime state from the provider data directory."""
+        path = provider_data_dir / PROVIDER_RUNTIME_STATE_FILENAME
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        return self.deserialize_runtime_state(payload, provider_data_dir=provider_data_dir)
+
+    def save_runtime_state(self, state: ProviderRuntimeState) -> None:
+        """Persist Codex-owned runtime state in the provider data directory."""
+        payload = self.serialize_runtime_state(state)
+        state.provider_data_dir.mkdir(parents=True, exist_ok=True)
+        (state.provider_data_dir / PROVIDER_RUNTIME_STATE_FILENAME).write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+
+    def clear_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> None:
+        """Clear Codex-owned runtime state in the provider data directory."""
+        try:
+            (provider_data_dir / PROVIDER_RUNTIME_STATE_FILENAME).unlink()
+        except FileNotFoundError:
+            pass
 
 
 class CodexProvider(BaseProvider):

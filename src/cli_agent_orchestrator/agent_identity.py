@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -41,6 +41,15 @@ class AgentIdentity:
     workdir: str
     session_name: str
     workspace_context: AgentWorkspaceContextConfig = AgentWorkspaceContextConfig()
+    current_workspace_context_id: Optional[str] = None
+
+    def for_workspace_context(self, workspace_context_id: str) -> "AgentIdentity":
+        """Return this identity bound to the active runtime workspace context."""
+        return replace(self, current_workspace_context_id=workspace_context_id)
+
+    def without_runtime_context(self) -> "AgentIdentity":
+        """Return the durable identity configuration without active runtime context."""
+        return replace(self, current_workspace_context_id=None)
 
 
 @dataclass(frozen=True)

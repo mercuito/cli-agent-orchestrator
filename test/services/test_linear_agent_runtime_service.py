@@ -233,7 +233,7 @@ def test_context_enabled_linear_event_starts_runtime_in_resolved_issue_context(
             identity=implementation_partner_identity_factory_with_context(resolved.identity),
         )
 
-    def fake_handle(identity, workspace_context_id=None):
+    def fake_handle(identity, workspace_context_id=None, identity_manager=None):
         captured["workspace_context_id"] = workspace_context_id
         handle = Mock()
         handle.notify.return_value = Mock(
@@ -315,7 +315,7 @@ def test_context_enabled_linear_events_switch_only_across_distinct_boundaries(
             identity=implementation_partner_identity_factory_with_context(resolved.identity),
         )
 
-    def fake_handle(identity, workspace_context_id=None):
+    def fake_handle(identity, workspace_context_id=None, identity_manager=None):
         captured_contexts.append(workspace_context_id)
         handle = Mock()
         handle.notify.return_value = Mock(

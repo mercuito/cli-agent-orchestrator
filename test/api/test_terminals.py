@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityConfigError
+from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
 from cli_agent_orchestrator.api.main import app
 from cli_agent_orchestrator.models.terminal import Terminal
 
@@ -59,24 +59,15 @@ class TestAgentRuntimeTerminalEndpoint:
     def test_resolves_agent_identity_to_current_terminal_with_token(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
-        identity = AgentIdentity(
-            id="discovery_partner",
-            display_name="Discovery Partner",
-            agent_profile="developer",
-            cli_provider="codex",
-            workdir="/tmp",
-            session_name="linear-discovery-partner",
+        identity_manager = MagicMock()
+        identity_manager.status_for_identity.return_value = SimpleNamespace(
+            active_terminal_id="abcd1234"
         )
-        registry = MagicMock()
-        registry.get.return_value = identity
-        handle = MagicMock()
-        handle.current_terminal.return_value = SimpleNamespace(id="abcd1234")
 
-        monkeypatch.setattr(main, "resolve_agent_identity_for_runtime", lambda agent_id: identity)
+        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
         monkeypatch.setattr(
             main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
         )
-        monkeypatch.setattr(main, "AgentRuntimeHandle", MagicMock(return_value=handle))
         monkeypatch.setattr(
             main, "create_terminal_dashboard_token", lambda terminal_id: "signed-token"
         )
@@ -102,22 +93,20 @@ class TestAgentRuntimeTerminalEndpoint:
         assert response.json()["terminal"]["id"] == "abcd1234"
         assert response.json()["terminal"]["agent_identity_id"] == "discovery_partner"
         assert response.json()["terminal_token"] == "signed-token"
+        identity_manager.status_for_identity.assert_called_once_with("discovery_partner")
 
     def test_returns_404_when_agent_has_no_running_terminal(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
-        registry = MagicMock()
-        registry.get.return_value = MagicMock()
-        handle = MagicMock()
-        handle.current_terminal.return_value = None
-
-        monkeypatch.setattr(
-            main, "resolve_agent_identity_for_runtime", lambda agent_id: registry.get(agent_id)
+        identity_manager = MagicMock()
+        identity_manager.status_for_identity.return_value = SimpleNamespace(
+            active_terminal_id=None
         )
+
+        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
         monkeypatch.setattr(
             main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
         )
-        monkeypatch.setattr(main, "AgentRuntimeHandle", MagicMock(return_value=handle))
 
         response = client.get("/agents/runtime/discovery_partner/terminal?agent_token=agent-token")
 
@@ -132,11 +121,11 @@ class TestAgentRuntimeTerminalEndpoint:
             "validate_agent_dashboard_token",
             lambda token, agent_id: token == "agent-token",
         )
-        monkeypatch.setattr(
-            main,
-            "resolve_agent_identity_for_runtime",
-            MagicMock(side_effect=AgentIdentityConfigError("Unknown CAO agent identity")),
+        identity_manager = MagicMock()
+        identity_manager.status_for_identity.side_effect = AgentIdentityConfigError(
+            "Unknown CAO agent identity"
         )
+        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
 
         response = client.get("/agents/runtime/missing/terminal?agent_token=agent-token")
 
@@ -148,35 +137,27 @@ class TestAgentRuntimeTerminalEndpoint:
     ):
         from cli_agent_orchestrator.api import main
 
-        resolver = MagicMock()
-        monkeypatch.setattr(main, "resolve_agent_identity_for_runtime", resolver)
+        identity_manager = MagicMock()
+        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
         monkeypatch.setattr(main, "validate_agent_dashboard_token", lambda token, agent_id: False)
 
         response = client.get("/agents/runtime/discovery_partner/terminal")
 
         assert response.status_code == 403
-        resolver.assert_not_called()
+        identity_manager.status_for_identity.assert_not_called()
 
     def test_resolves_agent_identity_from_workspace_provider_mapping(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
-        identity = AgentIdentity(
-            id="discovery_partner",
-            display_name="Discovery Partner",
-            agent_profile="developer",
-            cli_provider="codex",
-            workdir="/tmp",
-            session_name="linear-discovery-partner",
+        identity_manager = MagicMock()
+        identity_manager.status_for_identity.return_value = SimpleNamespace(
+            active_terminal_id="abcd1234"
         )
-        handle = MagicMock()
-        handle.current_terminal.return_value = SimpleNamespace(id="abcd1234")
 
-        resolver = MagicMock(return_value=identity)
-        monkeypatch.setattr(main, "resolve_agent_identity_for_runtime", resolver)
+        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
         monkeypatch.setattr(
             main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
         )
-        monkeypatch.setattr(main, "AgentRuntimeHandle", MagicMock(return_value=handle))
         monkeypatch.setattr(
             main, "create_terminal_dashboard_token", lambda terminal_id: "signed-token"
         )
@@ -200,7 +181,7 @@ class TestAgentRuntimeTerminalEndpoint:
 
         assert response.status_code == 200
         assert response.json()["terminal"]["id"] == "abcd1234"
-        resolver.assert_called_once_with("discovery_partner")
+        identity_manager.status_for_identity.assert_called_once_with("discovery_partner")
 
 
 class TestWorkingDirectoryEndpoint:

@@ -48,6 +48,7 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeNotification,
     AgentRuntimeNotifyResult,
 )
+from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityManager
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
     WorkspaceContextResolverError,
@@ -369,15 +370,18 @@ def _runtime_handle_for_resolved_presence(
     resolved: LinearResolvedPresence,
     workspace_context_resolution: WorkspaceContextResolution | None = None,
 ) -> AgentRuntimeHandle:
+    identity_manager = AgentIdentityManager(identity_providers=(get_linear_workspace_provider(),))
+    identity = identity_manager.register_identity(resolved.identity)
     if not resolved.identity.workspace_context.enabled:
-        return AgentRuntimeHandle(resolved.identity)
+        return AgentRuntimeHandle(identity, identity_manager=identity_manager)
     if workspace_context_resolution is None:
         raise LinearWorkspaceProviderConfigError(
             "Linear event did not contain an issue that can resolve workspace context"
         )
     return AgentRuntimeHandle(
-        resolved.identity,
+        identity,
         workspace_context_id=workspace_context_resolution.workspace_context_id,
+        identity_manager=identity_manager,
     )
 
 

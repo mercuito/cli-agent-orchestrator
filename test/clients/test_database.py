@@ -221,13 +221,29 @@ class TestTerminalOperations:
             "codex",
             "developer",
             agent_identity_id="implementation_partner",
+            workspace_context_id="ctx_implementation_partner_default",
         )
 
         result = get_terminal_metadata("test123")
 
         assert result is not None
         assert result["agent_identity_id"] == "implementation_partner"
+        assert result["workspace_context_id"] == "ctx_implementation_partner_default"
         assert list_terminals_by_agent_identity("implementation_partner")[0]["id"] == "test123"
+
+    def test_identity_managed_terminal_metadata_requires_workspace_context(
+        self, live_inbox_db
+    ):
+        """Identity-managed terminal metadata must be fully specified."""
+        with pytest.raises(ValueError, match="agent_identity_id and workspace_context_id"):
+            create_terminal(
+                "test123",
+                "cao-session",
+                "window-0",
+                "codex",
+                "developer",
+                agent_identity_id="implementation_partner",
+            )
 
     def test_raw_terminal_metadata_has_no_agent_identity_id(self, live_inbox_db):
         """Manual terminals remain valid and unmapped."""
@@ -974,6 +990,74 @@ class TestInitDb:
 
         assert "agent_identity_id" in columns
         assert row == (None,)
+
+    def test_terminal_workspace_context_backfill_binds_legacy_identity_terminal(
+        self, tmp_path, monkeypatch
+    ):
+        """Legacy identity-managed terminals get an explicit default workspace context."""
+        db_path = tmp_path / "legacy-identity-terminal.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr(db_module, "engine", test_engine)
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE terminals (
+                    id VARCHAR NOT NULL,
+                    tmux_session VARCHAR NOT NULL,
+                    tmux_window VARCHAR NOT NULL,
+                    provider VARCHAR NOT NULL,
+                    agent_profile VARCHAR,
+                    allowed_tools TEXT,
+                    agent_identity_id TEXT,
+                    workspace_context_id TEXT,
+                    last_active DATETIME,
+                    PRIMARY KEY (id)
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO terminals (
+                    id,
+                    tmux_session,
+                    tmux_window,
+                    provider,
+                    agent_profile,
+                    agent_identity_id,
+                    workspace_context_id
+                )
+                VALUES (
+                    'terminal-1',
+                    'cao-discovery-partner',
+                    'yards-discovery-partner',
+                    'codex',
+                    'yards-discovery-partner',
+                    'discovery_partner',
+                    NULL
+                )
+            """)
+
+        database_migrations._migrate_ensure_workspace_context_tables()
+        database_migrations._migrate_backfill_terminal_workspace_context_id()
+
+        with test_engine.connect() as connection:
+            terminal_context_id = connection.exec_driver_sql(
+                "SELECT workspace_context_id FROM terminals WHERE id = 'terminal-1'"
+            ).scalar_one()
+            context_boundary = connection.exec_driver_sql(
+                """
+                SELECT boundary_provider_id, boundary_object_type, boundary_object_id
+                FROM workspace_contexts
+                WHERE id = ?
+                """,
+                (terminal_context_id,),
+            ).fetchone()
+
+        assert terminal_context_id.startswith("wctx_")
+        assert context_boundary == (
+            "cao",
+            "agent_identity_default",
+            "discovery_partner",
+        )
 
     def test_marker_migrations_repair_notification_fk_targets_after_inbox_rebuild(
         self, tmp_path, monkeypatch

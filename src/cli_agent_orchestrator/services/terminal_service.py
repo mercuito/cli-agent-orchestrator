@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional
+from typing import Dict, Optional
 
 from cli_agent_orchestrator.agent_identity import (
     AgentIdentity,
@@ -31,7 +31,6 @@ from cli_agent_orchestrator.agent_identity import (
 )
 from cli_agent_orchestrator.clients.database import create_terminal as db_create_terminal
 from cli_agent_orchestrator.clients.database import delete_terminal as db_delete_terminal
-from cli_agent_orchestrator.clients.database import ensure_default_workspace_context
 from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
     update_last_active,
@@ -71,6 +70,48 @@ class TerminalRuntimeInputs:
     profile_material: dict
 
 
+@dataclass(frozen=True)
+class _AgentTerminalLaunch:
+    """Agent-owned launch metadata prepared by create_terminal_for_agent_identity."""
+
+    identity: AgentIdentity
+    workspace_context_id: str
+
+    @property
+    def agent_identity_id(self) -> str:
+        return self.identity.id
+
+    def build_context(
+        self,
+        *,
+        provider: str,
+        terminal_id: str,
+        session_name: str,
+        window_name: str,
+        working_directory: str,
+        agent_profile: str,
+        allowed_tools: Optional[list],
+    ) -> AgentRuntimeLaunchContext:
+        runtime_paths: AgentWorkspaceContextRuntimePaths = (
+            ensure_agent_workspace_context_runtime_paths(
+                self.identity,
+                self.workspace_context_id,
+                provider,
+            )
+        )
+        return AgentRuntimeLaunchContext(
+            identity=self.identity,
+            identity_data_dir=runtime_paths.identity_data_dir,
+            provider_data_dir=runtime_paths.provider_data_dir,
+            terminal_id=terminal_id,
+            session_name=session_name,
+            window_name=window_name,
+            working_directory=working_directory,
+            agent_profile=agent_profile,
+            allowed_tools=allowed_tools,
+        )
+
+
 def resolve_terminal_runtime_inputs(
     agent_profile: str,
     *,
@@ -104,11 +145,8 @@ def create_terminal(
     new_session: bool = False,
     working_directory: Optional[str] = None,
     allowed_tools: Optional[list] = None,
-    agent_identity: Optional[AgentIdentity] = None,
-    workspace_context_id: Optional[str] = None,
-    provider_runtime: Optional[Mapping[str, Any]] = None,
 ) -> Terminal:
-    """Create a new terminal with an initialized CLI agent.
+    """Create a new generic terminal with an initialized CLI agent.
 
     This function orchestrates the complete terminal creation workflow:
     1. Generate unique terminal ID and window name
@@ -131,6 +169,49 @@ def create_terminal(
         ValueError: If session already exists (new_session=True) or not found (new_session=False)
         TimeoutError: If provider initialization times out
     """
+    return _create_terminal_core(
+        provider=provider,
+        agent_profile=agent_profile,
+        session_name=session_name,
+        new_session=new_session,
+        working_directory=working_directory,
+        allowed_tools=allowed_tools,
+    )
+
+
+def create_terminal_for_agent_identity(agent_identity: AgentIdentity) -> Terminal:
+    """Create a terminal owned by an already registered CAO agent identity."""
+    session_name = _canonical_agent_session_name(agent_identity.session_name)
+    workspace_context_id = agent_identity.current_workspace_context_id
+    if workspace_context_id is None:
+        raise ValueError(
+            "create_terminal_for_agent_identity requires an agent identity bound "
+            "to current_workspace_context_id"
+        )
+    return _create_terminal_core(
+        provider=agent_identity.cli_provider,
+        agent_profile=agent_identity.agent_profile,
+        session_name=session_name,
+        new_session=not tmux_client.session_exists(session_name),
+        working_directory=agent_identity.workdir,
+        agent_launch=_AgentTerminalLaunch(
+            identity=agent_identity,
+            workspace_context_id=workspace_context_id,
+        ),
+    )
+
+
+def _create_terminal_core(
+    *,
+    provider: str,
+    agent_profile: str,
+    session_name: Optional[str] = None,
+    new_session: bool = False,
+    working_directory: Optional[str] = None,
+    allowed_tools: Optional[list] = None,
+    agent_launch: Optional[_AgentTerminalLaunch] = None,
+) -> Terminal:
+    """Create a terminal after the caller has chosen generic or identity-owned mode."""
     terminal_id = ""
     runtime_prepared = False
     try:
@@ -152,20 +233,9 @@ def create_terminal(
 
         env: Optional[Dict[str, str]] = None
         launch_context: Optional[AgentRuntimeLaunchContext] = None
-        if agent_identity is not None:
-            if workspace_context_id is None:
-                workspace_context_id = ensure_default_workspace_context(agent_identity.id).id
-            runtime_paths: AgentWorkspaceContextRuntimePaths = (
-                ensure_agent_workspace_context_runtime_paths(
-                    agent_identity,
-                    workspace_context_id,
-                    provider,
-                )
-            )
-            launch_context = AgentRuntimeLaunchContext(
-                identity=agent_identity,
-                identity_data_dir=runtime_paths.identity_data_dir,
-                provider_data_dir=runtime_paths.provider_data_dir,
+        if agent_launch is not None:
+            launch_context = agent_launch.build_context(
+                provider=provider,
                 terminal_id=terminal_id,
                 session_name=session_name,
                 window_name=window_name,
@@ -183,20 +253,19 @@ def create_terminal(
         env = runtime.environment
         runtime_prepared = True
         runtime_resume_args: Optional[list[str]] = None
-        if provider_runtime is not None:
-            if launch_context is None:
-                raise ValueError("provider_runtime requires an agent identity launch context")
+        runtime_capability = None
+        if agent_launch is not None:
+            assert launch_context is not None
             runtime_capability = provider_manager.runtime_state_capability(provider)
-            if runtime_capability is None:
-                raise ValueError(f"Provider {provider!r} does not support runtime restoration")
-            runtime_state = runtime_capability.deserialize_runtime_state(
-                provider_runtime,
-                provider_data_dir=launch_context.provider_data_dir,
-            )
-            runtime_resume_args = runtime_capability.launch_resume_args(
-                runtime_state,
-                provider_data_dir=launch_context.provider_data_dir,
-            )
+            if runtime_capability is not None:
+                runtime_state = runtime_capability.load_runtime_state(
+                    provider_data_dir=launch_context.provider_data_dir
+                )
+                if runtime_state is not None:
+                    runtime_resume_args = runtime_capability.launch_resume_args(
+                        runtime_state,
+                        provider_data_dir=launch_context.provider_data_dir,
+                    )
 
         # Step 2: Create tmux session or window
         if new_session:
@@ -228,8 +297,8 @@ def create_terminal(
             provider,
             agent_profile,
             allowed_tools,
-            agent_identity_id=agent_identity.id if agent_identity is not None else None,
-            workspace_context_id=workspace_context_id,
+            agent_identity_id=None if agent_launch is None else agent_launch.agent_identity_id,
+            workspace_context_id=None if agent_launch is None else agent_launch.workspace_context_id,
         )
 
         # Step 4: Create and initialize the CLI provider
@@ -248,7 +317,41 @@ def create_terminal(
                 None if launch_context is None else str(launch_context.provider_data_dir)
             ),
         )
-        provider_instance.initialize()
+        try:
+            provider_instance.initialize()
+        except Exception as exc:
+            if (
+                runtime_resume_args
+                and launch_context is not None
+                and runtime_capability is not None
+                and _looks_like_stale_resume_failure(exc)
+            ):
+                logger.warning(
+                    "Provider resume failed for terminal %s; clearing runtime state and "
+                    "retrying cold start: %s",
+                    terminal_id,
+                    exc,
+                )
+                provider_manager.cleanup_provider(terminal_id)
+                db_delete_terminal(terminal_id)
+                if new_session and session_name:
+                    tmux_client.kill_session(session_name)
+                else:
+                    tmux_client.kill_window(session_name, window_name)
+                provider_manager.cleanup_terminal_runtime(provider, terminal_id)
+                runtime_capability.clear_runtime_state(
+                    provider_data_dir=launch_context.provider_data_dir
+                )
+                return _create_terminal_core(
+                    provider=provider,
+                    agent_profile=agent_profile,
+                    session_name=session_name,
+                    new_session=new_session,
+                    working_directory=working_directory,
+                    allowed_tools=allowed_tools,
+                    agent_launch=agent_launch,
+                )
+            raise
 
         # Step 5: Set up terminal logging via tmux pipe-pane
         # This captures all terminal output to a log file for inbox monitoring
@@ -263,8 +366,8 @@ def create_terminal(
             provider=ProviderType(provider),
             session_name=session_name,
             agent_profile=agent_profile,
-            agent_identity_id=agent_identity.id if agent_identity is not None else None,
-            workspace_context_id=workspace_context_id,
+            agent_identity_id=None if agent_launch is None else agent_launch.agent_identity_id,
+            workspace_context_id=None if agent_launch is None else agent_launch.workspace_context_id,
             allowed_tools=allowed_tools,
             status=TerminalStatus.IDLE,
             last_active=datetime.now(),
@@ -282,6 +385,11 @@ def create_terminal(
             provider_manager.cleanup_provider(terminal_id)
         except Exception:
             pass  # Ignore cleanup errors
+        if terminal_id:
+            try:
+                db_delete_terminal(terminal_id)
+            except Exception:
+                pass  # Ignore cleanup errors
         if runtime_prepared and terminal_id:
             try:
                 provider_manager.cleanup_terminal_runtime(provider, terminal_id)
@@ -293,6 +401,25 @@ def create_terminal(
             except:
                 pass  # Ignore cleanup errors
         raise
+
+
+def _looks_like_stale_resume_failure(exc: Exception) -> bool:
+    message = str(exc).lower()
+    stale_markers = (
+        "no saved session found",
+        "session not found",
+        "not found with id",
+        "could not resume",
+        "resume failed",
+    )
+    return any(marker in message for marker in stale_markers)
+
+
+def _canonical_agent_session_name(session_name: str) -> str:
+    """Return a managed CAO session name for an agent identity."""
+    if session_name.startswith(SESSION_PREFIX):
+        return session_name
+    return f"{SESSION_PREFIX}{session_name}"
 
 
 def get_terminal(terminal_id: str) -> Dict:
@@ -315,6 +442,7 @@ def get_terminal(terminal_id: str) -> Dict:
             "session_name": metadata["tmux_session"],
             "agent_profile": metadata["agent_profile"],
             "agent_identity_id": metadata.get("agent_identity_id"),
+            "workspace_context_id": metadata.get("workspace_context_id"),
             "allowed_tools": metadata.get("allowed_tools"),
             "status": status,
             "last_active": metadata["last_active"],

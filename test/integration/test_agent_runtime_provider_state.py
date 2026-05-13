@@ -64,6 +64,9 @@ class TmuxRuntimeStateCapability:
     def __init__(self) -> None:
         self.discovered_terminal_ids: list[str] = []
         self.deserialized_payloads: list[dict[str, str]] = []
+        self.loaded_payloads: list[dict[str, str]] = []
+        self.saved_states: dict[Path, ProviderRuntimeState] = {}
+        self.cleared_provider_data_dirs: list[Path] = []
         self.resume_args: list[list[str]] = []
 
     def discover_current_runtime_state(
@@ -106,6 +109,27 @@ class TmuxRuntimeStateCapability:
 
     def serialize_runtime_state(self, state: ProviderRuntimeState):
         return dict(state.payload)
+
+    def load_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> ProviderRuntimeState | None:
+        state = self.saved_states.get(provider_data_dir)
+        if state is not None:
+            self.loaded_payloads.append(dict(state.payload))
+        return state
+
+    def save_runtime_state(self, state: ProviderRuntimeState) -> None:
+        self.saved_states[state.provider_data_dir] = state
+
+    def clear_runtime_state(
+        self,
+        *,
+        provider_data_dir: Path,
+    ) -> None:
+        self.saved_states.pop(provider_data_dir, None)
+        self.cleared_provider_data_dirs.append(provider_data_dir)
 
     def launch_resume_args(
         self,
@@ -252,14 +276,18 @@ def tmux_runtime_provider_world(monkeypatch: pytest.MonkeyPatch) -> TmuxRuntimeP
 
 
 @pytest.fixture
-def integration_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AgentIdentity:
+def integration_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_identity_manager_factory,
+) -> AgentIdentity:
     monkeypatch.setattr(
         "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
         tmp_path / "agents",
     )
     workdir = tmp_path / "repo"
     workdir.mkdir()
-    return AgentIdentity(
+    identity = AgentIdentity(
         id="cao47_integration_agent",
         display_name="CAO-47 Integration Agent",
         agent_profile="developer",
@@ -267,6 +295,12 @@ def integration_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Age
         workdir=str(workdir),
         session_name=f"cao47-runtime-{uuid.uuid4().hex[:8]}",
     )
+    identity_manager = agent_identity_manager_factory(identity)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.runtime.agent.default_agent_identity_manager",
+        lambda: identity_manager,
+    )
+    return identity
 
 
 def _linear_agent_session_payload(
@@ -428,7 +462,12 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         )
         assert "READY thread=session-a" in initial_output
         initial_state = json.loads(handle._runtime_state_path().read_text())
-        assert initial_state["provider_runtime"] == _payload("session-a")
+        assert "provider_runtime" not in initial_state
+        provider_data_dir = handle._runtime_paths().provider_data_dir
+        assert (
+            tmux_runtime_provider_world.capability.saved_states[provider_data_dir].payload
+            == _payload("session-a")
+        )
 
         tmux_runtime_provider_world.runtime_version["value"] = "v2"
         result = handle.notify(
@@ -442,7 +481,7 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
         assert result.delivery.delivered is True
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
-        assert tmux_runtime_provider_world.capability.deserialized_payloads == [
+        assert tmux_runtime_provider_world.capability.loaded_payloads == [
             _payload("session-a")
         ]
         assert tmux_runtime_provider_world.capability.resume_args == [
@@ -460,7 +499,11 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
 
         final_state = json.loads(handle._runtime_state_path().read_text())
         assert final_state["terminal_id"] == refreshed_terminal.id
-        assert final_state["provider_runtime"] == _payload("session-a")
+        assert "provider_runtime" not in final_state
+        assert (
+            tmux_runtime_provider_world.capability.saved_states[provider_data_dir].payload
+            == _payload("session-a")
+        )
     finally:
         tmux_client.kill_session(session_name)
 
