@@ -59,3 +59,4 @@ features:
 | [public-surface-encapsulation](public-surface-encapsulation.md) | A service wraps a third-party surface |
 | [lifecycle-boundary-operation-admissibility](lifecycle-boundary-operation-admissibility.md) | Lifecycle state gates operation validity |
 | [named-registration-collision](named-registration-collision.md) | Consumers register named entities |
+| [stable-behavior-ids](stable-behavior-ids.md) | Always |

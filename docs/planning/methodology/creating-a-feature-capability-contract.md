@@ -16,20 +16,22 @@ Code Contract and skip narrative and capability contract entirely.
 
 Vocabulary does not live here. The narrative carries domain vocabulary
 (see [creating-a-feature-narrative](./creating-a-feature-narrative.md))
-because it is authored at the point the walkthrough needs it. The
+because it is authored at the point the event timeline needs it. The
 capability contract cites the narrative for canonical definitions.
 
 ## What it contains
 
 - **Capabilities** — coherent concepts the feature provides, scoped tightly
   enough that one capability does not need "and also" to explain it. Each
-  capability is named in domain terms and grounded in narrative events
-  where the capability is actively exercised. Capabilities are the
+  capability has a stable ID of the form `CAP-<n>`, is named in domain
+  terms, and is grounded in narrative events where the capability is
+  actively exercised. Capabilities are the
   structural backbone the behavioral contract decomposes into behaviors.
 - **Invariants** — universal truths about the domain that must hold across
-  the feature. Stated in domain entities, not implementation artifacts.
-  Universal across all scenarios; scenario-bound properties are constraints
-  in the behavioral contract instead.
+  the feature. Each invariant has a stable ID of the form `INV-<n>`.
+  Stated in domain entities, not implementation artifacts. Universal across
+  all scenarios; scenario-bound properties are constraints in the
+  behavioral contract instead.
 - **Domain-level graphs** — state diagrams, entity-relationship diagrams,
   or flow diagrams expressed in domain concepts. Boxes labeled `Session`
   belong here; boxes labeled `SessionManager` do not.
@@ -40,7 +42,7 @@ capabilities are not optional.
 
 ## What it does not contain
 
-- The narrative or any walkthrough content. The narrative is its own
+- The narrative or any event timeline content. The narrative is its own
   artifact.
 - Domain vocabulary. Vocabulary lives in the narrative.
 - Behaviors or constraints. Those are decomposed from capabilities and
@@ -51,16 +53,17 @@ capabilities are not optional.
 ## Authoring order
 
 1. **Read the completed narrative.** Capabilities, invariants, and graphs
-   only make sense in the context of the walkthrough they support.
-2. **Derive capabilities from narrative events.** Each capability maps to
+   only make sense in the context of the event timeline they support.
+2. **Derive capabilities from narrative events.** Give each capability a
+   stable ID (`CAP-<n>`) and short domain title. Each capability maps to
    narrative events where the capability is actively exercised. Prior
    effects, hidden implementation requirements, and reader inference do
    not ground a capability — see
    [active-exercise-grounding](./criteria/feature-capability-contract/active-exercise-grounding.md).
-3. **Extract invariants from cross-cutting properties.** Properties that
-   apply across multiple narrative flows belong here as invariants.
-   Scenario-specific properties are constraints in the behavioral
-   contract.
+3. **Extract invariants from cross-cutting properties.** Give each
+   invariant a stable ID (`INV-<n>`) and short domain title. Properties
+   that apply across multiple narrative flows belong here as invariants.
+   Scenario-specific properties are constraints in the behavioral contract.
 4. **Add domain graphs where they earn their space.** A state diagram or
    entity-relationship diagram should communicate shape that prose would
    repeat across multiple flows. If the narrative does not benefit from a
@@ -86,14 +89,14 @@ selection.
 
 ## Capabilities
 
-### <capability name>
+### CAP-1 — <capability name>
 
 Brief domain context. Narrative events that exercise this capability:
-<event>, <event>.
+`E1`, `E2`.
 
 ## Invariants
 
-### <invariant name>
+### INV-1 — <invariant name>
 
 <One-sentence universal property in domain terms.>
 

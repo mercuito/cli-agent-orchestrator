@@ -11,7 +11,7 @@ HTTP verbs, library names, framework concepts.
 
 If a concept is needed and no domain word for it exists, define it in the
 narrative's Domain Vocabulary section and use the new domain term in the
-walkthrough.
+event timeline.
 
 ## Illustrations
 
@@ -21,4 +21,3 @@ returns the user's previous session as a JSON object."
 
 **Bad — payload shape.** "The system POSTs `{user, action}` to `/auth`."
 **Good:** "The system records the user's authentication attempt."
-

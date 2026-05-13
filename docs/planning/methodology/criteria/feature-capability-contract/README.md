@@ -27,3 +27,4 @@ The capability contract is a feature-level artifact at
 | [active-exercise-grounding](active-exercise-grounding.md) | Capabilities are mapped to narrative events |
 | [implementation-neutrality](implementation-neutrality.md) | Always |
 | [invariant-universality](invariant-universality.md) | The capability contract declares invariants |
+| [stable-capability-ids](stable-capability-ids.md) | Always |

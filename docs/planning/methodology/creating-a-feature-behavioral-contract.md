@@ -24,8 +24,10 @@ For behavior-changing work, the contract is derived in this order:
    [creating-a-feature-capability-contract](./creating-a-feature-capability-contract.md)).
    Capabilities are inputs here; the capability contract owns their
    derivation.
-3. Decompose each capability into testable Given/When/Then behaviors.
-4. Decompose each invariant into verfiable constraints.
+3. Decompose each capability into testable Given/When/Then behaviors with
+   stable IDs of the form `B-<n>`.
+4. Decompose each invariant into verifiable constraints with stable IDs of
+   the form `C-<n>`.
 
 The capability contract owns the structural backbone (capabilities,
 invariants); the behavioral contract owns the testable decomposition
@@ -35,25 +37,27 @@ here, not redefined.
 ## Document organization
 
 Behaviors are grouped under their parent capability heading; constraints are
-grouped under their parent invariant heading. The document structure itself is
-the traceability — there is no need for separate ID-based cross-references.
+grouped under their parent invariant heading. Each parent heading includes the
+stable capability or invariant ID from the Capability Contract. Each behavior
+and constraint has its own stable ID so `tasks.md`, handoffs, defences, and
+reviews can reference exact slices without copying clause text.
 
 ```markdown
 # Behavioral Contract
 
-## Capability: <capability name>
+## Capability: CAP-1 — <capability name>
 
 Brief domain context for this capability.
 
-### Behavior: <outcome-focused title>
+### B-1 — <outcome-focused behavior title>
 
 Given ...
 When ...
 Then ...
 
-## Invariant: <invariant name>
+## Invariant: INV-1 — <invariant name>
 
-### Constraint: <outcome-focused title>
+### C-1 — <outcome-focused constraint title>
 
 Given ...
 When ...

@@ -1,6 +1,6 @@
 # Narrative Criteria Catalog
 
-Reusable criteria for authoring a narrative — the user-facing walkthrough
+Reusable criteria for authoring a narrative — the user-facing event timeline
 of behavior-changing work. Narratives are not authored for pure refactor
 work; pure refactors enter at the Code Contract
 instead.
@@ -25,5 +25,6 @@ The narrative is a feature-level artifact at
 | Criterion | When to apply |
 |-----------|---------------|
 | [domain-language-only](domain-language-only.md) | Always |
+| [event-timeline-granularity](event-timeline-granularity.md) | Always |
 | [events-have-observable-outcomes](events-have-observable-outcomes.md) | Always |
-| [vocabulary-grounded-in-walkthrough](vocabulary-grounded-in-walkthrough.md) | Always |
+| [vocabulary-grounded-in-event-timeline](vocabulary-grounded-in-event-timeline.md) | Always |
