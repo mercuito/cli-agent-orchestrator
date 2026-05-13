@@ -29,10 +29,9 @@ for full assembly guidance.
 
 ## Catalog
 
-This catalog is currently empty. Feature-level test obligations have
-historically been task-local (covered by the coding-level catalog and the
-universal `test-validity-preserved` criterion). Entries are added here as
-they emerge from feature work that needs cross-task proof shape.
+| Criterion | When to apply |
+|-----------|---------------|
+| [stable-test-clause-ids](stable-test-clause-ids.md) | Always |
 
 ## Adding new criteria
 

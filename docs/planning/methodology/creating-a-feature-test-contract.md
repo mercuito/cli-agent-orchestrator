@@ -3,10 +3,16 @@
 ## Purpose
 
 The feature-level Test Contract defines cross-task proof and test-shape
-obligations for a feature. It is a single feature-level artifact and is
-optional — used when the feature has standing proof obligations that need
-to be sliced across tasks (shared harnesses, preservation baselines, fixture
-patterns, or proof shapes that only a coordinated set of tasks can satisfy).
+obligations for a feature. The narrative, capability contract, and
+behavioral contract describe what the system must do; they intentionally do
+not choose shared harnesses, preservation baselines, fixture patterns, proof
+shapes, or verification strategy. The feature-level Test Contract is where
+those feature-wide proof decisions live when they are needed.
+
+It is a single feature-level artifact and is optional — used when the
+feature has standing proof obligations that need to be sliced across tasks
+(shared harnesses, preservation baselines, fixture patterns, or proof shapes
+that only a coordinated set of tasks can satisfy).
 
 The feature-level contract is not redrafted at task altitude. Each task's
 slice of clause IDs is recorded in the Feature Tasks artifact (`tasks.md`);
@@ -27,12 +33,27 @@ If research reveals a feature-level clause is missing or wrong, the
 finding escalates upstream for amendment rather than being absorbed
 locally.
 
+Every feature-level Test Contract clause has a stable ID of the form
+`F-TC-<n>`. These IDs are the slice surface for `tasks.md`, handoffs,
+implementation plans, and defences. Clause titles may change for clarity;
+IDs remain stable unless the contract is deliberately reissued.
+
 ## When to use one
 
 Use a feature-level Test Contract when there are proof shapes that must be
 consistent across tasks — for example, a required harness, a shared
 fixture pattern, or proof obligations that only a coordinated set of tasks
 can satisfy.
+
+Author feature-level Test Contract clauses only from:
+
+- explicit user or product direction about proof shape or verification;
+- established repository test architecture, fixture conventions, harnesses,
+  preservation baselines, or testing standards;
+- existing test patterns that the feature must preserve or extend;
+- external project documents that impose proof or verification constraints;
+- pure-refactor scope, where preservation proof often needs shared
+  baselines and characterization decisions.
 
 If proof obligations are local to each task, the task-level Coding Test
 Contract and the universal `test-validity-preserved` criterion are
@@ -45,13 +66,15 @@ sufficient. No feature-level Test Contract is needed.
 - feature-level test criteria selected from the
   [feature-level Test Contract criteria catalog](./criteria/feature-test-contract/README.md)
 - feature-specific proof obligations that don't belong in the behavioral
-  contract and don't require codebase research to evaluate
+  contract and are grounded in the inputs above
 - proof-integrity scope for refactor work — which existing tests serve as
   the preservation baseline, and where characterization tests are needed
   for preexisting-but-uncovered behavior
 
 ## What does not belong here
 
+- Proof choices inferred only from the narrative, capability contract, or
+  behavioral contract. Those artifacts describe behavior, not proof shape.
 - Lower-level proof-quality obligations whose `when:` conditions require
   research to evaluate (test file organization, fixture choice, harness
   design for one task's affected surfaces). Those are coding-level
@@ -59,6 +82,9 @@ sufficient. No feature-level Test Contract is needed.
   [coding-level Test Contract criteria catalog](./criteria/coding-test-contract/README.md).
 - Task-by-task proof guidance. Tasks slice this contract; they are not
   authored from it.
+- Speculation. If the repo does not already establish a proof pattern and
+  the user has not asked for one, do not create one just to fill the
+  contract.
 
 ## Slicing
 
@@ -104,14 +130,14 @@ the behavior-changing path.
 
 ## Standing Proof Shapes
 
-(Shared harnesses, fixture patterns, or proof obligations that span tasks.
-Each clause gets a stable ID so the Feature Task Handoff and the Coding
-Test Contract can reference it.)
+- `F-TC-1`: <shared harness, fixture pattern, preservation baseline, or
+  proof obligation that spans tasks>
+- `F-TC-2`: ...
 
 ## Feature-Specific Proof Obligations
 
-(Anything unique to this feature that doesn't fit a reusable criterion.
-Each clause gets a stable ID.)
+- `F-TC-3`: <feature-specific proof obligation that does not fit a reusable criterion>
+- `F-TC-4`: ...
 ```
 
 ## Artifact path

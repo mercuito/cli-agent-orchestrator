@@ -30,6 +30,7 @@ for full assembly guidance.
 | Criterion | When to apply |
 |-----------|---------------|
 | [implementation-clause-verifiability](implementation-clause-verifiability.md) | Always |
+| [stable-code-clause-ids](stable-code-clause-ids.md) | Always |
 
 ## Adding new criteria
 
