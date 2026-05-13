@@ -31,7 +31,9 @@ Authored before coding begins, in this order:
 8. [Feature Task Handoff](./creating-a-feature-task-handoff.md) — one per
    task; references the task's slice entry in `tasks.md`, the
    committed-decisions artifact, the Verification Command, and coding
-   artifact paths.
+   artifact paths. When the task entry requires supporting references, the
+   handoff carries the concrete UI, design, product, domain, or existing-code
+   references needed for implementation research.
 
 ## Per-task lifecycle
 
@@ -40,7 +42,8 @@ For each task:
 1. **Read handoff and research.** Read the handoff, the task's entry in
    `tasks.md` (which lists the assigned slices), the named feature-level
    contracts, the committed-decisions artifact, the Verification Command,
-   and the artifact paths. Inspect the affected code and test surfaces.
+   the artifact paths, and any supporting references. Inspect the affected
+   code and test surfaces.
 2. Draft [Coding Code Contract](./creating-a-coding-code-contract.md).
 3. Draft [Coding Test Contract](./creating-a-coding-test-contract.md).
 4. Draft [Coding Implementation Plan](./creating-a-coding-implementation-plan.md).

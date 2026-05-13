@@ -58,6 +58,20 @@ will be created — the deterministic task-level paths under
 contracts; it points at where they will live and signals that drafting
 them is part of the task.
 
+### Supporting references
+
+When the task entry says supporting references are required, the handoff
+provides the concrete references the implementer must inspect during
+research before drafting the Coding Implementation Plan. References may
+include UI designs, screenshots, Figma frames, Storybook stories, routes,
+component files, product notes, domain examples, existing implementation
+patterns, or other inspectable material.
+
+Each reference must name what it is and how it applies. Do not use vague
+entries such as "follow the design" or "match existing UI." If a required
+reference is unavailable, the handoff explains the gap directly so the
+task can be blocked, revised, or clarified before implementation begins.
+
 ## What it does not contain
 
 - The slice IDs themselves (those live in `tasks.md`; the handoff
@@ -67,6 +81,8 @@ them is part of the task.
   phase.
 - Coding-level criteria selections — those live in the Coding Code
   Contract and Coding Test Contract.
+- New design decisions. Supporting references orient research; they do
+  not replace the Feature Narrative, contracts, or task slices.
 
 ## Document organization
 
@@ -86,6 +102,22 @@ The universal `test-validity-preserved` criterion applies regardless.
 
 See `docs/plans/<feature>/committed-implementation-decisions.md`. All
 entries are in force.
+
+## Supporting References
+
+Use these references during task research and implementation planning.
+
+### UI / Design References
+
+- `<path or URL>`: <what it shows and how it applies>
+
+### Product / Domain References
+
+- `<path or URL>`: <why it matters>
+
+### Existing Code References
+
+- `<path/component/module>`: <relevant existing pattern>
 
 ## Verification Command
 

@@ -27,4 +27,5 @@ assembly guidance.
 | [slice-acknowledgment-completeness](slice-acknowledgment-completeness.md) | Always |
 | [slice-coverage-uniqueness](slice-coverage-uniqueness.md) | Always |
 | [scope-handoffability](scope-handoffability.md) | Always |
+| [supporting-reference-acknowledgment](supporting-reference-acknowledgment.md) | Always |
 | [explicit-dependencies](explicit-dependencies.md) | Tasks have ordering dependencies |

@@ -26,3 +26,4 @@ for full assembly guidance.
 |-----------|---------------|
 | [slice-reference-resolves](slice-reference-resolves.md) | Always |
 | [operational-self-sufficiency](operational-self-sufficiency.md) | Always |
+| [supporting-reference-sufficiency](supporting-reference-sufficiency.md) | Task entry says supporting references are required |

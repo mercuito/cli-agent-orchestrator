@@ -34,6 +34,9 @@ For each task:
   - Test Contract slice — the feature-level Test Contract clause IDs the
     task owns, or an explicit "no Test Contract slice: <reason>" (or a
     note that no feature-level Test Contract exists)
+- supporting-reference acknowledgment — whether the task requires UI,
+  design, product, domain, or existing-code references in its handoff, or
+  an explicit "no supporting references required: <reason>"
 - explicit dependency notes when one task must land before another
 
 For the artifact as a whole:
@@ -52,6 +55,8 @@ reader resolves an ID by opening the named contract artifact.
 - coding-side details (research findings, plan, code obligations)
 - the per-task Verification Command and coding artifact paths (those live
   in the Feature Task Handoff)
+- concrete UI designs, screenshots, product docs, or code references
+  (the task entry only acknowledges whether the handoff must provide them)
 
 ## Document organization
 
@@ -69,6 +74,7 @@ below.
 - Behavioral slice: `B-1`, `B-3`, `C-2`
 - Code slice: `F-CC-1`, `F-CC-4`
 - Test slice: `F-TC-1`
+- Supporting references: required for UI layout and interaction details
 
 (Optional: depends on `t-<n>`.)
 
@@ -81,6 +87,9 @@ below.
 - Code slice: `F-CC-2`, `F-CC-3`
 - Test slice: no feature-level Test Contract exists; universal
   `test-validity-preserved` applies.
+- Supporting references: no supporting references required: pure
+  backend refactor with no UI, product, domain, or prior-pattern reference
+  dependency.
 
 ...
 ```
