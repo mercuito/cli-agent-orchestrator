@@ -136,7 +136,9 @@ def _linear_agent_session_payload() -> dict:
 
 
 def test_build_terminal_message_does_not_include_prompt_context():
-    event = _linear_provider_event(prompt_context='<issue identifier="CAO-13"><title>Demo</title></issue>')
+    event = _linear_provider_event(
+        prompt_context='<issue identifier="CAO-13"><title>Demo</title></issue>'
+    )
 
     message = runtime.build_terminal_message(event)
 
@@ -542,8 +544,9 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
     bridge_notification = Mock(delivery=delivery, created=True)
     accepted = []
 
-    def accept_notification(notification):
+    def accept_notification(notification, *, causing_event=None):
         accepted.append(notification)
+        assert causing_event is provider_event
         return AgentRuntimeNotifyResult(
             notification=notification,
             status=AgentRuntimeStatus.BUSY,
@@ -731,7 +734,9 @@ def test_notify_agent_for_persisted_event_routes_through_runtime_accept_notifica
             updated_at=datetime.now(),
         ),
     )
-    delivery = create_inbox_delivery("provider_conversation", "agent:implementation_partner", "Can you inspect")
+    delivery = create_inbox_delivery(
+        "provider_conversation", "agent:implementation_partner", "Can you inspect"
+    )
     bridge_notification = Mock(delivery=delivery, created=True)
     handle = Mock(inbox_receiver_id="agent:implementation_partner")
     handle.accept_notification.return_value = AgentRuntimeNotifyResult(

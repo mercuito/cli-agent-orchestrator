@@ -9,16 +9,25 @@ import pytest
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
+from cli_agent_orchestrator.events import CaoCorrelationId, CaoEventDispatcher, CaoEventId
+from cli_agent_orchestrator.linear.workspace_events import LinearAgentMentionedEvent
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import ProviderRuntimeDescriptor, ProviderRuntimeState
 from cli_agent_orchestrator.runtime import agent as runtime_agent
+from cli_agent_orchestrator.runtime import events as runtime_events
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeFreshnessAction,
     AgentRuntimeHandle,
     AgentRuntimeInvariantError,
     AgentRuntimeNotification,
     AgentRuntimeStatus,
+)
+from cli_agent_orchestrator.runtime.events import (
+    AgentRuntimeLifecycleEvent,
+    AgentRuntimeNotificationAcceptedEvent,
+    AgentRuntimeNotificationDeliveryEvent,
+    AgentRuntimeWorkspaceContextSwitchEvent,
 )
 from cli_agent_orchestrator.services import inbox_service
 
@@ -51,6 +60,19 @@ def identity(implementation_partner_identity_factory):
 @pytest.fixture
 def handle(identity) -> AgentRuntimeHandle:
     return AgentRuntimeHandle(identity)
+
+
+@pytest.fixture
+def recorded_runtime_events(monkeypatch):
+    dispatcher = CaoEventDispatcher()
+    runtime_events.register_runtime_cao_events(dispatcher)
+    published = []
+    dispatcher.subscribe_all(
+        handler=lambda event: published.append(event),
+        subscription_id="test-runtime-events",
+    )
+    monkeypatch.setattr(runtime_events, "default_cao_event_dispatcher", lambda: dispatcher)
+    return published
 
 
 def _create_terminal(session_name: str = "cao-implementation-partner") -> str:
@@ -105,6 +127,17 @@ def _provider_runtime_payload(thread_id: str) -> dict[str, str]:
         "schema_version": "test-provider-runtime-state.v1",
         "thread_id": thread_id,
     }
+
+
+def _linear_causing_event() -> LinearAgentMentionedEvent:
+    return LinearAgentMentionedEvent(
+        event_id=CaoEventId("linear:event:mention-1"),
+        correlation_id=CaoCorrelationId("linear-session-1"),
+        agent_id="implementation_partner",
+        message_id="message-1",
+        thread_id="linear-session-1",
+        message_body="Please handle this.",
+    )
 
 
 class RecordingRuntimeStateCapability:
@@ -251,6 +284,63 @@ def test_ensure_started_creates_terminal_from_agent_identity_when_not_started(
     )
 
 
+def test_ensure_started_publishes_lifecycle_event_for_direct_start(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    recorded_runtime_events,
+):
+    monkeypatch.setattr(
+        runtime_agent.tmux_client,
+        "session_exists",
+        lambda session: False,
+    )
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal",
+        Mock(return_value=_created_terminal_result("terminal-1")),
+    )
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+
+    terminal = handle.ensure_started()
+
+    assert terminal.id == "terminal-1"
+    assert [type(event) for event in recorded_runtime_events] == [AgentRuntimeLifecycleEvent]
+    lifecycle = recorded_runtime_events[0]
+    assert isinstance(lifecycle, AgentRuntimeLifecycleEvent)
+    assert lifecycle.action == AgentRuntimeFreshnessAction.STARTED.value
+    assert lifecycle.runtime_status == AgentRuntimeStatus.IDLE.value
+    assert lifecycle.terminal_id == "terminal-1"
+    assert lifecycle.ready is True
+    assert lifecycle.fresh is True
+    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+
+
+def test_ensure_started_publishes_lifecycle_event_for_direct_reuse(
+    test_session,
+    handle,
+    terminal_provider_patcher,
+    recorded_runtime_events,
+):
+    _create_terminal()
+    _mark_terminal_fresh(handle)
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+
+    terminal = handle.ensure_started()
+
+    assert terminal.id == "terminal-1"
+    assert [type(event) for event in recorded_runtime_events] == [AgentRuntimeLifecycleEvent]
+    lifecycle = recorded_runtime_events[0]
+    assert isinstance(lifecycle, AgentRuntimeLifecycleEvent)
+    assert lifecycle.action == AgentRuntimeFreshnessAction.REUSED.value
+    assert lifecycle.runtime_status == AgentRuntimeStatus.IDLE.value
+    assert lifecycle.terminal_id == "terminal-1"
+    assert lifecycle.ready is True
+    assert lifecycle.fresh is True
+    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+
+
 def test_current_terminal_rejects_multiple_manifestations_for_identity(test_session, handle):
     db_module.create_terminal(
         "terminal-1",
@@ -346,6 +436,7 @@ def test_context_runtime_switches_by_stopping_other_identity_terminal(
     identity,
     terminal_provider_patcher,
     terminal_send_patcher,
+    recorded_runtime_events,
 ):
     context_a = db_module.ensure_workspace_context_for_boundary(
         resolver_id="linear_planning",
@@ -425,6 +516,21 @@ def test_context_runtime_switches_by_stopping_other_identity_terminal(
     create_terminal.assert_called_once()
     assert create_terminal.call_args.kwargs["workspace_context_id"] == context_b.id
     send_input.assert_called_once_with("terminal-2", "Deliver in context B.")
+    switch_event = next(
+        event
+        for event in recorded_runtime_events
+        if isinstance(event, AgentRuntimeWorkspaceContextSwitchEvent)
+    )
+    assert switch_event.agent_identity_id == "implementation_partner"
+    assert switch_event.from_workspace_context_id == context_a.id
+    assert switch_event.to_workspace_context_id == context_b.id
+    assert switch_event.terminal_id == "terminal-1"
+    assert switch_event.runtime_status == AgentRuntimeStatus.IDLE.value
+    assert switch_event.outcome == "succeeded"
+    assert switch_event.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert switch_event.agent_participants[0].role == (
+        runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_CONTEXT_SWITCH_AGENT
+    )
 
 
 def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
@@ -433,6 +539,7 @@ def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
     identity,
     terminal_provider_patcher,
     terminal_send_patcher,
+    recorded_runtime_events,
 ):
     context_a = db_module.ensure_workspace_context_for_boundary(
         resolver_id="linear_planning",
@@ -476,6 +583,16 @@ def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
     delete_terminal.assert_not_called()
     create_terminal.assert_not_called()
     send_input.assert_not_called()
+    switch_event = next(
+        event
+        for event in recorded_runtime_events
+        if isinstance(event, AgentRuntimeWorkspaceContextSwitchEvent)
+    )
+    assert switch_event.from_workspace_context_id == context_a.id
+    assert switch_event.to_workspace_context_id == context_b.id
+    assert switch_event.runtime_status == AgentRuntimeStatus.BUSY.value
+    assert switch_event.outcome == "deferred"
+    assert switch_event.agent_participants[0].agent_identity_id == "implementation_partner"
 
 
 def test_current_terminal_reports_resume_unsupported_for_provider_without_resume(
@@ -504,6 +621,7 @@ def test_notify_accepts_durable_inbox_state_when_startup_fails(
     test_session,
     monkeypatch,
     handle,
+    recorded_runtime_events,
 ):
     monkeypatch.setattr(
         "cli_agent_orchestrator.runtime.agent.tmux_client.session_exists",
@@ -528,6 +646,23 @@ def test_notify_accepts_durable_inbox_state_when_startup_fails(
     assert [(delivery.message.body, delivery.notification.status) for delivery in deliveries] == [
         ("Please inspect Linear session CAO-31.", MessageStatus.PENDING)
     ]
+    assert [type(event) for event in recorded_runtime_events] == [
+        AgentRuntimeNotificationAcceptedEvent,
+        AgentRuntimeLifecycleEvent,
+        AgentRuntimeNotificationDeliveryEvent,
+    ]
+    lifecycle = recorded_runtime_events[1]
+    assert isinstance(lifecycle, AgentRuntimeLifecycleEvent)
+    assert lifecycle.action == AgentRuntimeFreshnessAction.FAILED.value
+    assert lifecycle.runtime_status == AgentRuntimeStatus.NOT_STARTED.value
+    assert lifecycle.error == "cannot start"
+    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+    delivery = recorded_runtime_events[2]
+    assert isinstance(delivery, AgentRuntimeNotificationDeliveryEvent)
+    assert delivery.outcome == "failed"
+    assert delivery.attempted is False
+    assert delivery.error == "cannot start"
+    assert delivery.agent_participants[0].agent_identity_id == "implementation_partner"
 
 
 def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
@@ -584,6 +719,76 @@ def test_fresh_idle_runtime_is_reused_for_delivery(
     assert result.freshness.action == AgentRuntimeFreshnessAction.REUSED
     assert result.delivery.delivered is True
     send_input.assert_called_once_with("terminal-1", "Deliver through a fresh terminal.")
+
+
+def test_notify_publishes_typed_runtime_events_with_provider_causation(
+    test_session,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+    recorded_runtime_events,
+):
+    _create_terminal()
+    _mark_terminal_fresh(handle)
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    terminal_send_patcher(runtime_agent.terminal_service)
+    causing_event = _linear_causing_event()
+
+    result = handle.notify(
+        "Deliver provider-caused notification.",
+        source_kind="linear_event",
+        source_id="event-runtime-causation",
+        causing_event=causing_event,
+    )
+
+    assert result.delivery.delivered is True
+    assert [type(event) for event in recorded_runtime_events] == [
+        AgentRuntimeNotificationAcceptedEvent,
+        AgentRuntimeLifecycleEvent,
+        AgentRuntimeNotificationDeliveryEvent,
+    ]
+    accepted = recorded_runtime_events[0]
+    assert isinstance(accepted, AgentRuntimeNotificationAcceptedEvent)
+    assert accepted.agent_identity_id == "implementation_partner"
+    assert accepted.workspace_context_id == handle.workspace_context_id
+    assert accepted.inbox_notification_id == result.notification.delivery.notification.id
+    assert accepted.source_kind == "linear_event"
+    assert accepted.source_id == "event-runtime-causation"
+    assert accepted.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert accepted.agent_participants[0].role == (
+        runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_NOTIFICATION_RECEIVER
+    )
+    assert accepted.correlation_id == CaoCorrelationId("linear-session-1")
+    assert accepted.causation_id == "linear:event:mention-1"
+
+    lifecycle = recorded_runtime_events[1]
+    assert isinstance(lifecycle, AgentRuntimeLifecycleEvent)
+    assert lifecycle.action == AgentRuntimeFreshnessAction.REUSED.value
+    assert lifecycle.runtime_status == AgentRuntimeStatus.IDLE.value
+    assert lifecycle.terminal_id == "terminal-1"
+    assert lifecycle.ready is True
+    assert lifecycle.fresh is True
+    assert lifecycle.agent_participants[0].role == (
+        runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_LIFECYCLE_AGENT
+    )
+    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert lifecycle.correlation_id == CaoCorrelationId("linear-session-1")
+    assert lifecycle.causation_id == "linear:event:mention-1"
+
+    delivery = recorded_runtime_events[2]
+    assert isinstance(delivery, AgentRuntimeNotificationDeliveryEvent)
+    assert delivery.inbox_notification_id == result.notification.delivery.notification.id
+    assert delivery.runtime_status == AgentRuntimeStatus.IDLE.value
+    assert delivery.outcome == "delivered"
+    assert delivery.attempted is True
+    assert delivery.delivered is True
+    assert delivery.error is None
+    assert delivery.agent_participants[0].role == (
+        runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_DELIVERY_TARGET
+    )
+    assert delivery.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert delivery.correlation_id == CaoCorrelationId("linear-session-1")
+    assert delivery.causation_id == "linear:event:mention-1"
 
 
 def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
@@ -1263,3 +1468,39 @@ def test_duplicate_notification_source_reuses_existing_inbox_message(
     assert [delivery.message.body for delivery in deliveries] == [
         "Only one notification should be queued."
     ]
+
+
+def test_duplicate_notification_source_does_not_republish_unchanged_runtime_events(
+    test_session,
+    handle,
+    terminal_provider_patcher,
+    recorded_runtime_events,
+):
+    _create_terminal()
+    _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
+
+    first = handle.notify(
+        "Only one runtime notification event should be emitted.",
+        source_kind="linear_event",
+        source_id="event-runtime-duplicate",
+    )
+    event_count_after_first = len(recorded_runtime_events)
+    second = handle.notify(
+        "Duplicate webhook should not emit unchanged runtime events.",
+        source_kind="linear_event",
+        source_id="event-runtime-duplicate",
+    )
+
+    assert first.notification.created is True
+    assert second.notification.created is False
+    assert event_count_after_first == 3
+    assert len(recorded_runtime_events) == event_count_after_first
+    assert [type(event) for event in recorded_runtime_events] == [
+        AgentRuntimeNotificationAcceptedEvent,
+        AgentRuntimeLifecycleEvent,
+        AgentRuntimeNotificationDeliveryEvent,
+    ]
+    delivery = recorded_runtime_events[-1]
+    assert isinstance(delivery, AgentRuntimeNotificationDeliveryEvent)
+    assert delivery.outcome == "deferred"
+    assert delivery.runtime_status == AgentRuntimeStatus.BUSY.value

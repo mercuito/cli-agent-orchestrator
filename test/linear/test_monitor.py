@@ -57,7 +57,7 @@ class RecordingRuntimeHandle:
     def __init__(self, _identity: Any) -> None:
         self.inbox_receiver_id = "agent:implementation_partner"
 
-    def accept_notification(self, notification: Any):
+    def accept_notification(self, notification: Any, *, causing_event: Any = None):
         delivery = notification.delivery
         RecordingRuntimeHandle.notifications.append(
             RecordedNotification(
@@ -74,7 +74,7 @@ class RetryRecordingHandle:
     def __init__(self, _identity: Any) -> None:
         self.inbox_receiver_id = "agent:implementation_partner"
 
-    def try_deliver_pending(self):
+    def try_deliver_pending(self, **_kwargs: Any):
         RetryRecordingHandle.calls += 1
         return type(
             "DeliveryResult",

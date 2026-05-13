@@ -499,6 +499,7 @@ def handle_provider_event(event: LinearIssueContextEvent) -> Optional[str]:
         sender_id=f"linear:{app_key or 'unknown'}",
         source_kind=LINEAR_RUNTIME_SOURCE_KIND,
         source_id=_runtime_source_id(event),
+        causing_event=event,
     )
     terminal_id = result.terminal_id
 
@@ -655,7 +656,7 @@ def notify_agent_for_persisted_event(
         delivery=notification.delivery,
         created=notification.created,
     )
-    result = handle.accept_notification(runtime_notification)
+    result = handle.accept_notification(runtime_notification, causing_event=provider_event)
     if result.terminal_id:
         _publish_persisted_external_url_once(
             thread_id=thread_id,

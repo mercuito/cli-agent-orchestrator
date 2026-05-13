@@ -14,6 +14,7 @@ from typing import Any, Mapping, Optional
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+import cli_agent_orchestrator.runtime.events as runtime_events
 from cli_agent_orchestrator.agent_identity import (
     AgentIdentity,
     AgentWorkspaceContextRuntimePaths,
@@ -22,7 +23,8 @@ from cli_agent_orchestrator.agent_identity import (
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
-from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.events import CaoEvent
+from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
@@ -206,10 +208,20 @@ class AgentRuntimeHandle:
         """Create or reuse the mapped terminal for this identity."""
         existing = self._terminal()
         if existing is not None:
+            self._publish_runtime_lifecycle_result(
+                self._runtime_lifecycle_result_for_terminal(
+                    existing,
+                    action=AgentRuntimeFreshnessAction.REUSED,
+                    fresh=self._existing_terminal_is_fresh(existing.id),
+                ),
+                causing_event=None,
+            )
             return existing
 
         desired_fingerprint = self._desired_runtime_fingerprint()
-        switch_result = self._deactivate_other_context_terminal_for_switch()
+        switch_result = self._deactivate_other_context_terminal_for_switch(
+            causing_event=None,
+        )
         if switch_result is not None:
             raise RuntimeError(switch_result.error or "workspace context switch failed")
         provider_runtime = self._stored_provider_runtime_payload()
@@ -221,16 +233,35 @@ class AgentRuntimeHandle:
             started.id,
             desired_fingerprint,
         )
+        self._publish_runtime_lifecycle_result(
+            self._runtime_lifecycle_result_for_terminal(
+                started,
+                action=AgentRuntimeFreshnessAction.STARTED,
+                fresh=True,
+            ),
+            causing_event=None,
+        )
         return started
 
-    def ensure_fresh_started(self) -> AgentRuntimeFreshnessResult:
+    def ensure_fresh_started(
+        self,
+        *,
+        causing_event: CaoEvent | None = None,
+        publish_lifecycle_event: bool = True,
+    ) -> AgentRuntimeFreshnessResult:
         """Ensure the identity runtime is started, fresh, and ready for delivery."""
         desired_fingerprint = self._desired_runtime_fingerprint()
         terminal = self._terminal()
         if terminal is None:
-            switch_result = self._deactivate_other_context_terminal_for_switch()
+            switch_result = self._deactivate_other_context_terminal_for_switch(
+                causing_event=causing_event,
+            )
             if switch_result is not None:
-                return switch_result
+                return self._publish_runtime_lifecycle_result(
+                    switch_result,
+                    causing_event=causing_event,
+                    publish_event=publish_lifecycle_event,
+                )
             try:
                 provider_runtime = self._stored_provider_runtime_payload()
                 started = self._start_with_fingerprint(
@@ -243,40 +274,56 @@ class AgentRuntimeHandle:
                 )
             except Exception as exc:
                 logger.warning("Unable to start runtime for agent %s: %s", self.identity.id, exc)
-                return AgentRuntimeFreshnessResult(
-                    action=AgentRuntimeFreshnessAction.FAILED,
-                    status=AgentRuntimeStatus.NOT_STARTED,
-                    terminal_id=None,
-                    ready=False,
-                    fresh=False,
-                    error=str(exc),
+                return self._publish_runtime_lifecycle_result(
+                    AgentRuntimeFreshnessResult(
+                        action=AgentRuntimeFreshnessAction.FAILED,
+                        status=AgentRuntimeStatus.NOT_STARTED,
+                        terminal_id=None,
+                        ready=False,
+                        fresh=False,
+                        error=str(exc),
+                    ),
+                    causing_event=causing_event,
+                    publish_event=publish_lifecycle_event,
                 )
-            return self._freshness_result_for_started_terminal(
-                started,
-                action=AgentRuntimeFreshnessAction.STARTED,
-                fresh=True,
+            return self._publish_runtime_lifecycle_result(
+                self._freshness_result_for_started_terminal(
+                    started,
+                    action=AgentRuntimeFreshnessAction.STARTED,
+                    fresh=True,
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
 
         status = self._status_for_terminal(terminal)
         if status is AgentRuntimeStatus.UNREACHABLE:
             self._move_pending_terminal_notifications_to_agent(terminal.id)
-            return AgentRuntimeFreshnessResult(
-                action=AgentRuntimeFreshnessAction.FAILED,
-                status=status,
-                terminal_id=terminal.id,
-                ready=False,
-                fresh=False,
-                error="runtime status is unreachable",
+            return self._publish_runtime_lifecycle_result(
+                AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.FAILED,
+                    status=status,
+                    terminal_id=terminal.id,
+                    ready=False,
+                    fresh=False,
+                    error="runtime status is unreachable",
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
         if status is AgentRuntimeStatus.ERROR:
             self._move_pending_terminal_notifications_to_agent(terminal.id)
-            return AgentRuntimeFreshnessResult(
-                action=AgentRuntimeFreshnessAction.FAILED,
-                status=status,
-                terminal_id=terminal.id,
-                ready=False,
-                fresh=False,
-                error="runtime is in error state",
+            return self._publish_runtime_lifecycle_result(
+                AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.FAILED,
+                    status=status,
+                    terminal_id=terminal.id,
+                    ready=False,
+                    fresh=False,
+                    error="runtime is in error state",
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
 
         fresh = self._applied_runtime_fingerprint(terminal.id) == desired_fingerprint
@@ -294,40 +341,56 @@ class AgentRuntimeHandle:
                         terminal.id,
                         exc,
                     )
-                    return AgentRuntimeFreshnessResult(
-                        action=AgentRuntimeFreshnessAction.FAILED,
+                    return self._publish_runtime_lifecycle_result(
+                        AgentRuntimeFreshnessResult(
+                            action=AgentRuntimeFreshnessAction.FAILED,
+                            status=status,
+                            terminal_id=terminal.id,
+                            ready=False,
+                            fresh=True,
+                            error=str(exc),
+                        ),
+                        causing_event=causing_event,
+                        publish_event=publish_lifecycle_event,
+                    )
+                return self._publish_runtime_lifecycle_result(
+                    AgentRuntimeFreshnessResult(
+                        action=AgentRuntimeFreshnessAction.REUSED,
                         status=status,
                         terminal_id=terminal.id,
-                        ready=False,
+                        ready=True,
                         fresh=True,
-                        error=str(exc),
-                    )
-                return AgentRuntimeFreshnessResult(
-                    action=AgentRuntimeFreshnessAction.REUSED,
-                    status=status,
-                    terminal_id=terminal.id,
-                    ready=True,
-                    fresh=True,
+                    ),
+                    causing_event=causing_event,
+                    publish_event=publish_lifecycle_event,
                 )
             self._move_pending_terminal_notifications_to_agent(terminal.id)
-            return AgentRuntimeFreshnessResult(
-                action=AgentRuntimeFreshnessAction.DEFERRED,
-                status=status,
-                terminal_id=terminal.id,
-                ready=False,
-                fresh=True,
-                error=f"runtime is {status.value}; delivery deferred",
+            return self._publish_runtime_lifecycle_result(
+                AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.DEFERRED,
+                    status=status,
+                    terminal_id=terminal.id,
+                    ready=False,
+                    fresh=True,
+                    error=f"runtime is {status.value}; delivery deferred",
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
 
         self._move_pending_terminal_notifications_to_agent(terminal.id)
         if status in (AgentRuntimeStatus.BUSY, AgentRuntimeStatus.WAITING_USER):
-            return AgentRuntimeFreshnessResult(
-                action=AgentRuntimeFreshnessAction.DEFERRED,
-                status=status,
-                terminal_id=terminal.id,
-                ready=False,
-                fresh=False,
-                error=f"runtime is stale and {status.value}; delivery deferred",
+            return self._publish_runtime_lifecycle_result(
+                AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.DEFERRED,
+                    status=status,
+                    terminal_id=terminal.id,
+                    ready=False,
+                    fresh=False,
+                    error=f"runtime is stale and {status.value}; delivery deferred",
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
 
         try:
@@ -344,22 +407,30 @@ class AgentRuntimeHandle:
                 terminal.id,
                 exc,
             )
-            return AgentRuntimeFreshnessResult(
-                action=AgentRuntimeFreshnessAction.FAILED,
-                status=status,
-                terminal_id=terminal.id,
-                ready=False,
-                fresh=False,
-                error=str(exc),
+            return self._publish_runtime_lifecycle_result(
+                AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.FAILED,
+                    status=status,
+                    terminal_id=terminal.id,
+                    ready=False,
+                    fresh=False,
+                    error=str(exc),
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
         if status not in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
-            return AgentRuntimeFreshnessResult(
-                action=AgentRuntimeFreshnessAction.FAILED,
-                status=status,
-                terminal_id=terminal.id,
-                ready=False,
-                fresh=False,
-                error=f"stale runtime cannot be refreshed while {status.value}",
+            return self._publish_runtime_lifecycle_result(
+                AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.FAILED,
+                    status=status,
+                    terminal_id=terminal.id,
+                    ready=False,
+                    fresh=False,
+                    error=f"stale runtime cannot be refreshed while {status.value}",
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
 
         try:
@@ -374,18 +445,26 @@ class AgentRuntimeHandle:
             )
         except Exception as exc:
             logger.warning("Unable to refresh runtime for agent %s: %s", self.identity.id, exc)
-            return AgentRuntimeFreshnessResult(
-                action=AgentRuntimeFreshnessAction.FAILED,
-                status=status,
-                terminal_id=None,
-                ready=False,
-                fresh=False,
-                error=str(exc),
+            return self._publish_runtime_lifecycle_result(
+                AgentRuntimeFreshnessResult(
+                    action=AgentRuntimeFreshnessAction.FAILED,
+                    status=status,
+                    terminal_id=None,
+                    ready=False,
+                    fresh=False,
+                    error=str(exc),
+                ),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
             )
-        return self._freshness_result_for_started_terminal(
-            restarted,
-            action=AgentRuntimeFreshnessAction.RESTARTED,
-            fresh=True,
+        return self._publish_runtime_lifecycle_result(
+            self._freshness_result_for_started_terminal(
+                restarted,
+                action=AgentRuntimeFreshnessAction.RESTARTED,
+                fresh=True,
+            ),
+            causing_event=causing_event,
+            publish_event=publish_lifecycle_event,
         )
 
     def current_terminal(self) -> Optional[AgentRuntimeTerminal]:
@@ -401,6 +480,7 @@ class AgentRuntimeHandle:
         source_id: Optional[str] = None,
         ensure_started: bool = True,
         attempt_delivery: bool = True,
+        causing_event: CaoEvent | None = None,
     ) -> AgentRuntimeNotifyResult:
         """Durably accept a provider notification and optionally deliver it.
 
@@ -414,9 +494,19 @@ class AgentRuntimeHandle:
             source_kind=source_kind,
             source_id=source_id,
         )
+        original_status = notification.delivery.notification.status
+        if notification.created:
+            self._publish_notification_accepted(
+                notification,
+                causing_event=causing_event,
+            )
 
         delivery = (
-            self.try_deliver_pending(ensure_started=ensure_started)
+            self.try_deliver_pending(
+                ensure_started=ensure_started,
+                causing_event=causing_event,
+                publish_lifecycle_event=notification.created,
+            )
             if attempt_delivery
             else AgentRuntimeDeliveryResult(
                 status=self.status(),
@@ -432,6 +522,12 @@ class AgentRuntimeHandle:
             in (AgentRuntimeFreshnessAction.STARTED, AgentRuntimeFreshnessAction.RESTARTED)
         )
         notification = self._refresh_notification_receiver(notification)
+        self._publish_notification_delivery_if_new_fact(
+            notification,
+            delivery,
+            original_status=original_status,
+            causing_event=causing_event,
+        )
         return AgentRuntimeNotifyResult(
             notification=notification,
             status=delivery.status,
@@ -448,6 +544,7 @@ class AgentRuntimeHandle:
         *,
         ensure_started: bool = True,
         attempt_delivery: bool = True,
+        causing_event: CaoEvent | None = None,
     ) -> AgentRuntimeNotifyResult:
         """Start or wake the runtime for an inbox notification created by another owner.
 
@@ -456,8 +553,19 @@ class AgentRuntimeHandle:
         This method keeps terminal lifecycle and busy/idle delivery behavior
         behind the runtime handle for those already-durable notifications.
         """
+        original_status = notification.delivery.notification.status
+        if notification.created:
+            self._publish_notification_accepted(
+                notification,
+                causing_event=causing_event,
+            )
+
         delivery = (
-            self.try_deliver_pending(ensure_started=ensure_started)
+            self.try_deliver_pending(
+                ensure_started=ensure_started,
+                causing_event=causing_event,
+                publish_lifecycle_event=notification.created,
+            )
             if attempt_delivery
             else AgentRuntimeDeliveryResult(
                 status=self.status(),
@@ -473,6 +581,12 @@ class AgentRuntimeHandle:
             in (AgentRuntimeFreshnessAction.STARTED, AgentRuntimeFreshnessAction.RESTARTED)
         )
         notification = self._refresh_notification_receiver(notification)
+        self._publish_notification_delivery_if_new_fact(
+            notification,
+            delivery,
+            original_status=original_status,
+            causing_event=causing_event,
+        )
         return AgentRuntimeNotifyResult(
             notification=notification,
             status=delivery.status,
@@ -483,10 +597,25 @@ class AgentRuntimeHandle:
             freshness=freshness,
         )
 
-    def try_deliver_pending(self, *, ensure_started: bool = True) -> AgentRuntimeDeliveryResult:
+    def try_deliver_pending(
+        self,
+        *,
+        ensure_started: bool = True,
+        causing_event: CaoEvent | None = None,
+        publish_lifecycle_event: bool = True,
+    ) -> AgentRuntimeDeliveryResult:
         """Best-effort delivery of pending notifications when the runtime is ready."""
         freshness = (
-            self.ensure_fresh_started() if ensure_started else self._freshness_without_starting()
+            self.ensure_fresh_started(
+                causing_event=causing_event,
+                publish_lifecycle_event=publish_lifecycle_event,
+            )
+            if ensure_started
+            else self._publish_runtime_lifecycle_result(
+                self._freshness_without_starting(),
+                causing_event=causing_event,
+                publish_event=publish_lifecycle_event,
+            )
         )
         self._last_freshness_result = freshness
         if not freshness.ready or freshness.terminal_id is None:
@@ -577,6 +706,8 @@ class AgentRuntimeHandle:
 
     def _deactivate_other_context_terminal_for_switch(
         self,
+        *,
+        causing_event: CaoEvent | None = None,
     ) -> AgentRuntimeFreshnessResult | None:
         terminal = self._other_context_terminal()
         if terminal is None:
@@ -584,6 +715,13 @@ class AgentRuntimeHandle:
 
         status = self._status_for_terminal(terminal)
         if status in (AgentRuntimeStatus.BUSY, AgentRuntimeStatus.WAITING_USER):
+            self._publish_workspace_context_switch_event(
+                terminal=terminal,
+                status=status,
+                outcome="deferred",
+                error=f"runtime is {status.value}; context switch deferred",
+                causing_event=causing_event,
+            )
             return AgentRuntimeFreshnessResult(
                 action=AgentRuntimeFreshnessAction.DEFERRED,
                 status=status,
@@ -593,6 +731,13 @@ class AgentRuntimeHandle:
                 error=f"runtime is {status.value}; context switch deferred",
             )
         if status not in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED):
+            self._publish_workspace_context_switch_event(
+                terminal=terminal,
+                status=status,
+                outcome="failed",
+                error=f"runtime is {status.value}; context switch failed",
+                causing_event=causing_event,
+            )
             return AgentRuntimeFreshnessResult(
                 action=AgentRuntimeFreshnessAction.FAILED,
                 status=status,
@@ -628,6 +773,13 @@ class AgentRuntimeHandle:
                 self.workspace_context_id,
                 exc,
             )
+            self._publish_workspace_context_switch_event(
+                terminal=terminal,
+                status=status,
+                outcome="failed",
+                error=str(exc),
+                causing_event=causing_event,
+            )
             return AgentRuntimeFreshnessResult(
                 action=AgentRuntimeFreshnessAction.FAILED,
                 status=status,
@@ -637,6 +789,13 @@ class AgentRuntimeHandle:
                 error=str(exc),
             )
 
+        self._publish_workspace_context_switch_event(
+            terminal=terminal,
+            status=status,
+            outcome="succeeded",
+            error=None,
+            causing_event=causing_event,
+        )
         return None
 
     def _start_with_fingerprint(
@@ -712,6 +871,47 @@ class AgentRuntimeHandle:
             fresh=fresh,
             error=f"runtime is {status.value}",
         )
+
+    def _runtime_lifecycle_result_for_terminal(
+        self,
+        terminal: AgentRuntimeTerminal,
+        *,
+        action: AgentRuntimeFreshnessAction,
+        fresh: bool,
+    ) -> AgentRuntimeFreshnessResult:
+        try:
+            status = self._status_for_terminal(terminal)
+        except Exception as exc:
+            logger.warning(
+                "Unable to query lifecycle status for agent %s terminal %s: %s",
+                self.identity.id,
+                terminal.id,
+                exc,
+            )
+            status = AgentRuntimeStatus.UNREACHABLE
+        ready = status in (AgentRuntimeStatus.IDLE, AgentRuntimeStatus.COMPLETED)
+        return AgentRuntimeFreshnessResult(
+            action=action,
+            status=status,
+            terminal_id=terminal.id,
+            ready=ready,
+            fresh=fresh,
+            error=None if ready else f"runtime is {status.value}",
+        )
+
+    def _existing_terminal_is_fresh(self, terminal_id: str) -> bool:
+        try:
+            return self._applied_runtime_fingerprint(terminal_id) == (
+                self._desired_runtime_fingerprint()
+            )
+        except Exception as exc:
+            logger.warning(
+                "Unable to evaluate runtime freshness for agent %s terminal %s: %s",
+                self.identity.id,
+                terminal_id,
+                exc,
+            )
+            return False
 
     def _freshness_without_starting(self) -> AgentRuntimeFreshnessResult:
         terminal = self._terminal()
@@ -1051,6 +1251,116 @@ class AgentRuntimeHandle:
         return AgentRuntimeNotification(
             created=notification.created,
             delivery=delivery,
+        )
+
+    def _publish_notification_accepted(
+        self,
+        notification: AgentRuntimeNotification,
+        *,
+        causing_event: CaoEvent | None,
+    ) -> None:
+        delivery = notification.delivery
+        sender_id = (
+            delivery.message.sender_id
+            if delivery.message is not None
+            else delivery.notification.source_kind
+        )
+        runtime_events.publish_runtime_event(
+            runtime_events.notification_accepted_event(
+                agent_identity_id=self.identity.id,
+                workspace_context_id=self.workspace_context_id,
+                inbox_notification_id=delivery.notification.id,
+                inbox_receiver_id=self.inbox_receiver_id,
+                sender_id=sender_id,
+                source_kind=delivery.notification.source_kind,
+                source_id=delivery.notification.source_id,
+                causing_event=causing_event,
+            )
+        )
+
+    def _publish_notification_delivery_if_new_fact(
+        self,
+        notification: AgentRuntimeNotification,
+        delivery: AgentRuntimeDeliveryResult,
+        *,
+        original_status: MessageStatus,
+        causing_event: CaoEvent | None,
+    ) -> None:
+        current_status = notification.delivery.notification.status
+        if not notification.created and current_status == original_status:
+            return
+
+        outcome = "deferred"
+        if current_status == MessageStatus.FAILED:
+            outcome = "failed"
+        elif delivery.delivered or current_status == MessageStatus.DELIVERED:
+            outcome = "delivered"
+        elif delivery.error and delivery.status not in (
+            AgentRuntimeStatus.BUSY,
+            AgentRuntimeStatus.WAITING_USER,
+        ):
+            outcome = "failed"
+
+        runtime_events.publish_runtime_event(
+            runtime_events.notification_delivery_event(
+                agent_identity_id=self.identity.id,
+                workspace_context_id=self.workspace_context_id,
+                inbox_notification_id=notification.delivery.notification.id,
+                inbox_receiver_id=self.inbox_receiver_id,
+                terminal_id=delivery.terminal_id,
+                runtime_status=delivery.status.value,
+                outcome=outcome,
+                attempted=delivery.attempted,
+                delivered=delivery.delivered,
+                error=delivery.error,
+                causing_event=causing_event,
+            )
+        )
+
+    def _publish_runtime_lifecycle_result(
+        self,
+        result: AgentRuntimeFreshnessResult,
+        *,
+        causing_event: CaoEvent | None,
+        publish_event: bool = True,
+    ) -> AgentRuntimeFreshnessResult:
+        if not publish_event:
+            return result
+        runtime_events.publish_runtime_event(
+            runtime_events.lifecycle_event(
+                agent_identity_id=self.identity.id,
+                workspace_context_id=self.workspace_context_id,
+                action=result.action.value,
+                runtime_status=result.status.value,
+                terminal_id=result.terminal_id,
+                ready=result.ready,
+                fresh=result.fresh,
+                error=result.error,
+                causing_event=causing_event,
+            )
+        )
+        return result
+
+    def _publish_workspace_context_switch_event(
+        self,
+        *,
+        terminal: AgentRuntimeTerminal,
+        status: AgentRuntimeStatus,
+        outcome: str,
+        error: str | None,
+        causing_event: CaoEvent | None,
+    ) -> None:
+        runtime_events.publish_runtime_event(
+            runtime_events.workspace_context_switch_event(
+                agent_identity_id=self.identity.id,
+                from_workspace_context_id=terminal.workspace_context_id,
+                to_workspace_context_id=self.workspace_context_id,
+                terminal_id=terminal.id,
+                runtime_status=status.value,
+                outcome=outcome,
+                error=error,
+                causing_event=causing_event,
+            )
         )
 
 

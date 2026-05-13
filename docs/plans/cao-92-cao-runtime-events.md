@@ -142,33 +142,267 @@ Selected criteria:
 1. Inspect `cli_agent_orchestrator.runtime.agent`, inbox delivery, Linear
    runtime integration, and workspace-context owner flows to identify the
    existing fact boundaries.
-2. Add a runtime-owned CAO event module/export surface with only concrete events
-   emitted by this slice.
-3. Register runtime event types with the default CAO dispatcher at the same
-   owner boundary pattern used after CAO-91.
-4. Publish typed events at selected success/deferred/failure runtime facts while
-   preserving causation and correlation when available.
-5. Add focused tests for every emitted event's typed fields, agent participants,
-   correlation/causation, and owner-surface publication.
-6. Run the Review Readiness Command and fill in the completion report and
+2. Add `cli_agent_orchestrator.runtime.events` as the runtime-owned event
+   vocabulary and bounded export surface. The emitted event set for this slice
+   is:
+   - `AgentRuntimeNotificationAcceptedEvent`, emitted only when the runtime
+     accepts a newly durable notification for an agent identity.
+   - `AgentRuntimeNotificationDeliveryEvent`, emitted when a runtime
+     notification delivery fact becomes observable: delivered, deferred, or
+     failed for the accepted notification.
+   - `AgentRuntimeLifecycleEvent`, emitted from freshness reconciliation when
+     the runtime is started, reused, refreshed/restarted, deferred, or failed.
+   - `AgentRuntimeWorkspaceContextSwitchEvent`, emitted when switching away
+     from another workspace context succeeds, defers because the other runtime
+     is busy/waiting, or fails.
+3. Keep participant vocabulary centralized in the runtime event module. All
+   emitted events expose `agent_participants` for the involved identity using
+   runtime-owned role strings.
+4. Register runtime event types with the default CAO dispatcher at runtime
+   publication boundaries, matching CAO-91's owner-surface registration pattern.
+5. Extend `AgentRuntimeHandle.notify` and `accept_notification` with optional
+   CAO provider event context. Linear passes the triggering
+   `LinearIssueContextEvent` where available; runtime events copy
+   `correlation_id` and set `causation_id` from the provider event id without
+   adding Linear-owned event classes or dispatch paths.
+6. Publish at owner surfaces where facts become true:
+   - notification accepted after `_create_or_get_notification` or
+     `accept_notification` confirms a newly durable notification;
+   - delivery event after the scoped notification is delivered, deferred, or
+     failed;
+   - lifecycle event from `ensure_fresh_started`/freshness reconciliation for
+     start, reuse, restart, defer, and fail outcomes;
+   - workspace-context switch event inside
+     `_deactivate_other_context_terminal_for_switch` for success, deferred,
+     and failed switch outcomes.
+7. Avoid duplicate publication by gating notification accepted and
+   notification delivery events on the scoped notification's first observable
+   transition: no accepted event when idempotency returns an existing
+   notification, no delivery event for already-delivered notifications, and no
+   additional event when Linear retry paths only re-encounter prior state.
+8. Add focused tests for every emitted event's typed fields, direct field access,
+   `agent_participants`, provider correlation/causation, useful
+   success/deferred/failure outcomes, workspace-context switch outcomes, and
+   idempotent duplicate suppression.
+9. Run the Review Readiness Command and fill in the completion report and
    contract defences.
-7. Dispatch required reviewers and address grounded findings.
+10. Dispatch required reviewers and address grounded findings.
 
 ## CAO-92 Coding Completion Report
 
-To be completed by the implementer.
+- Status: implemented and verified.
+- Repo-local methodology source: this checkout does not contain
+  `docs/planning/methodology/*`; CAO-92 used this persisted handoff plus
+  `docs/criteria/*` as the repo-local methodology source per dispatch
+  instruction.
+- Files changed:
+  - `src/cli_agent_orchestrator/runtime/events.py`
+  - `src/cli_agent_orchestrator/runtime/agent.py`
+  - `src/cli_agent_orchestrator/runtime/__init__.py`
+  - `src/cli_agent_orchestrator/linear/runtime.py`
+  - `test/runtime/test_agent_runtime.py`
+  - `test/services/test_linear_agent_runtime_service.py`
+  - `test/linear/test_monitor.py`
+  - `docs/plans/cao-92-cao-runtime-events.md`
+- Implemented emitted runtime events:
+  - `AgentRuntimeNotificationAcceptedEvent`: emitted only for newly durable
+    runtime notifications.
+  - `AgentRuntimeNotificationDeliveryEvent`: emitted when the scoped
+    notification is delivered, deferred, or failed as a new observable delivery
+    fact.
+  - `AgentRuntimeLifecycleEvent`: emitted for freshness reconciliation start,
+    reuse, restart/refresh, deferred, and failed outcomes, and for direct
+    `ensure_started()` start/reuse compatibility callers.
+  - `AgentRuntimeWorkspaceContextSwitchEvent`: emitted for workspace-context
+    switch success, deferred, and failed outcomes.
+- Intentionally deferred candidates:
+  - No timeline/UI/projection events.
+  - No log-derived events.
+  - No placeholder runtime taxonomy beyond the four emitted classes above.
+  - No retry/idempotency duplicate events for unchanged existing
+    notifications.
+- Production notes:
+  - Runtime event vocabulary, event names, participant roles, builders,
+    registration, and publication live under `cli_agent_orchestrator.runtime`.
+  - Linear passes its triggering CAO provider event as optional
+    `causing_event`; runtime events copy provider `correlation_id` and set
+    `causation_id` to the provider event id when available.
+  - `test/services/test_linear_agent_runtime_service.py` had a pre-existing
+    Black line-wrap diff inside the Review Readiness Command surface. It was
+    mechanically formatted so the exact command could run to completion; no
+    behavior was changed there except updating one runtime-handle test double
+    for the new provider-event context argument.
+- Review Readiness Command result:
+  - Initial exact run stopped at Black because
+    `test/services/test_linear_agent_runtime_service.py` required formatting.
+  - After mechanical Black formatting, test-double updates, and reviewer-driven
+    direct `ensure_started()` lifecycle proof, the exact command passed:
+    `black --check` passed; `isort --check-only` passed; `mypy` passed for
+    runtime/events; pytest runtime/inbox/Linear service/integration set passed
+    with 88 tests; `pytest test/linear -q --no-cov` passed with 147 tests.
+- Focused proof run:
+  - `uv run pytest test/runtime/test_agent_runtime.py -q --no-cov` passed with
+    42 tests.
+- Reviewer tracking:
+  - Coding Implementation Plan reviewer `019e1c84-1819-7241-9db8-172266e39e81`
+    round 1 requested a concrete emitted event inventory, provider
+    causation/correlation route, and duplicate suppression plan; round 2
+    approved after plan revision.
+  - Behavioral Contract reviewer `019e1c9e-eb48-7793-8040-b7365fcbd554`
+    approved in round 1 with no findings.
+  - Code Contract reviewer `019e1c9f-bbef-78c1-8938-cff2e993d00a` requested
+    direct `ensure_started()` lifecycle publication in round 1; round 2
+    approved after the owner-surface lifecycle fix and tests.
+  - Test Contract reviewer `019e1ca0-7976-7523-90f1-3800fa5f99af` requested
+    participant identity assertions for every emitted event type in round 1;
+    round 2 approved after proof updates.
+- Committed decision update or promotion draft: none needed. CAO-92 stays
+  within existing CAO-90/CAO-91 decisions and adds no new cross-task standing
+  decision.
+- Acceptance criteria status:
+  - Runtime-owned typed event classes added and emitted: satisfied.
+  - Direct typed fields rather than dict payloads: satisfied.
+  - `agent_participants` for identity filtering with runtime-owned role
+    strings: satisfied.
+  - Provider-caused correlation/causation preservation: satisfied.
+  - No timeline UI/projection, wholesale log events, placeholder classes, or
+    duplicate unchanged idempotent notification events: satisfied.
+- Residual risks and opportunities:
+  - Runtime event publication remains synchronous like the CAO event core;
+    subscriber failures propagate as the existing dispatcher contract implies.
+  - Direct `ensure_started()` compatibility callers publish the same lifecycle
+    event family rather than a separate compatibility event type.
 
 ## CAO-92 Behavioral Contract Defence
 
-To be completed by the implementer.
+- Assigned behavior: CAO can observe framework-owned agent notification and
+  runtime lifecycle facts through the same event system as provider events.
+  Defence: runtime publication uses `cli_agent_orchestrator.events` via
+  `register_runtime_cao_events()` and `publish_runtime_event()`. Runtime facts
+  are emitted from `AgentRuntimeHandle` where notification acceptance,
+  lifecycle freshness, direct start/reuse, delivery outcomes, and
+  workspace-context switch outcomes become true. Focused runtime tests subscribe
+  through a `CaoEventDispatcher` and assert the emitted runtime event sequence
+  for successful delivery, direct start/reuse, startup failure, busy deferral,
+  duplicate suppression, and workspace-context switch success/defer.
+- Assigned behavior: a generic consumer can filter these events by involved
+  agent identity without knowing the concrete runtime event type. Defence:
+  every emitted runtime event carries `agent_participants` as
+  `tuple[AgentParticipant, ...]` with the involved CAO identity id and a
+  runtime-owned role string. Tests assert participant identity and role for
+  notification, lifecycle, delivery, and context-switch events.
+- Assigned behavior: a concrete consumer can still use typed runtime event
+  fields directly. Defence: concrete frozen dataclass events expose direct
+  fields such as `agent_identity_id`, `workspace_context_id`,
+  `inbox_notification_id`, `terminal_id`, `runtime_status`, `outcome`,
+  `action`, `ready`, `fresh`, `from_workspace_context_id`, and
+  `to_workspace_context_id`. Tests access these fields directly without
+  payload dicts.
+- Behavioral constraints: provider-caused events preserve correlation/causation
+  when available; retries/idempotent paths do not duplicate unchanged runtime
+  notification events. Defence: Linear passes the provider CAO event into
+  runtime handle calls; tests assert copied `correlation_id` and
+  `causation_id` derived from the provider event id. Duplicate-source tests
+  assert no additional accepted, lifecycle, or delivery event is published when
+  a retry re-encounters the same pending notification without a new observable
+  transition.
 
 ## CAO-92 Code Contract Defence
 
-To be completed by the implementer.
+- Feature Code Contract: runtime events belong to CAO runtime/framework
+  ownership. Defence: event declarations, vocabulary, builders, registration,
+  and publication helpers live in `cli_agent_orchestrator.runtime.events`;
+  Linear only supplies optional provider event context to the runtime owner.
+- Feature Code Contract: event families own event names and participant role
+  strings. Defence: `RUNTIME_CAO_SOURCE_TYPE`,
+  `RUNTIME_AGENT_PARTICIPANT_ROLE_*`, event `event_name` values, and
+  `RUNTIME_CAO_EVENTS` are centralized in the runtime event module.
+- Feature Code Contract: concrete events are typed dataclass-style objects
+  satisfying CAO event protocols rather than dict payloads. Defence: four
+  frozen dataclass event classes declare typed CAO metadata fields and direct
+  runtime fields; no event class subclasses `Mapping` or carries a primary
+  payload dict.
+- Feature Code Contract: publication occurs at owner surfaces where runtime
+  facts become true. Defence: `AgentRuntimeHandle` publishes after durable
+  notification creation/acceptance, after scoped delivery outcome refresh,
+  from direct `ensure_started()` start/reuse, from freshness reconciliation
+  returns, and inside context-switch success, deferred, and failed branches.
+- Feature Code Contract: no speculative unused event classes. Defence:
+  `RUNTIME_CAO_EVENTS` contains only the four concrete event classes emitted by
+  this implementation.
+- Coding Code Contract criteria:
+  - `full-verification-required`: exact Review Readiness Command passed after
+    the noted formatting unblock.
+  - `minimal-cohesive-changes`: production edits stay within runtime event
+    ownership, runtime publication points, and Linear provider-context
+    threading; no UI/projection/log conversion was added.
+  - `no-unnecessary-duplication`: event metadata construction, participant
+    creation, registration, and publication are centralized in the runtime
+    event module.
+  - `respect-ownership-boundaries`: Linear retains provider event ownership;
+    runtime owns runtime event vocabulary and publication.
+  - `readable-and-explicit`: event names, outcome/action fields, and
+    publication helper names describe the fact being recorded.
+  - `respect-standing-decisions`: implementation uses CAO-90 structural typed
+    protocols and CAO-91 framework dispatcher only.
+  - `semantic-continuity`: existing runtime delivery, freshness, inbox, Linear
+    notification, and workspace-context behavior is preserved; tests assert the
+    existing result objects and side effects continue to work.
+  - `boundary-and-failure-testing`: tests cover delivered, deferred, failed,
+    context-switch success, and context-switch deferred paths.
+  - `centralized-vocabulary`: runtime names and roles are in one module.
+  - `prefer-public-surfaces`: tests use CAO event dispatcher and runtime owner
+    flows rather than private event helper calls as sole proof.
+  - `service-export-discipline`: runtime package exports only the four event
+    types and `register_runtime_cao_events`.
+  - `no-test-only-production-seams`: optional `causing_event` is required by
+    production Linear causation propagation, not test convenience.
+- Promotion draft/update: none. No standing decision change required.
 
 ## CAO-92 Test Contract Defence
 
-To be completed by the implementer.
+- Feature Test Contract: tests cover every emitted runtime event type, typed
+  fields, and `agent_participants`. Defence:
+  `test_notify_publishes_typed_runtime_events_with_provider_causation` covers
+  notification accepted, lifecycle, and delivery event typed fields and
+  participant identity/roles; direct `ensure_started()` tests cover lifecycle
+  start/reuse typed fields and participant identity; workspace-context tests
+  cover switch event typed fields and participant identity/role.
+- Feature Test Contract: tests prove useful success, deferred, and failure
+  paths for the emitted set. Defence: focused runtime tests prove delivered
+  notification on fresh idle runtime, busy delivery deferral, startup failure,
+  direct lifecycle start/reuse, workspace-context switch success, and
+  workspace-context switch deferral.
+- Feature Test Contract: tests prove provider-caused runtime events preserve
+  correlation and causation when available. Defence:
+  `test_notify_publishes_typed_runtime_events_with_provider_causation` passes a
+  real Linear CAO event as `causing_event` and asserts runtime events carry its
+  correlation id and causation id.
+- Feature Test Contract: existing runtime freshness, inbox delivery, Linear
+  notification, and workspace-context behavior continues to pass. Defence: the
+  exact Review Readiness Command passed the runtime, inbox, Linear service,
+  integration, and `test/linear` suites.
+- Coding Test Contract criteria:
+  - `test-validity-preserved`: existing assertions remain behavioral; test
+    doubles were updated only for the new runtime method signature.
+  - `verification-scope-discipline`: focused runtime proof and the full Review
+    Readiness Command both ran.
+  - `reusable-test-state`: runtime tests reuse existing identity, handle,
+    provider, terminal, and new event-recorder fixtures.
+  - `test-through-owner-surfaces`: event publication is exercised by
+    `AgentRuntimeHandle` flows rather than direct publication helper calls.
+  - `real-surface-proof-discipline`: tests exercise database-backed inbox
+    notifications, terminal metadata, provider status, runtime state, and
+    Linear runtime integration surfaces already covered by the command.
+  - `public-boundary-proof`: tests import runtime events through the runtime
+    package/module and subscribe through CAO's public dispatcher.
+  - `given-when-then-test-structure`: new tests keep setup, runtime action,
+    and event assertions visible.
+  - `setup-invariant-ownership`: existing fixtures own valid identity,
+    terminal, provider, and inbox state.
+- Proof risks: runtime publication uses a synchronous in-process dispatcher;
+  tests prove publication and field semantics but do not add asynchronous or
+  external subscriber isolation because that is outside CAO-92.
 
 ## Review Readiness Command
 
