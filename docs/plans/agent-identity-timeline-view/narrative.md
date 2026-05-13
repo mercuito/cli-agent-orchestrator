@@ -10,7 +10,7 @@ index landed by CAO-96.
 | Criterion | Rationale |
 |-----------|-----------|
 | [domain-language-only](../../planning/methodology/criteria/feature-narrative/domain-language-only.md) | Always applies; the narrative must speak in CAO event and dashboard-domain terms, not in UI component, route, or transport terms. |
-| [event-timeline-granularity](../../planning/methodology/criteria/feature-narrative/event-timeline-granularity.md) | Always applies; the agents area appearing, an identity opening, the timeline surfacing events, drilling into causation, drilling into correlation, broadcasts, live updates, non-participant events, and the empty state are each their own beat. |
+| [event-timeline-granularity](../../planning/methodology/criteria/feature-narrative/event-timeline-granularity.md) | Always applies; the agents area appearing, an identity opening, the timeline surfacing events, drilling into causation, drilling into correlation, each broadcast viewpoint, live updates, non-participant events, and the empty state are each their own beat. |
 | [events-have-observable-outcomes](../../planning/methodology/criteria/feature-narrative/events-have-observable-outcomes.md) | Always applies; every event must show what the operator observes afterward — a roster, an identity view, an updated timeline, a related-event thread, or an unchanged timeline. |
 | [scenario-grounding](../../planning/methodology/criteria/feature-narrative/scenario-grounding.md) | Always applies; the timeline follows one running scenario — an operator returning to the dashboard and investigating agent Aria after the Linear mention from the CAO-96 scenario — with branches for Cael's broadcast, a live new mention, a workspace-wide refresh, and an unused identity. |
 | [vocabulary-grounded-in-event-timeline](../../planning/methodology/criteria/feature-narrative/vocabulary-grounded-in-event-timeline.md) | Always applies; the timeline introduces dashboard-side terms (agents area, identity view, identity timeline, related event thread, live timeline update, empty identity timeline) that need definitions in addition to the CAO event vocabulary inherited from CAO-96. |
@@ -77,20 +77,25 @@ the runtime delivery the operator just inspected. After this beat, the
 operator can see the mention and its downstream effects grouped together
 without inspecting any event's typed body.
 
-### E6 — The broadcast mention appears on both Aria's and Cael's timelines
+### E6 — The broadcast mention appears on Aria's timeline
 
 Earlier in the day, a teammate had mentioned both Aria and Cael in a
 single Linear issue, and CAO had recorded one broadcast mention with two
 agent participants. Aria's identity timeline surfaces that broadcast
-mention with Aria's participant role visible, and when the operator
-returns to the identity roster and opens Cael's agent identity view,
-Cael's identity timeline surfaces the same canonical CAO event with
-Cael's participant role visible. After this beat, the operator
-understands that a single broadcast event lives once in the durable
-event log and shows up on each involved identity's timeline as the same
-event from each identity's point of view.
+mention with Aria's participant role visible. After this beat, the
+operator can see that Aria was one participant in a single broadcast
+CAO event.
 
-### E7 — A new mention lands and Aria's timeline updates live
+### E7 — Cael sees the same broadcast event from his point of view
+
+The operator returns to the identity roster and opens Cael's agent
+identity view. Cael's identity timeline surfaces the same canonical CAO
+event with Cael's participant role visible. After this beat, the
+operator understands that a single broadcast event lives once in the
+durable event log and shows up on each involved identity's timeline from
+that identity's point of view.
+
+### E8 — A new mention lands and Aria's timeline updates live
 
 The operator returns to Aria's agent identity view and keeps watching.
 The teammate replies on the Linear issue and mentions Aria again, and
@@ -100,7 +105,7 @@ Aria's identity timeline without the operator reloading. After this
 beat, the operator's identity timeline reflects newly recorded events
 involving Aria as they happen.
 
-### E8 — A workspace-wide refresh fires and Aria's timeline stays put
+### E9 — A workspace-wide refresh fires and Aria's timeline stays put
 
 While the operator continues watching Aria's identity timeline, a
 workspace-wide context refresh fires and CAO records it as a CAO event
@@ -112,7 +117,7 @@ moves for events that actually involve the watched identity, even when
 the durable event log is recording other workspace activity in the
 background.
 
-### E9 — A configured identity with no events reads as empty
+### E10 — A configured identity with no events reads as empty
 
 The operator returns to the identity roster and opens the third
 configured agent identity, who has not yet been involved in any recorded
