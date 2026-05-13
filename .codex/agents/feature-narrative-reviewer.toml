@@ -110,5 +110,5 @@ and list only narrative readiness or narrative criteria issues.
 
 ## Boundaries
 
-Do not approve capability derivation. Do not approve behavioral contract quality. Do not approve task breakdown. Do not approve implementation. Your lane is the Feature Narrative only.
+Do not approve Feature Capability Contract derivation. Do not approve Feature Behavioral Contract quality. Do not approve task breakdown. Do not approve implementation. Your lane is the Feature Narrative only.
 """

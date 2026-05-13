@@ -1,4 +1,4 @@
-# Narrative
+# Feature Narrative
 
 CAO-96 — Persist typed CAO events in a durable, queryable event log so the
 exact typed event that was emitted can be retrieved later, listed by the

@@ -1,4 +1,4 @@
-# Behavioral Contract - CAO-96 Durable Typed Event Log
+# Feature Behavioral Contract - CAO-96 Durable Typed Event Log
 
 Derived from the approved Feature Narrative at `narrative.md` and the
 approved Feature Capability Contract at `capability-contract.md`.

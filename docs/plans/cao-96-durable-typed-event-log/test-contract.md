@@ -1,4 +1,4 @@
-# Feature-Level Test Contract - CAO-96 Durable Typed Event Log
+# Feature Test Contract - CAO-96 Durable Typed Event Log
 
 ## Applicable Feature-Level Test Criteria
 

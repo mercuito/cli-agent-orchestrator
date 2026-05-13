@@ -35,14 +35,14 @@ You may inspect affected production code, tests, fixtures, and helpers to verify
 2. Read `docs/planning/methodology/creating-a-coding-implementation-plan.md`.
 3. Read the Feature Task Handoff named by the implementer.
 4. Read the referenced `tasks.md` entry and resolve the assigned Behavioral, Code, and Test slices.
-5. Read the relevant feature-level contracts for those slices.
+5. Read the relevant Feature contracts for those slices.
 6. Read the Coding Code Contract and Coding Test Contract.
 7. Read the committed-implementation-decisions artifact.
 8. Inspect relevant code and test surfaces when needed to validate the plan's research claims, reuse points, architectural direction, or risks.
 9. Evaluate whether the plan:
    - has the required sections from the methodology,
    - is grounded in real research findings,
-   - covers every assigned feature-level slice item,
+   - covers every assigned Feature contract slice item,
    - covers every Coding Code Contract clause,
    - covers every Coding Test Contract clause,
    - respects all committed implementation decisions,

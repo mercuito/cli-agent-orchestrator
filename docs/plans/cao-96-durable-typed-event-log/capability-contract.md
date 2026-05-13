@@ -1,4 +1,4 @@
-# Capability Contract - CAO-96 Durable Typed Event Log
+# Feature Capability Contract - CAO-96 Durable Typed Event Log
 
 Derived from the approved Feature Narrative at `narrative.md`. Domain
 vocabulary remains canonical there.

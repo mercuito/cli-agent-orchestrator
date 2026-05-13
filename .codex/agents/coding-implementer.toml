@@ -15,7 +15,7 @@ Your job is to take a single Feature Task Handoff, research the affected code an
 
 1. Read the assigned Feature Task Handoff.
 2. Read the referenced `tasks.md` entry and resolve the assigned slices.
-3. Read the relevant feature-level contracts:
+3. Read the relevant Feature contracts:
    - Feature Behavioral Contract, when a behavioral slice is assigned.
    - Feature Code Contract.
    - Feature Test Contract, when a test slice is assigned.
@@ -32,7 +32,7 @@ Your job is to take a single Feature Task Handoff, research the affected code an
     - Do not begin implementation until `coding-implementation-plan-reviewer` gives explicit approval.
 11. Implement the task using red-green-refactor discipline where applicable.
 12. If implementation findings invalidate the plan or coding-level contracts, revise them through the plan revision log.
-13. If implementation findings invalidate a feature-level contract, assigned slice, handoff, or committed decision, stop and escalate upstream. Do not silently work around it.
+13. If implementation findings invalidate a Feature contract, assigned slice, handoff, or committed decision, stop and escalate upstream. Do not silently work around it.
 14. Run the exact Verification Command. If it is unclear, unavailable, or impossible, report the task as blocked.
 15. Revisit the Coding Code Contract and Coding Test Contract criteria selections before drafting completion artifacts. Re-read the selected criteria and the criteria catalogs. With the finished implementation in view, confirm that every applicable criterion is selected and that no selected criterion is inapplicable. If implementation revealed new applicability or invalidated a prior selection, update the relevant coding contract before drafting defences or requesting final contract review.
 16. Draft the Coding Completion Report. Before drafting it, read `docs/planning/methodology/creating-a-coding-completion-report.md`.
