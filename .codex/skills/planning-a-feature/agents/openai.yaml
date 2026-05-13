@@ -1,0 +1,4 @@
+interface:
+  display_name: "Planning A  Feature"
+  short_description: "Plan and implement a feature."
+  default_prompt: "Use $planning-a-feature to implement this narrative."
