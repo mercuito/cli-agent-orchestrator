@@ -11,6 +11,7 @@ from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import sqlite_migrations
 from cli_agent_orchestrator.clients.baton_store import BatonEventModel, BatonModel
 from cli_agent_orchestrator.clients.cao_event_store import (
+    CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX,
     CaoEventAgentParticipantModel,
     CaoEventModel,
 )
@@ -321,31 +322,36 @@ def _migrate_ensure_cao_event_tables() -> None:
         engine = _database_module().engine
         CaoEventModel.__table__.create(bind=engine, checkfirst=True)
         CaoEventAgentParticipantModel.__table__.create(bind=engine, checkfirst=True)
+        event_table = CaoEventModel.__tablename__
+        participant_table = CaoEventAgentParticipantModel.__tablename__
+        event_id_column = CaoEventAgentParticipantModel.event_id.name
+        agent_identity_column = CaoEventAgentParticipantModel.agent_identity_id.name
+        occurred_at_column = CaoEventAgentParticipantModel.occurred_at.name
         with engine.begin() as connection:
             participant_columns = {
                 str(row[1])
                 for row in connection.exec_driver_sql(
-                    "PRAGMA table_info(cao_event_agent_participants)"
+                    f"PRAGMA table_info({participant_table})"
                 )
             }
-            if "occurred_at" not in participant_columns:
+            if occurred_at_column not in participant_columns:
                 connection.exec_driver_sql(
-                    "ALTER TABLE cao_event_agent_participants ADD COLUMN occurred_at DATETIME"
+                    f"ALTER TABLE {participant_table} ADD COLUMN {occurred_at_column} DATETIME"
                 )
-                connection.exec_driver_sql("""
-                    UPDATE cao_event_agent_participants
-                    SET occurred_at = (
-                        SELECT cao_events.occurred_at
-                        FROM cao_events
-                        WHERE cao_events.event_id = cao_event_agent_participants.event_id
+                connection.exec_driver_sql(f"""
+                    UPDATE {participant_table}
+                    SET {occurred_at_column} = (
+                        SELECT {event_table}.{occurred_at_column}
+                        FROM {event_table}
+                        WHERE {event_table}.{event_id_column} = {participant_table}.{event_id_column}
                     )
                 """)
             connection.exec_driver_sql(
-                "DROP INDEX IF EXISTS ix_cao_event_agent_participants_agent_occurred"
+                f"DROP INDEX IF EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}"
             )
-            connection.exec_driver_sql("""
-                CREATE INDEX IF NOT EXISTS ix_cao_event_agent_participants_agent_occurred
-                ON cao_event_agent_participants (agent_identity_id, occurred_at, event_id)
+            connection.exec_driver_sql(f"""
+                CREATE INDEX IF NOT EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}
+                ON {participant_table} ({agent_identity_column}, {occurred_at_column}, {event_id_column})
             """)
     except Exception as e:
         logger.warning(f"Migration check for CAO event log tables failed: {e}")

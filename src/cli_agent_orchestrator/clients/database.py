@@ -19,8 +19,6 @@ from cli_agent_orchestrator.clients.baton_store import (  # noqa: E402
     list_batons_held_by,
 )
 from cli_agent_orchestrator.clients.cao_event_store import (  # noqa: E402
-    CaoEventAgentParticipantModel,
-    CaoEventModel,
     CaoEventRecord,
     get_cao_event,
     list_cao_events_by_agent_identity,
@@ -28,7 +26,6 @@ from cli_agent_orchestrator.clients.cao_event_store import (  # noqa: E402
     list_cao_events_by_correlation_id,
     list_cao_events_by_event_name,
     list_cao_events_by_source,
-    persist_cao_event,
 )
 from cli_agent_orchestrator.clients.database_core import Base, SessionLocal, engine
 from cli_agent_orchestrator.clients.database_migrations import (  # noqa: E402
@@ -123,8 +120,6 @@ __all__ = [
     "Base",
     "BatonEventModel",
     "BatonModel",
-    "CaoEventAgentParticipantModel",
-    "CaoEventModel",
     "CaoEventRecord",
     "FlowModel",
     "INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE",
@@ -203,7 +198,6 @@ __all__ = [
     "list_pending_inbox_notifications",
     "list_terminals_by_session",
     "move_pending_inbox_notifications",
-    "persist_cao_event",
     "update_flow_enabled",
     "update_flow_run_times",
     "update_inbox_notification_receiver",

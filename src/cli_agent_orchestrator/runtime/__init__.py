@@ -13,6 +13,7 @@ from cli_agent_orchestrator.runtime.events import (
     AgentRuntimeNotificationAcceptedEvent,
     AgentRuntimeNotificationDeliveryEvent,
     AgentRuntimeWorkspaceContextSwitchEvent,
+    RuntimeWorkspaceEvent,
     register_runtime_cao_events,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "AgentRuntimeStatus",
     "AgentRuntimeTerminal",
     "AgentRuntimeWorkspaceContextSwitchEvent",
+    "RuntimeWorkspaceEvent",
     "register_runtime_cao_events",
 ]

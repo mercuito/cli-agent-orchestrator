@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, inspect
 
 from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.clients.cao_event_store import (
+    CaoEventAgentParticipantModel,
+    CaoEventModel,
+)
 from cli_agent_orchestrator.events import (
     AgentParticipant,
     CaoCausationId,
@@ -22,28 +27,34 @@ from cli_agent_orchestrator.events import (
 from cli_agent_orchestrator.linear.workspace_events import LinearAgentMentionedEvent
 from cli_agent_orchestrator.runtime.events import (
     AgentRuntimeLifecycleEvent,
+    AgentRuntimeNotificationDeliveryEvent,
+    RuntimeWorkspaceEvent,
     lifecycle_event,
+    notification_delivery_event,
+    workspace_runtime_event,
 )
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
-SOURCE = CaoEventSourceRef(
-    source_type=CaoEventSourceType("linear"),
-    source_id=CaoEventSourceId("msg-1"),
-)
 
 
 def _linear_mentioned_event(
     *,
     event_id: str = "linear:agent_mentioned:event-1",
     occurred_at: CaoEventOccurredAt = OCCURRED_AT,
+    source_id: str = "msg-1",
+    correlation_id: str | None = "session-1",
+    causation_id: str | None = "provider-event-1",
     participants: tuple[AgentParticipant, ...] | None = None,
 ) -> LinearAgentMentionedEvent:
     return LinearAgentMentionedEvent(
         event_id=CaoEventId(event_id),
-        source=SOURCE,
+        source=CaoEventSourceRef(
+            source_type=CaoEventSourceType("linear"),
+            source_id=CaoEventSourceId(source_id),
+        ),
         occurred_at=occurred_at,
-        correlation_id=CaoCorrelationId("session-1"),
-        causation_id=CaoCausationId("provider-event-1"),
+        correlation_id=CaoCorrelationId(correlation_id) if correlation_id is not None else None,
+        causation_id=CaoCausationId(causation_id) if causation_id is not None else None,
         event_type="AgentSession",
         app_key="linear-app",
         agent_id="implementation_partner",
@@ -86,7 +97,11 @@ def _linear_mentioned_event(
 def test_persistent_dispatcher_persists_and_reconstructs_linear_event(
     runtime_inbox_db_session,
 ) -> None:
-    event = _linear_mentioned_event()
+    event = _linear_mentioned_event(
+        source_id="msg-1",
+        correlation_id="session-1",
+        causation_id="provider-event-1",
+    )
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
 
     publication = dispatcher.publish(event)
@@ -144,29 +159,84 @@ def test_runtime_event_persists_and_reconstructs_as_exact_type(runtime_inbox_db_
     assert record.event == event
 
 
+def test_agent_history_orders_linear_mention_and_runtime_delivery_by_occurrence(
+    runtime_inbox_db_session,
+) -> None:
+    mention = _linear_mentioned_event(
+        occurred_at=OCCURRED_AT,
+        correlation_id="session-1",
+    )
+    delivery = replace(
+        notification_delivery_event(
+            agent_identity_id="implementation_partner",
+            workspace_context_id="wctx-1",
+            inbox_notification_id=42,
+            inbox_receiver_id="implementation_partner",
+            terminal_id="terminal-1",
+            runtime_status="ready",
+            outcome="delivered",
+            attempted=True,
+            delivered=True,
+            error=None,
+            causing_event=mention,
+        ),
+        occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=1)),
+    )
+    dispatcher = CaoEventDispatcher(
+        (LinearAgentMentionedEvent, AgentRuntimeNotificationDeliveryEvent),
+        persist_events=True,
+    )
+
+    dispatcher.publish(delivery)
+    dispatcher.publish(mention)
+
+    delivery_record = db_module.get_cao_event(str(delivery.event_id))
+    assert delivery_record is not None
+    assert delivery_record.event == delivery
+    assert isinstance(delivery_record.event, AgentRuntimeNotificationDeliveryEvent)
+    assert delivery_record.event.agent_participants == (
+        AgentParticipant(agent_identity_id="implementation_partner", role="delivery_target"),
+    )
+    assert [
+        record.event_id
+        for record in db_module.list_cao_events_by_agent_identity("implementation_partner")
+    ] == [
+        str(mention.event_id),
+        str(delivery.event_id),
+    ]
+    assert [
+        record.event_id for record in db_module.list_cao_events_by_correlation_id("session-1")
+    ] == [
+        str(mention.event_id),
+        str(delivery.event_id),
+    ]
+    assert [
+        record.event_id
+        for record in db_module.list_cao_events_by_causation_id(str(mention.event_id))
+    ] == [str(delivery.event_id)]
+
+
 def test_event_log_queries_common_metadata_paths(runtime_inbox_db_session) -> None:
     first = _linear_mentioned_event(
         event_id="linear:agent_mentioned:first",
         occurred_at=OCCURRED_AT,
+        source_id="msg-1",
+        correlation_id="session-1",
+        causation_id="provider-event-1",
     )
     second = _linear_mentioned_event(
         event_id="linear:agent_mentioned:second",
         occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=1)),
+        source_id="msg-1",
+        correlation_id="session-1",
+        causation_id="provider-event-1",
     )
     other = _linear_mentioned_event(
         event_id="linear:agent_mentioned:other",
         occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=2)),
-    )
-    other = LinearAgentMentionedEvent(
-        **{
-            **other.__dict__,
-            "source": CaoEventSourceRef(
-                source_type=CaoEventSourceType("linear"),
-                source_id=CaoEventSourceId("msg-2"),
-            ),
-            "correlation_id": CaoCorrelationId("session-2"),
-            "causation_id": CaoCausationId("provider-event-2"),
-        }
+        source_id="msg-2",
+        correlation_id="session-2",
+        causation_id="provider-event-2",
     )
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
 
@@ -218,13 +288,43 @@ def test_agent_participant_queries_support_broadcasts_without_duplicate_payload_
     partner_records = db_module.list_cao_events_by_agent_identity("implementation_partner")
     reviewer_records = db_module.list_cao_events_by_agent_identity("reviewer")
     with runtime_inbox_db_session() as session:
-        canonical_event_count = session.query(db_module.CaoEventModel).count()
-        participant_count = session.query(db_module.CaoEventAgentParticipantModel).count()
+        canonical_event_count = session.query(CaoEventModel).count()
+        participant_rows = (
+            session.query(CaoEventAgentParticipantModel)
+            .order_by(
+                CaoEventAgentParticipantModel.agent_identity_id.asc(),
+                CaoEventAgentParticipantModel.participant_role.asc(),
+            )
+            .all()
+        )
 
     assert [record.event_id for record in partner_records] == [str(event.event_id)]
     assert [record.event_id for record in reviewer_records] == [str(event.event_id)]
     assert canonical_event_count == 1
-    assert participant_count == 2
+    assert [
+        (row.event_id, row.agent_identity_id, row.participant_role) for row in participant_rows
+    ] == [
+        (str(event.event_id), "implementation_partner", "mentioned"),
+        (str(event.event_id), "reviewer", "mentioned"),
+    ]
+
+
+def test_agent_history_uses_participant_index_not_typed_body_mentions(
+    runtime_inbox_db_session,
+) -> None:
+    event = _linear_mentioned_event(
+        event_id="linear:agent_mentioned:body-only",
+        participants=(AgentParticipant(agent_identity_id="reviewer", role="mentioned"),),
+    )
+    dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
+
+    dispatcher.publish(event)
+
+    assert event.agent_id == "implementation_partner"
+    assert db_module.list_cao_events_by_agent_identity("implementation_partner") == ()
+    assert [
+        record.event_id for record in db_module.list_cao_events_by_agent_identity("reviewer")
+    ] == [str(event.event_id)]
 
 
 def test_duplicate_event_id_does_not_add_participants_from_conflicting_replay(
@@ -245,7 +345,7 @@ def test_duplicate_event_id_does_not_add_participants_from_conflicting_replay(
 
     record = db_module.get_cao_event(str(original.event_id))
     with runtime_inbox_db_session() as session:
-        participant_rows = session.query(db_module.CaoEventAgentParticipantModel).all()
+        participant_rows = session.query(CaoEventAgentParticipantModel).all()
 
     assert record is not None
     assert record.event == original
@@ -258,13 +358,50 @@ def test_duplicate_event_id_does_not_add_participants_from_conflicting_replay(
 def test_events_without_participants_persist_but_do_not_match_participant_queries(
     runtime_inbox_db_session,
 ) -> None:
-    event = _linear_mentioned_event(participants=())
+    event = workspace_runtime_event(
+        workspace_context_id="wctx-1",
+        action="refresh",
+        runtime_status="ready",
+        correlation_id=CaoCorrelationId("workspace-refresh-1"),
+    )
+    dispatcher = CaoEventDispatcher((RuntimeWorkspaceEvent,), persist_events=True)
+
+    dispatcher.publish(event)
+
+    record = db_module.get_cao_event(str(event.event_id))
+    assert record is not None
+    assert isinstance(record.event, RuntimeWorkspaceEvent)
+    assert db_module.list_cao_events_by_event_name(RuntimeWorkspaceEvent.event_name) == (record,)
+    assert db_module.list_cao_events_by_source(
+        source_type="cao_runtime",
+        source_id="workspace:wctx-1",
+    ) == (record,)
+    assert db_module.list_cao_events_by_correlation_id("workspace-refresh-1") == (record,)
+    assert db_module.list_cao_events_by_agent_identity("implementation_partner") == ()
+    with runtime_inbox_db_session() as session:
+        participant_count = (
+            session.query(CaoEventAgentParticipantModel)
+            .filter(CaoEventAgentParticipantModel.event_id == str(event.event_id))
+            .count()
+        )
+    assert participant_count == 0
+
+
+def test_event_log_queries_return_empty_results_for_unknown_facts(runtime_inbox_db_session) -> None:
+    event = _linear_mentioned_event()
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
 
     dispatcher.publish(event)
 
-    assert db_module.get_cao_event(str(event.event_id)) is not None
-    assert db_module.list_cao_events_by_agent_identity("implementation_partner") == ()
+    assert db_module.get_cao_event("missing-event") is None
+    assert db_module.list_cao_events_by_agent_identity("missing-agent") == ()
+    assert db_module.list_cao_events_by_event_name("missing-event-name") == ()
+    assert (
+        db_module.list_cao_events_by_source(source_type="linear", source_id="missing-source")
+        == ()
+    )
+    assert db_module.list_cao_events_by_correlation_id("missing-correlation") == ()
+    assert db_module.list_cao_events_by_causation_id("missing-causation") == ()
 
 
 def test_local_dispatchers_remain_non_persistent_by_default(runtime_inbox_db_session) -> None:

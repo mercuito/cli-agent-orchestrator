@@ -141,11 +141,29 @@ class AgentRuntimeWorkspaceContextSwitchEvent(_AgentRuntimeEventMetadata):
     error: str | None
 
 
+@dataclass(frozen=True, kw_only=True)
+class RuntimeWorkspaceEvent:
+    """Workspace-wide runtime activity that is not scoped to one agent identity."""
+
+    event_name: ClassVar[str] = "runtime_workspace"
+
+    event_id: CaoEventId
+    source: CaoEventSourceRef
+    occurred_at: CaoEventOccurredAt = field(default_factory=_now)
+    correlation_id: CaoCorrelationId | None = None
+    causation_id: CaoCausationId | None = None
+    workspace_context_id: str
+    action: str
+    runtime_status: str
+    error: str | None = None
+
+
 RUNTIME_CAO_EVENTS = (
     AgentRuntimeNotificationAcceptedEvent,
     AgentRuntimeNotificationDeliveryEvent,
     AgentRuntimeLifecycleEvent,
     AgentRuntimeWorkspaceContextSwitchEvent,
+    RuntimeWorkspaceEvent,
 )
 
 
@@ -292,6 +310,35 @@ def lifecycle_event(
             agent_identity_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_LIFECYCLE_AGENT,
         ),
+    )
+
+
+def workspace_runtime_event(
+    *,
+    workspace_context_id: str,
+    action: str,
+    runtime_status: str,
+    error: str | None = None,
+    correlation_id: CaoCorrelationId | None = None,
+    causing_event: CaoEvent | None = None,
+) -> RuntimeWorkspaceEvent:
+    """Build a workspace-wide runtime event with no agent participants."""
+
+    return RuntimeWorkspaceEvent(
+        event_id=_runtime_event_id(
+            RuntimeWorkspaceEvent.event_name,
+            workspace_context_id,
+            action,
+            runtime_status,
+            error,
+        ),
+        source=_runtime_source_ref(f"workspace:{workspace_context_id}"),
+        correlation_id=_correlation_for(causing_event) or correlation_id,
+        causation_id=_causation_for(causing_event),
+        workspace_context_id=workspace_context_id,
+        action=action,
+        runtime_status=runtime_status,
+        error=error,
     )
 
 
