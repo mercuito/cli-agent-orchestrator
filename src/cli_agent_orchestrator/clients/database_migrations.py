@@ -10,6 +10,10 @@ from typing import Optional
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import sqlite_migrations
 from cli_agent_orchestrator.clients.baton_store import BatonEventModel, BatonModel
+from cli_agent_orchestrator.clients.cao_event_store import (
+    CaoEventAgentParticipantModel,
+    CaoEventModel,
+)
 from cli_agent_orchestrator.clients.inbox_store import (
     INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
@@ -19,18 +23,18 @@ from cli_agent_orchestrator.clients.inbox_store import (
 )
 from cli_agent_orchestrator.clients.provider_conversation_store import (
     AgentRuntimeNotificationModel,
+    ProcessedProviderEventModel,
     ProviderConversationInboxNotificationModel,
     ProviderConversationMessageModel,
     ProviderConversationThreadModel,
     ProviderWorkItemModel,
-    ProcessedProviderEventModel,
 )
-from cli_agent_orchestrator.linear.monitor_store import LinearMonitorWatermarkModel
 from cli_agent_orchestrator.clients.workspace_context_store import (
     ContextWorkspaceModel,
     WorkspaceContextModel,
     WorkspaceContextObjectMappingModel,
 )
+from cli_agent_orchestrator.linear.monitor_store import LinearMonitorWatermarkModel
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +55,13 @@ def init_db() -> None:
     _migrate_ensure_agent_runtime_tables()
     _migrate_ensure_linear_monitor_tables()
     _migrate_ensure_workspace_context_tables()
+    _migrate_ensure_cao_event_tables()
     _migrate_drop_legacy_inbox_notification_ids()
     _migrate_ensure_provider_conversation_tables()
     _migrate_ensure_agent_runtime_tables()
     _migrate_ensure_linear_monitor_tables()
     _migrate_ensure_workspace_context_tables()
+    _migrate_ensure_cao_event_tables()
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
     _migrate_add_terminal_agent_identity_id()
@@ -307,6 +313,42 @@ def _migrate_ensure_workspace_context_tables() -> None:
         ContextWorkspaceModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for workspace context tables failed: {e}")
+
+
+def _migrate_ensure_cao_event_tables() -> None:
+    """Create durable CAO event log tables on existing databases."""
+    try:
+        engine = _database_module().engine
+        CaoEventModel.__table__.create(bind=engine, checkfirst=True)
+        CaoEventAgentParticipantModel.__table__.create(bind=engine, checkfirst=True)
+        with engine.begin() as connection:
+            participant_columns = {
+                str(row[1])
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(cao_event_agent_participants)"
+                )
+            }
+            if "occurred_at" not in participant_columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE cao_event_agent_participants ADD COLUMN occurred_at DATETIME"
+                )
+                connection.exec_driver_sql("""
+                    UPDATE cao_event_agent_participants
+                    SET occurred_at = (
+                        SELECT cao_events.occurred_at
+                        FROM cao_events
+                        WHERE cao_events.event_id = cao_event_agent_participants.event_id
+                    )
+                """)
+            connection.exec_driver_sql(
+                "DROP INDEX IF EXISTS ix_cao_event_agent_participants_agent_occurred"
+            )
+            connection.exec_driver_sql("""
+                CREATE INDEX IF NOT EXISTS ix_cao_event_agent_participants_agent_occurred
+                ON cao_event_agent_participants (agent_identity_id, occurred_at, event_id)
+            """)
+    except Exception as e:
+        logger.warning(f"Migration check for CAO event log tables failed: {e}")
 
 
 def _migrate_ensure_provider_conversation_tables() -> None:

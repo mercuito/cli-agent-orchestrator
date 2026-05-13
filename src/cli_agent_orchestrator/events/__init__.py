@@ -160,19 +160,37 @@ class _CaoEventSubscription:
 class CaoEventDispatcher:
     """Synchronous dispatcher for registered framework-wide typed events."""
 
-    def __init__(self, event_types: tuple[type[CaoEvent], ...] | None = None) -> None:
+    def __init__(
+        self,
+        event_types: tuple[type[CaoEvent], ...] | None = None,
+        *,
+        persist_events: bool = False,
+    ) -> None:
         self._event_types: dict[type[CaoEvent], type[CaoEvent]] = {}
         self._subscriptions: list[_CaoEventSubscription] = []
         self._subscription_ids: set[str] = set()
+        self._persist_events = persist_events
         if event_types:
             self.register_events(event_types)
 
     def register_events(self, event_types: tuple[type[CaoEvent], ...]) -> None:
         """Register CAO event classes that may be published."""
 
-        for event_type in event_types:
-            normalized = _validate_event_type(event_type)
-            self._event_types[normalized] = normalized
+        normalized_events = tuple(_validate_event_type(event_type) for event_type in event_types)
+        from cli_agent_orchestrator.events.serialization import register_cao_event_serializers
+
+        register_cao_event_serializers(normalized_events)
+        for event_type in normalized_events:
+            self._event_types[event_type] = event_type
+
+    @classmethod
+    def persistent(
+        cls,
+        event_types: tuple[type[CaoEvent], ...] | None = None,
+    ) -> "CaoEventDispatcher":
+        """Create a dispatcher that persists published events before subscribers run."""
+
+        return cls(event_types, persist_events=True)
 
     def published_events(self) -> tuple[type[CaoEvent], ...]:
         """Return registered event classes ordered by event name."""
@@ -220,6 +238,11 @@ class CaoEventDispatcher:
         if event_type not in self._event_types:
             raise UnknownCaoEventError(f"Unknown CAO event: {_event_type_event_name(event_type)}")
 
+        if self._persist_events:
+            from cli_agent_orchestrator.clients.cao_event_store import persist_cao_event
+
+            persist_cao_event(event)
+
         results: list[CaoEventHandlerResult] = []
         for subscription in self._subscriptions:
             if subscription.event_type is not None and subscription.event_type is not event_type:
@@ -252,7 +275,7 @@ class CaoEventDispatcher:
         )
 
 
-_DEFAULT_CAO_EVENT_DISPATCHER = CaoEventDispatcher()
+_DEFAULT_CAO_EVENT_DISPATCHER = CaoEventDispatcher.persistent()
 
 
 def default_cao_event_dispatcher() -> CaoEventDispatcher:
