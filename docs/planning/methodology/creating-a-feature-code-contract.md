@@ -23,6 +23,11 @@ Coding Code Contract (see
 names task-specific code-shape obligations after research, drawing from
 the coding-level criteria catalog.
 
+Feature-level Code Contract clauses are optional to create, but binding
+once approved and assigned to a task slice. An assigned clause is an
+unconditional acceptance requirement for that task, even when the
+Behavioral Contract is otherwise satisfied.
+
 If research reveals a feature-level clause is missing or wrong, the
 finding escalates upstream for amendment rather than being absorbed
 locally.

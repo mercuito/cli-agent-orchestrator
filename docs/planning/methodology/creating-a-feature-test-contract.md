@@ -29,6 +29,11 @@ If a feature has no cross-task proof obligations, no feature-level Test
 Contract is needed. The Coding Test Contract for each task and the
 universal criterion together carry proof expectations.
 
+Feature-level Test Contract clauses are optional to create, but binding
+once approved and assigned to a task slice. An assigned clause is an
+unconditional acceptance requirement for that task, even when the
+Behavioral Contract is otherwise satisfied.
+
 If research reveals a feature-level clause is missing or wrong, the
 finding escalates upstream for amendment rather than being absorbed
 locally.
