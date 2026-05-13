@@ -3,8 +3,9 @@
 ## Purpose
 
 The narrative is the first feature-level artifact for behavior-changing
-work. It is a domain-language event timeline — what users do, what the
-system recognizes, what changes, and what outcomes are visible. The narrative
+work. It is a domain-language event timeline: short story beats that show
+something happening in the domain, how the system responds, and what is
+different afterward. The narrative
 seeds every other feature-level artifact: capabilities, invariants, and
 domain graphs are derived from it in the capability contract, and the
 behavioral contract formalizes its events into testable behaviors.
@@ -15,10 +16,17 @@ Code Contract instead — see
 
 ## What it contains
 
+- **Scenario frame.** A concrete, plausible setup for the timeline: who or
+  what starts the sequence, which named domain actors or representative
+  systems are involved, what concrete thing moves through the system, and
+  who or what later observes the result. Names may be invented when the
+  exact integration is hypothetical, but they must feel like real domain
+  participants rather than abstract placeholders.
 - **Event timeline.** A sequence of short, discrete, referenceable
-  user-facing events. Each event describes one meaningful moment: what
-  happened, what the system recognized or presented in domain terms, and
-  what changed observably as a result.
+  user-facing or system-visible events. Each event is a short prose beat
+  that describes one meaningful moment: what happened, how the system
+  responded in domain terms, and what changed. The consequence must be
+  visible in the prose; do not add separate outcome fields.
 - **Domain vocabulary.** Definitions of the domain entities and concepts
   the timeline uses. Vocabulary lives here because the timeline needs
   it at the point it is being authored. Other feature-level artifacts cite
@@ -43,11 +51,15 @@ Code Contract instead — see
 
 ## Event Timeline
 
+Scenario frame: <one short paragraph describing the concrete running
+scenario and representative actors.>
+
 ### E1 — <short event title>
 
-**When:** <the user-facing event or system-recognized moment>
-**System response:** <what the system presents, recognizes, or records in domain terms>
-**Observable outcome:** <what changed or became visible>
+<Two to four sentences of natural domain prose. The first sentence names
+what happens. The next sentence describes how the system responds in
+domain terms. The final sentence makes the changed domain state visible
+without turning it into a requirement or capability statement.>
 
 ### E2 — <short event title>
 
@@ -61,21 +73,31 @@ Code Contract instead — see
 
 ## Authoring order
 
-1. **Sketch the event timeline.** Write the flow as discrete events with
-   stable IDs (`E1`, `E2`, ...), short outcome-focused titles, and no
-   multi-paragraph event bodies. If an event needs a large paragraph, split
-   it into smaller events.
-2. **Keep each event single-purpose.** Each event captures one meaningful
+1. **Choose the scenario frame.** Name the concrete domain situation the
+   feature will follow. Identify the user, provider, agent, workspace,
+   consumer, system, message, request, or other domain object that makes
+   the feature move. The scenario may use representative or invented names,
+   but it must be specific enough to feel like a real thing happening.
+2. **Sketch the event timeline.** Write the flow as discrete events with
+   stable IDs (`E1`, `E2`, ...), short natural titles, and no field labels
+   such as `When`, `System response`, or `Observable outcome`. If an event
+   needs a large paragraph, split it into smaller events.
+3. **Keep each event single-purpose.** Each event captures one meaningful
    moment on the timeline. Do not bundle multiple user actions, system
    recognitions, state changes, retries, and later queries into one event.
-3. **State outcomes for every event.** Each significant event must have an
-   observable outcome — what changed in domain terms. An event without an
-   outcome is unverifiable and cannot ground a behavior.
-4. **Define vocabulary as the timeline reaches for it.** When the timeline
+4. **Write each event as a story beat.** Use two to four sentences of
+   natural prose. The first sentence names what happens, the next sentence
+   describes the system response in domain terms, and the final sentence
+   makes the changed domain state visible.
+5. **Keep the beats connected.** Later events should follow from, branch
+   from, or intentionally contrast with earlier events. Avoid an abstract
+   inventory where each event could be reordered without changing the
+   story.
+6. **Define vocabulary as the timeline reaches for it.** When the timeline
    uses a domain term that is not common English, add it to
    the Domain Vocabulary section with a precise definition. The
    timeline may then use the term freely.
-5. **Stay implementation-free.** Reread the narrative looking for any
+7. **Stay implementation-free.** Reread the narrative looking for any
    implementation-side artifact (class, module, payload, file, library)
    and replace it with the domain term. If no domain term exists, add one
    to the vocabulary.
@@ -93,7 +115,7 @@ top of the narrative with one-line rationale per selection.
 ## Quality check
 
 Can a reader derive candidate capabilities and affected domain concepts
-from this narrative without inventing hidden steps or guessing outcomes? If
-not, the narrative is too vague — events are missing their outcomes, scope
-is too broad, too much is packed into a single event, or implementation
-language has crept in.
+from this narrative without inventing hidden steps or guessing what changed?
+If not, the narrative is too vague — events do not show their consequences,
+scope is too broad, the scenario is too abstract, too much is packed into a
+single event, or implementation language has crept in.

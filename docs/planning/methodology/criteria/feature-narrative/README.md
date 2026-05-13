@@ -27,4 +27,5 @@ The narrative is a feature-level artifact at
 | [domain-language-only](domain-language-only.md) | Always |
 | [event-timeline-granularity](event-timeline-granularity.md) | Always |
 | [events-have-observable-outcomes](events-have-observable-outcomes.md) | Always |
+| [scenario-grounding](scenario-grounding.md) | Always |
 | [vocabulary-grounded-in-event-timeline](vocabulary-grounded-in-event-timeline.md) | Always |
