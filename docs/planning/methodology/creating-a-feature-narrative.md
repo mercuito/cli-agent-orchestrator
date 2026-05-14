@@ -45,11 +45,11 @@ Code Contract instead — see
   narrative
 
 ## Applicable criteria
-<IMPORTANT> Do not draft the document until you have read and understood applicible criteria<IMPORTANT>
 
-Browse the [narrative criteria catalog](./criteria/feature-narrative/README.md) and
-select the criteria that apply. Add an `Applicable Criteria` table near the
-top of the narrative with one-line rationale per selection.
+Before drafting, read the
+[feature narrative criteria catalog](./criteria/feature-narrative/README.md)
+and select the criteria that apply. Add an `Applicable Criteria` table near
+the top of the narrative with one-line rationale per selection.
 
 ## Document organization
 

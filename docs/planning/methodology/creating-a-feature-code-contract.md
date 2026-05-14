@@ -114,6 +114,14 @@ should carry, the finding escalates upstream — implementation pauses, the
 contract is amended, and the task's slice in `feature-tasks.md` is re-issued.
 Task-local obligations belong in the Coding Code Contract instead.
 
+## Applicable criteria
+
+Before drafting, read the
+[feature-level Code Contract criteria catalog](./criteria/feature-code-contract/README.md)
+and select the criteria that apply. Add an `Applicable Feature-Level
+Criteria` table near the top of the contract with one-line rationale per
+selection.
+
 ## Pure refactor entry
 
 For pure refactor work — work with zero intended externally observable

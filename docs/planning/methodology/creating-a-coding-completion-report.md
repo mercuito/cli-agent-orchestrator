@@ -100,6 +100,12 @@ severity.
 Authored after implementation is functionally complete and the Verification
 Command runs successfully, alongside the per-contract defences.
 
+The Coding Completion Report has no standalone criteria catalog. Before
+drafting, read the selected criteria and clauses in the task's Coding Code
+Contract, Coding Test Contract, assigned feature-level slices, and the
+defence criteria catalogs for the per-contract defences being authored
+alongside the report.
+
 1. **Run the Verification Command** named in the task definition. The
    command must succeed before the report can be authored.
 2. **Run the slice-adequacy self-check.** Walk the assigned slices of the

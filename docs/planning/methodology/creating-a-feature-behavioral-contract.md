@@ -66,9 +66,10 @@ Then ...
 
 ## Applicable criteria
 
-Browse the [behavioral contract criteria catalog](./criteria/feature-behavioral-contract/README.md)
-and select the criteria that apply. Add an `Applicable Criteria` table near the
-top of the contract with one-line rationale per selection.
+Before drafting, read the
+[feature behavioral contract criteria catalog](./criteria/feature-behavioral-contract/README.md)
+and select the criteria that apply. Add an `Applicable Criteria` table near
+the top of the contract with one-line rationale per selection.
 
 Capability-derivation criteria live in the
 [capability contract criteria catalog](./criteria/feature-capability-contract/README.md)

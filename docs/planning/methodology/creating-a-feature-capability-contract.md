@@ -71,10 +71,10 @@ capabilities are not optional.
 
 ## Applicable criteria
 
-Browse the [capability contract criteria catalog](./criteria/feature-capability-contract/README.md)
-and select the criteria that apply. Add an `Applicable Criteria` table
-near the top of the capability contract with one-line rationale per
-selection.
+Before drafting, read the
+[feature capability contract criteria catalog](./criteria/feature-capability-contract/README.md)
+and select the criteria that apply. Add an `Applicable Criteria` table near
+the top of the capability contract with one-line rationale per selection.
 
 ## Document organization
 

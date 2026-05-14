@@ -112,8 +112,8 @@ Test Contract Defence can reference it.
 2. **Research the affected test surfaces.** Inspect existing tests,
    fixtures, harnesses, and preservation needs. Note what the changed
    behavior currently has covered and where gaps exist.
-3. **Browse the coding-level catalog** and select criteria whose `when:`
-   conditions hold given the research findings.
+3. **Read the coding-level criteria catalog before drafting** and select
+   criteria whose `when:` conditions hold given the research findings.
    `test-validity-preserved` is always selected. Each selection carries a
    one-line rationale.
 4. **Add task-specific obligations** that don't fit a reusable criterion.

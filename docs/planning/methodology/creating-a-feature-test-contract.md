@@ -106,6 +106,14 @@ pauses, the contract is amended, and the task's slice in `feature-tasks.md` is
 re-issued. Task-local obligations belong in the Coding Test Contract
 instead.
 
+## Applicable criteria
+
+Before drafting, read the
+[feature-level Test Contract criteria catalog](./criteria/feature-test-contract/README.md)
+and select the criteria that apply. Add an `Applicable Feature-Level Test
+Criteria` table near the top of the contract with one-line rationale per
+selection.
+
 ## Refactor work
 
 For pure refactor features, a feature-level Test Contract is typical

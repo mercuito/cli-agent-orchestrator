@@ -103,9 +103,9 @@ slice and selected criteria: <reason>.")
 2. **Research the affected code surfaces.** Inspect existing modules,
    conventions, reuse points, and risks. Concrete codebase findings
    inform which coding-level criteria apply.
-3. **Browse the coding-level catalog** and select criteria whose `when:`
-   conditions hold given the research findings. Each selection carries a
-   one-line rationale.
+3. **Read the coding-level criteria catalog before drafting** and select
+   criteria whose `when:` conditions hold given the research findings.
+   Each selection carries a one-line rationale.
 4. **Add task-specific obligations** that don't fit a reusable criterion.
    Each gets a stable ID and is verifiable on its own — see
    [implementation-clause-verifiability](./criteria/feature-code-contract/implementation-clause-verifiability.md)

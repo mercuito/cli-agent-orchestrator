@@ -96,9 +96,10 @@ below.
 
 ## Applicable criteria
 
-Browse the [feature tasks criteria catalog](./criteria/feature-tasks/README.md)
-and select the criteria that apply. Add an `Applicable Criteria` table near
-the top of the artifact with one-line rationale per selection.
+Before drafting, read the
+[feature tasks criteria catalog](./criteria/feature-tasks/README.md) and
+select the criteria that apply. Add an `Applicable Criteria` table near the
+top of the artifact with one-line rationale per selection.
 
 ## Artifact path
 

@@ -37,6 +37,13 @@ clause appears wrong or incomplete, the finding escalates upstream
 rather than being amended locally. Coding-level contracts are the
 task-level authoring authority.
 
+## Relevant criteria before drafting
+
+The Coding Implementation Plan has no standalone criteria catalog. Before
+drafting, read the selected criteria and clauses in the task's Coding Code
+Contract and Coding Test Contract, plus any assigned feature-level Code or
+Test Contract slices named by `feature-tasks.md`.
+
 ---
 
 ## Sections

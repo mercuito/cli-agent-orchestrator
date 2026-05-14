@@ -133,7 +133,8 @@ Use these references during task research and implementation planning.
 
 ## Applicable criteria
 
-Browse the [feature task handoff criteria catalog](./criteria/feature-task-handoff/README.md)
+Before drafting, read the
+[feature task handoff criteria catalog](./criteria/feature-task-handoff/README.md)
 and select the criteria that apply. Add an `Applicable Criteria` table near
 the top of the handoff with one-line rationale per selection.
 

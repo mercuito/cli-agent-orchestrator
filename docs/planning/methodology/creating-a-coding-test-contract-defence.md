@@ -71,7 +71,8 @@ Test Contract before the defence is persisted.
 
 ## Applicable criteria
 
-Browse the [test contract defence criteria catalog](./criteria/coding-test-contract-defence/README.md)
+Before drafting, read the
+[test contract defence criteria catalog](./criteria/coding-test-contract-defence/README.md)
 and select the criteria that apply. Add an `Applicable Criteria` table near
 the top of the defence with one-line rationale per selection.
 

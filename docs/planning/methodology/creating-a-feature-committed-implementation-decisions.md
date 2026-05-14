@@ -68,9 +68,10 @@ For the artifact as a whole:
 
 ## Applicable criteria
 
-Browse the [committed implementation decisions criteria catalog](./criteria/feature-committed-implementation-decisions/README.md)
-and select the criteria that apply. Add an `Applicable Criteria` table
-near the top of the artifact with one-line rationale per selection.
+Before drafting, read the
+[feature committed implementation decisions criteria catalog](./criteria/feature-committed-implementation-decisions/README.md)
+and select the criteria that apply. Add an `Applicable Criteria` table near
+the top of the artifact with one-line rationale per selection.
 
 ## Artifact path
 
