@@ -39,6 +39,51 @@ const getAgentRuntimeTerminal = vi.hoisted(() =>
     }),
   ),
 )
+const listAgentIdentities = vi.hoisted(() =>
+  vi.fn(() =>
+    Promise.resolve([
+      {
+        agent_identity_id: 'aria',
+        display_name: 'Aria',
+        agent_profile: 'partner',
+        cli_provider: 'codex',
+        active: false,
+        active_terminal_id: null,
+        active_workspace_context_id: null,
+        last_active_at: null,
+      },
+    ]),
+  ),
+)
+const getAgentIdentityTimeline = vi.hoisted(() =>
+  vi.fn(() =>
+    Promise.resolve({
+      identity: {
+        agent_identity_id: 'aria',
+        display_name: 'Aria',
+        agent_profile: 'partner',
+        cli_provider: 'codex',
+        active: false,
+        active_terminal_id: null,
+        active_workspace_context_id: null,
+        last_active_at: null,
+      },
+      events: [
+        {
+          event_id: 'linear:agent_mentioned:mention',
+          event_name: 'agent_mentioned',
+          event_type_key: 'LinearAgentMentionedEvent',
+          source_type: 'linear',
+          source_id: 'msg-1',
+          occurred_at: '2026-05-13T12:00:00',
+          correlation_id: null,
+          causation_id: null,
+          participant_role: 'mentioned',
+        },
+      ],
+    }),
+  ),
+)
 
 vi.mock('../components/TerminalView', () => ({
   TerminalView: terminalViewMock,
@@ -48,6 +93,13 @@ vi.mock('../api', () => ({
   api: {
     listProviders: vi.fn(() => Promise.resolve([{ name: 'codex', binary: 'codex', installed: true }])),
     listProfiles: vi.fn(() => Promise.resolve([{ name: 'developer', description: 'Developer', source: 'built-in' }])),
+    listAgentIdentities,
+    getAgentIdentityTimeline,
+    getAgentIdentityRelatedEvents: vi.fn(() => Promise.resolve({
+      event: null,
+      correlation_events: [],
+      causation_events: { direct_cause: null, direct_effects: [] },
+    })),
     getTerminal,
     getAgentRuntimeTerminal,
     getTerminalStatus: vi.fn(() => Promise.resolve('idle')),
@@ -79,7 +131,7 @@ vi.mock('../store', () => ({
   }),
 }))
 
-describe('AgentPanel terminal deep links', () => {
+describe('AgentPanel', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
@@ -88,76 +140,90 @@ describe('AgentPanel terminal deep links', () => {
     storeState.activeSessionDetail = null
   })
 
-  it('passes the initial terminal token through to TerminalView', async () => {
-    render(<AgentPanel initialTerminalId="term-1" initialTerminalToken="signed-token" />)
+  describe('identity timeline boundary', () => {
+    it('renders the identity timeline panel through the Agents panel boundary', async () => {
+      render(<AgentPanel />)
 
-    await waitFor(() => {
-      expect(terminalViewMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          terminalId: 'term-1',
-          provider: 'codex',
-          agentProfile: 'developer',
-          terminalToken: 'signed-token',
-        }),
-        {},
-      )
+      expect(await screen.findByRole('button', { name: /aria/i })).toBeInTheDocument()
+      expect(await screen.findByTestId('identity-timeline')).toBeInTheDocument()
+      expect(screen.getByText('linear:agent_mentioned:mention')).toBeInTheDocument()
+      expect(listAgentIdentities).toHaveBeenCalled()
+      expect(getAgentIdentityTimeline).toHaveBeenCalledWith('aria')
     })
-
-    expect(getTerminal).toHaveBeenCalledWith('term-1')
-    expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
   })
 
-  it('resolves a durable agent deep link to the current terminal', async () => {
-    render(<AgentPanel initialAgentId="discovery_partner" initialAgentToken="agent-token" />)
+  describe('terminal deep links', () => {
+    it('passes the initial terminal token through to TerminalView', async () => {
+      render(<AgentPanel initialTerminalId="term-1" initialTerminalToken="signed-token" />)
 
-    await waitFor(() => {
-      expect(terminalViewMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          terminalId: 'term-2',
-          provider: 'codex',
-          agentProfile: 'developer',
-          terminalToken: 'runtime-token',
-        }),
-        {},
-      )
+      await waitFor(() => {
+        expect(terminalViewMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            terminalId: 'term-1',
+            provider: 'codex',
+            agentProfile: 'developer',
+            terminalToken: 'signed-token',
+          }),
+          {},
+        )
+      })
+
+      expect(getTerminal).toHaveBeenCalledWith('term-1')
+      expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
     })
 
-    expect(getAgentRuntimeTerminal).toHaveBeenCalledWith('discovery_partner', 'agent-token')
-    expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
-  })
+    it('resolves a durable agent deep link to the current terminal', async () => {
+      render(<AgentPanel initialAgentId="discovery_partner" initialAgentToken="agent-token" />)
 
-  it('passes the session terminal token through when opening a listed terminal', async () => {
-    storeState.activeSession = 'cao-linear-smoke-tester'
-    storeState.activeSessionDetail = {
-      session: { id: 'cao-linear-smoke-tester', name: 'cao-linear-smoke-tester', status: 'active' },
-      terminals: [
-        {
-          id: 'term-3',
-          tmux_session: 'cao-linear-smoke-tester',
-          tmux_window: '0',
-          provider: 'codex',
-          agent_profile: 'linear_smoke_tester',
-          agent_identity_id: 'linear_smoke_tester',
-          terminal_token: 'session-terminal-token',
-          last_active: null,
-        },
-      ],
-    }
+      await waitFor(() => {
+        expect(terminalViewMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            terminalId: 'term-2',
+            provider: 'codex',
+            agentProfile: 'developer',
+            terminalToken: 'runtime-token',
+          }),
+          {},
+        )
+      })
 
-    render(<AgentPanel />)
+      expect(getAgentRuntimeTerminal).toHaveBeenCalledWith('discovery_partner', 'agent-token')
+      expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
+    })
 
-    fireEvent.click(await screen.findByRole('button', { name: /open terminal/i }))
+    it('passes the session terminal token through when opening a listed terminal', async () => {
+      storeState.activeSession = 'cao-linear-smoke-tester'
+      storeState.activeSessionDetail = {
+        session: { id: 'cao-linear-smoke-tester', name: 'cao-linear-smoke-tester', status: 'active' },
+        terminals: [
+          {
+            id: 'term-3',
+            tmux_session: 'cao-linear-smoke-tester',
+            tmux_window: '0',
+            provider: 'codex',
+            agent_profile: 'linear_smoke_tester',
+            agent_identity_id: 'linear_smoke_tester',
+            terminal_token: 'session-terminal-token',
+            last_active: null,
+          },
+        ],
+      }
 
-    await waitFor(() => {
-      expect(terminalViewMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          terminalId: 'term-3',
-          provider: 'codex',
-          agentProfile: 'linear_smoke_tester',
-          terminalToken: 'session-terminal-token',
-        }),
-        {},
-      )
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /open terminal/i }))
+
+      await waitFor(() => {
+        expect(terminalViewMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            terminalId: 'term-3',
+            provider: 'codex',
+            agentProfile: 'linear_smoke_tester',
+            terminalToken: 'session-terminal-token',
+          }),
+          {},
+        )
+      })
     })
   })
 })

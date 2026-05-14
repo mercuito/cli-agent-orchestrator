@@ -50,6 +50,45 @@ export interface AgentRuntimeTerminalLink {
   terminal_token: string
 }
 
+export interface AgentIdentityStatus {
+  agent_identity_id: string
+  display_name: string
+  agent_profile: string
+  cli_provider: string
+  active: boolean
+  active_terminal_id: string | null
+  active_workspace_context_id: string | null
+  last_active_at: string | null
+}
+
+export interface AgentIdentityTimelineEvent {
+  event_id: string
+  event_name: string
+  event_type_key: string
+  source_type: string
+  source_id: string
+  occurred_at: string
+  correlation_id: string | null
+  causation_id: string | null
+  participant_role: string | null
+}
+
+export interface AgentIdentityTimeline {
+  identity: AgentIdentityStatus
+  events: AgentIdentityTimelineEvent[]
+}
+
+export interface AgentIdentityCausationRelatedEvents {
+  direct_cause: AgentIdentityTimelineEvent | null
+  direct_effects: AgentIdentityTimelineEvent[]
+}
+
+export interface AgentIdentityRelatedEvents {
+  event: AgentIdentityTimelineEvent
+  correlation_events: AgentIdentityTimelineEvent[]
+  causation_events: AgentIdentityCausationRelatedEvents
+}
+
 export interface AgentProfileInfo {
   name: string
   description: string
@@ -152,6 +191,15 @@ export const api = {
       `/agents/runtime/${encodeURIComponent(agentId)}/terminal${query}`,
     )
   },
+  listAgentIdentities: () => fetchJSON<AgentIdentityStatus[]>('/agents/identities'),
+  getAgentIdentityTimeline: (agentId: string) =>
+    fetchJSON<AgentIdentityTimeline>(
+      `/agents/identities/${encodeURIComponent(agentId)}/timeline`,
+    ),
+  getAgentIdentityRelatedEvents: (agentId: string, eventId: string) =>
+    fetchJSON<AgentIdentityRelatedEvents>(
+      `/agents/identities/${encodeURIComponent(agentId)}/events/${encodeURIComponent(eventId)}/related`,
+    ),
   getTerminalStatus: (id: string) =>
     fetchJSON<Terminal>(`/terminals/${id}`).then(t => t.status),
   getTerminalOutput: (id: string, mode: 'full' | 'last' = 'full') =>

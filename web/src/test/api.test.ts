@@ -138,6 +138,85 @@ describe('API wrapper', () => {
     expect(result).toEqual(providers)
   })
 
+  it('listAgentIdentities fetches the committed identity roster endpoint', async () => {
+    const identities = [
+      {
+        agent_identity_id: 'aria',
+        display_name: 'Aria',
+        agent_profile: 'partner',
+        cli_provider: 'codex',
+        active: false,
+        active_terminal_id: null,
+        active_workspace_context_id: null,
+        last_active_at: null,
+      },
+    ]
+    mockResponse(identities)
+
+    const result = await api.listAgentIdentities()
+
+    expect(result).toEqual(identities)
+    expect(mockFetch).toHaveBeenCalledWith('/agents/identities', expect.any(Object))
+  })
+
+  it('getAgentIdentityTimeline URL-encodes the selected identity id', async () => {
+    const timeline = {
+      identity: {
+        agent_identity_id: 'aria/linear',
+        display_name: 'Aria',
+        agent_profile: 'partner',
+        cli_provider: 'codex',
+        active: true,
+        active_terminal_id: 'term-1',
+        active_workspace_context_id: 'wctx-1',
+        last_active_at: '2026-05-13T12:00:00',
+      },
+      events: [],
+    }
+    mockResponse(timeline)
+
+    const result = await api.getAgentIdentityTimeline('aria/linear')
+
+    expect(result).toEqual(timeline)
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/agents/identities/aria%2Flinear/timeline',
+      expect.any(Object),
+    )
+  })
+
+  it('getAgentIdentityRelatedEvents URL-encodes identity and event ids', async () => {
+    const related = {
+      event: {
+        event_id: 'linear:agent_mentioned:event/1',
+        event_name: 'agent_mentioned',
+        event_type_key: 'LinearAgentMentionedEvent',
+        source_type: 'linear',
+        source_id: 'msg-1',
+        occurred_at: '2026-05-13T12:00:00',
+        correlation_id: 'thread-1',
+        causation_id: null,
+        participant_role: null,
+      },
+      correlation_events: [],
+      causation_events: {
+        direct_cause: null,
+        direct_effects: [],
+      },
+    }
+    mockResponse(related)
+
+    const result = await api.getAgentIdentityRelatedEvents(
+      'aria/linear',
+      'linear:agent_mentioned:event/1',
+    )
+
+    expect(result).toEqual(related)
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/agents/identities/aria%2Flinear/events/linear%3Aagent_mentioned%3Aevent%2F1/related',
+      expect.any(Object),
+    )
+  })
+
   it('createSession sends POST with params', async () => {
     const terminal = { id: 't1', name: 'dev', provider: 'kiro_cli', session_name: 's1' }
     mockResponse(terminal)
