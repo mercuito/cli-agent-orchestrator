@@ -288,6 +288,8 @@ def _publish_identity_timeline_scenario(
         attempted=True,
         delivered=True,
         error=None,
+        source_kind="linear_event",
+        message_body="Please implement CAO-96.",
         causing_event=mention,
     )
     delivery = replace(
@@ -379,6 +381,8 @@ def test_agent_identity_timeline_route_returns_participant_index_rows(
     assert body["events"][0]["event_data"]["message_body"] == "Please implement CAO-96."
     assert body["events"][0]["event_data"]["raw_payload"] == {"typed_contract_field": True}
     assert body["events"][1]["event_data"]["terminal_id"] == "terminal-1"
+    assert body["events"][1]["event_data"]["source_kind"] == "linear_event"
+    assert body["events"][1]["event_data"]["message_body"] == "Please implement CAO-96."
     assert body["events"][1]["causation_id"] == str(mention.event_id)
 
 

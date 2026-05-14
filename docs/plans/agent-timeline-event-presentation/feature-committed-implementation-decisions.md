@@ -19,3 +19,13 @@
   rows and related-event rows dispatch through
   `eventTimelineViewRegistry.viewFor(event_type_key)`; unregistered event
   types render through the module's generic fallback.
+- `CID-3`: Generated frontend CAO event type constants live at
+  `web/src/generated/caoEventTypeKeys.ts` and are refreshed by
+  `scripts/generate_cao_event_type_keys.py`, which discovers backend
+  module-owned `*_CAO_EVENTS` tuples and calls
+  `cli_agent_orchestrator.events.serialization.event_type_key`.
+- `CID-4`: Frontend known event view modules self-register by exporting
+  `timelineEventViewRegistrations` from files under
+  `web/src/components/timelineEventViews/`; `timelineEventViews.tsx`
+  discovers those modules with Vite `import.meta.glob` and registers the
+  declared views.

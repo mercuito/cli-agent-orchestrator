@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "generate:event-types": "cd .. && uv run python scripts/generate_cao_event_type_keys.py",
+    "pretest": "npm run generate:event-types",
     "dev": "vite",
+    "prebuild": "npm run generate:event-types",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",

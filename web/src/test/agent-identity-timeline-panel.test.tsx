@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { AgentIdentityTimelinePanel } from '../components/AgentIdentityTimelinePanel'
 import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline } from '../api'
+import {
+  AGENT_RUNTIME_LIFECYCLE_EVENT,
+  AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
+  AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT,
+  LINEAR_AGENT_MENTIONED_EVENT,
+} from '../generated/caoEventTypeKeys'
 
 function identity(
   agent_identity_id: string,
@@ -121,6 +127,100 @@ const relatedUnknownAudit = event(
     event_data: {
       audit_kind: 'related_probe',
       confidence: 0.73,
+    },
+  },
+)
+
+const knownLinearMention = event(
+  'linear:event:mention-ops-417',
+  'agent_mentioned',
+  '2026-05-13T12:00:00',
+  'mentioned',
+  {
+    event_type_key: LINEAR_AGENT_MENTIONED_EVENT,
+    source_type: 'linear',
+    source_id: 'msg-ops-417',
+    event_data: {
+      issue_identifier: 'OPS-417',
+      issue_title: 'Restore dashboard event detail',
+      issue_url: 'https://linear.app/yards/issue/OPS-417/restore-dashboard-event-detail',
+      app_user_name: 'Nia',
+      message_body: 'Aria, can you trace the stuck inbox delivery?',
+    },
+  },
+)
+
+const knownRuntimeDelivery = event(
+  'runtime:event:delivery-ops-417',
+  'agent_runtime_notification_delivery',
+  '2026-05-13T12:01:00',
+  'delivery_target',
+  {
+    event_type_key: AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
+    source_type: 'cao_runtime',
+    source_id: 'notification:42',
+    causation_id: knownLinearMention.event_id,
+    event_data: {
+      source_kind: 'linear_mention',
+      message_body: 'Aria, can you trace the stuck inbox delivery?',
+      terminal_id: 'term-aria-main',
+      outcome: 'delivered',
+      runtime_status: 'idle',
+    },
+  },
+)
+
+const knownWorkspaceSwitch = event(
+  'runtime:event:workspace-switch',
+  'agent_runtime_workspace_context_switch',
+  '2026-05-13T12:02:00',
+  'context_switch_agent',
+  {
+    event_type_key: AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT,
+    source_type: 'cao_runtime',
+    source_id: 'term-aria-main',
+    event_data: {
+      from_workspace_context_id: 'cli-agent-orchestrator',
+      to_workspace_context_id: 'yards',
+      terminal_id: 'term-aria-main',
+      outcome: 'switched',
+      runtime_status: 'idle',
+    },
+  },
+)
+
+const knownRuntimeLifecycle = event(
+  'runtime:event:lifecycle-restarted',
+  'agent_runtime_lifecycle',
+  '2026-05-13T12:03:00',
+  'lifecycle_agent',
+  {
+    event_type_key: AGENT_RUNTIME_LIFECYCLE_EVENT,
+    source_type: 'cao_runtime',
+    source_id: 'term-aria-main',
+    event_data: {
+      action: 'restarted',
+      runtime_status: 'idle',
+      terminal_id: 'term-aria-main',
+      workspace_context_id: 'yards',
+      ready: true,
+      fresh: true,
+    },
+  },
+)
+
+const deliveryWithMissingOptionalFacts = event(
+  'runtime:event:delivery-missing-optional',
+  'agent_runtime_notification_delivery',
+  '2026-05-13T12:04:00',
+  'delivery_target',
+  {
+    event_type_key: AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
+    source_type: 'cao_runtime',
+    source_id: 'notification:43',
+    event_data: {
+      outcome: 'deferred',
+      runtime_status: 'busy',
     },
   },
 )
@@ -301,6 +401,44 @@ describe('AgentIdentityTimelinePanel', () => {
     expect(screen.getAllByText('Effect Target').length).toBeGreaterThan(0)
     expect(screen.getAllByText('related_probe').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Cause experimental:audit:event-1').length).toBeGreaterThan(0)
+  })
+
+  it('renders taught Linear and runtime event kinds through registered typed views', async () => {
+    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
+      identity: aria,
+      events: [
+        knownLinearMention,
+        knownRuntimeDelivery,
+        knownWorkspaceSwitch,
+        knownRuntimeLifecycle,
+        deliveryWithMissingOptionalFacts,
+        unknownAudit,
+      ],
+    })
+
+    render(<AgentIdentityTimelinePanel />)
+
+    const timeline = await screen.findByTestId('identity-timeline')
+    expect(within(timeline).getByText('OPS-417')).toBeInTheDocument()
+    expect(within(timeline).getByText('Restore dashboard event detail')).toBeInTheDocument()
+    expect(within(timeline).getByText('Nia')).toBeInTheDocument()
+    expect(within(timeline).getAllByText('Aria, can you trace the stuck inbox delivery?').length).toBeGreaterThan(1)
+    expect(within(timeline).getByText('Linear issue')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('Linear Mention')).toBeInTheDocument()
+    expect(within(timeline).getAllByText('term-aria-main').length).toBeGreaterThan(1)
+
+    expect(within(timeline).getByText('cli-agent-orchestrator')).toBeInTheDocument()
+    expect(within(timeline).getAllByText('yards').length).toBeGreaterThan(1)
+    expect(within(timeline).getByText('switched')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('restarted')).toBeInTheDocument()
+    expect(within(timeline).getByText('idle')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('Unknown source')).toBeInTheDocument()
+    expect(within(timeline).getByText('No message text recorded')).toBeInTheDocument()
+    expect(within(timeline).getByText('No terminal recorded')).toBeInTheDocument()
+    expect(within(timeline).getByText('Experimental Audit Event')).toBeInTheDocument()
   })
 
   it('does not reuse related-event results fetched under a different selected identity', async () => {

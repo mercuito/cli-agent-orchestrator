@@ -809,6 +809,8 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     delivery = recorded_runtime_events[2]
     assert isinstance(delivery, AgentRuntimeNotificationDeliveryEvent)
     assert delivery.inbox_notification_id == result.notification.delivery.notification.id
+    assert delivery.source_kind == "linear_event"
+    assert delivery.message_body == "Deliver provider-caused notification."
     assert delivery.runtime_status == AgentRuntimeStatus.IDLE.value
     assert delivery.outcome == "delivered"
     assert delivery.attempted is True

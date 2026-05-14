@@ -3,12 +3,21 @@ import { AgentIdentityTimelineEvent } from '../api'
 
 type TimelineEventViewSurface = 'main' | 'related'
 
-interface TimelineEventViewProps {
+export interface TimelineEventViewProps {
   event: AgentIdentityTimelineEvent
   surface: TimelineEventViewSurface
 }
 
-type TimelineEventView = (props: TimelineEventViewProps) => JSX.Element
+export type TimelineEventView = (props: TimelineEventViewProps) => JSX.Element
+
+export interface TimelineEventViewRegistration {
+  eventTypeKey: string
+  view: TimelineEventView
+}
+
+interface TimelineEventViewModule {
+  timelineEventViewRegistrations?: TimelineEventViewRegistration[]
+}
 
 function formatLabel(value: string | null | undefined): string {
   if (!value) return 'None'
@@ -37,6 +46,17 @@ class EventTimelineViewRegistry {
 }
 
 export const eventTimelineViewRegistry = new EventTimelineViewRegistry()
+
+const timelineEventViewModules = import.meta.glob<TimelineEventViewModule>(
+  './timelineEventViews/*.tsx',
+  { eager: true },
+)
+
+Object.values(timelineEventViewModules).forEach(module => {
+  module.timelineEventViewRegistrations?.forEach(registration => {
+    eventTimelineViewRegistry.register(registration.eventTypeKey, registration.view)
+  })
+})
 
 function primitiveFactValue(value: unknown): string | null {
   if (value === null) return 'null'

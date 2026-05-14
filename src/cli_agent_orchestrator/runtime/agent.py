@@ -1277,6 +1277,12 @@ class AgentRuntimeHandle:
                 attempted=delivery.attempted,
                 delivered=delivery.delivered,
                 error=delivery.error,
+                source_kind=notification.delivery.notification.source_kind,
+                message_body=(
+                    notification.delivery.message.body
+                    if notification.delivery.message is not None
+                    else None
+                ),
                 causing_event=causing_event,
             )
         )

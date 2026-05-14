@@ -108,6 +108,8 @@ class AgentRuntimeNotificationDeliveryEvent(_AgentRuntimeEventMetadata):
     attempted: bool
     delivered: bool
     error: str | None
+    source_kind: str | None = None
+    message_body: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -237,6 +239,8 @@ def notification_delivery_event(
     attempted: bool,
     delivered: bool,
     error: str | None,
+    source_kind: str | None = None,
+    message_body: str | None = None,
     causing_event: CaoEvent | None = None,
 ) -> AgentRuntimeNotificationDeliveryEvent:
     """Build a runtime notification delivery outcome event."""
@@ -262,6 +266,8 @@ def notification_delivery_event(
         attempted=attempted,
         delivered=delivered,
         error=error,
+        source_kind=source_kind,
+        message_body=message_body,
         agent_participants=_agent_participants(
             agent_identity_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_DELIVERY_TARGET,
