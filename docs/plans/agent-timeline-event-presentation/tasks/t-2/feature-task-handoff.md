@@ -15,7 +15,10 @@ kinds from the narrative. Done means Linear mention, runtime delivery,
 workspace context switch, and runtime lifecycle events each have
 registered frontend views that read typed `event_data` and show the
 issue, mention, delivery, terminal, workspace context, and lifecycle
-details named by the behavioral slices.
+details named by the behavioral slices. The event type wiring must use
+generated TypeScript constants derived from backend CAO event classes and
+module self-registration rather than hand-typed fully qualified event
+type strings or a central manual registry list.
 
 ## Slice Reference
 
@@ -36,17 +39,18 @@ Use these references during task research and implementation planning.
 
 - `docs/plans/agent-timeline-event-presentation/feature-narrative.md`: concrete Aria, Nia, `OPS-417`, `term-aria-main`, `cli-agent-orchestrator`, and `yards` scenario details that the frontend views must make readable.
 - `docs/plans/agent-timeline-event-presentation/feature-behavioral-contract.md`: exact behavior slices for Linear mention, runtime delivery, workspace context switch, and runtime lifecycle presentations.
-- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level frontend typed-view ownership and payload narrowing obligations.
+- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level frontend typed-view ownership, payload narrowing, generated event type constant, and self-registration obligations.
 - `docs/plans/agent-timeline-event-presentation/feature-test-contract.md`: feature-level proof slice for known frontend event views.
 
 ### Existing Code References
 
 - `src/cli_agent_orchestrator/linear/workspace_events.py`: Linear CAO event definitions and payload fields the Linear mention frontend view must read.
 - `src/cli_agent_orchestrator/runtime/events.py`: runtime delivery, lifecycle, workspace context switch, and runtime payload fields the frontend views must read.
-- `src/cli_agent_orchestrator/events/serialization.py`: existing event type key and typed-event serialization behavior behind the `event_data` shape exposed by `t-1`.
+- `src/cli_agent_orchestrator/events/serialization.py`: existing `event_type_key` function and typed-event serialization behavior behind generated frontend event type constants and the `event_data` shape exposed by `t-1`.
 - `src/cli_agent_orchestrator/services/agent_identity_timeline.py`: timeline read composition surface introduced or extended by `t-1`.
 - `web/src/api.ts`: frontend typed timeline event shape from `t-1`.
 - `web/src/components/AgentIdentityTimelinePanel.tsx`: frontend event-view registry and row rendering surface introduced by `t-1`.
+- `web/src/components/timelineEventViews.tsx`: frontend event-view registry surface introduced by `t-1` that `t-2` must extend through generated constants and module self-registration.
 - `web/src/test/agent-identity-timeline-panel.test.tsx`: frontend component proof pattern for kind-specific timeline row content.
 - `web/src/test/api.test.ts`: frontend API wrapper proof pattern for typed `event_data`.
 - `test/linear/test_webhook_ingestion.py`: Linear event fixture examples and published event assertions.

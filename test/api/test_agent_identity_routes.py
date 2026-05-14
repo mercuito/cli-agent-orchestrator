@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from typing import ClassVar
 
 from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
 from cli_agent_orchestrator.clients import database as db_module
@@ -26,6 +27,20 @@ from cli_agent_orchestrator.runtime.events import (
 from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityStatus
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ExperimentalAuditEvent:
+    event_name: ClassVar[str] = "experimental_audit_event"
+
+    event_id: CaoEventId
+    source: CaoEventSourceRef
+    occurred_at: CaoEventOccurredAt
+    correlation_id: CaoCorrelationId | None
+    causation_id: CaoCausationId | None
+    audit_kind: str
+    confidence: float
+    agent_participants: tuple[AgentParticipant, ...]
 
 
 @dataclass
@@ -360,6 +375,10 @@ def test_agent_identity_timeline_route_returns_participant_index_rows(
         ("agent_mentioned", "mentioned"),
     ]
     assert body["events"][0]["correlation_id"] == "thread-1"
+    assert body["events"][0]["event_data"]["issue_title"] == "Persist events"
+    assert body["events"][0]["event_data"]["message_body"] == "Please implement CAO-96."
+    assert body["events"][0]["event_data"]["raw_payload"] == {"typed_contract_field": True}
+    assert body["events"][1]["event_data"]["terminal_id"] == "terminal-1"
     assert body["events"][1]["causation_id"] == str(mention.event_id)
 
 
@@ -394,20 +413,26 @@ def test_agent_identity_timeline_route_preserves_broadcast_viewpoint(
         if event["event_id"] == str(broadcast.event_id)
     ]
     assert partner_broadcast_events[0]["participant_role"] == "mentioned"
-    assert reviewer_response.json()["events"] == [
-        {
-            "event_id": str(broadcast.event_id),
-            "event_name": "agent_mentioned",
-            "event_type_key": (
-                "cli_agent_orchestrator.linear.workspace_events.LinearAgentMentionedEvent"
-            ),
-            "source_type": "linear",
-            "source_id": "msg-broadcast",
-            "occurred_at": "2026-05-13T12:02:00",
-            "correlation_id": "thread-broadcast",
-            "causation_id": None,
-            "participant_role": "observer",
-        }
+    reviewer_events = reviewer_response.json()["events"]
+    assert len(reviewer_events) == 1
+    reviewer_event = reviewer_events[0]
+    assert {key: value for key, value in reviewer_event.items() if key != "event_data"} == {
+        "event_id": str(broadcast.event_id),
+        "event_name": "agent_mentioned",
+        "event_type_key": (
+            "cli_agent_orchestrator.linear.workspace_events.LinearAgentMentionedEvent"
+        ),
+        "source_type": "linear",
+        "source_id": "msg-broadcast",
+        "occurred_at": "2026-05-13T12:02:00",
+        "correlation_id": "thread-broadcast",
+        "causation_id": None,
+        "participant_role": "observer",
+    }
+    assert reviewer_event["event_data"]["message_id"] == "msg-broadcast"
+    assert reviewer_event["event_data"]["agent_participants"] == [
+        {"agent_identity_id": "implementation_partner", "role": "mentioned"},
+        {"agent_identity_id": "reviewer", "role": "observer"},
     ]
 
 
@@ -458,14 +483,97 @@ def test_agent_identity_related_events_route_uses_envelope_threads(
         str(mention.event_id),
         str(delivery.event_id),
     ]
+    assert mention_response.json()["event"]["event_data"]["issue_identifier"] == "CAO-96"
+    assert mention_response.json()["correlation_events"][0]["event_data"]["message_body"] == (
+        "Please implement CAO-96."
+    )
+    assert mention_response.json()["correlation_events"][1]["event_data"]["terminal_id"] == (
+        "terminal-1"
+    )
     assert mention_response.json()["causation_events"]["direct_cause"] is None
     assert _event_ids(mention_response.json()["causation_events"]["direct_effects"]) == [
         str(delivery.event_id)
     ]
+    assert mention_response.json()["causation_events"]["direct_effects"][0]["event_data"][
+        "outcome"
+    ] == "delivered"
     assert delivery_response.status_code == 200
     assert delivery_response.json()["causation_events"]["direct_cause"]["event_id"] == str(
         mention.event_id
     )
+    assert delivery_response.json()["causation_events"]["direct_cause"]["event_data"][
+        "message_body"
+    ] == "Please implement CAO-96."
+
+
+def test_agent_identity_related_events_route_keeps_untaught_events_related_and_roleful(
+    client,
+    monkeypatch,
+    runtime_inbox_db_session,
+    agent_identity_manager_factory,
+    implementation_partner_identity_factory,
+):
+    manager = _manager_with_timeline_identities(
+        agent_identity_manager_factory,
+        implementation_partner_identity_factory,
+    )
+    _patch_default_identity_manager(monkeypatch, manager)
+    root = _ExperimentalAuditEvent(
+        event_id=CaoEventId("experimental:audit:event-1"),
+        source=CaoEventSourceRef(
+            source_type=CaoEventSourceType("audit"),
+            source_id=CaoEventSourceId("audit-1"),
+        ),
+        occurred_at=OCCURRED_AT,
+        correlation_id=CaoCorrelationId("thread-audit"),
+        causation_id=None,
+        audit_kind="workspace_scan",
+        confidence=0.92,
+        agent_participants=(
+            AgentParticipant(agent_identity_id="implementation_partner", role="participant"),
+        ),
+    )
+    effect = replace(
+        root,
+        event_id=CaoEventId("experimental:audit:event-2"),
+        source=CaoEventSourceRef(
+            source_type=CaoEventSourceType("audit"),
+            source_id=CaoEventSourceId("audit-2"),
+        ),
+        occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=1)),
+        causation_id=CaoCausationId(str(root.event_id)),
+        audit_kind="related_probe",
+        confidence=0.73,
+        agent_participants=(
+            AgentParticipant(agent_identity_id="implementation_partner", role="effect_target"),
+        ),
+    )
+    dispatcher = CaoEventDispatcher((_ExperimentalAuditEvent,), persist_events=True)
+    dispatcher.publish(effect)
+    dispatcher.publish(root)
+
+    response = client.get(
+        f"/agents/identities/implementation_partner/events/{root.event_id}/related"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event"]["event_name"] == "experimental_audit_event"
+    assert body["event"]["participant_role"] == "participant"
+    assert body["event"]["event_data"]["audit_kind"] == "workspace_scan"
+    assert _event_ids(body["correlation_events"]) == [
+        str(root.event_id),
+        str(effect.event_id),
+    ]
+    assert _event_ids(body["causation_events"]["direct_effects"]) == [
+        str(effect.event_id)
+    ]
+    assert body["causation_events"]["direct_effects"][0]["participant_role"] == (
+        "effect_target"
+    )
+    assert body["causation_events"]["direct_effects"][0]["event_data"][
+        "audit_kind"
+    ] == "related_probe"
 
 
 def test_agent_identity_related_events_route_handles_missing_relatedness_and_unknown_event(

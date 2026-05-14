@@ -70,6 +70,7 @@ export interface AgentIdentityTimelineEvent {
   occurred_at: string
   correlation_id: string | null
   causation_id: string | null
+  event_data: Record<string, unknown>
   participant_role: string | null
 }
 

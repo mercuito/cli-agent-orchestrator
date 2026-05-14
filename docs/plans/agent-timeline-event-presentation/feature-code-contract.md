@@ -59,6 +59,15 @@ styling.
   terminal identifier. Free-form prose alone does not satisfy this
   clause.
 
+- **F-CC-6 — Event view wiring uses generated event type constants and
+  self-registration.** Frontend typed event views use TypeScript event
+  type constants generated from backend CAO event classes via the same
+  `event_type_key` function used by persistence. View modules declare the
+  generated event type constants they handle and are auto-registered into
+  the frontend event-view registry by module discovery. Known event views
+  do not hand-type fully qualified Python event type key strings and do
+  not require a central manual registry edit for each new view.
+
 ## Feature-Specific Code Obligations
 
 None beyond the architectural commitments above. Lower-level code-shape

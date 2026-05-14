@@ -114,6 +114,8 @@ def test_persistent_dispatcher_persists_and_reconstructs_linear_event(
     assert record.source_id == "msg-1"
     assert record.correlation_id == "session-1"
     assert record.causation_id == "provider-event-1"
+    assert record.event_data["message_body"] == "Please implement CAO-96."
+    assert record.event_data["raw_payload"] == {"typed_contract_field": True}
     assert isinstance(record.event, LinearAgentMentionedEvent)
     assert record.event == event
 

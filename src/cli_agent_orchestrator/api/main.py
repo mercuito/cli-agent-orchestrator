@@ -13,7 +13,7 @@ import termios
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Dict, List, Literal, NoReturn, Optional
+from typing import Annotated, Any, Dict, List, Literal, NoReturn, Optional
 
 from fastapi import (
     FastAPI,
@@ -238,6 +238,7 @@ class AgentIdentityTimelineEventResponse(BaseModel):
     occurred_at: datetime
     correlation_id: Optional[str] = None
     causation_id: Optional[str] = None
+    event_data: Dict[str, Any]
     participant_role: Optional[str] = None
 
     @classmethod
@@ -251,6 +252,7 @@ class AgentIdentityTimelineEventResponse(BaseModel):
             occurred_at=read.occurred_at,
             correlation_id=read.correlation_id,
             causation_id=read.causation_id,
+            event_data=read.event_data,
             participant_role=read.participant_role,
         )
 

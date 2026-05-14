@@ -4,7 +4,7 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| `t-1` — Typed Timeline Payload Surface And Fallback View | Pending | Reissued after architecture pivot from backend-owned presentation values to frontend typed event views. |
+| `t-1` — Typed Timeline Payload Surface And Fallback View | Complete | Implemented, exact verification passed, reviewer approvals recorded, and committed decisions promoted. |
 | `t-2` — Known Frontend Event Views | Pending | Depends on `t-1`. |
 | `t-3` — Related View Continuity And Entity References | Pending | Depends on `t-1` and `t-2`. |
 
@@ -16,4 +16,14 @@
   frontend. Backend timeline reads expose event envelope fields and typed
   `event_data`; frontend event views own rendering, fallback, and entity
   reference affordances.
-- No task is currently implemented under the reissued architecture.
+- `t-1` is complete under the reissued architecture.
+
+## Completed Dispatch: `t-1`
+
+- Task: `t-1`
+- Handoff: `docs/plans/agent-timeline-event-presentation/tasks/t-1/feature-task-handoff.md`
+- Started after planning artifacts were reviewed and committed in
+  `ae2218b`.
+- Completion proof: exact Verification Command from the handoff succeeded,
+  required coding artifacts and defences were persisted, required reviewer
+  approvals were recorded, and committed decisions were promoted.

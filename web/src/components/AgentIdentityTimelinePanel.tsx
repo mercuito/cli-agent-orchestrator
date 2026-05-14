@@ -1,22 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline, AgentIdentityTimelineEvent } from '../api'
-import { AlertCircle, Bot, ChevronDown, ChevronRight, Clock3, GitBranch, Link2, Radio, Search } from 'lucide-react'
+import { AlertCircle, Bot, ChevronDown, ChevronRight, Radio, Search } from 'lucide-react'
+import { eventTimelineViewRegistry } from './timelineEventViews'
 
 const IDENTITY_TIMELINE_REFRESH_MS = 5000
-
-function formatLabel(value: string | null | undefined): string {
-  if (!value) return 'None'
-  return value
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, char => char.toUpperCase())
-}
-
-function formatTime(value: string | null | undefined): string {
-  if (!value) return 'Unknown time'
-  return value.replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '')
-}
 
 function activeLabel(identity: AgentIdentityStatus): string {
   return identity.active ? 'Active' : 'Inactive'
@@ -123,23 +110,14 @@ function RelatedEventList({
         </div>
       ) : (
         <div className="space-y-1.5">
-          {sortedEvents.map(event => (
-            <div key={`${title}-${event.event_id}`} className="min-w-0 rounded border border-gray-700/40 bg-gray-950/50 px-3 py-2">
-              <div className="min-w-0">
-                <div className="truncate text-xs font-medium text-gray-200">
-                  {formatLabel(event.event_name)}
-                </div>
-                <div
-                  data-testid="related-event-id"
-                  title={event.event_id}
-                  className="mt-1 truncate font-mono text-[11px] text-gray-500"
-                >
-                  {event.event_id}
-                </div>
+          {sortedEvents.map(event => {
+            const EventView = eventTimelineViewRegistry.viewFor(event.event_type_key)
+            return (
+              <div key={`${title}-${event.event_id}`} className="min-w-0 rounded border border-gray-700/40 bg-gray-950/50 px-3 py-2">
+                <EventView event={event} surface="related" />
               </div>
-              <div className="mt-1 text-[11px] text-gray-500">{formatTime(event.occurred_at)}</div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -161,40 +139,12 @@ function TimelineRow({
   error: string | null
   onToggle: () => void
 }) {
+  const EventView = eventTimelineViewRegistry.viewFor(event.event_type_key)
+
   return (
     <article className="rounded-lg border border-gray-700/40 bg-gray-900/55">
       <div className="grid gap-3 p-3 md:grid-cols-[minmax(0,1fr)_160px_160px] md:items-center">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-gray-100">{formatLabel(event.event_name)}</span>
-            <span className="rounded bg-blue-900/50 px-2 py-0.5 text-[11px] text-blue-300">
-              {formatLabel(event.source_type)}
-            </span>
-            {event.participant_role && (
-              <span className="rounded bg-emerald-900/50 px-2 py-0.5 text-[11px] text-emerald-300">
-                {formatLabel(event.participant_role)}
-              </span>
-            )}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-            <span className="inline-flex items-center gap-1">
-              <Clock3 size={12} />
-              {formatTime(event.occurred_at)}
-            </span>
-            {event.correlation_id && (
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <GitBranch size={12} />
-                <span className="truncate">Correlation {event.correlation_id}</span>
-              </span>
-            )}
-            {event.causation_id && (
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <Link2 size={12} />
-                <span className="truncate">Cause {event.causation_id}</span>
-              </span>
-            )}
-          </div>
-        </div>
+        <EventView event={event} surface="main" />
         <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-wide text-gray-500">Event ID</div>
           <div

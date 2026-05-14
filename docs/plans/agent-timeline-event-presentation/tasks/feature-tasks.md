@@ -32,10 +32,11 @@ preserve generic fallback visibility for untaught event kinds.
 
 Deliver frontend typed views for Linear mention, runtime delivery,
 workspace context switch, and runtime lifecycle events so their rows show
-the kind-specific details named by the narrative.
+the kind-specific details named by the narrative. Wire those views through
+generated backend event type constants and module self-registration.
 
 - Behavioral slice: `B-1`, `B-2`, `B-3`, `B-4`, `B-5`
-- Code slice: `F-CC-3`
+- Code slice: `F-CC-3`, `F-CC-6`
 - Test slice: `F-TC-2`
 - Supporting references: required for Linear and runtime CAO event
   definitions, frontend event-view patterns, domain examples, and known

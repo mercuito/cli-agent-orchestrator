@@ -9,6 +9,13 @@
 
 ## Entries
 
-No committed implementation decisions have been promoted yet. The first
-landed task that settles durable implementation facts will promote entries
-from its Code Contract Defence.
+- `CID-1`: Identity timeline and related-event backend reads expose typed
+  CAO payload data as `event_data`, parsed from the persisted event-log
+  `event_data_json` at `CaoEventRecord.event_data` and carried through
+  `TimelineEventRead` into API responses. Backend timeline code remains
+  data-only and must not add UI presentation values.
+- `CID-2`: The frontend event-view registry for identity timeline rows
+  lives at `web/src/components/timelineEventViews.tsx`. Main timeline
+  rows and related-event rows dispatch through
+  `eventTimelineViewRegistry.viewFor(event_type_key)`; unregistered event
+  types render through the module's generic fallback.

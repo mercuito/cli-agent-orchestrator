@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -100,6 +101,7 @@ class CaoEventRecord:
     occurred_at: datetime
     correlation_id: str | None
     causation_id: str | None
+    event_data: dict[str, Any]
     event: CaoEvent
 
 
@@ -266,6 +268,7 @@ def _record_from_model(row: CaoEventModel) -> CaoEventRecord:
     event_type_key = cast(str, row.event_type_key)
     event_data_json = cast(str, row.event_data_json)
     event = deserialize_cao_event(event_type_key, event_data_json)
+    event_data = cast(dict[str, Any], json.loads(event_data_json))
     return CaoEventRecord(
         event_id=cast(str, row.event_id),
         event_name=cast(str, row.event_name),
@@ -275,6 +278,7 @@ def _record_from_model(row: CaoEventModel) -> CaoEventRecord:
         occurred_at=cast(datetime, row.occurred_at),
         correlation_id=cast(str | None, row.correlation_id),
         causation_id=cast(str | None, row.causation_id),
+        event_data=event_data,
         event=event,
     )
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import CaoEventRecord
@@ -29,6 +30,7 @@ class TimelineEventRead:
     occurred_at: datetime
     correlation_id: str | None
     causation_id: str | None
+    event_data: dict[str, Any]
     participant_role: str | None = None
 
 
@@ -84,7 +86,10 @@ class AgentIdentityTimelineService:
     def related_events_for_identity_event(self, agent_id: str, event_id: str) -> RelatedEventsRead:
         """Return envelope-related CAO event threads for a manager-resolved identity."""
 
-        self._identity_manager.status_for_identity(agent_id)
+        identity_status = self._identity_manager.status_for_identity(agent_id)
+        participant_roles = _participant_roles_by_event_id(
+            identity_status.agent_identity_id
+        )
         record = db_module.get_cao_event(event_id)
         if record is None:
             raise UnknownTimelineEventError(f"Unknown CAO event: {event_id}")
@@ -100,19 +105,31 @@ class AgentIdentityTimelineService:
         direct_effect_records = db_module.list_cao_events_by_causation_id(record.event_id)
 
         return RelatedEventsRead(
-            event=_timeline_event_from_record(record),
+            event=_timeline_event_from_record(
+                record,
+                participant_role=participant_roles.get(record.event_id),
+            ),
             correlation_events=tuple(
-                _timeline_event_from_record(related_record)
+                _timeline_event_from_record(
+                    related_record,
+                    participant_role=participant_roles.get(related_record.event_id),
+                )
                 for related_record in correlation_records
             ),
             causation_events=CausationRelatedEventsRead(
                 direct_cause=(
-                    _timeline_event_from_record(direct_cause)
+                    _timeline_event_from_record(
+                        direct_cause,
+                        participant_role=participant_roles.get(direct_cause.event_id),
+                    )
                     if direct_cause is not None
                     else None
                 ),
                 direct_effects=tuple(
-                    _timeline_event_from_record(related_record)
+                    _timeline_event_from_record(
+                        related_record,
+                        participant_role=participant_roles.get(related_record.event_id),
+                    )
                     for related_record in direct_effect_records
                 ),
             ),
@@ -133,5 +150,15 @@ def _timeline_event_from_record(
         occurred_at=record.occurred_at,
         correlation_id=record.correlation_id,
         causation_id=record.causation_id,
+        event_data=record.event_data,
         participant_role=participant_role,
     )
+
+
+def _participant_roles_by_event_id(agent_identity_id: str) -> dict[str, str]:
+    return {
+        participant_record.record.event_id: participant_record.participant_role
+        for participant_record in db_module.list_cao_event_participants_by_agent_identity(
+            agent_identity_id
+        )
+    }

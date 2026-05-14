@@ -195,6 +195,10 @@ describe('API wrapper', () => {
         occurred_at: '2026-05-13T12:00:00',
         correlation_id: 'thread-1',
         causation_id: null,
+        event_data: {
+          issue_identifier: 'CAO-96',
+          message_body: 'Please implement CAO-96.',
+        },
         participant_role: null,
       },
       correlation_events: [],
@@ -215,6 +219,46 @@ describe('API wrapper', () => {
       '/agents/identities/aria%2Flinear/events/linear%3Aagent_mentioned%3Aevent%2F1/related',
       expect.any(Object),
     )
+  })
+
+  it('getAgentIdentityTimeline preserves typed event data in returned rows', async () => {
+    const timeline = {
+      identity: {
+        agent_identity_id: 'aria',
+        display_name: 'Aria',
+        agent_profile: 'partner',
+        cli_provider: 'codex',
+        active: true,
+        active_terminal_id: 'term-1',
+        active_workspace_context_id: 'wctx-1',
+        last_active_at: '2026-05-13T12:00:00',
+      },
+      events: [
+        {
+          event_id: 'experimental:audit:event-1',
+          event_name: 'experimental_audit_event',
+          event_type_key: 'cao.experimental.AuditEvent',
+          source_type: 'audit',
+          source_id: 'audit-1',
+          occurred_at: '2026-05-13T12:05:00',
+          correlation_id: 'thread-audit',
+          causation_id: null,
+          event_data: {
+            audit_kind: 'workspace_scan',
+            confidence: 0.92,
+          },
+          participant_role: 'participant',
+        },
+      ],
+    }
+    mockResponse(timeline)
+
+    const result = await api.getAgentIdentityTimeline('aria')
+
+    expect(result.events[0].event_data).toEqual({
+      audit_kind: 'workspace_scan',
+      confidence: 0.92,
+    })
   })
 
   it('createSession sends POST with params', async () => {

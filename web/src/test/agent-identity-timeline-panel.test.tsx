@@ -37,6 +37,7 @@ function event(
     occurred_at,
     correlation_id: null,
     causation_id: null,
+    event_data: {},
     participant_role,
     ...overrides,
   }
@@ -88,6 +89,41 @@ const liveMention = event(
   { correlation_id: 'thread-live' },
 )
 const workspaceRefreshId = 'workspace:context_refresh:non-participant'
+const unknownAudit = event(
+  'experimental:audit:event-1',
+  'experimental_audit_event',
+  '2026-05-13T12:05:00',
+  'participant',
+  {
+    event_type_key: 'cao.experimental.AuditEvent',
+    source_type: 'audit',
+    source_id: 'audit-1',
+    correlation_id: 'thread-audit',
+    event_data: {
+      audit_kind: 'workspace_scan',
+      confidence: 0.92,
+      nested_fact: { hidden: true },
+      tags: ['alpha', 'beta'],
+    },
+  },
+)
+const relatedUnknownAudit = event(
+  'experimental:audit:event-2',
+  'experimental_audit_event',
+  '2026-05-13T12:06:00',
+  'effect_target',
+  {
+    event_type_key: 'cao.experimental.RelatedAuditEvent',
+    source_type: 'audit',
+    source_id: 'audit-2',
+    correlation_id: 'thread-audit',
+    causation_id: unknownAudit.event_id,
+    event_data: {
+      audit_kind: 'related_probe',
+      confidence: 0.73,
+    },
+  },
+)
 
 const timelines: Record<string, AgentIdentityTimeline> = {
   aria: {
@@ -230,6 +266,41 @@ describe('AgentIdentityTimelinePanel', () => {
       'title',
       'runtime:notification_delivery:delivery',
     )
+  })
+
+  it('renders untaught event kinds through fallback views on the timeline and related panel', async () => {
+    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
+      identity: aria,
+      events: [unknownAudit],
+    })
+    vi.mocked(api.getAgentIdentityRelatedEvents).mockResolvedValue({
+      event: unknownAudit,
+      correlation_events: [unknownAudit, relatedUnknownAudit],
+      causation_events: {
+        direct_cause: null,
+        direct_effects: [relatedUnknownAudit],
+      },
+    })
+
+    render(<AgentIdentityTimelinePanel />)
+
+    expect(await screen.findByText('Experimental Audit Event')).toBeInTheDocument()
+    expect(screen.getByText('Participant')).toBeInTheDocument()
+    expect(screen.getByText('Correlation thread-audit')).toBeInTheDocument()
+    expect(screen.getByText('Source audit:audit-1')).toBeInTheDocument()
+    expect(screen.getByText('Audit Kind')).toBeInTheDocument()
+    expect(screen.getByText('workspace_scan')).toBeInTheDocument()
+    expect(screen.getByText('Confidence')).toBeInTheDocument()
+    expect(screen.getByText('0.92')).toBeInTheDocument()
+    expect(screen.queryByText('Nested Fact')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tags')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /inspect related events for experimental:audit:event-1/i }))
+
+    expect(await screen.findByText('Direct Effects')).toBeInTheDocument()
+    expect(screen.getAllByText('Effect Target').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('related_probe').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Cause experimental:audit:event-1').length).toBeGreaterThan(0)
   })
 
   it('does not reuse related-event results fetched under a different selected identity', async () => {
