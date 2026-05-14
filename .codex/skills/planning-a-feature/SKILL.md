@@ -30,6 +30,7 @@ needed. In this methodology, the standard profile names are:
 - `feature-narrative-reviewer.toml`
 - `feature-capability-contract-reviewer.toml`
 - `feature-behavioral-contract-reviewer.toml`
+- `feature-code-contract-reviewer.toml`
 - `feature-tasks-reviewer.toml`
 - `coding-implementer.toml`
 - `coding-implementation-plan-reviewer.toml`
@@ -78,6 +79,10 @@ needed. In this methodology, the standard profile names are:
      implementation obligations, state that explicitly rather than
      inventing clauses. Each feature-level Code Contract clause must have a
      stable `F-CC-<n>` ID so `feature-tasks.md` can assign slices by ID.
+   - If a Feature Code Contract is present, dispatch
+     `feature-code-contract-reviewer` to review it against
+     `creating-a-feature-code-contract.md` and the feature-level code
+     criteria. Continue only after explicit approval.
    - Create a Feature Test Contract only when proof obligations exist at
      feature altitude and need to be sliced across tasks. Use
      `creating-a-feature-test-contract.md` and feature-level test criteria.
@@ -163,6 +168,7 @@ Use the narrow reviewer profile that matches the artifact under review:
 - `feature-narrative-reviewer` for `feature-narrative.md`;
 - `feature-capability-contract-reviewer` for `feature-capability-contract.md`;
 - `feature-behavioral-contract-reviewer` for `feature-behavioral-contract.md`;
+- `feature-code-contract-reviewer` for `feature-code-contract.md`;
 - `feature-tasks-reviewer` for `tasks/feature-tasks.md`;
 - `coding-implementation-plan-reviewer` for `coding-implementation-plan.md`;
 - `coding-behavioral-contract-reviewer` for behavioral compliance after
