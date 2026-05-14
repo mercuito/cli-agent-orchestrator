@@ -44,6 +44,13 @@ Code Contract instead — see
 - Acceptance criteria phrased as Given/When/Then — those are behaviors, not
   narrative
 
+## Applicable criteria
+<IMPORTANT> Do not draft the document until you have read and understood applicible criteria<IMPORTANT>
+
+Browse the [narrative criteria catalog](./criteria/feature-narrative/README.md) and
+select the criteria that apply. Add an `Applicable Criteria` table near the
+top of the narrative with one-line rationale per selection.
+
 ## Document organization
 
 ```markdown
@@ -101,12 +108,6 @@ without turning it into a requirement or capability statement.>
    implementation-side artifact (class, module, payload, file, library)
    and replace it with the domain term. If no domain term exists, add one
    to the vocabulary.
-
-## Applicable criteria
-
-Browse the [narrative criteria catalog](./criteria/feature-narrative/README.md) and
-select the criteria that apply. Add an `Applicable Criteria` table near the
-top of the narrative with one-line rationale per selection.
 
 ## Artifact path
 
