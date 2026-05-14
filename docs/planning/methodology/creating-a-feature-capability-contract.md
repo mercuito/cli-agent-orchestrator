@@ -109,6 +109,9 @@ Brief domain context. Narrative events that exercise this capability:
 
 `docs/plans/<feature>/capability-contract.md`
 
+The artifact is the feature-level Capability Contract; `feature` is not a
+filename prefix. Do not name the file `feature-capability-contract.md`.
+
 ## Quality check
 
 For each capability: does it map to a narrative event where the capability

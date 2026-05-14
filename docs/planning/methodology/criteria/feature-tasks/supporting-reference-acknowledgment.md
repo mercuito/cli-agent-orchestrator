@@ -12,7 +12,7 @@ examples, existing implementation patterns, or other material the
 implementer should inspect before drafting the Coding Implementation Plan.
 
 If references are required, the task entry names the reason at a high
-level. The concrete references live in the Feature Task Handoff, not in
+level. The concrete references live in the Task Handoff, not in
 `tasks.md`.
 
 If no references are required, the task entry says so with a short reason.

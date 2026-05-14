@@ -1,15 +1,15 @@
-# Creating a Feature Tasks Artifact
+# Creating a Tasks Artifact
 
 ## Purpose
 
-The Feature Tasks artifact (`tasks.md`) enumerates the tasks the feature
+The Tasks artifact (`tasks.md`) enumerates the tasks the feature
 will be implemented through. It carries each task's stable ID, brief
 scope, and the slice IDs the task owns from the feature-level contracts.
 
 It is **the authoritative source for slice ownership** across the
 feature: which task owns which behavior, which Code Contract clause,
 which Test Contract clause. The
-[Feature Task Handoff](./creating-a-feature-task-handoff.md) is the
+[Task Handoff](./creating-a-feature-task-handoff.md) is the
 operational packet that turns one task entry into a startable assignment;
 it references this artifact rather than restating the slices.
 
@@ -50,11 +50,11 @@ reader resolves an ID by opening the named contract artifact.
 
 ## What it does not contain
 
-- the full handoff for any task (that is the Feature Task Handoff)
+- the full handoff for any task (that is the Task Handoff)
 - restatement of behavior, constraint, or contract clause text
 - coding-side details (research findings, plan, code obligations)
 - the per-task Verification Command and coding artifact paths (those live
-  in the Feature Task Handoff)
+  in the Task Handoff)
 - concrete UI designs, screenshots, product docs, or code references
   (the task entry only acknowledges whether the handoff must provide them)
 
@@ -103,3 +103,6 @@ the top of the artifact with one-line rationale per selection.
 ## Artifact path
 
 `docs/plans/<feature>/tasks/tasks.md`
+
+The artifact is the feature-level Tasks index; `feature` is not a filename
+prefix.

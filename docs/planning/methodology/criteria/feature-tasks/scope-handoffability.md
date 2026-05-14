@@ -6,7 +6,7 @@ when: Always.
 # Scope Sentence Supports Handoff Drafting
 
 Each task's scope sentence, combined with the task's listed slices and the
-feature-level contracts, must be enough to draft a Feature Task Handoff
+feature-level contracts, must be enough to draft a Task Handoff
 without consulting the planner again.
 
 If the scope is too vague to answer "what does this task deliver?", the

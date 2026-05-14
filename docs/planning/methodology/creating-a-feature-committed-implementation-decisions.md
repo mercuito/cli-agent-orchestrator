@@ -75,3 +75,6 @@ near the top of the artifact with one-line rationale per selection.
 ## Artifact path
 
 `docs/plans/<feature>/committed-implementation-decisions.md`
+
+The artifact is the feature-level Committed Implementation Decisions ledger;
+`feature` is not a filename prefix.

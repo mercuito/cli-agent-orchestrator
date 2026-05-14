@@ -54,6 +54,11 @@ before drafting the body, include the artifact's `Applicable Criteria` table
 when the methodology calls for one, and treat selected criteria as binding
 until revised through the artifact.
 
+Use the methodology's artifact filenames exactly. The word "feature-level"
+describes artifact altitude; it is not a filename prefix for top-level plan
+artifacts. For example, use `capability-contract.md`, not
+`feature-capability-contract.md`.
+
 Before dispatching agents, inspect local role prompts under the current repo's
 `.codex/agents/` directory first, then fall back to `~/.codex/agents/` if
 needed. In this methodology, the standard profile names are:
@@ -74,30 +79,30 @@ needed. In this methodology, the standard profile names are:
    - For behavior-changing work, strengthen a thin narrative before deriving
      contracts.
    - Refuse to derive a capability contract, behavioral contract, or task list
-     for behavior-changing work until a Feature Narrative exists.
+     for behavior-changing work until a Narrative exists.
    - For pure refactor work, skip narrative, capability contract, and
-     behavioral contract; enter at the Feature Code Contract.
+     behavioral contract; enter at the Code Contract.
 
 2. **Create feature-level artifacts**
-   - For behavior-changing work, create or update the Feature Narrative using
+   - For behavior-changing work, create or update the Narrative using
      `creating-a-feature-narrative.md` and the feature narrative criteria.
      Structure the narrative as a timeline of short, discrete,
      referenceable events with stable event IDs, not as free-form prose
      paragraphs.
-   - Dispatch `feature-narrative-reviewer` to review the Feature Narrative.
+   - Dispatch `feature-narrative-reviewer` to review the Narrative.
      Continue only after explicit approval.
-   - Derive the Feature Capability Contract from the approved narrative using
+   - Derive the Capability Contract from the approved narrative using
      `creating-a-feature-capability-contract.md` and the feature capability
      contract criteria.
-   - Dispatch `feature-capability-contract-reviewer` to review the Feature
-     Capability Contract. Continue only after explicit approval.
-   - Derive the Feature Behavioral Contract from the approved narrative and
-     approved capability contract using
+   - Dispatch `feature-capability-contract-reviewer` to review the Capability
+     Contract. Continue only after explicit approval.
+   - Derive the Behavioral Contract from the approved narrative and approved
+     capability contract using
      `creating-a-feature-behavioral-contract.md` and the feature behavioral
      contract criteria.
-   - Dispatch `feature-behavioral-contract-reviewer` to review the Feature
-     Behavioral Contract. Continue only after explicit approval.
-   - Create the Feature Code Contract using
+   - Dispatch `feature-behavioral-contract-reviewer` to review the Behavioral
+     Contract. Continue only after explicit approval.
+   - Create the Code Contract using
      `creating-a-feature-code-contract.md` and feature-level code criteria
      only when there are feature-wide implementation-steering obligations.
      Do not derive code-shape choices from the narrative, capability
@@ -108,7 +113,7 @@ needed. In this methodology, the standard profile names are:
      implementation obligations, state that explicitly rather than
      inventing clauses. Each feature-level Code Contract clause must have a
      stable `F-CC-<n>` ID so `tasks.md` can assign slices by ID.
-   - Create a Feature Test Contract only when proof obligations exist at
+   - Create a Test Contract only when proof obligations exist at
      feature altitude and need to be sliced across tasks. Use
      `creating-a-feature-test-contract.md` and feature-level test criteria.
      Do not derive proof-shape choices from the narrative, capability
@@ -127,17 +132,17 @@ needed. In this methodology, the standard profile names are:
      running ledger of settled implementation facts.
 
 3. **Break work into tasks and handoffs**
-   - Do not create `tasks.md` for behavior-changing work until the Feature
-     Narrative, Feature Capability Contract, and Feature Behavioral Contract
-     have explicit reviewer approval.
+   - Do not create `tasks.md` for behavior-changing work until the Narrative,
+     Capability Contract, and Behavioral Contract have explicit reviewer
+     approval.
    - Maintain `tasks.md` as the feature-level task list. Before drafting or
      revising it, read `creating-a-feature-tasks.md` and the feature tasks
      criteria catalog.
    - Create one `feature-task-handoff.md` per task. Before drafting or
      revising a handoff, read `creating-a-feature-task-handoff.md` and the
      feature task handoff criteria catalog.
-   - Each handoff must explicitly name behavioral, Feature Code Contract, and
-     Feature Test Contract slices, or explicitly state no slice for that
+   - Each handoff must explicitly name behavioral, Code Contract, and Test
+     Contract slices, or explicitly state no slice for that
      contract with a reason.
    - Each handoff must reference the committed-implementation-decisions
      artifact, include the Verification Command, and provide deterministic
@@ -150,7 +155,7 @@ needed. In this methodology, the standard profile names are:
 
 5. **Orchestrate implementation**
    - Dispatch one implementer agent per task.
-   - Pass the Feature Task Handoff, feature-level contracts/slices, committed
+   - Pass the Task Handoff, feature-level contracts/slices, committed
      implementation decisions, Verification Command, deterministic coding
      artifact paths, and relevant criteria catalogs.
    - Tell implementers they are not alone in the codebase and must not revert
@@ -203,7 +208,7 @@ Use the narrow reviewer profile that matches the artifact under review:
 Every implementer prompt must include:
 
 - task scope and ownership;
-- Feature Task Handoff and assigned feature-level slices;
+- Task Handoff and assigned feature-level slices;
 - relevant feature-level and coding-level criteria documents;
 - paths for Coding Code Contract, Coding Test Contract, Coding Implementation
   Plan, Coding Completion Report, and applicable defences;
@@ -217,5 +222,5 @@ Every implementer prompt must include:
 
 Do not skip review gates because the design seems obvious. Do not dispatch
 implementers from unreviewed feature-level artifacts or missing handoffs. Do
-not hide domain-specific policy inside lower-level services unless the Feature
-Narrative and Feature Behavioral Contract establish that ownership.
+not hide domain-specific policy inside lower-level services unless the
+Narrative and Behavioral Contract establish that ownership.

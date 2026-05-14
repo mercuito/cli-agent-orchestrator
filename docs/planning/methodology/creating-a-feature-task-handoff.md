@@ -1,16 +1,16 @@
-# Creating a Feature Task Handoff
+# Creating a Task Handoff
 
 ## Purpose
 
-The Feature Task Handoff is the per-task assignment packet. It points at
+The Task Handoff is the per-task assignment packet. It points at
 the task's slice entry in the
-[Feature Tasks](./creating-a-feature-tasks.md) artifact (which owns the
+[Tasks](./creating-a-feature-tasks.md) artifact (which owns the
 slice IDs), references the committed-implementation-decisions artifact,
 and provides the Verification Command and coding-level artifact paths —
 everything needed to start research and drafting the Coding Implementation
 Plan.
 
-A Feature Task Handoff exists per task. The Feature Tasks artifact owns
+A Task Handoff exists per task. The Tasks artifact owns
 the slice assignments across the whole feature; the per-task handoff is
 the operational packet that turns one slice entry into a startable task.
 
@@ -27,9 +27,9 @@ first.
 
 ### Slice reference
 
-A pointer to the task's entry in the Feature Tasks artifact, which owns
+A pointer to the task's entry in the Tasks artifact, which owns
 the assigned Behavioral / Code / Test slice IDs. The handoff does not
-restate the slice IDs — the Feature Tasks entry is the single source of
+restate the slice IDs — the Tasks entry is the single source of
 truth for what this task is responsible for satisfying.
 
 The slices are resolved by reading the referenced entry. The universal
@@ -82,12 +82,12 @@ task can be blocked, revised, or clarified before implementation begins.
 - Coding-level criteria selections — those live in the Coding Code
   Contract and Coding Test Contract.
 - New design decisions. Supporting references orient research; they do
-  not replace the Feature Narrative, contracts, or task slices.
+  not replace the Narrative, contracts, or task slices.
 
 ## Document organization
 
 ```markdown
-# Feature Task Handoff: t-<n> — <short title>
+# Task Handoff: t-<n> — <short title>
 
 ## Task Brief
 
@@ -140,3 +140,7 @@ the top of the handoff with one-line rationale per selection.
 ## Artifact path
 
 `docs/plans/<feature>/tasks/t-<n>/feature-task-handoff.md`
+
+The artifact is the Task Handoff. Its filename remains
+`feature-task-handoff.md` to distinguish the feature-level assignment packet
+from the coding-level artifacts in the same task directory.

@@ -12,23 +12,27 @@ and are out of scope here.
 
 Authored before coding begins, in this order:
 
-1. [Feature Narrative](./creating-a-feature-narrative.md) — behavior-changing
+The word "feature" describes this section's altitude. Top-level feature
+artifact filenames use the concise names in the directory layout below; do
+not add a `feature-` prefix to contract filenames.
+
+1. [Narrative](./creating-a-feature-narrative.md) — behavior-changing
    work only; pure refactors skip.
-2. [Feature Capability Contract](./creating-a-feature-capability-contract.md)
+2. [Capability Contract](./creating-a-feature-capability-contract.md)
    — behavior-changing work only; derives capabilities from the narrative
    and captures cross-cutting invariants and domain graphs.
-3. [Feature Behavioral Contract](./creating-a-feature-behavioral-contract.md)
+3. [Behavioral Contract](./creating-a-feature-behavioral-contract.md)
    — behavior-changing work only.
-4. [Feature Code Contract](./creating-a-feature-code-contract.md) — entry
+4. [Code Contract](./creating-a-feature-code-contract.md) — entry
    artifact for pure refactors.
-5. [Feature Test Contract](./creating-a-feature-test-contract.md) — optional;
+5. [Test Contract](./creating-a-feature-test-contract.md) — optional;
    only when proof obligations span tasks.
 6. [Committed Implementation Decisions](./creating-a-feature-committed-implementation-decisions.md)
    — running ledger of settled facts from landed tasks; seeded when the
    feature begins, grown entry by entry as tasks promote durable facts.
-7. [Feature Tasks](./creating-a-feature-tasks.md) — the feature's task list
+7. [Tasks](./creating-a-feature-tasks.md) — the feature's task list
    with stable IDs, brief scopes, and assigned contract slice IDs.
-8. [Feature Task Handoff](./creating-a-feature-task-handoff.md) — one per
+8. [Task Handoff](./creating-a-feature-task-handoff.md) — one per
    task; references the task's slice entry in `tasks.md`, the
    committed-decisions artifact, the Verification Command, and coding
    artifact paths. When the task entry requires supporting references, the
@@ -63,6 +67,10 @@ For each task:
 Pure refactor tasks omit the Behavioral Contract Defence in step 7.
 
 ## Directory layout
+
+These filenames are canonical. The top-level contract filenames are
+`capability-contract.md`, `behavioral-contract.md`, `code-contract.md`, and
+`test-contract.md`, not `feature-*.md` variants.
 
 ```text
 docs/plans/<feature>/

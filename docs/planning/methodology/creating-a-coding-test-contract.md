@@ -37,7 +37,7 @@ upstream rather than being absorbed into the Coding Test Contract.
 
 The Coding Test Contract is drafted from:
 
-- the Feature Task Handoff and the task's slice entry in `tasks.md`
+- the Task Handoff and the task's slice entry in `tasks.md`
   (the entry lists the assigned feature-level Test Contract clause IDs
   when one exists, or explicitly states no slice / no feature-level
   Test Contract; the handoff carries the Verification Command and the
@@ -105,7 +105,7 @@ Test Contract Defence can reference it.
 
 ## Authoring order
 
-1. **Read the Feature Task Handoff and the task's `tasks.md` entry** — the
+1. **Read the Task Handoff and the task's `tasks.md` entry** — the
    entry names the assigned feature-level Test Contract slice (or absence,
    or no feature-level Test Contract); the handoff carries the Verification
    Command and committed-implementation-decisions reference.
@@ -134,9 +134,9 @@ re-issued.
 
 - The **feature-level Test Contract** (when present) carries cross-task
   proof obligations. Clauses are referenced by ID; not redrafted here.
-- The **Feature Tasks artifact** (`tasks.md`) names the assigned
-  feature-level Test Contract slice for this task (or the explicit
-  absence of one). The **Feature Task Handoff** references that entry
+- The **Tasks artifact** (`tasks.md`) names the assigned feature-level Test
+  Contract slice for this task (or the explicit absence of one). The
+  **Task Handoff** references that entry
   and supplies the Verification Command and committed-implementation-decisions
   reference.
 - The **Coding Implementation Plan** explains how the task will satisfy

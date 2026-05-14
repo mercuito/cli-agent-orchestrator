@@ -15,7 +15,7 @@ is double-assigned.
 
 ## Illustrations
 
-**Bad — orphan clause.** Feature Code Contract clause `F-CC-3` is not
+**Bad — orphan clause.** Feature-level Code Contract clause `F-CC-3` is not
 referenced by any task entry.
 **Good:** `F-CC-3` appears in exactly one task's Code slice.
 

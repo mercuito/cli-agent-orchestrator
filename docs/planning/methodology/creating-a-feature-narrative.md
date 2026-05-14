@@ -113,6 +113,9 @@ without turning it into a requirement or capability statement.>
 
 `docs/plans/<feature>/narrative.md`
 
+The artifact is the feature-level Narrative; `feature` is not a filename
+prefix.
+
 ## Quality check
 
 Can a reader derive candidate capabilities and affected domain concepts

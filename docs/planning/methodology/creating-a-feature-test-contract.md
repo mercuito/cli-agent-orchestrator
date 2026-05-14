@@ -1,4 +1,4 @@
-# Creating a Feature-Level Test Contract
+# Creating a Test Contract
 
 ## Purpose
 
@@ -15,8 +15,8 @@ feature has standing proof obligations that need to be sliced across tasks
 that only a coordinated set of tasks can satisfy).
 
 The feature-level contract is not redrafted at task altitude. Each task's
-slice of clause IDs is recorded in the Feature Tasks artifact (`tasks.md`);
-the Feature Task Handoff references that entry. A separate task-level
+slice of clause IDs is recorded in the Tasks artifact (`tasks.md`);
+the Task Handoff references that entry. A separate task-level
 Coding Test Contract (see
 [creating-a-coding-test-contract](./creating-a-coding-test-contract.md))
 names task-specific proof-shape obligations after research, drawing from
@@ -93,7 +93,7 @@ sufficient. No feature-level Test Contract is needed.
 
 ## Slicing
 
-Each task's entry in the Feature Tasks artifact (`tasks.md`) explicitly
+Each task's entry in the Tasks artifact (`tasks.md`) explicitly
 enumerates which feature-level Test Contract clauses that task carries
 (or states "no slice for this contract" with a one-line reason; or notes
 that no feature-level Test Contract exists for this feature). Tasks
@@ -125,7 +125,7 @@ the behavior-changing path.
 ## Document organization
 
 ```markdown
-# Feature-Level Test Contract
+# Test Contract
 
 ## Applicable Feature-Level Test Criteria
 
@@ -149,6 +149,9 @@ the behavior-changing path.
 
 `docs/plans/<feature>/test-contract.md`
 
+The artifact is the feature-level Test Contract; `feature` is not a
+filename prefix. Do not name the file `feature-test-contract.md`.
+
 ## Relationship to other artifacts
 
 - The **feature-level Behavioral Contract** (when present) defines what
@@ -156,8 +159,8 @@ the behavior-changing path.
   cross-task proof of those behaviors is shaped.
 - The **feature-level Code Contract** defines production-code obligations.
   The feature-level Test Contract does not duplicate code obligations.
-- The **Feature Tasks artifact** (`tasks.md`) enumerates which feature-level
-  Test Contract clauses each task carries by ID. The **Feature Task Handoff**
+- The **Tasks artifact** (`tasks.md`) enumerates which feature-level
+  Test Contract clauses each task carries by ID. The **Task Handoff**
   references that entry and adds the per-task Verification Command and
   coding-level paths.
 - The **Coding Test Contract** is the task-level contract. It draws from

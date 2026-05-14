@@ -74,6 +74,13 @@ Capability-derivation criteria live in the
 [capability contract criteria catalog](./criteria/feature-capability-contract/README.md)
 and apply when authoring the capability contract, not here.
 
+## Artifact path
+
+`docs/plans/<feature>/behavioral-contract.md`
+
+The artifact is the feature-level Behavioral Contract; `feature` is not a
+filename prefix. Do not name the file `feature-behavioral-contract.md`.
+
 ## Quality check
 
 For each behavior: can a reader write a test from the statement without making
