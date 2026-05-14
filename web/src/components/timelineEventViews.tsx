@@ -3,9 +3,14 @@ import { AgentIdentityTimelineEvent } from '../api'
 
 type TimelineEventViewSurface = 'main' | 'related'
 
+export type OpenExternalReference = (url: string) => void
+export type FocusTerminalReference = (terminalId: string) => void | Promise<void>
+
 export interface TimelineEventViewProps {
   event: AgentIdentityTimelineEvent
   surface: TimelineEventViewSurface
+  onOpenExternalReference?: OpenExternalReference
+  onFocusTerminal?: FocusTerminalReference
 }
 
 export type TimelineEventView = (props: TimelineEventViewProps) => JSX.Element

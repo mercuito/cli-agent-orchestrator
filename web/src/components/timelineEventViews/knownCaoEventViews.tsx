@@ -1,4 +1,4 @@
-import { Bell, GitCompareArrows, LifeBuoy, MessageSquareText } from 'lucide-react'
+import { Bell, ExternalLink, GitCompareArrows, LifeBuoy, MessageSquareText, Monitor } from 'lucide-react'
 import type { ReactNode } from 'react'
 import {
   AGENT_RUNTIME_LIFECYCLE_EVENT,
@@ -19,6 +19,7 @@ const LinearMentionPayloadKey = {
   issueIdentifier: 'issue_identifier',
   issueId: 'issue_id',
   issueTitle: 'issue_title',
+  issueUrl: 'issue_url',
   appUserName: 'app_user_name',
   appUserId: 'app_user_id',
   messageBody: 'message_body',
@@ -92,6 +93,30 @@ function DetailPill({
   )
 }
 
+function EntityReferenceButton({
+  label,
+  ariaLabel,
+  icon,
+  onClick,
+}: {
+  label: string
+  ariaLabel: string
+  icon: JSX.Element
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onClick}
+      className="inline-flex max-w-full items-center gap-1.5 rounded border border-emerald-800/60 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium text-emerald-200 transition-colors hover:border-emerald-600 hover:bg-emerald-900/60"
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
+  )
+}
+
 function ViewShell({
   icon,
   title,
@@ -116,13 +141,17 @@ function ViewShell({
   )
 }
 
-const LinearMentionTimelineEventView: TimelineEventView = ({ event }: TimelineEventViewProps) => {
+const LinearMentionTimelineEventView: TimelineEventView = ({
+  event,
+  onOpenExternalReference,
+}: TimelineEventViewProps) => {
   const data = event.event_data
   const issueIdentifier =
     stringFact(data, LinearMentionPayloadKey.issueIdentifier) ??
     stringFact(data, LinearMentionPayloadKey.issueId)
   const issueTitle =
     stringFact(data, LinearMentionPayloadKey.issueTitle) ?? 'Untitled Linear issue'
+  const issueUrl = stringFact(data, LinearMentionPayloadKey.issueUrl)
   const mentioner =
     stringFact(data, LinearMentionPayloadKey.appUserName) ??
     stringFact(data, LinearMentionPayloadKey.appUserId) ??
@@ -139,18 +168,29 @@ const LinearMentionTimelineEventView: TimelineEventView = ({ event }: TimelineEv
       <DetailPill label="Linear issue" value={issueContext} tone="blue" />
       <DetailPill label="Title" value={issueTitle} />
       <DetailPill label="Mentioner" value={mentioner} tone="emerald" />
+      {issueUrl && onOpenExternalReference && (
+        <EntityReferenceButton
+          label="Open in Linear"
+          ariaLabel={`Open Linear issue ${issueContext}`}
+          icon={<ExternalLink size={12} />}
+          onClick={() => onOpenExternalReference(issueUrl)}
+        />
+      )}
       <Snippet text={message} />
     </ViewShell>
   )
 }
 
-const RuntimeDeliveryTimelineEventView: TimelineEventView = ({ event }: TimelineEventViewProps) => {
+const RuntimeDeliveryTimelineEventView: TimelineEventView = ({
+  event,
+  onFocusTerminal,
+}: TimelineEventViewProps) => {
   const data = event.event_data
   const sourceKind = stringFact(data, RuntimeDeliveryPayloadKey.sourceKind)
   const message =
     stringFact(data, RuntimeDeliveryPayloadKey.messageBody) ?? 'No message text recorded'
-  const terminalId =
-    stringFact(data, RuntimeDeliveryPayloadKey.terminalId) ?? 'No terminal recorded'
+  const terminalTarget = stringFact(data, RuntimeDeliveryPayloadKey.terminalId)
+  const terminalId = terminalTarget ?? 'No terminal recorded'
   const outcome = stringFact(data, RuntimeDeliveryPayloadKey.outcome) ?? 'unknown outcome'
 
   return (
@@ -161,6 +201,14 @@ const RuntimeDeliveryTimelineEventView: TimelineEventView = ({ event }: Timeline
       <DetailPill label="Source" value={labelize(sourceKind, 'Unknown source')} tone="blue" />
       <DetailPill label="Terminal" value={terminalId} tone="emerald" />
       <DetailPill label="Outcome" value={outcome} />
+      {terminalTarget && onFocusTerminal && (
+        <EntityReferenceButton
+          label="Open terminal"
+          ariaLabel={`Open terminal ${terminalTarget}`}
+          icon={<Monitor size={12} />}
+          onClick={() => onFocusTerminal(terminalTarget)}
+        />
+      )}
       <Snippet text={message} />
     </ViewShell>
   )

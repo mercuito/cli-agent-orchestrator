@@ -180,6 +180,16 @@ export function AgentPanel({
     setLiveTerminal({ id: terminalId, provider, agentProfile, terminalToken })
   }
 
+  const focusTimelineTerminal = async (terminalId: string) => {
+    try {
+      const terminal = await api.getTerminal(terminalId)
+      await selectSession(terminal.session_name)
+      openTerminal(terminal.id, terminal.provider, terminal.agent_profile)
+    } catch {
+      showSnackbar({ type: 'error', message: `Terminal ${terminalId} was not found` })
+    }
+  }
+
   useEffect(() => {
     if ((!initialTerminalId && !initialAgentId) || initialTerminalOpened.current) return
     let cancelled = false
@@ -252,7 +262,7 @@ export function AgentPanel({
 
   return (
     <div className="space-y-6">
-      <AgentIdentityTimelinePanel />
+      <AgentIdentityTimelinePanel onFocusTerminal={focusTimelineTerminal} />
 
       {/* Sessions List */}
       <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-5">

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react'
 import { AgentPanel } from '../components/AgentPanel'
+import { AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT } from '../generated/caoEventTypeKeys'
 
 const terminalViewMock = vi.hoisted(() => vi.fn(() => <div data-testid="terminal-view" />))
 const selectSession = vi.hoisted(() => vi.fn(() => Promise.resolve()))
@@ -78,6 +79,7 @@ const getAgentIdentityTimeline = vi.hoisted(() =>
           occurred_at: '2026-05-13T12:00:00',
           correlation_id: null,
           causation_id: null,
+          event_data: {},
           participant_role: 'mentioned',
         },
       ],
@@ -224,6 +226,66 @@ describe('AgentPanel', () => {
           {},
         )
       })
+    })
+
+    it('focuses a runtime delivery terminal reference through the existing terminal open flow', async () => {
+      getAgentIdentityTimeline.mockResolvedValueOnce({
+        identity: {
+          agent_identity_id: 'aria',
+          display_name: 'Aria',
+          agent_profile: 'partner',
+          cli_provider: 'codex',
+          active: false,
+          active_terminal_id: null,
+          active_workspace_context_id: null,
+          last_active_at: null,
+        },
+        events: [
+          {
+            event_id: 'runtime:event:delivery-ops-417',
+            event_name: 'agent_runtime_notification_delivery',
+            event_type_key: AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
+            source_type: 'cao_runtime',
+            source_id: 'notification:42',
+            occurred_at: '2026-05-13T12:01:00',
+            correlation_id: null,
+            causation_id: null,
+            event_data: {
+              source_kind: 'linear_mention',
+              message_body: 'Aria, can you trace the stuck inbox delivery?',
+              terminal_id: 'term-aria-main',
+              outcome: 'delivered',
+            },
+            participant_role: 'delivery_target',
+          },
+        ],
+      })
+      getTerminal.mockResolvedValueOnce({
+        id: 'term-aria-main',
+        name: 'developer-aria',
+        provider: 'codex',
+        session_name: 'cao-linear-discovery-partner',
+        agent_profile: 'developer',
+        status: 'idle',
+        last_active: null,
+      })
+
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /open terminal term-aria-main/i }))
+
+      await waitFor(() => {
+        expect(terminalViewMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            terminalId: 'term-aria-main',
+            provider: 'codex',
+            agentProfile: 'developer',
+          }),
+          {},
+        )
+      })
+      expect(getTerminal).toHaveBeenCalledWith('term-aria-main')
+      expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
     })
   })
 })

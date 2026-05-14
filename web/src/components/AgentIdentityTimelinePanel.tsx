@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline, AgentIdentityTimelineEvent } from '../api'
 import { AlertCircle, Bot, ChevronDown, ChevronRight, Radio, Search } from 'lucide-react'
-import { eventTimelineViewRegistry } from './timelineEventViews'
+import {
+  eventTimelineViewRegistry,
+  type FocusTerminalReference,
+  type OpenExternalReference,
+} from './timelineEventViews'
 
 const IDENTITY_TIMELINE_REFRESH_MS = 5000
 
@@ -91,10 +95,14 @@ function RelatedEventList({
   title,
   events,
   emptyLabel,
+  onOpenExternalReference,
+  onFocusTerminal,
 }: {
   title: string
   events: AgentIdentityTimelineEvent[]
   emptyLabel: string
+  onOpenExternalReference: OpenExternalReference
+  onFocusTerminal?: FocusTerminalReference
 }) {
   const sortedEvents = useMemo(() => newestEventsFirst(events), [events])
   const listId = `related-event-list-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
@@ -114,7 +122,12 @@ function RelatedEventList({
             const EventView = eventTimelineViewRegistry.viewFor(event.event_type_key)
             return (
               <div key={`${title}-${event.event_id}`} className="min-w-0 rounded border border-gray-700/40 bg-gray-950/50 px-3 py-2">
-                <EventView event={event} surface="related" />
+                <EventView
+                  event={event}
+                  surface="related"
+                  onOpenExternalReference={onOpenExternalReference}
+                  onFocusTerminal={onFocusTerminal}
+                />
               </div>
             )
           })}
@@ -131,6 +144,8 @@ function TimelineRow({
   loading,
   error,
   onToggle,
+  onOpenExternalReference,
+  onFocusTerminal,
 }: {
   event: AgentIdentityTimelineEvent
   expanded: boolean
@@ -138,13 +153,20 @@ function TimelineRow({
   loading: boolean
   error: string | null
   onToggle: () => void
+  onOpenExternalReference: OpenExternalReference
+  onFocusTerminal?: FocusTerminalReference
 }) {
   const EventView = eventTimelineViewRegistry.viewFor(event.event_type_key)
 
   return (
     <article className="rounded-lg border border-gray-700/40 bg-gray-900/55">
       <div className="grid gap-3 p-3 md:grid-cols-[minmax(0,1fr)_160px_160px] md:items-center">
-        <EventView event={event} surface="main" />
+        <EventView
+          event={event}
+          surface="main"
+          onOpenExternalReference={onOpenExternalReference}
+          onFocusTerminal={onFocusTerminal}
+        />
         <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-wide text-gray-500">Event ID</div>
           <div
@@ -181,17 +203,23 @@ function TimelineRow({
                 title="Direct Cause"
                 events={related.causation_events.direct_cause ? [related.causation_events.direct_cause] : []}
                 emptyLabel="No direct cause recorded."
+                onOpenExternalReference={onOpenExternalReference}
+                onFocusTerminal={onFocusTerminal}
               />
               <RelatedEventList
                 title="Direct Effects"
                 events={related.causation_events.direct_effects}
                 emptyLabel="No direct effects recorded."
+                onOpenExternalReference={onOpenExternalReference}
+                onFocusTerminal={onFocusTerminal}
               />
               <div className="lg:col-span-2 lg:mx-auto lg:w-full lg:max-w-md">
                 <RelatedEventList
                   title="Shared Correlation Thread"
                   events={related.correlation_events}
                   emptyLabel="No shared correlation thread recorded."
+                  onOpenExternalReference={onOpenExternalReference}
+                  onFocusTerminal={onFocusTerminal}
                 />
               </div>
             </div>
@@ -202,7 +230,19 @@ function TimelineRow({
   )
 }
 
-export function AgentIdentityTimelinePanel() {
+interface AgentIdentityTimelinePanelProps {
+  onOpenExternalReference?: OpenExternalReference
+  onFocusTerminal?: FocusTerminalReference
+}
+
+function openExternalReference(url: string) {
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+export function AgentIdentityTimelinePanel({
+  onOpenExternalReference = openExternalReference,
+  onFocusTerminal,
+}: AgentIdentityTimelinePanelProps = {}) {
   const [identities, setIdentities] = useState<AgentIdentityStatus[]>([])
   const [rosterLoading, setRosterLoading] = useState(true)
   const [rosterError, setRosterError] = useState<string | null>(null)
@@ -438,6 +478,8 @@ export function AgentIdentityTimelinePanel() {
                     loading={relatedLoadingKey === cacheKey}
                     error={relatedErrors[cacheKey] || null}
                     onToggle={() => handleToggleRelated(event.event_id)}
+                    onOpenExternalReference={onOpenExternalReference}
+                    onFocusTerminal={onFocusTerminal}
                   />
                 )
               })}

@@ -150,6 +150,24 @@ const knownLinearMention = event(
   },
 )
 
+const knownLinearMentionWithoutIssueUrl = event(
+  'linear:event:mention-no-url',
+  'agent_mentioned',
+  '2026-05-13T12:00:00',
+  'mentioned',
+  {
+    event_type_key: LINEAR_AGENT_MENTIONED_EVENT,
+    source_type: 'linear',
+    source_id: 'msg-no-url',
+    event_data: {
+      issue_identifier: 'OPS-418',
+      issue_title: 'Trace terminal focus',
+      app_user_name: 'Nia',
+      message_body: 'Aria, can you verify the terminal link?',
+    },
+  },
+)
+
 const knownRuntimeDelivery = event(
   'runtime:event:delivery-ops-417',
   'agent_runtime_notification_delivery',
@@ -439,6 +457,78 @@ describe('AgentIdentityTimelinePanel', () => {
     expect(within(timeline).getByText('No message text recorded')).toBeInTheDocument()
     expect(within(timeline).getByText('No terminal recorded')).toBeInTheDocument()
     expect(within(timeline).getByText('Experimental Audit Event')).toBeInTheDocument()
+  })
+
+  it('renders related events through the same taught views and fallback view as main rows', async () => {
+    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
+      identity: aria,
+      events: [knownLinearMention],
+    })
+    vi.mocked(api.getAgentIdentityRelatedEvents).mockResolvedValue({
+      event: knownLinearMention,
+      correlation_events: [knownRuntimeDelivery, unknownAudit],
+      causation_events: {
+        direct_cause: null,
+        direct_effects: [knownRuntimeDelivery, unknownAudit],
+      },
+    })
+
+    render(<AgentIdentityTimelinePanel />)
+
+    await screen.findByText('Nia mentioned this agent')
+    fireEvent.click(screen.getByRole('button', { name: /inspect related events for linear:event:mention-ops-417/i }))
+
+    const relatedGrid = await screen.findByTestId('related-events-grid')
+    expect(within(relatedGrid).getAllByText('Mention delivered to terminal term-aria-main').length).toBeGreaterThan(0)
+    expect(within(relatedGrid).getAllByText('Linear Mention').length).toBeGreaterThan(0)
+    expect(within(relatedGrid).getAllByText('Aria, can you trace the stuck inbox delivery?').length).toBeGreaterThan(0)
+    expect(within(relatedGrid).getAllByText('Experimental Audit Event').length).toBeGreaterThan(0)
+  })
+
+  it('opens the Linear issue external entity reference from authored event data', async () => {
+    const openExternalReference = vi.spyOn(window, 'open').mockImplementation(() => null)
+    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
+      identity: aria,
+      events: [knownLinearMention],
+    })
+
+    render(<AgentIdentityTimelinePanel />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /open linear issue ops-417/i }))
+
+    expect(openExternalReference).toHaveBeenCalledWith(
+      'https://linear.app/yards/issue/OPS-417/restore-dashboard-event-detail',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
+  it('keeps Linear issue context readable without a broken external reference when issue_url is absent', async () => {
+    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
+      identity: aria,
+      events: [knownLinearMentionWithoutIssueUrl],
+    })
+
+    render(<AgentIdentityTimelinePanel />)
+
+    const timeline = await screen.findByTestId('identity-timeline')
+    expect(within(timeline).getByText('OPS-418')).toBeInTheDocument()
+    expect(within(timeline).getByText('Trace terminal focus')).toBeInTheDocument()
+    expect(within(timeline).queryByRole('button', { name: /open linear issue ops-418/i })).not.toBeInTheDocument()
+  })
+
+  it('focuses the runtime delivery terminal through the internal entity reference callback', async () => {
+    const focusTerminal = vi.fn()
+    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
+      identity: aria,
+      events: [knownRuntimeDelivery],
+    })
+
+    render(<AgentIdentityTimelinePanel onFocusTerminal={focusTerminal} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /open terminal term-aria-main/i }))
+
+    expect(focusTerminal).toHaveBeenCalledWith('term-aria-main')
   })
 
   it('does not reuse related-event results fetched under a different selected identity', async () => {

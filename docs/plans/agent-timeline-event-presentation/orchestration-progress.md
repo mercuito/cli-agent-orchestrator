@@ -6,7 +6,7 @@
 |------|--------|-------|
 | `t-1` — Typed Timeline Payload Surface And Fallback View | Complete | Implemented, exact verification passed, reviewer approvals recorded, and committed decisions promoted. |
 | `t-2` — Known Frontend Event Views | Complete | Implemented, exact verification passed, reviewer approvals recorded, and committed decisions promoted. |
-| `t-3` — Related View Continuity And Entity References | Pending | Depends on `t-1` and `t-2`. |
+| `t-3` — Related View Continuity And Entity References | Complete | Implemented, exact verification passed, reviewer approvals recorded, and no committed-decision promotion was needed. |
 
 ## Architecture Pivot
 
@@ -17,6 +17,7 @@
   `event_data`; frontend event views own rendering, fallback, and entity
   reference affordances.
 - `t-1` is complete under the reissued architecture.
+- All implementation tasks are complete under the reissued architecture.
 
 ## Completed Dispatch: `t-1`
 
@@ -38,3 +39,13 @@
 - Completion proof: exact Verification Command from the handoff succeeded,
   required coding artifacts and defences were persisted, required reviewer
   approvals were recorded, and committed decisions were promoted.
+
+## Completed Dispatch: `t-3`
+
+- Task: `t-3`
+- Handoff: `docs/plans/agent-timeline-event-presentation/tasks/t-3/feature-task-handoff.md`
+- Started after `t-1` and `t-2` completed and were committed in
+  `4783367` and `872c1c4`.
+- Completion proof: exact Verification Command from the handoff succeeded,
+  required coding artifacts and defences were persisted, required reviewer
+  approvals were recorded, and no committed-decision promotion was needed.
