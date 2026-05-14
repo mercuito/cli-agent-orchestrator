@@ -32,6 +32,9 @@ for full assembly guidance.
 | Criterion | When to apply |
 |-----------|---------------|
 | [stable-test-clause-ids](stable-test-clause-ids.md) | Always |
+| [proof-shape-not-test-instance](proof-shape-not-test-instance.md) | When the contract carries clauses describing cross-task proof obligations |
+| [seam-proof-crosses-components](seam-proof-crosses-components.md) | When a clause names a seam between components, layers, or pipeline stages |
+| [preservation-baseline-discoverable](preservation-baseline-discoverable.md) | When the contract names a preservation baseline for refactor work |
 
 ## Adding new criteria
 
