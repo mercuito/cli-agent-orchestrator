@@ -6,7 +6,7 @@ when: Always.
 # Stable Test Clause IDs
 
 Every feature-level Test Contract clause has a stable ID of the form
-`F-TC-<n>`. These IDs are the slice surface used by `tasks.md`, handoffs,
+`F-TC-<n>`. These IDs are the slice surface used by `feature-tasks.md`, handoffs,
 implementation plans, and Test Contract Defences.
 
 Do not rely on headings, bullets, or prose position alone. A clause title

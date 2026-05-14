@@ -1,15 +1,15 @@
-# Creating a Tasks Artifact
+# Creating a Feature Tasks Artifact
 
 ## Purpose
 
-The Tasks artifact (`tasks.md`) enumerates the tasks the feature
+The Feature Tasks artifact (`feature-tasks.md`) enumerates the tasks the feature
 will be implemented through. It carries each task's stable ID, brief
 scope, and the slice IDs the task owns from the feature-level contracts.
 
 It is **the authoritative source for slice ownership** across the
 feature: which task owns which behavior, which Code Contract clause,
 which Test Contract clause. The
-[Task Handoff](./creating-a-feature-task-handoff.md) is the
+[Feature Task Handoff](./creating-a-feature-task-handoff.md) is the
 operational packet that turns one task entry into a startable assignment;
 it references this artifact rather than restating the slices.
 
@@ -50,21 +50,21 @@ reader resolves an ID by opening the named contract artifact.
 
 ## What it does not contain
 
-- the full handoff for any task (that is the Task Handoff)
+- the full handoff for any task (that is the Feature Task Handoff)
 - restatement of behavior, constraint, or contract clause text
 - coding-side details (research findings, plan, code obligations)
 - the per-task Verification Command and coding artifact paths (those live
-  in the Task Handoff)
+  in the Feature Task Handoff)
 - concrete UI designs, screenshots, product docs, or code references
   (the task entry only acknowledges whether the handoff must provide them)
 
 ## Document organization
 
 ```markdown
-# Tasks — <feature>
+# Feature Tasks — <feature>
 
-Tasks for the <feature> feature. See `behavioral-contract.md`,
-`code-contract.md`, and `test-contract.md` for the slice IDs referenced
+Feature Tasks for the <feature> feature. See `feature-behavioral-contract.md`,
+`feature-code-contract.md`, and `feature-test-contract.md` for the slice IDs referenced
 below.
 
 ## t-1 — <short title>
@@ -102,7 +102,7 @@ the top of the artifact with one-line rationale per selection.
 
 ## Artifact path
 
-`docs/plans/<feature>/tasks/tasks.md`
+`docs/plans/<feature>/tasks/feature-tasks.md`
 
-The artifact is the feature-level Tasks index; `feature` is not a filename
-prefix.
+The artifact is the Feature Tasks index; the filename keeps the `feature-`
+prefix to mark it as a feature-level planning artifact.

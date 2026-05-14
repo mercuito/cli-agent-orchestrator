@@ -1,4 +1,4 @@
-# Capability Contract — Agent Timeline Event Presentation
+# Feature Capability Contract — Agent Timeline Event Presentation
 
 ## Applicable Criteria
 

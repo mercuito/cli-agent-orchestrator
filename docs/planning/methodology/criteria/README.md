@@ -12,8 +12,8 @@ contract or artifact selects it.
 | [feature-code-contract](feature-code-contract/README.md) | Authoring the feature-level Code Contract |
 | [feature-test-contract](feature-test-contract/README.md) | Authoring the feature-level Test Contract |
 | [feature-committed-implementation-decisions](feature-committed-implementation-decisions/README.md) | Authoring entries in the running ledger |
-| [feature-tasks](feature-tasks/README.md) | Authoring the Tasks index |
-| [feature-task-handoff](feature-task-handoff/README.md) | Authoring a per-task Task Handoff |
+| [feature-tasks](feature-tasks/README.md) | Authoring the Feature Tasks index |
+| [feature-task-handoff](feature-task-handoff/README.md) | Authoring a per-task Feature Task Handoff |
 | [coding-code-contract](coding-code-contract/README.md) | Authoring a task-level Coding Code Contract |
 | [coding-test-contract](coding-test-contract/README.md) | Authoring a task-level Coding Test Contract |
 | [coding-behavioral-contract-defence](coding-behavioral-contract-defence/README.md) | Authoring a Behavioral Contract Defence |

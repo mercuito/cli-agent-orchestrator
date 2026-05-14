@@ -1,8 +1,8 @@
-# Creating a Committed Implementation Decisions Artifact
+# Creating a Feature Committed Implementation Decisions Artifact
 
 ## Purpose
 
-The Committed Implementation Decisions artifact records settled
+The Feature Committed Implementation Decisions artifact records settled
 implementation facts from landed tasks that future tasks must remain
 compatible with. It is the running ledger of cross-task constraints
 discovered during implementation — module boundaries chosen, public
@@ -47,7 +47,7 @@ For the artifact as a whole:
 ## Document organization
 
 ```markdown
-# Committed Implementation Decisions — <feature>
+# Feature Committed Implementation Decisions — <feature>
 
 ## cid-1 — <short statement>
 
@@ -74,7 +74,8 @@ near the top of the artifact with one-line rationale per selection.
 
 ## Artifact path
 
-`docs/plans/<feature>/committed-implementation-decisions.md`
+`docs/plans/<feature>/feature-committed-implementation-decisions.md`
 
-The artifact is the feature-level Committed Implementation Decisions ledger;
-`feature` is not a filename prefix.
+The artifact is the Feature Committed Implementation Decisions ledger; the
+filename keeps the `feature-` prefix to mark it as a feature-level planning
+artifact.

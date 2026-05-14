@@ -1,4 +1,4 @@
-# Capability Contract Criteria Catalog
+# Feature Capability Contract Criteria Catalog
 
 Reusable criteria for authoring the capability contract — the artifact
 that derives capabilities from the narrative and captures cross-cutting
@@ -12,7 +12,7 @@ contract selects it. Catalog authoring follows the rules in
 ## How to use
 
 The capability contract is a feature-level artifact at
-`docs/plans/<feature>/capability-contract.md`. To assemble:
+`docs/plans/<feature>/feature-capability-contract.md`. To assemble:
 
 1. Browse this catalog — read each criterion's `when` field
 2. Select criteria that apply

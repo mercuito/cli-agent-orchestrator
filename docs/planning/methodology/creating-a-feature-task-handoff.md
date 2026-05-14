@@ -1,16 +1,16 @@
-# Creating a Task Handoff
+# Creating a Feature Task Handoff
 
 ## Purpose
 
-The Task Handoff is the per-task assignment packet. It points at
+The Feature Task Handoff is the per-task assignment packet. It points at
 the task's slice entry in the
-[Tasks](./creating-a-feature-tasks.md) artifact (which owns the
+[Feature Tasks](./creating-a-feature-tasks.md) artifact (which owns the
 slice IDs), references the committed-implementation-decisions artifact,
 and provides the Verification Command and coding-level artifact paths —
 everything needed to start research and drafting the Coding Implementation
 Plan.
 
-A Task Handoff exists per task. The Tasks artifact owns
+A Feature Task Handoff exists per task. The Feature Tasks artifact owns
 the slice assignments across the whole feature; the per-task handoff is
 the operational packet that turns one slice entry into a startable task.
 
@@ -27,9 +27,9 @@ first.
 
 ### Slice reference
 
-A pointer to the task's entry in the Tasks artifact, which owns
+A pointer to the task's entry in the Feature Tasks artifact, which owns
 the assigned Behavioral / Code / Test slice IDs. The handoff does not
-restate the slice IDs — the Tasks entry is the single source of
+restate the slice IDs — the Feature Tasks entry is the single source of
 truth for what this task is responsible for satisfying.
 
 The slices are resolved by reading the referenced entry. The universal
@@ -74,7 +74,7 @@ task can be blocked, revised, or clarified before implementation begins.
 
 ## What it does not contain
 
-- The slice IDs themselves (those live in `tasks.md`; the handoff
+- The slice IDs themselves (those live in `feature-tasks.md`; the handoff
   references them).
 - The full text of feature-level contracts (reference clauses by ID).
 - Plan, code, tests, or evidence — those are produced later in the coding
@@ -82,12 +82,12 @@ task can be blocked, revised, or clarified before implementation begins.
 - Coding-level criteria selections — those live in the Coding Code
   Contract and Coding Test Contract.
 - New design decisions. Supporting references orient research; they do
-  not replace the Narrative, contracts, or task slices.
+  not replace the Feature Narrative, contracts, or task slices.
 
 ## Document organization
 
 ```markdown
-# Task Handoff: t-<n> — <short title>
+# Feature Task Handoff: t-<n> — <short title>
 
 ## Task Brief
 
@@ -95,12 +95,12 @@ task can be blocked, revised, or clarified before implementation begins.
 
 ## Slice Reference
 
-See `../tasks.md#t-<n>` for assigned Behavioral, Code, and Test slices.
+See `../feature-tasks.md#t-<n>` for assigned Behavioral, Code, and Test slices.
 The universal `test-validity-preserved` criterion applies regardless.
 
 ## Committed Implementation Decisions
 
-See `docs/plans/<feature>/committed-implementation-decisions.md`. All
+See `docs/plans/<feature>/feature-committed-implementation-decisions.md`. All
 entries are in force.
 
 ## Supporting References
@@ -141,6 +141,6 @@ the top of the handoff with one-line rationale per selection.
 
 `docs/plans/<feature>/tasks/t-<n>/feature-task-handoff.md`
 
-The artifact is the Task Handoff. Its filename remains
-`feature-task-handoff.md` to distinguish the feature-level assignment packet
-from the coding-level artifacts in the same task directory.
+The artifact is the Feature Task Handoff. Its filename keeps the `feature-`
+prefix to distinguish the feature-level assignment packet from the
+coding-level artifacts in the same task directory.

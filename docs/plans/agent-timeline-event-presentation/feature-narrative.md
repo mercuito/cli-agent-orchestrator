@@ -1,4 +1,4 @@
-# Narrative — Agent Timeline Event Presentation
+# Feature Narrative — Agent Timeline Event Presentation
 
 Agent Timeline Event Presentation — Replace today's generic, envelope-only
 identity timeline rows with kind-specific event presentations that the

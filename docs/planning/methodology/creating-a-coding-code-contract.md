@@ -32,7 +32,7 @@ upstream rather than being absorbed into the Coding Code Contract.
 
 The Coding Code Contract is drafted from:
 
-- the Task Handoff and the task's slice entry in `tasks.md`
+- the Feature Task Handoff and the task's slice entry in `feature-tasks.md`
   (the entry lists the assigned feature-level Code Contract clause IDs;
   the handoff carries the Verification Command and the
   committed-implementation-decisions artifact reference)
@@ -60,7 +60,7 @@ Code Contract Defence can reference it.
 
 - Feature-level cross-task obligations. Reference the feature-level Code
   Contract slice by ID instead — those clauses live in the feature
-  contract, and the task's `tasks.md` entry names which apply to this task.
+  contract, and the task's `feature-tasks.md` entry names which apply to this task.
 - Behavioral correctness. That belongs in the feature-level Behavioral
   Contract; tests prove behaviors at the coding altitude.
 - Proof-quality and test-shape obligations. Those belong in the Coding
@@ -96,7 +96,7 @@ slice and selected criteria: <reason>.")
 
 ## Authoring order
 
-1. **Read the Task Handoff and the task's `tasks.md` entry** — the
+1. **Read the Feature Task Handoff and the task's `feature-tasks.md` entry** — the
    entry names the assigned feature-level Code Contract slice; the handoff
    carries the Verification Command and committed-implementation-decisions
    reference.
@@ -115,7 +115,7 @@ slice and selected criteria: <reason>.")
 
 If research reveals the feature-level slice is wrong or missing, escalate
 upstream before drafting the Coding Code Contract — implementation pauses
-until the feature contract is amended and the slice in `tasks.md` is
+until the feature contract is amended and the slice in `feature-tasks.md` is
 re-issued.
 
 ## Artifact path
@@ -126,8 +126,8 @@ re-issued.
 
 - The **feature-level Code Contract** carries cross-task obligations.
   Clauses are referenced by ID; not redrafted here.
-- The **Tasks artifact** (`tasks.md`) names the assigned feature-level
-  slice for this task. The **Task Handoff**
+- The **Feature Tasks artifact** (`feature-tasks.md`) names the assigned feature-level
+  slice for this task. The **Feature Task Handoff**
   references that entry and supplies the Verification Command and the
   committed-implementation-decisions reference.
 - The **Coding Implementation Plan** explains how the task will satisfy

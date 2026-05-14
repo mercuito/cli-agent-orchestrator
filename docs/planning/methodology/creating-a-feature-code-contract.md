@@ -1,4 +1,4 @@
-# Creating a Code Contract
+# Creating a Feature Code Contract
 
 ## Purpose
 
@@ -16,8 +16,8 @@ commitments, architectural boundaries, mandated reuse points, or other
 implementation decisions that later tasks must respect.
 
 The feature-level contract is not redrafted at task altitude. Each task's
-slice of clause IDs is recorded in the Tasks artifact (`tasks.md`);
-the Task Handoff references that entry. A separate task-level
+slice of clause IDs is recorded in the Feature Tasks artifact (`feature-tasks.md`);
+the Feature Task Handoff references that entry. A separate task-level
 Coding Code Contract (see
 [creating-a-coding-code-contract](./creating-a-coding-code-contract.md))
 names task-specific code-shape obligations after research, drawing from
@@ -75,12 +75,12 @@ Contract clauses beyond selected criteria, rather than inventing clauses.
   correctness and are grounded in the inputs above
 
 The feature-level Code Contract may include obligations that no single
-task can satisfy alone. That is expected. Each task's entry in `tasks.md`
+task can satisfy alone. That is expected. Each task's entry in `feature-tasks.md`
 names the slice that task is responsible for; task-scoped code-shape
 clauses live in the task's Coding Code Contract.
 
 Every feature-level Code Contract clause has a stable ID of the form
-`F-CC-<n>`. These IDs are the slice surface for `tasks.md`, handoffs,
+`F-CC-<n>`. These IDs are the slice surface for `feature-tasks.md`, handoffs,
 implementation plans, and defences. Clause titles may change for clarity;
 IDs remain stable unless the contract is deliberately reissued.
 
@@ -103,15 +103,15 @@ IDs remain stable unless the contract is deliberately reissued.
 
 ## Slicing
 
-Each task's entry in the Tasks artifact (`tasks.md`) explicitly
+Each task's entry in the Feature Tasks artifact (`feature-tasks.md`) explicitly
 enumerates which feature-level Code Contract clauses that task carries
 (or states "no slice for this contract" with a one-line reason). Tasks
 reference clauses by ID; they do not redraft them. The Feature Task
-Handoff references the task's `tasks.md` entry.
+Handoff references the task's `feature-tasks.md` entry.
 
 If implementation surfaces an obligation the feature-level Code Contract
 should carry, the finding escalates upstream — implementation pauses, the
-contract is amended, and the task's slice in `tasks.md` is re-issued.
+contract is amended, and the task's slice in `feature-tasks.md` is re-issued.
 Task-local obligations belong in the Coding Code Contract instead.
 
 ## Pure refactor entry
@@ -140,7 +140,7 @@ behavior, and the narrative path applies.
 ## Document organization
 
 ```markdown
-# Code Contract
+# Feature Code Contract
 
 ## Applicable Feature-Level Criteria
 
@@ -162,17 +162,17 @@ behavior, and the narrative path applies.
 
 ## Artifact path
 
-`docs/plans/<feature>/code-contract.md`
+`docs/plans/<feature>/feature-code-contract.md`
 
-The artifact is the feature-level Code Contract; `feature` is not a
-filename prefix. Do not name the file `feature-code-contract.md`.
+The artifact is the Feature Code Contract; the filename keeps the
+`feature-` prefix to mark it as a feature-level planning artifact.
 
 ## Relationship to other artifacts
 
 - The **feature-level Behavioral Contract** defines what the system must
   do. The feature-level Code Contract defines cross-task code obligations.
-- The **Tasks artifact** (`tasks.md`) enumerates which feature-level
-  Code Contract clauses each task carries by ID. The **Task Handoff**
+- The **Feature Tasks artifact** (`feature-tasks.md`) enumerates which feature-level
+  Code Contract clauses each task carries by ID. The **Feature Task Handoff**
   references that entry and adds the per-task Verification Command and
   coding-level paths.
 - The **Coding Code Contract** is the task-level contract. It draws from

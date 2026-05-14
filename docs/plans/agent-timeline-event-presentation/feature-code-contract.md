@@ -1,4 +1,4 @@
-# Code Contract — Agent Timeline Event Presentation
+# Feature Code Contract — Agent Timeline Event Presentation
 
 Cross-task implementation-steering obligations for the Agent Timeline
 Event Presentation feature. Authored in parallel with the Feature
@@ -20,7 +20,7 @@ styling.
 | Criterion | Why it applies |
 |-----------|----------------|
 | [implementation-clause-verifiability](../../planning/methodology/criteria/feature-code-contract/implementation-clause-verifiability.md) | Always applies; every clause below names the surface it governs and what counts as compliance. |
-| [stable-code-clause-ids](../../planning/methodology/criteria/feature-code-contract/stable-code-clause-ids.md) | Always applies; every clause carries a stable `F-CC-<n>` ID for slicing in `tasks.md`, handoffs, and Code Contract Defences. |
+| [stable-code-clause-ids](../../planning/methodology/criteria/feature-code-contract/stable-code-clause-ids.md) | Always applies; every clause carries a stable `F-CC-<n>` ID for slicing in `feature-tasks.md`, handoffs, and Code Contract Defences. |
 
 ## Architectural Commitments
 

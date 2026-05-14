@@ -1,15 +1,15 @@
 # Feature Tasks Criteria Catalog
 
-Reusable criteria for the Tasks artifact (`tasks.md`) — the
+Reusable criteria for the Feature Tasks artifact (`feature-tasks.md`) — the
 authoritative index of tasks, scopes, and slice ownership across a feature.
 
 This catalog is a library. A criterion has no authority until the Feature
-Tasks artifact selects it. Catalog authoring follows the rules in
+Feature Tasks artifact selects it. Catalog authoring follows the rules in
 [../README.md](../README.md).
 
 ## How to use
 
-The Tasks artifact is at `docs/plans/<feature>/tasks/tasks.md`. To
+The Feature Tasks artifact is at `docs/plans/<feature>/tasks/feature-tasks.md`. To
 assemble:
 
 1. Browse this catalog — read each criterion's `when` field

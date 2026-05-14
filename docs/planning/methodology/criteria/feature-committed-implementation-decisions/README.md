@@ -1,4 +1,4 @@
-# Committed Implementation Decisions Criteria Catalog
+# Feature Committed Implementation Decisions Criteria Catalog
 
 Reusable criteria for the committed-implementation-decisions artifact —
 the running ledger of settled facts from landed tasks that future tasks
@@ -11,7 +11,7 @@ follows the rules in [../README.md](../README.md).
 ## How to use
 
 The committed-implementation-decisions artifact is a feature-level ledger
-at `docs/plans/<feature>/committed-implementation-decisions.md`. To
+at `docs/plans/<feature>/feature-committed-implementation-decisions.md`. To
 assemble:
 
 1. Browse this catalog — read each criterion's `when` field

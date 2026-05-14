@@ -1,4 +1,4 @@
-# Committed Implementation Decisions — Agent Timeline Event Presentation
+# Feature Committed Implementation Decisions — Agent Timeline Event Presentation
 
 ## Applicable Criteria
 

@@ -1,4 +1,4 @@
-# Behavioral Contract Criteria Catalog
+# Feature Behavioral Contract Criteria Catalog
 
 Reusable criteria for assembling feature-level behavioral contracts. These are
 a curated checklist of common behavioral dimensions so important user-visible
@@ -13,7 +13,7 @@ completeness obligation, and paired good/bad illustrations.
 ## How to use
 
 The behavioral contract is a single feature-level artifact at
-`docs/plans/<feature>/behavioral-contract.md`. To assemble:
+`docs/plans/<feature>/feature-behavioral-contract.md`. To assemble:
 
 1. Browse this catalog — read each criterion's `when` field
 2. Select criteria that apply to the feature
@@ -27,7 +27,7 @@ behavioral contract remains the authority for the exact behaviors.
 ### Example preamble
 
 ```markdown
-# Behavioral Contract — <feature>
+# Feature Behavioral Contract — <feature>
 
 ## Applicable Criteria
 

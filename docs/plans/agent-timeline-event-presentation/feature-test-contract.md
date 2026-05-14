@@ -1,4 +1,4 @@
-# Test Contract — Agent Timeline Event Presentation
+# Feature Test Contract — Agent Timeline Event Presentation
 
 ## Applicable Feature-Level Test Criteria
 

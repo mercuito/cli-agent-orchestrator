@@ -1,4 +1,4 @@
-# Task Handoff: t-2 — Known Event Kind Presenters
+# Feature Task Handoff: t-2 — Known Event Kind Presenters
 
 ## Applicable Criteria
 
@@ -19,13 +19,13 @@ behavioral slices.
 
 ## Slice Reference
 
-See `../tasks.md#t-2--known-event-kind-presenters` for assigned
+See `../feature-tasks.md#t-2--known-event-kind-presenters` for assigned
 Behavioral, Code, and Test slices. The universal
 `test-validity-preserved` criterion applies regardless.
 
 ## Committed Implementation Decisions
 
-See `docs/plans/agent-timeline-event-presentation/committed-implementation-decisions.md`.
+See `docs/plans/agent-timeline-event-presentation/feature-committed-implementation-decisions.md`.
 All entries are in force.
 
 ## Supporting References
@@ -34,10 +34,10 @@ Use these references during task research and implementation planning.
 
 ### Product / Domain References
 
-- `docs/plans/agent-timeline-event-presentation/narrative.md`: concrete Aria, Nia, `OPS-417`, `term-aria-main`, `cli-agent-orchestrator`, and `yards` scenario details that the presenters must make readable.
-- `docs/plans/agent-timeline-event-presentation/behavioral-contract.md`: exact behavior slices for Linear mention, runtime delivery, workspace context switch, and runtime lifecycle presentations.
-- `docs/plans/agent-timeline-event-presentation/code-contract.md`: feature-level presenter-registration and presenter-authoring locality obligations.
-- `docs/plans/agent-timeline-event-presentation/test-contract.md`: feature-level proof slice for known event presenters.
+- `docs/plans/agent-timeline-event-presentation/feature-narrative.md`: concrete Aria, Nia, `OPS-417`, `term-aria-main`, `cli-agent-orchestrator`, and `yards` scenario details that the presenters must make readable.
+- `docs/plans/agent-timeline-event-presentation/feature-behavioral-contract.md`: exact behavior slices for Linear mention, runtime delivery, workspace context switch, and runtime lifecycle presentations.
+- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level presenter-registration and presenter-authoring locality obligations.
+- `docs/plans/agent-timeline-event-presentation/feature-test-contract.md`: feature-level proof slice for known event presenters.
 
 ### Existing Code References
 

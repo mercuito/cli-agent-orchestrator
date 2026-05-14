@@ -1,4 +1,4 @@
-# Creating a Behavioral Contract
+# Creating a Feature Behavioral Contract
 
 ## Purpose
 
@@ -39,11 +39,11 @@ here, not redefined.
 Behaviors are grouped under their parent capability heading; constraints are
 grouped under their parent invariant heading. Each parent heading includes the
 stable capability or invariant ID from the Capability Contract. Each behavior
-and constraint has its own stable ID so `tasks.md`, handoffs, defences, and
+and constraint has its own stable ID so `feature-tasks.md`, handoffs, defences, and
 reviews can reference exact slices without copying clause text.
 
 ```markdown
-# Behavioral Contract
+# Feature Behavioral Contract
 
 ## Capability: CAP-1 — <capability name>
 
@@ -76,10 +76,10 @@ and apply when authoring the capability contract, not here.
 
 ## Artifact path
 
-`docs/plans/<feature>/behavioral-contract.md`
+`docs/plans/<feature>/feature-behavioral-contract.md`
 
-The artifact is the feature-level Behavioral Contract; `feature` is not a
-filename prefix. Do not name the file `feature-behavioral-contract.md`.
+The artifact is the Feature Behavioral Contract; the filename keeps the
+`feature-` prefix to mark it as a feature-level planning artifact.
 
 ## Quality check
 

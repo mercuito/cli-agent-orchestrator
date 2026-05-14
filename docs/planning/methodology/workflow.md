@@ -12,28 +12,27 @@ and are out of scope here.
 
 Authored before coding begins, in this order:
 
-The word "feature" describes this section's altitude. Top-level feature
-artifact filenames use the concise names in the directory layout below; do
-not add a `feature-` prefix to contract filenames.
+Top-level feature artifact filenames use the `feature-*` prefix to
+distinguish them from task-level coding artifacts in task directories.
 
-1. [Narrative](./creating-a-feature-narrative.md) — behavior-changing
+1. [Feature Narrative](./creating-a-feature-narrative.md) — behavior-changing
    work only; pure refactors skip.
-2. [Capability Contract](./creating-a-feature-capability-contract.md)
+2. [Feature Capability Contract](./creating-a-feature-capability-contract.md)
    — behavior-changing work only; derives capabilities from the narrative
    and captures cross-cutting invariants and domain graphs.
-3. [Behavioral Contract](./creating-a-feature-behavioral-contract.md)
+3. [Feature Behavioral Contract](./creating-a-feature-behavioral-contract.md)
    — behavior-changing work only.
-4. [Code Contract](./creating-a-feature-code-contract.md) — entry
+4. [Feature Code Contract](./creating-a-feature-code-contract.md) — entry
    artifact for pure refactors.
-5. [Test Contract](./creating-a-feature-test-contract.md) — optional;
+5. [Feature Test Contract](./creating-a-feature-test-contract.md) — optional;
    only when proof obligations span tasks.
 6. [Committed Implementation Decisions](./creating-a-feature-committed-implementation-decisions.md)
    — running ledger of settled facts from landed tasks; seeded when the
    feature begins, grown entry by entry as tasks promote durable facts.
-7. [Tasks](./creating-a-feature-tasks.md) — the feature's task list
+7. [Feature Tasks](./creating-a-feature-tasks.md) — the feature's task list
    with stable IDs, brief scopes, and assigned contract slice IDs.
-8. [Task Handoff](./creating-a-feature-task-handoff.md) — one per
-   task; references the task's slice entry in `tasks.md`, the
+8. [Feature Task Handoff](./creating-a-feature-task-handoff.md) — one per
+   task; references the task's slice entry in `feature-tasks.md`, the
    committed-decisions artifact, the Verification Command, and coding
    artifact paths. When the task entry requires supporting references, the
    handoff carries the concrete UI, design, product, domain, or existing-code
@@ -44,7 +43,7 @@ not add a `feature-` prefix to contract filenames.
 For each task:
 
 1. **Read handoff and research.** Read the handoff, the task's entry in
-   `tasks.md` (which lists the assigned slices), the named feature-level
+   `feature-tasks.md` (which lists the assigned slices), the named feature-level
    contracts, the committed-decisions artifact, the Verification Command,
    the artifact paths, and any supporting references. Inspect the affected
    code and test surfaces.
@@ -68,20 +67,18 @@ Pure refactor tasks omit the Behavioral Contract Defence in step 7.
 
 ## Directory layout
 
-These filenames are canonical. The top-level contract filenames are
-`capability-contract.md`, `behavioral-contract.md`, `code-contract.md`, and
-`test-contract.md`, not `feature-*.md` variants.
+These filenames are canonical for feature-level planning artifacts.
 
 ```text
 docs/plans/<feature>/
-├── narrative.md                            # behavior-changing only
-├── capability-contract.md                  # behavior-changing only
-├── behavioral-contract.md                  # behavior-changing only
-├── code-contract.md
-├── test-contract.md                        # optional
-├── committed-implementation-decisions.md
+├── feature-narrative.md                            # behavior-changing only
+├── feature-capability-contract.md                  # behavior-changing only
+├── feature-behavioral-contract.md                  # behavior-changing only
+├── feature-code-contract.md
+├── feature-test-contract.md                        # optional
+├── feature-committed-implementation-decisions.md
 └── tasks/
-    ├── tasks.md
+    ├── feature-tasks.md
     └── t-<n>/
         ├── feature-task-handoff.md
         ├── coding-code-contract.md

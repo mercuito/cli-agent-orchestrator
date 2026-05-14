@@ -1,15 +1,15 @@
-# Task Handoff Criteria Catalog
+# Feature Task Handoff Criteria Catalog
 
-Reusable criteria for the Task Handoff — the per-task assignment
-packet that turns a slice entry in `tasks.md` into a startable task.
+Reusable criteria for the Feature Task Handoff — the per-task assignment
+packet that turns a slice entry in `feature-tasks.md` into a startable task.
 
 This catalog is a library. A criterion has no authority until a Feature
-Task Handoff selects it. Catalog authoring follows the rules in
+Feature Task Handoff selects it. Catalog authoring follows the rules in
 [../README.md](../README.md).
 
 ## How to use
 
-A Task Handoff lives at
+A Feature Task Handoff lives at
 `docs/plans/<feature>/tasks/t-<n>/feature-task-handoff.md`. To assemble:
 
 1. Browse this catalog — read each criterion's `when` field

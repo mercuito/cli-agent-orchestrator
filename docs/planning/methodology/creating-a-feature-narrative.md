@@ -1,4 +1,4 @@
-# Creating a Narrative
+# Creating a Feature Narrative
 
 ## Purpose
 
@@ -54,7 +54,7 @@ top of the narrative with one-line rationale per selection.
 ## Document organization
 
 ```markdown
-# Narrative
+# Feature Narrative
 
 ## Event Timeline
 
@@ -111,10 +111,10 @@ without turning it into a requirement or capability statement.>
 
 ## Artifact path
 
-`docs/plans/<feature>/narrative.md`
+`docs/plans/<feature>/feature-narrative.md`
 
-The artifact is the feature-level Narrative; `feature` is not a filename
-prefix.
+The artifact is the Feature Narrative; the filename keeps the `feature-`
+prefix to mark it as a feature-level planning artifact.
 
 ## Quality check
 

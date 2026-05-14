@@ -1,4 +1,4 @@
-# Narrative Criteria Catalog
+# Feature Narrative Criteria Catalog
 
 Reusable criteria for authoring a narrative — the user-facing event timeline
 of behavior-changing work. Narratives are not authored for pure refactor
@@ -12,7 +12,7 @@ artifact selects it. Catalog authoring follows the rules in
 ## How to use
 
 The narrative is a feature-level artifact at
-`docs/plans/<feature>/narrative.md`. To assemble:
+`docs/plans/<feature>/feature-narrative.md`. To assemble:
 
 1. Browse this catalog — read each criterion's `when` field
 2. Select criteria that apply

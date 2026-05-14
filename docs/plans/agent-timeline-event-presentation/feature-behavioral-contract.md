@@ -1,4 +1,4 @@
-# Behavioral Contract — Agent Timeline Event Presentation
+# Feature Behavioral Contract — Agent Timeline Event Presentation
 
 ## Applicable Criteria
 

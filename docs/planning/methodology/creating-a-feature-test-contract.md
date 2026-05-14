@@ -1,4 +1,4 @@
-# Creating a Test Contract
+# Creating a Feature Test Contract
 
 ## Purpose
 
@@ -15,8 +15,8 @@ feature has standing proof obligations that need to be sliced across tasks
 that only a coordinated set of tasks can satisfy).
 
 The feature-level contract is not redrafted at task altitude. Each task's
-slice of clause IDs is recorded in the Tasks artifact (`tasks.md`);
-the Task Handoff references that entry. A separate task-level
+slice of clause IDs is recorded in the Feature Tasks artifact (`feature-tasks.md`);
+the Feature Task Handoff references that entry. A separate task-level
 Coding Test Contract (see
 [creating-a-coding-test-contract](./creating-a-coding-test-contract.md))
 names task-specific proof-shape obligations after research, drawing from
@@ -39,7 +39,7 @@ finding escalates upstream for amendment rather than being absorbed
 locally.
 
 Every feature-level Test Contract clause has a stable ID of the form
-`F-TC-<n>`. These IDs are the slice surface for `tasks.md`, handoffs,
+`F-TC-<n>`. These IDs are the slice surface for `feature-tasks.md`, handoffs,
 implementation plans, and defences. Clause titles may change for clarity;
 IDs remain stable unless the contract is deliberately reissued.
 
@@ -93,16 +93,16 @@ sufficient. No feature-level Test Contract is needed.
 
 ## Slicing
 
-Each task's entry in the Tasks artifact (`tasks.md`) explicitly
+Each task's entry in the Feature Tasks artifact (`feature-tasks.md`) explicitly
 enumerates which feature-level Test Contract clauses that task carries
 (or states "no slice for this contract" with a one-line reason; or notes
 that no feature-level Test Contract exists for this feature). Tasks
 reference clauses by ID; they do not redraft them. The Feature Task
-Handoff references the task's `tasks.md` entry.
+Handoff references the task's `feature-tasks.md` entry.
 
 If implementation surfaces a proof obligation the feature-level Test
 Contract should carry, the finding escalates upstream — implementation
-pauses, the contract is amended, and the task's slice in `tasks.md` is
+pauses, the contract is amended, and the task's slice in `feature-tasks.md` is
 re-issued. Task-local obligations belong in the Coding Test Contract
 instead.
 
@@ -125,7 +125,7 @@ the behavior-changing path.
 ## Document organization
 
 ```markdown
-# Test Contract
+# Feature Test Contract
 
 ## Applicable Feature-Level Test Criteria
 
@@ -147,10 +147,10 @@ the behavior-changing path.
 
 ## Artifact path
 
-`docs/plans/<feature>/test-contract.md`
+`docs/plans/<feature>/feature-test-contract.md`
 
-The artifact is the feature-level Test Contract; `feature` is not a
-filename prefix. Do not name the file `feature-test-contract.md`.
+The artifact is the Feature Test Contract; the filename keeps the
+`feature-` prefix to mark it as a feature-level planning artifact.
 
 ## Relationship to other artifacts
 
@@ -159,8 +159,8 @@ filename prefix. Do not name the file `feature-test-contract.md`.
   cross-task proof of those behaviors is shaped.
 - The **feature-level Code Contract** defines production-code obligations.
   The feature-level Test Contract does not duplicate code obligations.
-- The **Tasks artifact** (`tasks.md`) enumerates which feature-level
-  Test Contract clauses each task carries by ID. The **Task Handoff**
+- The **Feature Tasks artifact** (`feature-tasks.md`) enumerates which feature-level
+  Test Contract clauses each task carries by ID. The **Feature Task Handoff**
   references that entry and adds the per-task Verification Command and
   coding-level paths.
 - The **Coding Test Contract** is the task-level contract. It draws from

@@ -18,7 +18,7 @@ it.
 1. Browse this catalog by reading each criterion's `when` field.
 2. Select criteria that apply to the feature.
 3. Persist the feature-level Code Contract at
-   `docs/plans/<feature>/code-contract.md`.
+   `docs/plans/<feature>/feature-code-contract.md`.
 4. Add an `Applicable Feature-Level Criteria` table near the top with
    one-line rationale per selection.
 

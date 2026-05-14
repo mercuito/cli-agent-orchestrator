@@ -1,8 +1,8 @@
-# Tasks — Agent Timeline Event Presentation
+# Feature Tasks — Agent Timeline Event Presentation
 
 Tasks for the Agent Timeline Event Presentation feature. See
-`../behavioral-contract.md`, `../code-contract.md`, and
-`../test-contract.md` for the slice IDs referenced below.
+`../feature-behavioral-contract.md`, `../feature-code-contract.md`, and
+`../feature-test-contract.md` for the slice IDs referenced below.
 
 ## Applicable Criteria
 

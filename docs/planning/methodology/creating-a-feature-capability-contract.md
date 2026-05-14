@@ -1,4 +1,4 @@
-# Creating a Capability Contract
+# Creating a Feature Capability Contract
 
 ## Purpose
 
@@ -79,7 +79,7 @@ selection.
 ## Document organization
 
 ```markdown
-# Capability Contract — <feature>
+# Feature Capability Contract — <feature>
 
 ## Applicable Criteria
 
@@ -107,10 +107,10 @@ Brief domain context. Narrative events that exercise this capability:
 
 ## Artifact path
 
-`docs/plans/<feature>/capability-contract.md`
+`docs/plans/<feature>/feature-capability-contract.md`
 
-The artifact is the feature-level Capability Contract; `feature` is not a
-filename prefix. Do not name the file `feature-capability-contract.md`.
+The artifact is the Feature Capability Contract; the filename keeps the
+`feature-` prefix to mark it as a feature-level planning artifact.
 
 ## Quality check
 

@@ -12,8 +12,8 @@ examples, existing implementation patterns, or other material the
 implementer should inspect before drafting the Coding Implementation Plan.
 
 If references are required, the task entry names the reason at a high
-level. The concrete references live in the Task Handoff, not in
-`tasks.md`.
+level. The concrete references live in the Feature Task Handoff, not in
+`feature-tasks.md`.
 
 If no references are required, the task entry says so with a short reason.
 
@@ -24,7 +24,7 @@ but does not say whether design references are required.
 **Good:** "Supporting references: required for timeline layout, empty
 state, and interaction details."
 
-**Bad - dumping references into `tasks.md`.** The task entry lists five
+**Bad - dumping references into `feature-tasks.md`.** The task entry lists five
 screenshots and component paths.
 **Good:** The task entry says references are required; the handoff carries
 the screenshot and component list.

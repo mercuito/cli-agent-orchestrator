@@ -6,7 +6,7 @@ when: Always.
 # The Handoff Carries Everything Needed To Start
 
 A complete handoff carries all four operational pointers: the slice
-reference into `tasks.md`, the committed-implementation-decisions
+reference into `feature-tasks.md`, the committed-implementation-decisions
 reference, the Verification Command, and the coding-level artifact paths.
 None of these may be omitted on the assumption a reader will go find them.
 

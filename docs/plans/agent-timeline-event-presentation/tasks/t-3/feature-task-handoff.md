@@ -1,4 +1,4 @@
-# Task Handoff: t-3 — Related Presentation Continuity And Entity References
+# Feature Task Handoff: t-3 — Related Presentation Continuity And Entity References
 
 ## Applicable Criteria
 
@@ -18,13 +18,13 @@ referenced CAO dashboard terminal.
 
 ## Slice Reference
 
-See `../tasks.md#t-3--related-presentation-continuity-and-entity-references`
+See `../feature-tasks.md#t-3--related-presentation-continuity-and-entity-references`
 for assigned Behavioral, Code, and Test slices. The universal
 `test-validity-preserved` criterion applies regardless.
 
 ## Committed Implementation Decisions
 
-See `docs/plans/agent-timeline-event-presentation/committed-implementation-decisions.md`.
+See `docs/plans/agent-timeline-event-presentation/feature-committed-implementation-decisions.md`.
 All entries are in force.
 
 ## Supporting References
@@ -37,10 +37,10 @@ Use these references during task research and implementation planning.
 
 ### Product / Domain References
 
-- `docs/plans/agent-timeline-event-presentation/narrative.md`: domain story for related-event continuity, opening the Linear issue, and focusing the receiving terminal.
-- `docs/plans/agent-timeline-event-presentation/behavioral-contract.md`: exact behavior and invariant slices for related-event presentation continuity and entity-reference target integrity.
-- `docs/plans/agent-timeline-event-presentation/code-contract.md`: feature-level structured entity-reference obligation.
-- `docs/plans/agent-timeline-event-presentation/test-contract.md`: feature-level proof slice for related-event and entity-reference behavior.
+- `docs/plans/agent-timeline-event-presentation/feature-narrative.md`: domain story for related-event continuity, opening the Linear issue, and focusing the receiving terminal.
+- `docs/plans/agent-timeline-event-presentation/feature-behavioral-contract.md`: exact behavior and invariant slices for related-event presentation continuity and entity-reference target integrity.
+- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level structured entity-reference obligation.
+- `docs/plans/agent-timeline-event-presentation/feature-test-contract.md`: feature-level proof slice for related-event and entity-reference behavior.
 
 ### Existing Code References
 

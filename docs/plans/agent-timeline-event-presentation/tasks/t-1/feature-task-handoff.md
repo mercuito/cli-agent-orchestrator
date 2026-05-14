@@ -1,4 +1,4 @@
-# Task Handoff: t-1 — Timeline Presentation Framework And Fallback
+# Feature Task Handoff: t-1 — Timeline Presentation Framework And Fallback
 
 ## Applicable Criteria
 
@@ -18,13 +18,13 @@ without concrete event-kind branching.
 
 ## Slice Reference
 
-See `../tasks.md#t-1--timeline-presentation-framework-and-fallback` for
+See `../feature-tasks.md#t-1--timeline-presentation-framework-and-fallback` for
 assigned Behavioral, Code, and Test slices. The universal
 `test-validity-preserved` criterion applies regardless.
 
 ## Committed Implementation Decisions
 
-See `docs/plans/agent-timeline-event-presentation/committed-implementation-decisions.md`.
+See `docs/plans/agent-timeline-event-presentation/feature-committed-implementation-decisions.md`.
 All entries are in force.
 
 ## Supporting References
@@ -37,10 +37,10 @@ Use these references during task research and implementation planning.
 
 ### Product / Domain References
 
-- `docs/plans/agent-timeline-event-presentation/narrative.md`: domain story for kind-specific event presentations, generic fallback presentation, and timeline/related-events surfaces.
-- `docs/plans/agent-timeline-event-presentation/behavioral-contract.md`: exact user-visible behavior and invariant slices owned by this task.
-- `docs/plans/agent-timeline-event-presentation/code-contract.md`: feature-level code clauses governing backend-owned presentation values and fallback ownership.
-- `docs/plans/agent-timeline-event-presentation/test-contract.md`: feature-level proof slice for core presentation framework and fallback behavior.
+- `docs/plans/agent-timeline-event-presentation/feature-narrative.md`: domain story for kind-specific event presentations, generic fallback presentation, and timeline/related-events surfaces.
+- `docs/plans/agent-timeline-event-presentation/feature-behavioral-contract.md`: exact user-visible behavior and invariant slices owned by this task.
+- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level code clauses governing backend-owned presentation values and fallback ownership.
+- `docs/plans/agent-timeline-event-presentation/feature-test-contract.md`: feature-level proof slice for core presentation framework and fallback behavior.
 
 ### Existing Code References
 

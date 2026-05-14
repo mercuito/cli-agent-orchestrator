@@ -9,7 +9,7 @@ Every behavior and constraint has a stable ID. Behaviors use `B-<n>`;
 constraints use `C-<n>`. Parent headings reference the capability or
 invariant ID from the Capability Contract, such as `CAP-1` or `INV-2`.
 
-IDs are part of the slice surface. `tasks.md`, handoffs, defences, and
+IDs are part of the slice surface. `feature-tasks.md`, handoffs, defences, and
 reviews use them to identify exact obligations without restating clause
 text.
 

@@ -17,10 +17,10 @@ revision log when implementation findings demand it.
 
 The plan is drafted from:
 
-- the Task Handoff (slice reference into `tasks.md`, Verification
+- the Feature Task Handoff (slice reference into `feature-tasks.md`, Verification
   Command, committed-implementation-decisions artifact reference,
   coding-level contract paths)
-- the task's slice entry in `tasks.md`, which lists the assigned IDs from
+- the task's slice entry in `feature-tasks.md`, which lists the assigned IDs from
   the feature-level Behavioral, Code, and Test contracts
 - the assigned slice of the feature-level Behavioral Contract, when the
   slice entry names one
@@ -131,7 +131,7 @@ Use a deterministic, task-specific path. Do not use generic names like
   (reference them by ID)
 - durable project history from prior tasks (reference committed
   implementation decisions instead)
-- the Verification Command (which lives in the Task Handoff;
+- the Verification Command (which lives in the Feature Task Handoff;
   the plan may reference it for convenience but doesn't own it)
 - a separate "out of scope" section — scope is defined by the assigned
   slices and the coding-level contracts; anything outside them is out of

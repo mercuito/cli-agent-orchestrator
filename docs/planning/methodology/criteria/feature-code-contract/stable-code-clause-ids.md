@@ -6,7 +6,7 @@ when: Always.
 # Stable Code Clause IDs
 
 Every feature-level Code Contract clause has a stable ID of the form
-`F-CC-<n>`. These IDs are the slice surface used by `tasks.md`, handoffs,
+`F-CC-<n>`. These IDs are the slice surface used by `feature-tasks.md`, handoffs,
 implementation plans, and Code Contract Defences.
 
 Do not rely on headings, bullets, or prose position alone. A clause title
