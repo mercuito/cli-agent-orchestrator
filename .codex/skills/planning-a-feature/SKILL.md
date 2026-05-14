@@ -30,6 +30,7 @@ needed. In this methodology, the standard profile names are:
 - `feature-narrative-reviewer.toml`
 - `feature-capability-contract-reviewer.toml`
 - `feature-behavioral-contract-reviewer.toml`
+- `feature-tasks-reviewer.toml`
 - `coding-implementer.toml`
 - `coding-implementation-plan-reviewer.toml`
 - `coding-behavioral-contract-reviewer.toml`
@@ -102,6 +103,9 @@ needed. In this methodology, the standard profile names are:
    - Maintain `feature-tasks.md` as the feature-level task list. Before drafting or
      revising it, read `creating-a-feature-tasks.md` and the feature tasks
      criteria catalog.
+   - Dispatch `feature-tasks-reviewer` to review the Feature Tasks artifact
+     against the approved feature-level contracts and feature tasks criteria.
+     Continue to handoffs only after explicit approval.
    - Create one `feature-task-handoff.md` per task. Before drafting or
      revising a handoff, read `creating-a-feature-task-handoff.md` and the
      feature task handoff criteria catalog.
@@ -159,6 +163,7 @@ Use the narrow reviewer profile that matches the artifact under review:
 - `feature-narrative-reviewer` for `feature-narrative.md`;
 - `feature-capability-contract-reviewer` for `feature-capability-contract.md`;
 - `feature-behavioral-contract-reviewer` for `feature-behavioral-contract.md`;
+- `feature-tasks-reviewer` for `tasks/feature-tasks.md`;
 - `coding-implementation-plan-reviewer` for `coding-implementation-plan.md`;
 - `coding-behavioral-contract-reviewer` for behavioral compliance after
   implementation;

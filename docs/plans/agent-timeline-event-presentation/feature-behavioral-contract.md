@@ -7,6 +7,7 @@
 | [given-when-then-verifiability](../../planning/methodology/criteria/feature-behavioral-contract/given-when-then-verifiability.md) | Every behavior and constraint must be precise enough to test from its text. |
 | [behavior-is-action](../../planning/methodology/criteria/feature-behavioral-contract/behavior-is-action.md) | Behavior clauses must describe concrete operator or system actions and observable outcomes. |
 | [behavior-outcome-titles](../../planning/methodology/criteria/feature-behavioral-contract/behavior-outcome-titles.md) | Behavior titles must name the observable outcome rather than the trigger or implementation mechanism. |
+| [single-outcome-behaviors](../../planning/methodology/criteria/feature-behavioral-contract/single-outcome-behaviors.md) | Every behavior must describe one outcome so task slices do not inherit bundled work. |
 | [stable-behavior-ids](../../planning/methodology/criteria/feature-behavioral-contract/stable-behavior-ids.md) | Tasks, handoffs, and defences need stable behavior and constraint identifiers. |
 
 ## Capability: CAP-1 — Kind-Specific Timeline Event Presentation
@@ -26,11 +27,11 @@ expanding the row.
 ### B-2 — Linear Mention Presentation Shows Issue Context
 
 Given Aria's identity timeline contains a Linear mention event naming an
-issue, a mentioner, mention text, and the Linear issue itself,
+issue, a mentioner, and mention text,
 When the operator reads the Linear mention row,
 Then the row shows the issue title, the teammate who wrote the mention, a
-short snippet from the mention text, and an external entity reference for
-the Linear issue.
+short snippet from the mention text, and issue context sufficient to
+distinguish the mentioned issue.
 
 ### B-3 — Runtime Delivery Presentation Shows Delivery Context
 
@@ -39,8 +40,7 @@ an earlier Linear mention and naming the terminal that received the
 delivery,
 When the operator reads the runtime delivery row,
 Then the row shows the source kind that triggered the delivery, the
-message that was delivered, and an internal entity reference for the
-receiving terminal.
+message that was delivered, and the receiving terminal identifier.
 
 ### B-4 — Workspace Context Switch Presentation Shows Movement
 

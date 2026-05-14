@@ -1,4 +1,4 @@
-# Feature Task Handoff: t-1 — Timeline Presentation Framework And Fallback
+# Feature Task Handoff: t-1 — Typed Timeline Payload Surface And Fallback View
 
 ## Applicable Criteria
 
@@ -10,15 +10,15 @@
 
 ## Task Brief
 
-Create the generic event presentation surface for identity timeline rows.
-Done means timeline and related-event reads return a presentation value
-for every CAO event, untaught event kinds receive the generic fallback
-presentation, and the dashboard renders timeline rows from that value
-without concrete event-kind branching.
+Create the typed event payload and fallback surface for identity timeline
+rows. Done means timeline and related-event reads return each CAO event's
+typed `event_data`, the dashboard dispatches rows through a frontend
+event-view registry, and untaught event kinds remain visible through the
+frontend fallback view.
 
 ## Slice Reference
 
-See `../feature-tasks.md#t-1--timeline-presentation-framework-and-fallback` for
+See `../feature-tasks.md#t-1--typed-timeline-payload-surface-and-fallback-view` for
 assigned Behavioral, Code, and Test slices. The universal
 `test-validity-preserved` criterion applies regardless.
 
@@ -39,15 +39,15 @@ Use these references during task research and implementation planning.
 
 - `docs/plans/agent-timeline-event-presentation/feature-narrative.md`: domain story for kind-specific event presentations, generic fallback presentation, and timeline/related-events surfaces.
 - `docs/plans/agent-timeline-event-presentation/feature-behavioral-contract.md`: exact user-visible behavior and invariant slices owned by this task.
-- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level code clauses governing backend-owned presentation values and fallback ownership.
-- `docs/plans/agent-timeline-event-presentation/feature-test-contract.md`: feature-level proof slice for core presentation framework and fallback behavior.
+- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level code clauses governing typed event payload responses, frontend event-view dispatch, and fallback ownership.
+- `docs/plans/agent-timeline-event-presentation/feature-test-contract.md`: feature-level proof slice for typed payload response shape and fallback behavior.
 
 ### Existing Code References
 
-- `src/cli_agent_orchestrator/services/agent_identity_timeline.py`: backend service that currently returns envelope-only timeline and related-event reads.
+- `src/cli_agent_orchestrator/services/agent_identity_timeline.py`: backend service that currently returns envelope-only timeline and related-event reads and can expose typed event data from persisted records.
 - `src/cli_agent_orchestrator/api/main.py`: FastAPI response models and routes for identity timeline and related-event reads.
-- `web/src/api.ts`: frontend API types for identity timeline events and related events.
-- `web/src/components/AgentIdentityTimelinePanel.tsx`: dashboard timeline row and related-events rendering that must move to generic presentation rendering.
+- `web/src/api.ts`: frontend API types for identity timeline events, related events, and typed `event_data`.
+- `web/src/components/AgentIdentityTimelinePanel.tsx`: dashboard timeline row and related-events rendering that must move behind a frontend event-view registry and fallback view.
 - `test/api/test_agent_identity_routes.py`: backend identity timeline API proof pattern.
 - `test/events/test_cao_event_persistence.py`: event-log fixture/proof patterns for persisted CAO events and untaught event kinds.
 - `web/src/test/agent-identity-timeline-panel.test.tsx`: frontend timeline component proof pattern.

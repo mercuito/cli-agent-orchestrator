@@ -29,3 +29,4 @@ assembly guidance.
 | [scope-handoffability](scope-handoffability.md) | Always |
 | [supporting-reference-acknowledgment](supporting-reference-acknowledgment.md) | Always |
 | [explicit-dependencies](explicit-dependencies.md) | Tasks have ordering dependencies |
+| [acyclic-dependencies](acyclic-dependencies.md) | Tasks have ordering dependencies |

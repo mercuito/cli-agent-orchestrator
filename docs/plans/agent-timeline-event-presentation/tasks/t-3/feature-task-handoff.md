@@ -1,4 +1,4 @@
-# Feature Task Handoff: t-3 — Related Presentation Continuity And Entity References
+# Feature Task Handoff: t-3 — Related View Continuity And Entity References
 
 ## Applicable Criteria
 
@@ -10,15 +10,15 @@
 
 ## Task Brief
 
-Complete the presentation behavior around related events and entity
-references. Done means related events keep the same event presentations
-they would have on the main timeline, external Linear issue references
-open the issue context, and internal terminal references focus the
-referenced CAO dashboard terminal.
+Complete the related-event and entity-reference behavior on top of the
+frontend event-view registry. Done means related events render through
+the same frontend views they would use on the main timeline, external
+Linear issue references open the issue context, and internal terminal
+references focus the referenced CAO dashboard terminal.
 
 ## Slice Reference
 
-See `../feature-tasks.md#t-3--related-presentation-continuity-and-entity-references`
+See `../feature-tasks.md#t-3--related-view-continuity-and-entity-references`
 for assigned Behavioral, Code, and Test slices. The universal
 `test-validity-preserved` criterion applies regardless.
 
@@ -39,7 +39,7 @@ Use these references during task research and implementation planning.
 
 - `docs/plans/agent-timeline-event-presentation/feature-narrative.md`: domain story for related-event continuity, opening the Linear issue, and focusing the receiving terminal.
 - `docs/plans/agent-timeline-event-presentation/feature-behavioral-contract.md`: exact behavior and invariant slices for related-event presentation continuity and entity-reference target integrity.
-- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level structured entity-reference obligation.
+- `docs/plans/agent-timeline-event-presentation/feature-code-contract.md`: feature-level frontend view entity-reference obligation.
 - `docs/plans/agent-timeline-event-presentation/feature-test-contract.md`: feature-level proof slice for related-event and entity-reference behavior.
 
 ### Existing Code References
@@ -48,7 +48,7 @@ Use these references during task research and implementation planning.
 - `web/src/components/AgentPanel.tsx`: existing Agents dashboard boundary and terminal focus/deep-link behavior.
 - `web/src/dashboardLink.ts`: dashboard link parsing used by existing focus/navigation flows.
 - `web/src/store.ts`: dashboard state and terminal reconciliation used when focusing a CAO dashboard context.
-- `web/src/api.ts`: frontend API types for presentation entity references returned by the backend.
+- `web/src/api.ts`: frontend API types for typed event payload facts used by entity-reference views.
 - `web/src/test/agent-identity-timeline-panel.test.tsx`: component proof pattern for related-event expansion and stale related-event requests.
 - `web/src/test/agent-panel-deeplink.test.tsx`: existing terminal/dashboard focus proof pattern.
 - `web/src/test/api.test.ts`: API type/shape proof pattern for structured entity references.

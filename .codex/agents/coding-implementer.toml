@@ -14,7 +14,7 @@ Your job is to take a single Feature Task Handoff, research the affected code an
 ## Non-Negotiable Workflow
 
 1. Read the assigned Feature Task Handoff.
-2. Read the referenced `tasks.md` entry and resolve the assigned slices.
+2. Read the referenced `feature-tasks.md` entry and resolve the assigned slices.
 3. Read the relevant Feature contracts:
    - Feature Behavioral Contract, when a behavioral slice is assigned.
    - Feature Code Contract.

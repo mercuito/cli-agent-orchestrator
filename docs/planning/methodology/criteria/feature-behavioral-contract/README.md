@@ -54,6 +54,7 @@ features:
 | [given-when-then-verifiability](given-when-then-verifiability.md) | Always |
 | [behavior-is-action](behavior-is-action.md) | Always |
 | [behavior-outcome-titles](behavior-outcome-titles.md) | Always |
+| [single-outcome-behaviors](single-outcome-behaviors.md) | Always |
 | [configured-input-error-surfacing](configured-input-error-surfacing.md) | Users provide consumed inputs |
 | [operation-outcome-signaling](operation-outcome-signaling.md) | Public operations report structured outcomes |
 | [public-surface-encapsulation](public-surface-encapsulation.md) | A service wraps a third-party surface |
