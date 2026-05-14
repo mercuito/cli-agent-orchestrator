@@ -1,15 +1,37 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 
 from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
+from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.events import (
+    AgentParticipant,
+    CaoCausationId,
+    CaoCorrelationId,
+    CaoEventDispatcher,
+    CaoEventId,
+    CaoEventOccurredAt,
+    CaoEventSourceId,
+    CaoEventSourceRef,
+    CaoEventSourceType,
+)
+from cli_agent_orchestrator.linear.workspace_events import LinearAgentMentionedEvent
+from cli_agent_orchestrator.runtime.events import (
+    AgentRuntimeNotificationDeliveryEvent,
+    RuntimeWorkspaceEvent,
+    notification_delivery_event,
+    workspace_runtime_event,
+)
 from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityStatus
+
+OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
 
 
 @dataclass
 class _FakeIdentityManager:
     statuses: tuple[AgentIdentityStatus, ...]
+    status_calls: tuple[str, ...] = ()
 
     def list_statuses(self, *, active=None):
         if active is None:
@@ -17,6 +39,7 @@ class _FakeIdentityManager:
         return tuple(status for status in self.statuses if status.active is active)
 
     def status_for_identity(self, agent_id: str):
+        self.status_calls = (*self.status_calls, agent_id)
         for status in self.statuses:
             if status.agent_identity_id == agent_id:
                 return status
@@ -132,3 +155,348 @@ def test_runtime_terminal_endpoint_uses_identity_manager_status(client, monkeypa
     assert response.status_code == 200
     assert response.json()["terminal"]["id"] == "abcd1234"
     assert response.json()["terminal_token"] == "token-abcd1234"
+
+
+def _linear_mentioned_event(
+    *,
+    event_id: str = "linear:agent_mentioned:event-1",
+    occurred_at: CaoEventOccurredAt = OCCURRED_AT,
+    source_id: str = "msg-1",
+    correlation_id: str | None = "thread-1",
+    causation_id: str | None = None,
+    participants: tuple[AgentParticipant, ...] | None = None,
+) -> LinearAgentMentionedEvent:
+    return LinearAgentMentionedEvent(
+        event_id=CaoEventId(event_id),
+        source=CaoEventSourceRef(
+            source_type=CaoEventSourceType("linear"),
+            source_id=CaoEventSourceId(source_id),
+        ),
+        occurred_at=occurred_at,
+        correlation_id=CaoCorrelationId(correlation_id) if correlation_id is not None else None,
+        causation_id=CaoCausationId(causation_id) if causation_id is not None else None,
+        event_type="AgentSession",
+        app_key="linear-app",
+        agent_id="implementation_partner",
+        app_user_id="user-1",
+        app_user_name="RJ Wilson",
+        issue_id="issue-id-1",
+        issue_identifier="CAO-96",
+        issue_url="https://linear.app/yards-framework/issue/CAO-96/example",
+        issue_title="Persist events",
+        issue_state="Backlog",
+        parent_issue_id="parent-id-1",
+        parent_issue_identifier="CAO-89",
+        agent_session_id="session-1",
+        thread_id="thread-1",
+        thread_url="https://linear.app/session/1",
+        prompt_context="Please implement this.",
+        message_id=source_id,
+        message_body="Please implement CAO-96.",
+        message_kind="comment",
+        message_metadata={"visibility": "public"},
+        action="create",
+        should_notify_agent=True,
+        suppression_reason=None,
+        raw_payload={"typed_contract_field": True},
+        delivery_id="delivery-1",
+        metadata={"classification": "human_mention_or_prompt"},
+        agent_participants=(
+            participants
+            if participants is not None
+            else (
+                AgentParticipant(
+                    agent_identity_id="implementation_partner",
+                    role="mentioned",
+                ),
+            )
+        ),
+    )
+
+
+def _manager_with_timeline_identities(
+    agent_identity_manager_factory,
+    implementation_partner_identity_factory,
+):
+    return agent_identity_manager_factory(
+        implementation_partner_identity_factory(),
+        implementation_partner_identity_factory(
+            id="reviewer",
+            display_name="Reviewer",
+            session_name="reviewer",
+        ),
+    )
+
+
+def _patch_default_identity_manager(monkeypatch, manager):
+    status_calls = []
+    original_status_for_identity = manager.status_for_identity
+
+    def _status_for_identity(agent_id: str):
+        status_calls.append(agent_id)
+        return original_status_for_identity(agent_id)
+
+    monkeypatch.setattr(manager, "status_for_identity", _status_for_identity)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_identity_manager",
+        lambda: manager,
+    )
+    return status_calls
+
+
+def _publish_identity_timeline_scenario(
+    *,
+    mention_correlation_id: str,
+    broadcast_correlation_id: str,
+    broadcast_partner_role: str,
+    broadcast_reviewer_role: str,
+    workspace_correlation_id: str,
+) -> tuple[
+    LinearAgentMentionedEvent,
+    AgentRuntimeNotificationDeliveryEvent,
+    LinearAgentMentionedEvent,
+    RuntimeWorkspaceEvent,
+]:
+    mention = _linear_mentioned_event(
+        event_id="linear:agent_mentioned:mention",
+        occurred_at=OCCURRED_AT,
+        correlation_id=mention_correlation_id,
+    )
+    delivery = notification_delivery_event(
+        agent_identity_id="implementation_partner",
+        workspace_context_id="wctx-1",
+        inbox_notification_id=42,
+        inbox_receiver_id="implementation_partner",
+        terminal_id="terminal-1",
+        runtime_status="ready",
+        outcome="delivered",
+        attempted=True,
+        delivered=True,
+        error=None,
+        causing_event=mention,
+    )
+    delivery = replace(
+        delivery,
+        occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=1)),
+    )
+    broadcast = _linear_mentioned_event(
+        event_id="linear:agent_mentioned:broadcast",
+        occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=2)),
+        source_id="msg-broadcast",
+        correlation_id=broadcast_correlation_id,
+        participants=(
+            AgentParticipant(
+                agent_identity_id="implementation_partner",
+                role=broadcast_partner_role,
+            ),
+            AgentParticipant(agent_identity_id="reviewer", role=broadcast_reviewer_role),
+        ),
+    )
+    workspace = workspace_runtime_event(
+        workspace_context_id="wctx-1",
+        action="refresh",
+        runtime_status="ready",
+        correlation_id=CaoCorrelationId(workspace_correlation_id),
+    )
+    workspace = replace(
+        workspace,
+        occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=3)),
+    )
+    dispatcher = CaoEventDispatcher(
+        (
+            LinearAgentMentionedEvent,
+            AgentRuntimeNotificationDeliveryEvent,
+            RuntimeWorkspaceEvent,
+        ),
+        persist_events=True,
+    )
+    for event in (mention, delivery, broadcast, workspace):
+        dispatcher.publish(event)
+    return mention, delivery, broadcast, workspace
+
+
+def _event_ids(response_events):
+    return [event["event_id"] for event in response_events]
+
+
+def test_agent_identity_timeline_route_returns_participant_index_rows(
+    client,
+    monkeypatch,
+    runtime_inbox_db_session,
+    agent_identity_manager_factory,
+    implementation_partner_identity_factory,
+):
+    manager = _manager_with_timeline_identities(
+        agent_identity_manager_factory,
+        implementation_partner_identity_factory,
+    )
+    status_calls = _patch_default_identity_manager(monkeypatch, manager)
+    mention, delivery, broadcast, workspace = _publish_identity_timeline_scenario(
+        mention_correlation_id="thread-1",
+        broadcast_correlation_id="thread-broadcast",
+        broadcast_partner_role="mentioned",
+        broadcast_reviewer_role="observer",
+        workspace_correlation_id="workspace-refresh",
+    )
+
+    response = client.get("/agents/identities/implementation_partner/timeline")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert status_calls == ["implementation_partner"]
+    assert body["identity"]["agent_identity_id"] == "implementation_partner"
+    assert _event_ids(body["events"]) == [
+        str(mention.event_id),
+        str(delivery.event_id),
+        str(broadcast.event_id),
+    ]
+    assert str(workspace.event_id) not in _event_ids(body["events"])
+    assert db_module.get_cao_event(str(workspace.event_id)) is not None
+    assert [
+        (event["event_name"], event["participant_role"]) for event in body["events"]
+    ] == [
+        ("agent_mentioned", "mentioned"),
+        ("agent_runtime_notification_delivery", "delivery_target"),
+        ("agent_mentioned", "mentioned"),
+    ]
+    assert body["events"][0]["correlation_id"] == "thread-1"
+    assert body["events"][1]["causation_id"] == str(mention.event_id)
+
+
+def test_agent_identity_timeline_route_preserves_broadcast_viewpoint(
+    client,
+    monkeypatch,
+    runtime_inbox_db_session,
+    agent_identity_manager_factory,
+    implementation_partner_identity_factory,
+):
+    manager = _manager_with_timeline_identities(
+        agent_identity_manager_factory,
+        implementation_partner_identity_factory,
+    )
+    _patch_default_identity_manager(monkeypatch, manager)
+    _, _, broadcast, _ = _publish_identity_timeline_scenario(
+        mention_correlation_id="thread-1",
+        broadcast_correlation_id="thread-broadcast",
+        broadcast_partner_role="mentioned",
+        broadcast_reviewer_role="observer",
+        workspace_correlation_id="workspace-refresh",
+    )
+
+    partner_response = client.get("/agents/identities/implementation_partner/timeline")
+    reviewer_response = client.get("/agents/identities/reviewer/timeline")
+
+    assert partner_response.status_code == 200
+    assert reviewer_response.status_code == 200
+    partner_broadcast_events = [
+        event
+        for event in partner_response.json()["events"]
+        if event["event_id"] == str(broadcast.event_id)
+    ]
+    assert partner_broadcast_events[0]["participant_role"] == "mentioned"
+    assert reviewer_response.json()["events"] == [
+        {
+            "event_id": str(broadcast.event_id),
+            "event_name": "agent_mentioned",
+            "event_type_key": (
+                "cli_agent_orchestrator.linear.workspace_events.LinearAgentMentionedEvent"
+            ),
+            "source_type": "linear",
+            "source_id": "msg-broadcast",
+            "occurred_at": "2026-05-13T12:02:00",
+            "correlation_id": "thread-broadcast",
+            "causation_id": None,
+            "participant_role": "observer",
+        }
+    ]
+
+
+def test_agent_identity_timeline_route_unknown_identity_returns_404(
+    client,
+    monkeypatch,
+    agent_identity_manager_factory,
+    implementation_partner_identity_factory,
+):
+    manager = agent_identity_manager_factory(implementation_partner_identity_factory())
+    _patch_default_identity_manager(monkeypatch, manager)
+
+    response = client.get("/agents/identities/missing/timeline")
+
+    assert response.status_code == 404
+    assert "Unknown CAO agent identity" in response.json()["detail"]
+
+
+def test_agent_identity_related_events_route_uses_envelope_threads(
+    client,
+    monkeypatch,
+    runtime_inbox_db_session,
+    agent_identity_manager_factory,
+    implementation_partner_identity_factory,
+):
+    manager = _manager_with_timeline_identities(
+        agent_identity_manager_factory,
+        implementation_partner_identity_factory,
+    )
+    _patch_default_identity_manager(monkeypatch, manager)
+    mention, delivery, _, _ = _publish_identity_timeline_scenario(
+        mention_correlation_id="thread-1",
+        broadcast_correlation_id="thread-broadcast",
+        broadcast_partner_role="mentioned",
+        broadcast_reviewer_role="observer",
+        workspace_correlation_id="workspace-refresh",
+    )
+
+    mention_response = client.get(
+        f"/agents/identities/implementation_partner/events/{mention.event_id}/related"
+    )
+    delivery_response = client.get(
+        f"/agents/identities/implementation_partner/events/{delivery.event_id}/related"
+    )
+
+    assert mention_response.status_code == 200
+    assert _event_ids(mention_response.json()["correlation_events"]) == [
+        str(mention.event_id),
+        str(delivery.event_id),
+    ]
+    assert mention_response.json()["causation_events"]["direct_cause"] is None
+    assert _event_ids(mention_response.json()["causation_events"]["direct_effects"]) == [
+        str(delivery.event_id)
+    ]
+    assert delivery_response.status_code == 200
+    assert delivery_response.json()["causation_events"]["direct_cause"]["event_id"] == str(
+        mention.event_id
+    )
+
+
+def test_agent_identity_related_events_route_handles_missing_relatedness_and_unknown_event(
+    client,
+    monkeypatch,
+    runtime_inbox_db_session,
+    agent_identity_manager_factory,
+    implementation_partner_identity_factory,
+):
+    manager = agent_identity_manager_factory(implementation_partner_identity_factory())
+    _patch_default_identity_manager(monkeypatch, manager)
+    isolated = _linear_mentioned_event(
+        event_id="linear:agent_mentioned:isolated",
+        correlation_id=None,
+        causation_id=None,
+    )
+    dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
+    dispatcher.publish(isolated)
+
+    response = client.get(
+        f"/agents/identities/implementation_partner/events/{isolated.event_id}/related"
+    )
+    missing_response = client.get(
+        "/agents/identities/implementation_partner/events/missing-event/related"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["correlation_events"] == []
+    assert response.json()["causation_events"] == {
+        "direct_cause": None,
+        "direct_effects": [],
+    }
+    assert missing_response.status_code == 404
+    assert "Unknown CAO event" in missing_response.json()["detail"]

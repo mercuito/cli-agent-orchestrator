@@ -327,6 +327,32 @@ def test_agent_history_uses_participant_index_not_typed_body_mentions(
     ] == [str(event.event_id)]
 
 
+def test_agent_identity_timeline_read_exposes_selected_participant_role_from_index(
+    runtime_inbox_db_session,
+) -> None:
+    event = _linear_mentioned_event(
+        event_id="linear:agent_mentioned:broadcast-role-proof",
+        participants=(
+            AgentParticipant(agent_identity_id="implementation_partner", role="mentioned"),
+            AgentParticipant(agent_identity_id="reviewer", role="observer"),
+        ),
+    )
+    dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
+
+    dispatcher.publish(event)
+
+    partner_records = db_module.list_cao_event_participants_by_agent_identity(
+        "implementation_partner"
+    )
+    reviewer_records = db_module.list_cao_event_participants_by_agent_identity("reviewer")
+    assert [(record.record.event_id, record.participant_role) for record in partner_records] == [
+        (str(event.event_id), "mentioned")
+    ]
+    assert [(record.record.event_id, record.participant_role) for record in reviewer_records] == [
+        (str(event.event_id), "observer")
+    ]
+
+
 def test_duplicate_event_id_does_not_add_participants_from_conflicting_replay(
     runtime_inbox_db_session,
 ) -> None:

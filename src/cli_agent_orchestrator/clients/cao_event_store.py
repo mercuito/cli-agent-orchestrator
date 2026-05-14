@@ -103,6 +103,15 @@ class CaoEventRecord:
     event: CaoEvent
 
 
+@dataclass(frozen=True)
+class CaoEventParticipantRecord:
+    """Persisted CAO event plus one selected agent participant role."""
+
+    record: CaoEventRecord
+    agent_identity_id: str
+    participant_role: str
+
+
 def persist_cao_event(event: CaoEvent) -> CaoEventRecord:
     """Persist one typed CAO event and participant index idempotently by event id."""
 
@@ -181,6 +190,36 @@ def list_cao_events_by_agent_identity(agent_identity_id: str) -> tuple[CaoEventR
             .all()
         )
         return tuple(_record_from_model(row) for row in rows)
+
+
+def list_cao_event_participants_by_agent_identity(
+    agent_identity_id: str,
+) -> tuple[CaoEventParticipantRecord, ...]:
+    """List events and selected participant roles for one agent identity."""
+
+    with _session_local()() as session:
+        rows = (
+            session.query(CaoEventModel, CaoEventAgentParticipantModel.participant_role)
+            .join(
+                CaoEventAgentParticipantModel,
+                CaoEventAgentParticipantModel.event_id == CaoEventModel.event_id,
+            )
+            .filter(CaoEventAgentParticipantModel.agent_identity_id == agent_identity_id)
+            .order_by(
+                CaoEventAgentParticipantModel.occurred_at.asc(),
+                CaoEventAgentParticipantModel.event_id.asc(),
+                CaoEventAgentParticipantModel.participant_role.asc(),
+            )
+            .all()
+        )
+        return tuple(
+            CaoEventParticipantRecord(
+                record=_record_from_model(event_row),
+                agent_identity_id=agent_identity_id,
+                participant_role=participant_role if participant_role else "",
+            )
+            for event_row, participant_role in rows
+        )
 
 
 def list_cao_events_by_event_name(event_name: str) -> tuple[CaoEventRecord, ...]:

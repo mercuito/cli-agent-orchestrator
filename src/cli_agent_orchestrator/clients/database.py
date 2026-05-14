@@ -19,8 +19,10 @@ from cli_agent_orchestrator.clients.baton_store import (  # noqa: E402
     list_batons_held_by,
 )
 from cli_agent_orchestrator.clients.cao_event_store import (  # noqa: E402
+    CaoEventParticipantRecord,
     CaoEventRecord,
     get_cao_event,
+    list_cao_event_participants_by_agent_identity,
     list_cao_events_by_agent_identity,
     list_cao_events_by_causation_id,
     list_cao_events_by_correlation_id,
@@ -120,6 +122,7 @@ __all__ = [
     "Base",
     "BatonEventModel",
     "BatonModel",
+    "CaoEventParticipantRecord",
     "CaoEventRecord",
     "FlowModel",
     "INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE",
@@ -187,6 +190,7 @@ __all__ = [
     "list_baton_events",
     "list_batons",
     "list_batons_held_by",
+    "list_cao_event_participants_by_agent_identity",
     "list_cao_events_by_agent_identity",
     "list_cao_events_by_causation_id",
     "list_cao_events_by_correlation_id",

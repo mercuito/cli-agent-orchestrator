@@ -61,6 +61,14 @@ from cli_agent_orchestrator.services.agent_identity_manager import (
     AgentIdentityStatus,
     default_agent_identity_manager,
 )
+from cli_agent_orchestrator.services.agent_identity_timeline import (
+    AgentIdentityTimelineService,
+    CausationRelatedEventsRead,
+    IdentityTimelineRead,
+    RelatedEventsRead,
+    TimelineEventRead,
+    UnknownTimelineEventError,
+)
 from cli_agent_orchestrator.services import (
     baton_service,
     baton_watchdog_service,
@@ -216,6 +224,96 @@ class AgentIdentityStatusResponse(BaseModel):
             active_terminal_id=status.active_terminal_id,
             active_workspace_context_id=status.active_workspace_context_id,
             last_active_at=status.last_active_at,
+        )
+
+
+class AgentIdentityTimelineEventResponse(BaseModel):
+    """Envelope-level CAO event row for one identity timeline."""
+
+    event_id: str
+    event_name: str
+    event_type_key: str
+    source_type: str
+    source_id: str
+    occurred_at: datetime
+    correlation_id: Optional[str] = None
+    causation_id: Optional[str] = None
+    participant_role: Optional[str] = None
+
+    @classmethod
+    def from_read(cls, read: TimelineEventRead) -> "AgentIdentityTimelineEventResponse":
+        return cls(
+            event_id=read.event_id,
+            event_name=read.event_name,
+            event_type_key=read.event_type_key,
+            source_type=read.source_type,
+            source_id=read.source_id,
+            occurred_at=read.occurred_at,
+            correlation_id=read.correlation_id,
+            causation_id=read.causation_id,
+            participant_role=read.participant_role,
+        )
+
+
+class AgentIdentityTimelineResponse(BaseModel):
+    """Timeline read response for one manager-resolved CAO identity."""
+
+    identity: AgentIdentityStatusResponse
+    events: List[AgentIdentityTimelineEventResponse]
+
+    @classmethod
+    def from_read(cls, read: IdentityTimelineRead) -> "AgentIdentityTimelineResponse":
+        return cls(
+            identity=AgentIdentityStatusResponse.from_status(read.identity),
+            events=[
+                AgentIdentityTimelineEventResponse.from_read(event)
+                for event in read.events
+            ],
+        )
+
+
+class AgentIdentityCausationRelatedEventsResponse(BaseModel):
+    """Direct cause and direct effect event reads for a CAO event."""
+
+    direct_cause: Optional[AgentIdentityTimelineEventResponse] = None
+    direct_effects: List[AgentIdentityTimelineEventResponse]
+
+    @classmethod
+    def from_read(
+        cls,
+        read: CausationRelatedEventsRead,
+    ) -> "AgentIdentityCausationRelatedEventsResponse":
+        return cls(
+            direct_cause=(
+                AgentIdentityTimelineEventResponse.from_read(read.direct_cause)
+                if read.direct_cause is not None
+                else None
+            ),
+            direct_effects=[
+                AgentIdentityTimelineEventResponse.from_read(event)
+                for event in read.direct_effects
+            ],
+        )
+
+
+class AgentIdentityRelatedEventsResponse(BaseModel):
+    """Envelope-based related event threads for one canonical CAO event."""
+
+    event: AgentIdentityTimelineEventResponse
+    correlation_events: List[AgentIdentityTimelineEventResponse]
+    causation_events: AgentIdentityCausationRelatedEventsResponse
+
+    @classmethod
+    def from_read(cls, read: RelatedEventsRead) -> "AgentIdentityRelatedEventsResponse":
+        return cls(
+            event=AgentIdentityTimelineEventResponse.from_read(read.event),
+            correlation_events=[
+                AgentIdentityTimelineEventResponse.from_read(event)
+                for event in read.correlation_events
+            ],
+            causation_events=AgentIdentityCausationRelatedEventsResponse.from_read(
+                read.causation_events
+            ),
         )
 
 
@@ -475,6 +573,51 @@ async def get_agent_identity_endpoint(agent_id: str) -> AgentIdentityStatusRespo
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to resolve agent identity: {str(e)}",
+        )
+
+
+@app.get(
+    "/agents/identities/{agent_id}/timeline",
+    response_model=AgentIdentityTimelineResponse,
+)
+async def get_agent_identity_timeline_endpoint(agent_id: str) -> AgentIdentityTimelineResponse:
+    """Resolve one CAO identity timeline from the durable event participant index."""
+    try:
+        timeline = AgentIdentityTimelineService(
+            default_agent_identity_manager()
+        ).timeline_for_identity(agent_id)
+        return AgentIdentityTimelineResponse.from_read(timeline)
+    except AgentIdentityConfigError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resolve agent identity timeline: {str(e)}",
+        )
+
+
+@app.get(
+    "/agents/identities/{agent_id}/events/{event_id}/related",
+    response_model=AgentIdentityRelatedEventsResponse,
+)
+async def get_agent_identity_related_events_endpoint(
+    agent_id: str,
+    event_id: str,
+) -> AgentIdentityRelatedEventsResponse:
+    """Resolve correlation and causation threads for one canonical CAO event."""
+    try:
+        related_events = AgentIdentityTimelineService(
+            default_agent_identity_manager()
+        ).related_events_for_identity_event(agent_id, event_id)
+        return AgentIdentityRelatedEventsResponse.from_read(related_events)
+    except AgentIdentityConfigError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except UnknownTimelineEventError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resolve agent identity related events: {str(e)}",
         )
 
 
