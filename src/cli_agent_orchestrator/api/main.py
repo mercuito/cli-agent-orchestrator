@@ -114,6 +114,15 @@ def _terminal_ws_authorized(websocket: WebSocket, terminal_id: str) -> bool:
     return bool(token and validate_terminal_dashboard_token(token, terminal_id))
 
 
+def _tmux_attach_environment() -> dict[str, str]:
+    """Return an environment suitable for attaching tmux to the web PTY."""
+
+    term = os.environ.get("TERM")
+    if term is None or term.lower() in {"", "dumb", "unknown"}:
+        term = "xterm-256color"
+    return {**os.environ, "TERM": term}
+
+
 def _client_is_loopback(request: Request) -> bool:
     client_host = request.client.host if request.client else None
     return client_host in (None, "127.0.0.1", "::1", "localhost")
@@ -1087,9 +1096,9 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
 
     # Start tmux attach inside the PTY.
     # Force a known TERM so tmux can initialize its terminfo regardless of
-    # how cao-server was launched (GUI/daemon contexts may not inherit TERM,
+    # how cao-server was launched (GUI/daemon contexts may inherit TERM=dumb,
     # which surfaces as "terminal does not support clear" on attach).
-    tmux_env = {**os.environ, "TERM": os.environ.get("TERM") or "xterm-256color"}
+    tmux_env = _tmux_attach_environment()
     proc = subprocess.Popen(
         ["tmux", "-u", "attach-session", "-t", f"{session_name}:{window_name}"],
         stdin=slave_fd,

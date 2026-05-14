@@ -55,6 +55,22 @@ class TestTerminalWebsocketAuthorization:
         assert not main._terminal_ws_authorized(websocket, "term-2")
 
 
+class TestTerminalWebsocketEnvironment:
+    def test_tmux_attach_environment_replaces_dumb_term(self, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        monkeypatch.setenv("TERM", "dumb")
+
+        assert main._tmux_attach_environment()["TERM"] == "xterm-256color"
+
+    def test_tmux_attach_environment_preserves_capable_term(self, monkeypatch):
+        from cli_agent_orchestrator.api import main
+
+        monkeypatch.setenv("TERM", "screen-256color")
+
+        assert main._tmux_attach_environment()["TERM"] == "screen-256color"
+
+
 class TestAgentRuntimeTerminalEndpoint:
     def test_resolves_agent_identity_to_current_terminal_with_token(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
