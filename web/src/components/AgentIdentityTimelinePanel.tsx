@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline, AgentIdentityTimelineEvent } from '../api'
 import { AlertCircle, Bot, ChevronDown, ChevronRight, Clock3, GitBranch, Link2, Radio, Search } from 'lucide-react'
 
+const IDENTITY_TIMELINE_REFRESH_MS = 5000
+
 function formatLabel(value: string | null | undefined): string {
   if (!value) return 'None'
   return value
@@ -22,6 +24,18 @@ function activeLabel(identity: AgentIdentityStatus): string {
 
 function relatedEventCacheKey(agentId: string, eventId: string): string {
   return `${agentId}::${eventId}`
+}
+
+function eventTimeMillis(event: AgentIdentityTimelineEvent): number {
+  const parsed = Date.parse(event.occurred_at)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+function newestEventsFirst(events: AgentIdentityTimelineEvent[]): AgentIdentityTimelineEvent[] {
+  return [...events].sort((left, right) => {
+    const byTime = eventTimeMillis(right) - eventTimeMillis(left)
+    return byTime || right.event_id.localeCompare(left.event_id)
+  })
 }
 
 function IdentityRosterItem({
@@ -95,22 +109,33 @@ function RelatedEventList({
   events: AgentIdentityTimelineEvent[]
   emptyLabel: string
 }) {
+  const sortedEvents = useMemo(() => newestEventsFirst(events), [events])
+  const listId = `related-event-list-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+
   return (
-    <div>
+    <div data-testid={listId}>
       <h5 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
         {title}
       </h5>
-      {events.length === 0 ? (
+      {sortedEvents.length === 0 ? (
         <div className="rounded border border-gray-700/40 bg-gray-950/40 px-3 py-2 text-xs text-gray-500">
           {emptyLabel}
         </div>
       ) : (
         <div className="space-y-1.5">
-          {events.map(event => (
-            <div key={`${title}-${event.event_id}`} className="rounded border border-gray-700/40 bg-gray-950/50 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-gray-200">{formatLabel(event.event_name)}</span>
-                <span className="font-mono text-[11px] text-gray-500">{event.event_id}</span>
+          {sortedEvents.map(event => (
+            <div key={`${title}-${event.event_id}`} className="min-w-0 rounded border border-gray-700/40 bg-gray-950/50 px-3 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium text-gray-200">
+                  {formatLabel(event.event_name)}
+                </div>
+                <div
+                  data-testid="related-event-id"
+                  title={event.event_id}
+                  className="mt-1 truncate font-mono text-[11px] text-gray-500"
+                >
+                  {event.event_id}
+                </div>
               </div>
               <div className="mt-1 text-[11px] text-gray-500">{formatTime(event.occurred_at)}</div>
             </div>
@@ -172,7 +197,11 @@ function TimelineRow({
         </div>
         <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-wide text-gray-500">Event ID</div>
-          <div data-testid="timeline-event-id" className="mt-1 truncate font-mono text-xs text-gray-300">
+          <div
+            data-testid="timeline-event-id"
+            title={event.event_id}
+            className="mt-1 truncate font-mono text-xs text-gray-300"
+          >
             {event.event_id}
           </div>
         </div>
@@ -197,7 +226,7 @@ function TimelineRow({
               {error}
             </div>
           ) : related ? (
-            <div className="grid gap-3 lg:grid-cols-3">
+            <div data-testid="related-events-grid" className="grid gap-3 lg:grid-cols-2">
               <RelatedEventList
                 title="Direct Cause"
                 events={related.causation_events.direct_cause ? [related.causation_events.direct_cause] : []}
@@ -208,11 +237,13 @@ function TimelineRow({
                 events={related.causation_events.direct_effects}
                 emptyLabel="No direct effects recorded."
               />
-              <RelatedEventList
-                title="Shared Correlation Thread"
-                events={related.correlation_events}
-                emptyLabel="No shared correlation thread recorded."
-              />
+              <div className="lg:col-span-2 lg:mx-auto lg:w-full lg:max-w-md">
+                <RelatedEventList
+                  title="Shared Correlation Thread"
+                  events={related.correlation_events}
+                  emptyLabel="No shared correlation thread recorded."
+                />
+              </div>
             </div>
           ) : null}
         </div>
@@ -262,25 +293,35 @@ export function AgentIdentityTimelinePanel() {
       return
     }
     let cancelled = false
+    const fetchTimeline = async (initialLoad: boolean) => {
+      if (initialLoad) {
+        setTimelineLoading(true)
+        setTimelineError(null)
+      }
+      try {
+        const result = await api.getAgentIdentityTimeline(selectedId)
+        if (cancelled) return
+        setTimeline(result)
+        setTimelineError(null)
+      } catch {
+        if (!cancelled && initialLoad) setTimelineError('Unable to load identity timeline.')
+      } finally {
+        if (!cancelled && initialLoad) setTimelineLoading(false)
+      }
+    }
+
     setTimeline(null)
-    setTimelineLoading(true)
-    setTimelineError(null)
     setExpandedEventId(null)
     setRelatedByEvent({})
     setRelatedErrors({})
     setRelatedLoadingKey(null)
-    api.getAgentIdentityTimeline(selectedId)
-      .then(result => {
-        if (!cancelled) setTimeline(result)
-      })
-      .catch(() => {
-        if (!cancelled) setTimelineError('Unable to load identity timeline.')
-      })
-      .finally(() => {
-        if (!cancelled) setTimelineLoading(false)
-      })
+    fetchTimeline(true)
+    const interval = setInterval(() => {
+      fetchTimeline(false)
+    }, IDENTITY_TIMELINE_REFRESH_MS)
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
   }, [selectedId])
 
@@ -295,6 +336,10 @@ export function AgentIdentityTimelinePanel() {
   }, [identities, search])
 
   const selectedIdentity = timeline?.identity ?? identities.find(identity => identity.agent_identity_id === selectedId) ?? null
+  const timelineEvents = useMemo(
+    () => newestEventsFirst(timeline?.events ?? []),
+    [timeline?.events],
+  )
 
   const handleToggleRelated = async (eventId: string) => {
     if (!selectedId) return
@@ -432,7 +477,7 @@ export function AgentIdentityTimelinePanel() {
             </div>
           ) : timeline ? (
             <div data-testid="identity-timeline" className="space-y-2">
-              {timeline.events.map(event => {
+              {timelineEvents.map(event => {
                 const cacheKey = selectedId ? relatedEventCacheKey(selectedId, event.event_id) : event.event_id
                 return (
                   <TimelineRow

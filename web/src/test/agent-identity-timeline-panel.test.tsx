@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { AgentIdentityTimelinePanel } from '../components/AgentIdentityTimelinePanel'
 import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline } from '../api'
@@ -80,6 +80,13 @@ const broadcastForCael = {
   ...broadcastForAria,
   participant_role: 'observer',
 }
+const liveMention = event(
+  'linear:agent_mentioned:live',
+  'agent_mentioned',
+  '2026-05-13T12:04:00',
+  'mentioned',
+  { correlation_id: 'thread-live' },
+)
 const workspaceRefreshId = 'workspace:context_refresh:non-participant'
 
 const timelines: Record<string, AgentIdentityTimeline> = {
@@ -118,6 +125,10 @@ describe('AgentIdentityTimelinePanel', () => {
     vi.spyOn(api, 'getAgentIdentityRelatedEvents').mockResolvedValue(relatedForDelivery)
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('lists configured identities and opens the selected identity timeline', async () => {
     render(<AgentIdentityTimelinePanel />)
 
@@ -132,9 +143,47 @@ describe('AgentIdentityTimelinePanel', () => {
     expect(within(timeline).getByText('2026-05-13 12:01:00')).toBeInTheDocument()
     expect(within(timeline).getByText('Delivery Target')).toBeInTheDocument()
     expect(screen.getAllByTestId('timeline-event-id').map((node) => node.textContent)).toEqual([
-      'linear:agent_mentioned:mention',
-      'runtime:notification_delivery:delivery',
       'linear:agent_mentioned:broadcast',
+      'runtime:notification_delivery:delivery',
+      'linear:agent_mentioned:mention',
+    ])
+    expect(screen.queryByText(workspaceRefreshId)).not.toBeInTheDocument()
+  })
+
+  it('refreshes the watched identity timeline without surfacing non-participant workspace events', async () => {
+    vi.useFakeTimers()
+    let ariaTimelineFetches = 0
+    vi.mocked(api.getAgentIdentityTimeline).mockImplementation(async (agentId) => {
+      const timeline = timelines[agentId]
+      if (!timeline) throw new Error(`unknown identity ${agentId}`)
+      if (agentId !== 'aria') return timeline
+
+      ariaTimelineFetches += 1
+      if (ariaTimelineFetches === 1) return timeline
+
+      return {
+        identity: aria,
+        events: [liveMention, ...timeline.events],
+      }
+    })
+
+    render(<AgentIdentityTimelinePanel />)
+
+    await act(async () => {})
+    await act(async () => {})
+    const timeline = screen.getByTestId('identity-timeline')
+    expect(within(timeline).queryByText('linear:agent_mentioned:live')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    expect(within(timeline).getByText('linear:agent_mentioned:live')).toBeInTheDocument()
+    expect(screen.getAllByTestId('timeline-event-id').map((node) => node.textContent)).toEqual([
+      'linear:agent_mentioned:live',
+      'linear:agent_mentioned:broadcast',
+      'runtime:notification_delivery:delivery',
+      'linear:agent_mentioned:mention',
     ])
     expect(screen.queryByText(workspaceRefreshId)).not.toBeInTheDocument()
   })
@@ -169,6 +218,18 @@ describe('AgentIdentityTimelinePanel', () => {
     expect(screen.getByText('Shared Correlation Thread')).toBeInTheDocument()
     expect(screen.getAllByText('linear:agent_mentioned:mention').length).toBeGreaterThan(1)
     expect(screen.getAllByText('runtime:notification_delivery:delivery').length).toBeGreaterThan(1)
+    const relatedGrid = screen.getByTestId('related-events-grid')
+    expect(relatedGrid).toHaveClass('lg:grid-cols-2')
+    const sharedThread = screen.getByTestId('related-event-list-shared-correlation-thread')
+    expect(sharedThread.parentElement).toHaveClass('lg:col-span-2', 'lg:mx-auto')
+    expect(within(sharedThread).getAllByTestId('related-event-id').map((node) => node.textContent)).toEqual([
+      'runtime:notification_delivery:delivery',
+      'linear:agent_mentioned:mention',
+    ])
+    expect(within(sharedThread).getAllByTestId('related-event-id')[0]).toHaveAttribute(
+      'title',
+      'runtime:notification_delivery:delivery',
+    )
   })
 
   it('does not reuse related-event results fetched under a different selected identity', async () => {
