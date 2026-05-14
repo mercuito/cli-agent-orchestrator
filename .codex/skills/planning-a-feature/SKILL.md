@@ -10,42 +10,6 @@ implementation workflow, especially phrases like "implement this narrative",
 "derive capabilities", "derive the behavioral contract", "break this into
 tasks", or "dispatch implementers".
 
-## Required Reading
-
-Before deriving artifacts, read the repo-local methodology and criteria. Prefer
-paths in the current repo; if missing, ask briefly or locate equivalent docs.
-
-- `docs/planning/methodology/workflow.md`
-- `docs/planning/methodology/creating-a-feature-narrative.md`
-- `docs/planning/methodology/creating-a-feature-capability-contract.md`
-- `docs/planning/methodology/creating-a-feature-behavioral-contract.md`
-- `docs/planning/methodology/creating-a-feature-code-contract.md`
-- `docs/planning/methodology/creating-a-feature-test-contract.md`
-- `docs/planning/methodology/creating-a-feature-committed-implementation-decisions.md`
-- `docs/planning/methodology/creating-a-feature-tasks.md`
-- `docs/planning/methodology/creating-a-feature-task-handoff.md`
-- `docs/planning/methodology/creating-a-coding-code-contract.md`
-- `docs/planning/methodology/creating-a-coding-test-contract.md`
-- `docs/planning/methodology/creating-a-coding-implementation-plan.md`
-- `docs/planning/methodology/creating-a-coding-completion-report.md`
-- `docs/planning/methodology/creating-a-coding-behavioral-contract-defence.md`
-- `docs/planning/methodology/creating-a-coding-code-contract-defence.md`
-- `docs/planning/methodology/creating-a-coding-test-contract-defence.md`
-- `docs/planning/methodology/criteria/README.md`
-- `docs/planning/methodology/criteria/feature-narrative/README.md`
-- `docs/planning/methodology/criteria/feature-capability-contract/README.md`
-- `docs/planning/methodology/criteria/feature-behavioral-contract/README.md`
-- `docs/planning/methodology/criteria/feature-code-contract/README.md`
-- `docs/planning/methodology/criteria/feature-test-contract/README.md`
-- `docs/planning/methodology/criteria/feature-committed-implementation-decisions/README.md`
-- `docs/planning/methodology/criteria/feature-tasks/README.md`
-- `docs/planning/methodology/criteria/feature-task-handoff/README.md`
-- `docs/planning/methodology/criteria/coding-code-contract/README.md`
-- `docs/planning/methodology/criteria/coding-test-contract/README.md`
-- `docs/planning/methodology/criteria/coding-behavioral-contract-defence/README.md`
-- `docs/planning/methodology/criteria/coding-code-contract-defence/README.md`
-- `docs/planning/methodology/criteria/coding-test-contract-defence/README.md`
-
 ## Artifact Authoring Rule
 
 Before drafting or revising any methodology artifact, read that artifact's
