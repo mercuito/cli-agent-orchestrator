@@ -31,6 +31,10 @@ for full assembly guidance.
 |-----------|---------------|
 | [implementation-clause-verifiability](implementation-clause-verifiability.md) | Always |
 | [stable-code-clause-ids](stable-code-clause-ids.md) | Always |
+| [backward-compatibility-policy](backward-compatibility-policy.md) | When the contract reshapes any existing surface |
+| [replaced-surface-lifecycle-policy](replaced-surface-lifecycle-policy.md) | When the contract replaces an existing surface |
+| [caller-migration-policy](caller-migration-policy.md) | When the reshaped surface has existing callers |
+| [persistent-state-migration-policy](persistent-state-migration-policy.md) | When the contract reshapes persistent storage holding pre-existing data |
 
 ## Adding new criteria
 

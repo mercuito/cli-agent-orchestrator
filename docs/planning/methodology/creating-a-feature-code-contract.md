@@ -147,6 +147,16 @@ behavior, and the narrative path applies.
 
 ## Document organization
 
+A clause may carry an optional `**Illustration.**` block under its
+obligation text. Add one when the clause governs a recognizable code
+shape (a field signature, decorator pattern, response-model shape) or a
+recognizable implementer anti-pattern (a class of shim, adapter, or
+silent deferral) where a concrete example aids compliance recognition.
+Skip it when the clause is process- or architecture-shaped and an
+illustration would be padding. Illustrations are subordinate to the
+clause text; the obligation stays in the clause prose, and the
+illustration does not introduce un-IDed obligations.
+
 ```markdown
 # Feature Code Contract
 
@@ -160,6 +170,12 @@ behavior, and the narrative path applies.
 
 - `F-CC-1`: <module ownership, public surface rule, reuse direction, or
   other cross-task architectural commitment>
+
+  **Illustration.** <Optional. Compliant code snippet or shape example.>
+
+  Not compliant: <Optional. One-line description of a plausible
+  alternative that would fail the clause, with the reason it fails.>
+
 - `F-CC-2`: ...
 
 ## Feature-Specific Code Obligations
