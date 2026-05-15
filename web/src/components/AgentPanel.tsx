@@ -29,6 +29,7 @@ interface AgentPanelProps {
   initialTerminalToken?: string | null
   initialAgentId?: string | null
   initialAgentToken?: string | null
+  onInitialDeepLinkConsumed?: () => void
 }
 
 export function AgentPanel({
@@ -36,6 +37,7 @@ export function AgentPanel({
   initialTerminalToken = null,
   initialAgentId = null,
   initialAgentToken = null,
+  onInitialDeepLinkConsumed,
 }: AgentPanelProps) {
   const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus, setActiveMonitoringSessions, setActiveBatons } = useStore()
   const [provider, setProvider] = usePersistedState('cao.spawn.provider', 'kiro_cli')
@@ -193,6 +195,8 @@ export function AgentPanel({
   useEffect(() => {
     if ((!initialTerminalId && !initialAgentId) || initialTerminalOpened.current) return
     let cancelled = false
+    initialTerminalOpened.current = true
+    onInitialDeepLinkConsumed?.()
 
     const terminalPromise = initialTerminalId
       ? api.getTerminal(initialTerminalId)
@@ -203,14 +207,12 @@ export function AgentPanel({
     terminalPromise
       .then(async ({ terminal, terminalToken }) => {
         if (cancelled) return
-        initialTerminalOpened.current = true
         await selectSession(terminal.session_name)
         if (cancelled) return
         openTerminal(terminal.id, terminal.provider, terminal.agent_profile, terminalToken)
       })
       .catch(() => {
         if (cancelled) return
-        initialTerminalOpened.current = true
         showSnackbar({
           type: 'error',
           message: initialAgentId
@@ -222,7 +224,7 @@ export function AgentPanel({
     return () => {
       cancelled = true
     }
-  }, [initialTerminalId, initialTerminalToken, initialAgentId, initialAgentToken])
+  }, [initialTerminalId, initialTerminalToken, initialAgentId, initialAgentToken, onInitialDeepLinkConsumed])
 
   // Fetch working directories for terminals in session detail
   useEffect(() => {

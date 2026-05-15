@@ -1,4 +1,4 @@
-import { useEffect, useState, Suspense } from 'react'
+import { useCallback, useEffect, useState, Suspense } from 'react'
 import { useStore } from './store'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { DashboardHome } from './components/DashboardHome'
@@ -48,8 +48,26 @@ function Snackbar() {
 
 export default function App() {
   const [initialView] = useState(() => parseInitialDashboardView(window.location.search))
+  const [pendingInitialDeepLink, setPendingInitialDeepLink] = useState(() => ({
+    terminalId: initialView.terminalId,
+    terminalToken: initialView.terminalToken,
+    agentId: initialView.agentId,
+    agentToken: initialView.agentToken,
+  }))
   const [tab, setTab] = useState<TabKey>(initialView.tab)
   const { sessions, connected, fetchSessions } = useStore()
+
+  const consumeInitialDeepLink = useCallback(() => {
+    setPendingInitialDeepLink(current => {
+      if (!current.terminalId && !current.agentId) return current
+      return {
+        terminalId: null,
+        terminalToken: null,
+        agentId: null,
+        agentToken: null,
+      }
+    })
+  }, [])
 
   useEffect(() => {
     fetchSessions()
@@ -133,10 +151,11 @@ export default function App() {
             {tab === 'home' && <DashboardHome onNavigate={(t) => setTab(t as TabKey)} />}
             {tab === 'agents' && (
               <AgentPanel
-                initialTerminalId={initialView.terminalId}
-                initialTerminalToken={initialView.terminalToken}
-                initialAgentId={initialView.agentId}
-                initialAgentToken={initialView.agentToken}
+                initialTerminalId={pendingInitialDeepLink.terminalId}
+                initialTerminalToken={pendingInitialDeepLink.terminalToken}
+                initialAgentId={pendingInitialDeepLink.agentId}
+                initialAgentToken={pendingInitialDeepLink.agentToken}
+                onInitialDeepLinkConsumed={consumeInitialDeepLink}
               />
             )}
             {tab === 'flows' && <FlowsPanel />}

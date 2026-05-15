@@ -193,6 +193,23 @@ describe('AgentPanel', () => {
       expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
     })
 
+    it('reports a consumed terminal deep link so parent tab remounts do not replay it', async () => {
+      const onConsumed = vi.fn()
+
+      render(
+        <AgentPanel
+          initialTerminalId="term-1"
+          initialTerminalToken="signed-token"
+          onInitialDeepLinkConsumed={onConsumed}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(onConsumed).toHaveBeenCalledTimes(1)
+      })
+      expect(getTerminal).toHaveBeenCalledWith('term-1')
+    })
+
     it('passes the session terminal token through when opening a listed terminal', async () => {
       storeState.activeSession = 'cao-linear-smoke-tester'
       storeState.activeSessionDetail = {
