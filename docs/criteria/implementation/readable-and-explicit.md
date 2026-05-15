@@ -1,6 +1,6 @@
 ---
 name: readable-and-explicit
-when: Any implementation task.
+when: Always.
 ---
 
 # Code Makes Behavior Explicit
