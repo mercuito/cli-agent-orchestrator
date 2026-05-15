@@ -5,54 +5,19 @@ import {
   AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
   AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT,
   LINEAR_AGENT_MENTIONED_EVENT,
-} from '../../generated/caoEventTypeKeys'
+} from '../../generated/caoEventPayloadTypes'
 import type {
-  TimelineEventView,
-  TimelineEventViewProps,
+  KnownTimelineEventView,
+  KnownTimelineEventViewProps,
   TimelineEventViewRegistration,
 } from '../timelineEventViews'
+import { timelineEventViewRegistration } from '../timelineEventViews'
 
-// Payload field names mirror backend dataclass event_data keys at the frontend
-// presentation boundary. Event type identity is generated; payload names remain
-// the backend-owned JSON contract this view must intentionally read.
-const LinearMentionPayloadKey = {
-  issueIdentifier: 'issue_identifier',
-  issueId: 'issue_id',
-  issueTitle: 'issue_title',
-  issueUrl: 'issue_url',
-  appUserName: 'app_user_name',
-  appUserId: 'app_user_id',
-  messageBody: 'message_body',
-} as const
-
-const RuntimeDeliveryPayloadKey = {
-  sourceKind: 'source_kind',
-  messageBody: 'message_body',
-  terminalId: 'terminal_id',
-  outcome: 'outcome',
-} as const
-
-const WorkspaceSwitchPayloadKey = {
-  fromWorkspaceContextId: 'from_workspace_context_id',
-  toWorkspaceContextId: 'to_workspace_context_id',
-  outcome: 'outcome',
-} as const
-
-const RuntimeLifecyclePayloadKey = {
-  action: 'action',
-  runtimeStatus: 'runtime_status',
-  terminalId: 'terminal_id',
-  workspaceContextId: 'workspace_context_id',
-  ready: 'ready',
-} as const
-
-function stringFact(data: Record<string, unknown>, key: string): string | null {
-  const value = data[key]
+function stringFact(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
-function booleanFact(data: Record<string, unknown>, key: string): boolean | null {
-  const value = data[key]
+function booleanFact(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null
 }
 
@@ -141,23 +106,23 @@ function ViewShell({
   )
 }
 
-const LinearMentionTimelineEventView: TimelineEventView = ({
+const LinearMentionTimelineEventView: KnownTimelineEventView<typeof LINEAR_AGENT_MENTIONED_EVENT> = ({
   event,
   onOpenExternalReference,
-}: TimelineEventViewProps) => {
+}: KnownTimelineEventViewProps<typeof LINEAR_AGENT_MENTIONED_EVENT>) => {
   const data = event.event_data
   const issueIdentifier =
-    stringFact(data, LinearMentionPayloadKey.issueIdentifier) ??
-    stringFact(data, LinearMentionPayloadKey.issueId)
+    stringFact(data.issue_identifier) ??
+    stringFact(data.issue_id)
   const issueTitle =
-    stringFact(data, LinearMentionPayloadKey.issueTitle) ?? 'Untitled Linear issue'
-  const issueUrl = stringFact(data, LinearMentionPayloadKey.issueUrl)
+    stringFact(data.issue_title) ?? 'Untitled Linear issue'
+  const issueUrl = stringFact(data.issue_url)
   const mentioner =
-    stringFact(data, LinearMentionPayloadKey.appUserName) ??
-    stringFact(data, LinearMentionPayloadKey.appUserId) ??
+    stringFact(data.app_user_name) ??
+    stringFact(data.app_user_id) ??
     'Unknown teammate'
   const message =
-    stringFact(data, LinearMentionPayloadKey.messageBody) ?? 'No mention text recorded'
+    stringFact(data.message_body) ?? 'No mention text recorded'
   const issueContext = issueIdentifier ?? 'Unknown issue'
 
   return (
@@ -181,17 +146,19 @@ const LinearMentionTimelineEventView: TimelineEventView = ({
   )
 }
 
-const RuntimeDeliveryTimelineEventView: TimelineEventView = ({
+const RuntimeDeliveryTimelineEventView: KnownTimelineEventView<
+  typeof AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT
+> = ({
   event,
   onFocusTerminal,
-}: TimelineEventViewProps) => {
+}: KnownTimelineEventViewProps<typeof AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT>) => {
   const data = event.event_data
-  const sourceKind = stringFact(data, RuntimeDeliveryPayloadKey.sourceKind)
+  const sourceKind = stringFact(data.source_kind)
   const message =
-    stringFact(data, RuntimeDeliveryPayloadKey.messageBody) ?? 'No message text recorded'
-  const terminalTarget = stringFact(data, RuntimeDeliveryPayloadKey.terminalId)
+    stringFact(data.message_body) ?? 'No message text recorded'
+  const terminalTarget = stringFact(data.terminal_id)
   const terminalId = terminalTarget ?? 'No terminal recorded'
-  const outcome = stringFact(data, RuntimeDeliveryPayloadKey.outcome) ?? 'unknown outcome'
+  const outcome = stringFact(data.outcome) ?? 'unknown outcome'
 
   return (
     <ViewShell
@@ -214,16 +181,18 @@ const RuntimeDeliveryTimelineEventView: TimelineEventView = ({
   )
 }
 
-const WorkspaceContextSwitchTimelineEventView: TimelineEventView = ({
+const WorkspaceContextSwitchTimelineEventView: KnownTimelineEventView<
+  typeof AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT
+> = ({
   event,
-}: TimelineEventViewProps) => {
+}: KnownTimelineEventViewProps<typeof AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT>) => {
   const data = event.event_data
   const fromContext =
-    stringFact(data, WorkspaceSwitchPayloadKey.fromWorkspaceContextId) ??
+    stringFact(data.from_workspace_context_id) ??
     'Unknown from context'
   const toContext =
-    stringFact(data, WorkspaceSwitchPayloadKey.toWorkspaceContextId) ?? 'Unknown to context'
-  const outcome = stringFact(data, WorkspaceSwitchPayloadKey.outcome) ?? 'context changed'
+    stringFact(data.to_workspace_context_id) ?? 'Unknown to context'
+  const outcome = stringFact(data.outcome) ?? 'context changed'
 
   return (
     <ViewShell
@@ -237,20 +206,20 @@ const WorkspaceContextSwitchTimelineEventView: TimelineEventView = ({
   )
 }
 
-const RuntimeLifecycleTimelineEventView: TimelineEventView = ({
+const RuntimeLifecycleTimelineEventView: KnownTimelineEventView<typeof AGENT_RUNTIME_LIFECYCLE_EVENT> = ({
   event,
-}: TimelineEventViewProps) => {
+}: KnownTimelineEventViewProps<typeof AGENT_RUNTIME_LIFECYCLE_EVENT>) => {
   const data = event.event_data
   const action =
-    stringFact(data, RuntimeLifecyclePayloadKey.action) ?? 'unknown lifecycle phase'
+    stringFact(data.action) ?? 'unknown lifecycle phase'
   const runtimeStatus =
-    stringFact(data, RuntimeLifecyclePayloadKey.runtimeStatus) ?? 'unknown status'
+    stringFact(data.runtime_status) ?? 'unknown status'
   const terminalId =
-    stringFact(data, RuntimeLifecyclePayloadKey.terminalId) ?? 'No terminal recorded'
+    stringFact(data.terminal_id) ?? 'No terminal recorded'
   const workspaceContext =
-    stringFact(data, RuntimeLifecyclePayloadKey.workspaceContextId) ??
+    stringFact(data.workspace_context_id) ??
     'Unknown workspace context'
-  const ready = booleanFact(data, RuntimeLifecyclePayloadKey.ready)
+  const ready = booleanFact(data.ready)
   const health = ready === false ? 'attention needed' : runtimeStatus
 
   return (
@@ -267,20 +236,14 @@ const RuntimeLifecycleTimelineEventView: TimelineEventView = ({
 }
 
 export const timelineEventViewRegistrations: TimelineEventViewRegistration[] = [
-  {
-    eventTypeKey: LINEAR_AGENT_MENTIONED_EVENT,
-    view: LinearMentionTimelineEventView,
-  },
-  {
-    eventTypeKey: AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
-    view: RuntimeDeliveryTimelineEventView,
-  },
-  {
-    eventTypeKey: AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT,
-    view: WorkspaceContextSwitchTimelineEventView,
-  },
-  {
-    eventTypeKey: AGENT_RUNTIME_LIFECYCLE_EVENT,
-    view: RuntimeLifecycleTimelineEventView,
-  },
+  timelineEventViewRegistration(LINEAR_AGENT_MENTIONED_EVENT, LinearMentionTimelineEventView),
+  timelineEventViewRegistration(
+    AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
+    RuntimeDeliveryTimelineEventView,
+  ),
+  timelineEventViewRegistration(
+    AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT,
+    WorkspaceContextSwitchTimelineEventView,
+  ),
+  timelineEventViewRegistration(AGENT_RUNTIME_LIFECYCLE_EVENT, RuntimeLifecycleTimelineEventView),
 ]

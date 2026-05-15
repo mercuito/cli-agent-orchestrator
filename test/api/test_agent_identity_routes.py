@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass as std_dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import ClassVar
+from typing import ClassVar, Literal
+
+from pydantic.dataclasses import dataclass
 
 from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
 from cli_agent_orchestrator.clients import database as db_module
@@ -32,6 +34,7 @@ OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.ut
 @dataclass(frozen=True, kw_only=True)
 class _ExperimentalAuditEvent:
     event_name: ClassVar[str] = "experimental_audit_event"
+    kind: Literal["experimental.audit_event"] = "experimental.audit_event"
 
     event_id: CaoEventId
     source: CaoEventSourceRef
@@ -43,7 +46,7 @@ class _ExperimentalAuditEvent:
     agent_participants: tuple[AgentParticipant, ...]
 
 
-@dataclass
+@std_dataclass
 class _FakeIdentityManager:
     statuses: tuple[AgentIdentityStatus, ...]
     status_calls: tuple[str, ...] = ()
@@ -120,9 +123,7 @@ def test_list_agent_identities_active_filter(client, monkeypatch):
     response = client.get("/agents/identities?active=true")
 
     assert response.status_code == 200
-    assert [row["agent_identity_id"] for row in response.json()] == [
-        "implementation_partner"
-    ]
+    assert [row["agent_identity_id"] for row in response.json()] == ["implementation_partner"]
 
 
 def test_get_agent_identity_unknown_returns_404(client, monkeypatch):
@@ -336,6 +337,46 @@ def _event_ids(response_events):
     return [event["event_id"] for event in response_events]
 
 
+def test_agent_identity_timeline_openapi_preserves_public_event_envelope(client):
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    timeline_event_schema = schemas["AgentIdentityTimelineEventResponse"]
+    timeline_response_schema = schemas["AgentIdentityTimelineResponse"]
+    related_response_schema = schemas["AgentIdentityRelatedEventsResponse"]
+    causation_response_schema = schemas["AgentIdentityCausationRelatedEventsResponse"]
+    event_data_schema = timeline_event_schema["properties"]["event_data"]
+
+    assert timeline_event_schema["properties"]["event_type_key"] == {
+        "type": "string",
+        "title": "Event Type Key",
+    }
+    assert "event_type_key" in timeline_event_schema["required"]
+    assert event_data_schema["type"] == "object"
+    assert event_data_schema["additionalProperties"] is True
+    assert "event_data" in timeline_event_schema["required"]
+    assert timeline_response_schema["properties"]["events"]["items"] == {
+        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+    }
+    assert related_response_schema["properties"]["event"] == {
+        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+    }
+    assert related_response_schema["properties"]["correlation_events"]["items"] == {
+        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+    }
+    assert related_response_schema["properties"]["causation_events"] == {
+        "$ref": "#/components/schemas/AgentIdentityCausationRelatedEventsResponse"
+    }
+    assert causation_response_schema["properties"]["direct_cause"]["anyOf"] == [
+        {"$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"},
+        {"type": "null"},
+    ]
+    assert causation_response_schema["properties"]["direct_effects"]["items"] == {
+        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+    }
+
+
 def test_agent_identity_timeline_route_returns_participant_index_rows(
     client,
     monkeypatch,
@@ -369,9 +410,7 @@ def test_agent_identity_timeline_route_returns_participant_index_rows(
     ]
     assert str(workspace.event_id) not in _event_ids(body["events"])
     assert db_module.get_cao_event(str(workspace.event_id)) is not None
-    assert [
-        (event["event_name"], event["participant_role"]) for event in body["events"]
-    ] == [
+    assert [(event["event_name"], event["participant_role"]) for event in body["events"]] == [
         ("agent_mentioned", "mentioned"),
         ("agent_runtime_notification_delivery", "delivery_target"),
         ("agent_mentioned", "mentioned"),
@@ -498,16 +537,18 @@ def test_agent_identity_related_events_route_uses_envelope_threads(
     assert _event_ids(mention_response.json()["causation_events"]["direct_effects"]) == [
         str(delivery.event_id)
     ]
-    assert mention_response.json()["causation_events"]["direct_effects"][0]["event_data"][
-        "outcome"
-    ] == "delivered"
+    assert (
+        mention_response.json()["causation_events"]["direct_effects"][0]["event_data"]["outcome"]
+        == "delivered"
+    )
     assert delivery_response.status_code == 200
     assert delivery_response.json()["causation_events"]["direct_cause"]["event_id"] == str(
         mention.event_id
     )
-    assert delivery_response.json()["causation_events"]["direct_cause"]["event_data"][
-        "message_body"
-    ] == "Please implement CAO-96."
+    assert (
+        delivery_response.json()["causation_events"]["direct_cause"]["event_data"]["message_body"]
+        == "Please implement CAO-96."
+    )
 
 
 def test_agent_identity_related_events_route_keeps_untaught_events_related_and_roleful(
@@ -569,15 +610,11 @@ def test_agent_identity_related_events_route_keeps_untaught_events_related_and_r
         str(root.event_id),
         str(effect.event_id),
     ]
-    assert _event_ids(body["causation_events"]["direct_effects"]) == [
-        str(effect.event_id)
-    ]
-    assert body["causation_events"]["direct_effects"][0]["participant_role"] == (
-        "effect_target"
+    assert _event_ids(body["causation_events"]["direct_effects"]) == [str(effect.event_id)]
+    assert body["causation_events"]["direct_effects"][0]["participant_role"] == ("effect_target")
+    assert (
+        body["causation_events"]["direct_effects"][0]["event_data"]["audit_kind"] == "related_probe"
     )
-    assert body["causation_events"]["direct_effects"][0]["event_data"][
-        "audit_kind"
-    ] == "related_probe"
 
 
 def test_agent_identity_related_events_route_handles_missing_relatedness_and_unknown_event(

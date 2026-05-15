@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react'
 import { AgentPanel } from '../components/AgentPanel'
-import { AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT } from '../generated/caoEventTypeKeys'
+import { AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT } from '../generated/caoEventPayloadTypes'
 
 const terminalViewMock = vi.hoisted(() => vi.fn(() => <div data-testid="terminal-view" />))
 const selectSession = vi.hoisted(() => vi.fn(() => Promise.resolve()))

@@ -318,43 +318,87 @@ def _migrate_ensure_workspace_context_tables() -> None:
 
 def _migrate_ensure_cao_event_tables() -> None:
     """Create durable CAO event log tables on existing databases."""
-    try:
-        engine = _database_module().engine
-        CaoEventModel.__table__.create(bind=engine, checkfirst=True)
-        CaoEventAgentParticipantModel.__table__.create(bind=engine, checkfirst=True)
-        event_table = CaoEventModel.__tablename__
-        participant_table = CaoEventAgentParticipantModel.__tablename__
-        event_id_column = CaoEventAgentParticipantModel.event_id.name
-        agent_identity_column = CaoEventAgentParticipantModel.agent_identity_id.name
-        occurred_at_column = CaoEventAgentParticipantModel.occurred_at.name
-        with engine.begin() as connection:
-            participant_columns = {
-                str(row[1])
-                for row in connection.exec_driver_sql(
-                    f"PRAGMA table_info({participant_table})"
-                )
-            }
-            if occurred_at_column not in participant_columns:
-                connection.exec_driver_sql(
-                    f"ALTER TABLE {participant_table} ADD COLUMN {occurred_at_column} DATETIME"
-                )
-                connection.exec_driver_sql(f"""
-                    UPDATE {participant_table}
-                    SET {occurred_at_column} = (
-                        SELECT {event_table}.{occurred_at_column}
-                        FROM {event_table}
-                        WHERE {event_table}.{event_id_column} = {participant_table}.{event_id_column}
-                    )
-                """)
+    engine = _database_module().engine
+    CaoEventModel.__table__.create(bind=engine, checkfirst=True)
+    CaoEventAgentParticipantModel.__table__.create(bind=engine, checkfirst=True)
+    event_table = CaoEventModel.__tablename__
+    participant_table = CaoEventAgentParticipantModel.__tablename__
+    event_id_column = CaoEventAgentParticipantModel.event_id.name
+    agent_identity_column = CaoEventAgentParticipantModel.agent_identity_id.name
+    occurred_at_column = CaoEventAgentParticipantModel.occurred_at.name
+    kind_column = CaoEventModel.kind.name
+    legacy_type_key_column = "event_type_key"
+    with engine.begin() as connection:
+        event_columns = {
+            str(row[1]) for row in connection.exec_driver_sql(f"PRAGMA table_info({event_table})")
+        }
+        if kind_column not in event_columns:
             connection.exec_driver_sql(
-                f"DROP INDEX IF EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}"
+                f"ALTER TABLE {event_table} ADD COLUMN {kind_column} VARCHAR"
+            )
+            event_columns.add(kind_column)
+        if legacy_type_key_column in event_columns:
+            legacy_kind_by_type_key = _cao_event_kind_by_legacy_type_key()
+            for legacy_type_key, kind in legacy_kind_by_type_key.items():
+                connection.exec_driver_sql(
+                    f"""
+                    UPDATE {event_table}
+                    SET {kind_column} = ?
+                    WHERE {legacy_type_key_column} = ?
+                    """,
+                    (kind, legacy_type_key),
+                )
+            unresolved_rows = connection.exec_driver_sql(f"""
+                SELECT {event_id_column}, {legacy_type_key_column}
+                FROM {event_table}
+                WHERE {kind_column} IS NULL OR {kind_column} = ''
+            """).fetchall()
+            if unresolved_rows:
+                unresolved = ", ".join(f"{row[0]}={row[1]}" for row in unresolved_rows)
+                raise ValueError(f"Unresolved legacy CAO event type keys: {unresolved}")
+            connection.exec_driver_sql("DROP INDEX IF EXISTS ix_cao_events_event_type_key")
+            connection.exec_driver_sql(
+                f"ALTER TABLE {event_table} DROP COLUMN {legacy_type_key_column}"
+            )
+        connection.exec_driver_sql(
+            f"CREATE INDEX IF NOT EXISTS ix_cao_events_{kind_column} "
+            f"ON {event_table} ({kind_column})"
+        )
+
+        participant_columns = {
+            str(row[1])
+            for row in connection.exec_driver_sql(f"PRAGMA table_info({participant_table})")
+        }
+        if occurred_at_column not in participant_columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE {participant_table} ADD COLUMN {occurred_at_column} DATETIME"
             )
             connection.exec_driver_sql(f"""
-                CREATE INDEX IF NOT EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}
-                ON {participant_table} ({agent_identity_column}, {occurred_at_column}, {event_id_column})
+                UPDATE {participant_table}
+                SET {occurred_at_column} = (
+                    SELECT {event_table}.{occurred_at_column}
+                    FROM {event_table}
+                    WHERE {event_table}.{event_id_column} = {participant_table}.{event_id_column}
+                )
             """)
-    except Exception as e:
-        logger.warning(f"Migration check for CAO event log tables failed: {e}")
+        connection.exec_driver_sql(
+            f"DROP INDEX IF EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}"
+        )
+        connection.exec_driver_sql(f"""
+            CREATE INDEX IF NOT EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}
+            ON {participant_table} ({agent_identity_column}, {occurred_at_column}, {event_id_column})
+        """)
+
+
+def _cao_event_kind_by_legacy_type_key() -> dict[str, str]:
+    from cli_agent_orchestrator.events.serialization import cao_event_kind
+    from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
+    from cli_agent_orchestrator.runtime.events import RUNTIME_CAO_EVENTS
+
+    return {
+        f"{event_type.__module__}.{event_type.__qualname__}": cao_event_kind(event_type)
+        for event_type in (*LINEAR_CAO_EVENTS, *RUNTIME_CAO_EVENTS)
+    }
 
 
 def _migrate_ensure_provider_conversation_tables() -> None:

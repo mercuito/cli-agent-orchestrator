@@ -1,5 +1,6 @@
 import { Clock3, GitBranch, Link2 } from 'lucide-react'
 import { AgentIdentityTimelineEvent } from '../api'
+import type { CaoEventPayloadForTypeKey, CaoEventTypeKey } from '../generated/caoEventPayloadTypes'
 
 type TimelineEventViewSurface = 'main' | 'related'
 
@@ -15,9 +16,38 @@ export interface TimelineEventViewProps {
 
 export type TimelineEventView = (props: TimelineEventViewProps) => JSX.Element
 
+export type KnownTimelineEvent<T extends CaoEventTypeKey> = Omit<
+  AgentIdentityTimelineEvent,
+  'event_type_key' | 'event_data'
+> & {
+  event_type_key: T
+  event_data: Partial<CaoEventPayloadForTypeKey<T>> & Record<string, unknown>
+}
+
+export type KnownTimelineEventViewProps<T extends CaoEventTypeKey> = Omit<
+  TimelineEventViewProps,
+  'event'
+> & {
+  event: KnownTimelineEvent<T>
+}
+
+export type KnownTimelineEventView<T extends CaoEventTypeKey> = (
+  props: KnownTimelineEventViewProps<T>
+) => JSX.Element
+
 export interface TimelineEventViewRegistration {
   eventTypeKey: string
   view: TimelineEventView
+}
+
+export function timelineEventViewRegistration<T extends CaoEventTypeKey>(
+  eventTypeKey: T,
+  view: KnownTimelineEventView<T>,
+): TimelineEventViewRegistration {
+  return {
+    eventTypeKey,
+    view: view as TimelineEventView,
+  }
 }
 
 interface TimelineEventViewModule {

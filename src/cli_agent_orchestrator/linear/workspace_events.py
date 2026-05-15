@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Mapping, Optional
+from typing import Any, ClassVar, Literal, Mapping, Optional
 from uuid import uuid4
+
+from pydantic.dataclasses import dataclass
 
 from cli_agent_orchestrator.events import (
     AgentParticipant,
@@ -108,31 +110,34 @@ class LinearIssueContextEvent:
         return self.parent_issue_identifier or self.parent_issue_id or self.canonical_issue_id
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class LinearAgentMentionedEvent(LinearIssueContextEvent):
     """Human mention or prompt routed to a Linear agent."""
 
     event_name: ClassVar[str] = "agent_mentioned"
     description: ClassVar[str] = "Human mention or prompt routed to a Linear agent."
+    kind: Literal["linear.agent_mentioned"] = "linear.agent_mentioned"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class LinearIssueDelegatedToAgentEvent(LinearIssueContextEvent):
     """Linear issue delegation routed to an agent."""
 
     event_name: ClassVar[str] = "issue_delegated_to_agent"
     description: ClassVar[str] = "Linear issue delegation routed to an agent."
+    kind: Literal["linear.issue_delegated_to_agent"] = "linear.issue_delegated_to_agent"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class LinearAgentSessionPromptedEvent(LinearIssueContextEvent):
     """Follow-up prompt inside an existing Linear AgentSession."""
 
     event_name: ClassVar[str] = "agent_session_prompted"
     description: ClassVar[str] = "Follow-up prompt inside an existing Linear AgentSession."
+    kind: Literal["linear.agent_session_prompted"] = "linear.agent_session_prompted"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class LinearAgentSessionLifecycleActivityEvent(LinearIssueContextEvent):
     """Linear AgentSession lifecycle activity that may affect routing or state."""
 
@@ -140,14 +145,18 @@ class LinearAgentSessionLifecycleActivityEvent(LinearIssueContextEvent):
     description: ClassVar[str] = (
         "Linear AgentSession lifecycle activity that may affect routing or state."
     )
+    kind: Literal["linear.agent_session_lifecycle_activity"] = (
+        "linear.agent_session_lifecycle_activity"
+    )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class LinearAgentSessionStopRequestedEvent(LinearIssueContextEvent):
     """Linear stop/cancel signal for an existing AgentSession."""
 
     event_name: ClassVar[str] = "agent_session_stop_requested"
     description: ClassVar[str] = "Linear stop/cancel signal for an existing AgentSession."
+    kind: Literal["linear.agent_session_stop_requested"] = "linear.agent_session_stop_requested"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -157,6 +166,7 @@ class LinearIssueCreatedEvent:
     provider_name: ClassVar[str] = LINEAR_PROVIDER_NAME
     event_name: ClassVar[str] = "issue_created"
     description: ClassVar[str] = "Linear issue created through a CAO-mediated Linear tool."
+    kind: Literal["linear.issue_created"] = "linear.issue_created"
 
     event_id: CaoEventId = field(default_factory=_default_event_id)
     source: CaoEventSourceRef = field(default_factory=_default_source)

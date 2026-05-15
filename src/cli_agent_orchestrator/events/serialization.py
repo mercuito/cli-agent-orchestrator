@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import MISSING, fields, is_dataclass
 from datetime import datetime
-from importlib import import_module
 from types import UnionType
-from typing import Any, cast, get_args, get_origin, get_type_hints
+from typing import Any, Literal, cast, get_args, get_origin, get_type_hints
 
 from cli_agent_orchestrator.events import (
     AgentParticipant,
@@ -21,14 +20,15 @@ from cli_agent_orchestrator.events import (
     CaoEventSourceRef,
     CaoEventSourceType,
     InvalidCaoEventError,
+    UnknownCaoEventError,
 )
 
 
 class CaoEventSerializerRegistry:
-    """Registry that round-trips concrete CAO event dataclasses by type key."""
+    """Registry that round-trips concrete CAO event dataclasses by kind."""
 
     def __init__(self) -> None:
-        self._event_types_by_key: dict[str, type[CaoEvent]] = {}
+        self._event_types_by_kind: dict[str, type[CaoEvent]] = {}
 
     def register(self, event_types: tuple[type[CaoEvent], ...]) -> None:
         for event_type in event_types:
@@ -36,27 +36,28 @@ class CaoEventSerializerRegistry:
                 raise InvalidCaoEventError(
                     f"{event_type.__name__} must be a dataclass to be persisted"
                 )
-            type_key = event_type_key(event_type)
-            existing = self._event_types_by_key.get(type_key)
+            kind = cao_event_kind(event_type)
+            existing = self._event_types_by_kind.get(kind)
             if existing is not None and existing is not event_type:
-                raise InvalidCaoEventError(f"Duplicate CAO event type key: {type_key}")
-            self._event_types_by_key[type_key] = event_type
+                raise InvalidCaoEventError(f"Duplicate CAO event kind: {kind}")
+            self._event_types_by_kind[kind] = event_type
 
     def serialize(self, event: CaoEvent) -> tuple[str, str]:
         event_type = type(event)
-        self.register((event_type,))
+        kind = _event_instance_kind(event)
+        if self._event_types_by_kind.get(kind) is not event_type:
+            raise UnknownCaoEventError(f"no registered CAO event class for kind: {kind}")
         event_data = {
             field.name: _encode_value(getattr(event, field.name))
             for field in fields(cast(Any, event))
             if field.init
         }
-        return event_type_key(event_type), _dumps(event_data)
+        return kind, _dumps(event_data)
 
-    def deserialize(self, event_type_key_value: str, event_data_json: str) -> CaoEvent:
-        event_type = self._event_types_by_key.get(event_type_key_value)
+    def deserialize(self, kind: str, event_data_json: str) -> CaoEvent:
+        event_type = self._event_types_by_kind.get(kind)
         if event_type is None:
-            event_type = _import_event_type(event_type_key_value)
-            self.register((event_type,))
+            raise UnknownCaoEventError(f"no registered CAO event class for kind: {kind}")
         try:
             event_data = json.loads(event_data_json)
         except json.JSONDecodeError as exc:
@@ -70,6 +71,8 @@ class CaoEventSerializerRegistry:
             if not field.init:
                 continue
             if field.name not in event_data:
+                if field.default is not MISSING or field.default_factory is not MISSING:
+                    continue
                 raise InvalidCaoEventError(f"Stored CAO event data is missing field: {field.name}")
             kwargs[field.name] = _decode_value(event_data[field.name], type_hints[field.name])
         return event_type(**kwargs)
@@ -91,39 +94,51 @@ def register_cao_event_serializers(event_types: tuple[type[CaoEvent], ...]) -> N
 
 
 def serialize_cao_event(event: CaoEvent) -> tuple[str, str]:
-    """Serialize one typed event into its concrete type key and canonical JSON."""
+    """Serialize one typed event into its concrete kind and canonical JSON."""
 
     return default_cao_event_serializer_registry().serialize(event)
 
 
-def deserialize_cao_event(event_type_key_value: str, event_data_json: str) -> CaoEvent:
-    """Reconstruct one typed event from its registered type key and canonical JSON."""
+def deserialize_cao_event(kind: str, event_data_json: str) -> CaoEvent:
+    """Reconstruct one typed event from its registered kind and canonical JSON."""
 
     return default_cao_event_serializer_registry().deserialize(
-        event_type_key_value,
+        kind,
         event_data_json,
     )
 
 
-def event_type_key(event_type: type[CaoEvent]) -> str:
-    """Return the stable discriminator for a concrete event class."""
+def cao_event_kind(event_type: type[CaoEvent]) -> str:
+    """Return the storage discriminator for a concrete event class."""
 
-    return f"{event_type.__module__}.{event_type.__qualname__}"
+    type_hints = get_type_hints(event_type)
+    kind_hint = type_hints.get("kind")
+    if get_origin(kind_hint) is not Literal:
+        raise InvalidCaoEventError(
+            f"{event_type.__name__}.kind must be annotated as a Literal discriminator"
+        )
+    literal_values = get_args(kind_hint)
+    if len(literal_values) != 1 or not isinstance(literal_values[0], str):
+        raise InvalidCaoEventError(
+            f"{event_type.__name__}.kind must declare exactly one string Literal"
+        )
+    kind = literal_values[0].strip()
+    if not kind:
+        raise InvalidCaoEventError(f"{event_type.__name__}.kind must be non-empty")
+    default = getattr(event_type, "kind", None)
+    if default != kind:
+        raise InvalidCaoEventError(
+            f"{event_type.__name__}.kind default must match its Literal discriminator"
+        )
+    return kind
 
 
-def _import_event_type(type_key: str) -> type[CaoEvent]:
-    module_name, separator, qualified_name = type_key.rpartition(".")
-    if not separator or not module_name or not qualified_name:
-        raise InvalidCaoEventError(f"Unknown CAO event type key: {type_key}")
-    try:
-        value: object = import_module(module_name)
-        for attribute in qualified_name.split("."):
-            value = getattr(value, attribute)
-    except (ImportError, AttributeError) as exc:
-        raise InvalidCaoEventError(f"Unknown CAO event type key: {type_key}") from exc
-    if not isinstance(value, type):
-        raise InvalidCaoEventError(f"CAO event type key does not resolve to a class: {type_key}")
-    return cast(type[CaoEvent], value)
+def _event_instance_kind(event: CaoEvent) -> str:
+    kind = cao_event_kind(type(event))
+    value = getattr(event, "kind", None)
+    if value != kind:
+        raise InvalidCaoEventError(f"{type(event).__name__}.kind must be {kind}")
+    return kind
 
 
 def _dumps(value: object) -> str:

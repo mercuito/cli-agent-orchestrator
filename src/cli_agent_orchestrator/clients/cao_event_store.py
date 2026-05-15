@@ -17,9 +17,7 @@ from cli_agent_orchestrator.events.serialization import deserialize_cao_event, s
 _NO_PARTICIPANT_ROLE = ""
 CAO_EVENTS_TABLE = "cao_events"
 CAO_EVENT_AGENT_PARTICIPANTS_TABLE = "cao_event_agent_participants"
-CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX = (
-    "ix_cao_event_agent_participants_agent_occurred"
-)
+CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX = "ix_cao_event_agent_participants_agent_occurred"
 CAO_EVENT_ID_COLUMN = "event_id"
 CAO_EVENT_OCCURRED_AT_COLUMN = "occurred_at"
 CAO_EVENT_AGENT_IDENTITY_ID_COLUMN = "agent_identity_id"
@@ -39,7 +37,7 @@ class CaoEventModel(Base):
 
     event_id = Column(CAO_EVENT_ID_COLUMN, String, primary_key=True)
     event_name = Column(String, nullable=False, index=True)
-    event_type_key = Column(String, nullable=False, index=True)
+    kind = Column(String, nullable=False, index=True)
     source_type = Column(String, nullable=False, index=True)
     source_id = Column(String, nullable=False, index=True)
     occurred_at = Column(
@@ -117,11 +115,11 @@ class CaoEventParticipantRecord:
 def persist_cao_event(event: CaoEvent) -> CaoEventRecord:
     """Persist one typed CAO event and participant index idempotently by event id."""
 
-    event_type_key, event_data_json = serialize_cao_event(event)
+    kind, event_data_json = serialize_cao_event(event)
     values = {
         CAO_EVENT_ID_COLUMN: str(event.event_id),
         "event_name": event.event_name,
-        "event_type_key": event_type_key,
+        "kind": kind,
         "source_type": str(event.source.source_type),
         "source_id": str(event.source.source_id),
         CAO_EVENT_OCCURRED_AT_COLUMN: event.occurred_at,
@@ -265,14 +263,14 @@ def _list_records(*criteria: object) -> tuple[CaoEventRecord, ...]:
 
 
 def _record_from_model(row: CaoEventModel) -> CaoEventRecord:
-    event_type_key = cast(str, row.event_type_key)
+    kind = cast(str, row.kind)
     event_data_json = cast(str, row.event_data_json)
-    event = deserialize_cao_event(event_type_key, event_data_json)
+    event = deserialize_cao_event(kind, event_data_json)
     event_data = cast(dict[str, Any], json.loads(event_data_json))
     return CaoEventRecord(
         event_id=cast(str, row.event_id),
         event_name=cast(str, row.event_name),
-        event_type_key=event_type_key,
+        event_type_key=_public_event_type_key(type(event)),
         source_type=cast(str, row.source_type),
         source_id=cast(str, row.source_id),
         occurred_at=cast(datetime, row.occurred_at),
@@ -281,6 +279,10 @@ def _record_from_model(row: CaoEventModel) -> CaoEventRecord:
         event_data=event_data,
         event=event,
     )
+
+
+def _public_event_type_key(event_type: type[CaoEvent]) -> str:
+    return f"{event_type.__module__}.{event_type.__qualname__}"
 
 
 def _session_local():

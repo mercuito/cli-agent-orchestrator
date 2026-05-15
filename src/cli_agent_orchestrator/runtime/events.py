@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import datetime, timezone
-from typing import ClassVar
+from typing import ClassVar, Literal
 from uuid import uuid4
+
+from pydantic.dataclasses import dataclass
 
 from cli_agent_orchestrator.events import (
     AgentParticipant,
@@ -82,6 +84,9 @@ class AgentRuntimeNotificationAcceptedEvent(_AgentRuntimeEventMetadata):
     """Runtime accepted a newly durable notification for an agent identity."""
 
     event_name: ClassVar[str] = "agent_runtime_notification_accepted"
+    kind: Literal["cao_runtime.agent_runtime_notification_accepted"] = (
+        "cao_runtime.agent_runtime_notification_accepted"
+    )
 
     agent_identity_id: str
     workspace_context_id: str
@@ -97,6 +102,9 @@ class AgentRuntimeNotificationDeliveryEvent(_AgentRuntimeEventMetadata):
     """Runtime delivery for an accepted notification was delivered, deferred, or failed."""
 
     event_name: ClassVar[str] = "agent_runtime_notification_delivery"
+    kind: Literal["cao_runtime.agent_runtime_notification_delivery"] = (
+        "cao_runtime.agent_runtime_notification_delivery"
+    )
 
     agent_identity_id: str
     workspace_context_id: str
@@ -117,6 +125,7 @@ class AgentRuntimeLifecycleEvent(_AgentRuntimeEventMetadata):
     """Runtime lifecycle reconciliation started, reused, refreshed, deferred, or failed."""
 
     event_name: ClassVar[str] = "agent_runtime_lifecycle"
+    kind: Literal["cao_runtime.agent_runtime_lifecycle"] = "cao_runtime.agent_runtime_lifecycle"
 
     agent_identity_id: str
     workspace_context_id: str
@@ -133,6 +142,9 @@ class AgentRuntimeWorkspaceContextSwitchEvent(_AgentRuntimeEventMetadata):
     """Runtime switched workspace context, deferred the switch, or failed it."""
 
     event_name: ClassVar[str] = "agent_runtime_workspace_context_switch"
+    kind: Literal["cao_runtime.agent_runtime_workspace_context_switch"] = (
+        "cao_runtime.agent_runtime_workspace_context_switch"
+    )
 
     agent_identity_id: str
     from_workspace_context_id: str
@@ -148,6 +160,7 @@ class RuntimeWorkspaceEvent:
     """Workspace-wide runtime activity that is not scoped to one agent identity."""
 
     event_name: ClassVar[str] = "runtime_workspace"
+    kind: Literal["cao_runtime.runtime_workspace"] = "cao_runtime.runtime_workspace"
 
     event_id: CaoEventId
     source: CaoEventSourceRef

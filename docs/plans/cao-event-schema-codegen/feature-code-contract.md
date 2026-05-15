@@ -3,9 +3,9 @@
 Cross-task implementation-steering obligations for the CAO Event Schema
 Codegen refactor. This is the entry artifact: the work is a pure refactor
 with no externally observable behavior change. The end-state pivots the
-CAO event type system to a stable wire-format discriminator and an
-OpenAPI-driven TypeScript codegen pipeline so that frontend event views
-can narrow on typed event payloads.
+CAO event type system to a stable internal/storage discriminator and a
+schema-driven TypeScript codegen pipeline while preserving the existing
+public timeline API response envelope.
 
 ## Scope Preamble
 
@@ -14,20 +14,20 @@ can narrow on typed event payloads.
 - CAO event declaration: every event class declares a stable instance-level
   `kind` discriminator field and is constructed via Pydantic dataclasses
   instead of stdlib dataclasses.
-- Wire-format discriminator: persisted and transmitted events identify
-  their type by a stable `kind` string (`"<provider>.<event_name>"`)
-  rather than by the Python module-qualified class name
+- Internal/storage discriminator: persisted events identify their type by
+  a stable `kind` string (`"<provider>.<event_name>"`) rather than by the
+  Python module-qualified class name
   (`event_type_key = f"{module}.{qualname}"`).
 - Event serializer class lookup: `CaoEventSerializerRegistry` indexes
   registered event classes by `kind` and resolves them via explicit
   registration at startup, retiring dynamic module import for unknown
   type keys.
-- API timeline response shape: timeline event-data fields on the API
-  surface are typed as a Pydantic discriminated union over the full set
-  of CAO event classes, producing `oneOf` + `discriminator` in OpenAPI.
-- Frontend event type generation pipeline: TypeScript event types are
-  generated from the FastAPI-emitted OpenAPI document via
-  `openapi-typescript`. The hand-rolled
+- API timeline response compatibility: timeline routes keep their
+  existing externally observable response envelope, including the
+  `event_type_key` field and object-shaped `event_data` payloads.
+- Frontend event type generation pipeline: TypeScript event payload types
+  are generated from a repo-local schema document via `openapi-typescript`
+  without changing the public timeline API response schema. The hand-rolled
   `scripts/generate_cao_event_type_keys.py` and
   `web/src/generated/caoEventTypeKeys.ts` are retired.
 - Database `cao_events` table: a `kind` column is added as the canonical
@@ -47,7 +47,8 @@ can narrow on typed event payloads.
   `web/src/components/timelineEventViews/`
 - `web/src/generated/` (replace existing generated TS event constants
   with `openapi-typescript` output)
-- `web/package.json` (codegen script wiring)
+- `web/package.json` and `web/package-lock.json` (codegen script and
+  dependency wiring)
 - `scripts/generate_cao_event_type_keys.py` (retired)
 - Affected tests: `test/events/test_cao_event_persistence.py`,
   `test/api/test_agent_identity_routes.py`,
@@ -70,18 +71,15 @@ can narrow on typed event payloads.
 
 ### Feature-wide obligations that must not be violated
 
-- No persisted event is lost during the storage migration: every row in
-  `cao_events` at feature start is present and reconstructable (under
-  the new `kind`-keyed shape) at feature end.
-- Event reconstruction equality is preserved: round-tripping a published
-  event through the persistence layer yields an instance equal to the
-  original under dataclass equality, before and after the discriminator
-  pivot.
-- The `CaoEvent` protocol's required attributes (`event_id`, `source`,
-  `occurred_at`, `correlation_id`, `causation_id`) remain present on
-  every event class with their existing types.
-- Existing event-driven tests across backend and frontend (per the
-  affected tests list above) remain green at every task boundary.
+The binding preservation obligations are the ID'd clauses below:
+
+- Public timeline API response compatibility is governed by F-CC-4.
+- Persisted event migration and reconstruction are governed by F-CC-6.
+- Event equality and protocol attribute preservation are governed by
+  F-CC-9.
+- Task-boundary proof preservation is governed by the task-specific
+  preservation baseline clauses in
+  `feature-test-contract.md`.
 
 ## Applicable Feature-Level Criteria
 
@@ -89,9 +87,9 @@ can narrow on typed event payloads.
 |-----------|----------------|
 | [implementation-clause-verifiability](../../planning/methodology/criteria/feature-code-contract/implementation-clause-verifiability.md) | Always applies; every clause below names the surface it governs and what counts as compliance. |
 | [stable-code-clause-ids](../../planning/methodology/criteria/feature-code-contract/stable-code-clause-ids.md) | Always applies; every clause carries a stable `F-CC-<n>` ID for slicing in `feature-tasks.md`, handoffs, and Code Contract Defences. |
-| [backward-compatibility-policy](../../planning/methodology/criteria/feature-code-contract/backward-compatibility-policy.md) | The contract reshapes every event class, the serializer, API response models, the storage schema, and the frontend codegen pipeline; F-CC-7 carries the policy across all reshaped surfaces. |
-| [replaced-surface-lifecycle-policy](../../planning/methodology/criteria/feature-code-contract/replaced-surface-lifecycle-policy.md) | The contract replaces `event_type_key` as the wire-format identifier, the dynamic-import serializer fallback, the hand-rolled codegen script, and the legacy storage column; F-CC-7's removal list states the end-state for each. |
-| [caller-migration-policy](../../planning/methodology/criteria/feature-code-contract/caller-migration-policy.md) | Reshaped surfaces have callers in event factories, the persistence layer, the timeline service, the API routes, and the frontend timeline panel; F-CC-8 enumerates the migration policy and discovery method per surface. |
+| [backward-compatibility-policy](../../planning/methodology/criteria/feature-code-contract/backward-compatibility-policy.md) | The contract reshapes every event class, the serializer, the storage schema, API response construction internals, and the frontend codegen pipeline while preserving public timeline API compatibility through F-CC-4. |
+| [replaced-surface-lifecycle-policy](../../planning/methodology/criteria/feature-code-contract/replaced-surface-lifecycle-policy.md) | The contract replaces `event_type_key` as the serializer/storage discriminator, the dynamic-import serializer fallback, the hand-rolled codegen script, and the legacy storage column; F-CC-7 and F-CC-10 state the end-state for each while preserving API response compatibility under F-CC-4. |
+| [caller-migration-policy](../../planning/methodology/criteria/feature-code-contract/caller-migration-policy.md) | Reshaped surfaces have callers in event factories, the persistence layer, the timeline service, the API routes, and the frontend timeline panel; F-CC-8, F-CC-11, and F-CC-12 enumerate the migration policy and discovery method per surface. |
 | [persistent-state-migration-policy](../../planning/methodology/criteria/feature-code-contract/persistent-state-migration-policy.md) | The `cao_events` table schema is reshaped and pre-existing rows must be backfilled; F-CC-6 states the migration shape, owning-task scope, and failure-handling policy. |
 
 ## Architectural Commitments
@@ -105,7 +103,7 @@ can narrow on typed event payloads.
   `"linear.agent_mentioned"`, `"cao_runtime.agent_runtime_lifecycle"`,
   `"cao_runtime.runtime_workspace"`). Existing `ClassVar event_name` and
   `ClassVar provider_name` declarations remain unchanged; `kind` is the
-  wire-format discriminator going forward.
+  internal/storage discriminator going forward.
 
   **Illustration.** Compliant declaration on a Linear event class:
 
@@ -121,8 +119,8 @@ can narrow on typed event payloads.
   branches can't be narrowed to a single class.
   `kind: ClassVar[Literal["linear.agent_mentioned"]] = "..."` — the
   class-level value never appears on instances, so the JSON Schema for
-  the event omits the discriminator field and the OpenAPI `oneOf` cannot
-  be assembled.
+  the event omits the discriminator field and the generated event schema
+  cannot be assembled.
 
 - **F-CC-2 — Event classes are Pydantic dataclasses.** Every CAO event
   class is declared with
@@ -131,9 +129,12 @@ can narrow on typed event payloads.
   annotations, `NewType`-typed fields, `field(default_factory=...)`
   defaults, frozen/kw_only semantics, inheritance from
   `_AgentRuntimeEventMetadata` and `LinearIssueContextEvent`, computed
-  `@property` accessors — are preserved unchanged. `is_dataclass`,
-  `dataclasses.fields`, and `typing.get_type_hints` continue to return
-  the same shape on every event class.
+  `@property` accessors — are preserved unchanged except for the single
+  `kind` instance field required by F-CC-1. `is_dataclass` remains true;
+  `dataclasses.fields` exposes every pre-existing field with its existing
+  type/default/init behavior plus the new `kind` field exactly once; and
+  `typing.get_type_hints` preserves all pre-existing hints while adding
+  the `kind` literal hint.
 
   **Illustration.** Compliant decorator swap, leaving the class body
   unchanged:
@@ -157,10 +158,12 @@ can narrow on typed event payloads.
   ```
 
   Recognition of compliance: `is_dataclass(LinearAgentMentionedEvent)`
-  returns `True` after the swap; `dataclasses.fields(...)` returns the
-  same field tuple as before;
+  returns `True` after the swap; every pre-existing
+  `dataclasses.fields(...)` entry remains present with the same metadata,
+  and the only added field entry is `kind`;
   `get_type_hints(LinearAgentMentionedEvent)["event_id"]` is still
-  `CaoEventId`. Not compliant: replacing the decorator with
+  `CaoEventId`, while `get_type_hints(LinearAgentMentionedEvent)["kind"]`
+  is the class-specific `Literal[...]`. Not compliant: replacing the decorator with
   `pydantic.BaseModel` inheritance — the serializer's `is_dataclass`
   guards and `_decode_value`'s `target_type is CaoEventId` branches stop
   matching, and inheritance from `_AgentRuntimeEventMetadata` /
@@ -171,7 +174,7 @@ can narrow on typed event payloads.
   `src/cli_agent_orchestrator/events/serialization.py` registers and
   resolves event classes via their `kind` literal value rather than via
   `f"{module}.{qualname}"`. `serialize_cao_event` emits `kind` as the
-  type key; `deserialize_cao_event` looks up the class by `kind` against
+  internal/storage type key; `deserialize_cao_event` looks up the class by `kind` against
   the populated registry. The dynamic-import fallback (`_import_event_type`)
   is removed; an unrecognized `kind` raises `UnknownCaoEventError`. Event
   classes are registered explicitly at startup through the existing
@@ -203,7 +206,7 @@ can narrow on typed event payloads.
           self._event_types_by_kind: dict[str, type[CaoEvent]] = {}
 
       def serialize(self, event):
-          return event.kind, _dumps(...)                    # stable wire-format string
+          return event.kind, _dumps(...)                    # stable storage string
 
       def deserialize(self, kind, payload_json):
           event_type = self._event_types_by_kind.get(kind)
@@ -213,81 +216,44 @@ can narrow on typed event payloads.
   ```
 
   Not compliant: keeping `_import_event_type` as a silent fallback for
-  unknown `kind` values — the contract's purpose is to decouple the wire
-  format from Python module paths, so dynamic resolution by `kind`
+  unknown `kind` values — the contract's purpose is to decouple the
+  storage discriminator from Python module paths, so dynamic resolution by `kind`
   through `importlib` would re-introduce the coupling under a new name.
 
-- **F-CC-4 — Timeline API responses expose a discriminated event union.**
-  The `event_data` field on timeline event response models in
-  `src/cli_agent_orchestrator/api/main.py` (currently
-  `AgentIdentityTimelineEventResponse`,
-  `AgentIdentityCausationRelatedEventsResponse`, and
-  `AgentIdentityRelatedEventsResponse`) is typed
-  `Annotated[Union[<every CAO event class>], pydantic.Discriminator("kind")]`.
-  The FastAPI-emitted OpenAPI document served at `/openapi.json`
-  contains, for each affected response, a JSON Schema `oneOf` with a
-  `discriminator` keyed on `kind`, carrying exactly one branch per
-  member of `LINEAR_CAO_EVENTS + RUNTIME_CAO_EVENTS`.
+- **F-CC-4 — Public timeline API response shape is preserved.** Timeline
+  event response models and route outputs in
+  `src/cli_agent_orchestrator/api/main.py` preserve the externally
+  observable response envelope currently consumed by the frontend:
+  `event_type_key` remains present with the same Python module-qualified
+  class-name value shape, and `event_data` remains an object payload whose
+  existing keys and values are not renamed, removed, or wrapped by the
+  refactor. Any typed event instances or generated schema artifacts used
+  during response construction are internal implementation details; they
+  do not require clients to consume `kind` from the public timeline
+  response.
 
-  **Illustration.** Compliant response-model shape:
+  Not compliant: removing `event_type_key` from
+  `AgentIdentityTimelineEventResponse`, changing it to a `kind` value, or
+  requiring frontend/runtime API consumers to read `event_data.kind` to
+  preserve existing timeline behavior. Not compliant: changing the
+  `/openapi.json` timeline response schema in a way that removes the
+  existing `event_type_key` property or changes `event_data` away from the
+  object-shaped payload contract the current API exposes.
 
-  ```python
-  from typing import Annotated, Union
-  from pydantic import BaseModel, Discriminator
-
-  CaoEventUnion = Annotated[
-      Union[
-          LinearAgentMentionedEvent,
-          LinearIssueDelegatedToAgentEvent,
-          # ... every member of LINEAR_CAO_EVENTS + RUNTIME_CAO_EVENTS
-          AgentRuntimeLifecycleEvent,
-      ],
-      Discriminator("kind"),
-  ]
-
-  class AgentIdentityTimelineEventResponse(BaseModel):
-      event_id: str
-      occurred_at: datetime
-      # ... other envelope fields
-      event_data: CaoEventUnion
-  ```
-
-  Resulting OpenAPI shape under
-  `components.schemas.AgentIdentityTimelineEventResponse.properties.event_data`:
-
-  ```json
-  {
-    "oneOf": [
-      { "$ref": "#/components/schemas/LinearAgentMentionedEvent" },
-      { "$ref": "#/components/schemas/LinearIssueDelegatedToAgentEvent" }
-    ],
-    "discriminator": {
-      "propertyName": "kind",
-      "mapping": {
-        "linear.agent_mentioned": "#/components/schemas/LinearAgentMentionedEvent",
-        "linear.issue_delegated_to_agent": "#/components/schemas/LinearIssueDelegatedToAgentEvent"
-      }
-    }
-  }
-  ```
-
-  Not compliant: leaving `event_data: Dict[str, Any]` and emitting the
-  discriminator only as a sibling string field on the response envelope.
-  The OpenAPI schema would lack `oneOf` / `discriminator` and
-  `openapi-typescript` would generate a single opaque `Record<string,
-  unknown>` instead of a narrowing TS union.
-
-- **F-CC-5 — Frontend event types are OpenAPI-generated.** TypeScript
-  type declarations for CAO events are produced by running
-  `openapi-typescript` against the FastAPI-emitted OpenAPI document. The
-  generated output lives at a single version-controlled path under
-  `web/src/generated/` and is the only source of CAO event type
-  declarations consumed by the frontend. The frontend event-view
-  registry in `web/src/components/timelineEventViews.tsx` and the known
-  event view modules under `web/src/components/timelineEventViews/`
-  consume the generated discriminated union and narrow on `kind`.
-  `scripts/generate_cao_event_type_keys.py` and
-  `web/src/generated/caoEventTypeKeys.ts` are removed.
+- **F-CC-5 — Frontend event payload types are schema-generated.**
+  TypeScript type declarations for CAO event payloads are produced by
+  running `openapi-typescript` against a repo-local schema document
+  generated from the backend CAO event declarations. The generated output
+  lives at a single version-controlled path under `web/src/generated/`
+  and is the only source of CAO event payload field declarations consumed
+  by the frontend event-view registry in
+  `web/src/components/timelineEventViews.tsx` and the known event view
+  modules under `web/src/components/timelineEventViews/`. This codegen
+  path does not change the public timeline API response shape governed by
+  F-CC-4. `scripts/generate_cao_event_type_keys.py` and
+  `web/src/generated/caoEventTypeKeys.ts` are removed or replaced by the
+  new generated artifact, with any still-needed public `event_type_key`
+  constants produced by the new pipeline.
 
 - **F-CC-6 — `cao_events` storage uses `kind` as the sole
   discriminator.** The `cao_events` table stores each event's `kind`
@@ -306,41 +272,22 @@ can narrow on typed event payloads.
   resolve the event class via `kind` exclusively; no read path
   references `event_type_key`.
 
-- **F-CC-7 — Replaced surfaces are removed, not retained.** The
-  refactor's end state contains exactly one implementation of each
-  concern this contract reshapes. Backward-compatibility shims, parallel
+- **F-CC-7 — Backend/storage replacement surfaces are removed with their
+  replacements.** The backend/storage refactor's end state contains
+  exactly one implementation of each event-declaration, serializer, and
+  storage concern it reshapes. Backward-compatibility shims, parallel
   code paths, "deprecated but kept" surfaces, dual-write storage
   layouts, and transitional re-exports of removed symbols are out of
-  scope for this feature. The following surfaces no longer exist
-  anywhere in the repository at feature end:
+  scope for these backend/storage surfaces. The following surfaces are
+  removed in the same task that lands their replacements:
 
-  - The `event_type_key` field on any event response model or wire-format
-    payload.
   - The `event_type_key` column on the `cao_events` table.
   - The `event_type_key()` and `_import_event_type()` helpers in
     `src/cli_agent_orchestrator/events/serialization.py`.
   - The stdlib `dataclasses.dataclass` decorator applied to any member of
     `LINEAR_CAO_EVENTS + RUNTIME_CAO_EVENTS`.
-  - `scripts/generate_cao_event_type_keys.py` and
-    `web/src/generated/caoEventTypeKeys.ts`.
-  - Frontend hand-typed Python-style event type key strings
-    (e.g. `"cli_agent_orchestrator.linear.workspace_events.LinearAgentMentionedEvent"`)
-    in any `web/src/` source file.
 
-  Tasks that introduce a replacement surface remove the surface it
-  replaces in the same change set unless the removal would break an
-  unmigrated dependency owned by another task in this feature; in that
-  case the deferring task names the follow-up task in this feature that
-  performs the removal. No removal is deferred past the last task of
-  this feature, and no removal is deferred to a follow-up feature.
-
-  **Illustration.** Not compliant: leaving `event_type_key: str` on
-  `AgentIdentityTimelineEventResponse` alongside the new typed
-  `event_data: CaoEventUnion` "in case the frontend still wants it" —
-  the frontend's consumption is in scope (F-CC-5) and both ends migrate
-  together.
-
-  Not compliant: keeping `_import_event_type` with a `# deprecated`
+  **Illustration.** Not compliant: keeping `_import_event_type` with a `# deprecated`
   comment and an unchanged body — the function is removed, not
   annotated.
 
@@ -349,20 +296,14 @@ can narrow on typed event payloads.
   older readers within scope; readers are migrated as part of this
   feature.
 
-  Not compliant: keeping `scripts/generate_cao_event_type_keys.py` as a
-  thin re-export wrapper over the new `openapi-typescript` output to
-  avoid touching callers — there are no remaining callers within scope.
-
-- **F-CC-8 — Caller migration is exhaustive and verifiable.** For each
-  reshaped surface, every caller within the affected code surfaces (per
-  the scope preamble) migrates to the new shape during this feature; no
-  caller is retained on the old shape (reinforces F-CC-7). Each
-  reshaped surface names a discovery method that the implementing task
-  runs to enumerate its callers; the task's Coding Code Contract
-  Defence records the resulting caller set and the migration outcome
-  per caller. A caller discovered after the task lands and missed by
-  the discovery method is treated as a contract escalation, not a
-  task-local fix.
+- **F-CC-8 — Backend/storage caller migration is exhaustive and
+  verifiable.** For each reshaped backend/storage surface, every caller
+  within the affected code surfaces migrates to the new shape in the task
+  that reshapes that surface. The implementing task runs the named
+  discovery methods, and its Coding Code Contract Defence records the
+  resulting caller set and migration outcome per caller. A caller
+  discovered after the task lands and missed by the discovery method is
+  treated as a contract escalation, not a task-local fix.
 
   - **Event constructors** (every class in `LINEAR_CAO_EVENTS +
     RUNTIME_CAO_EVENTS`): discovery by `rg` over `src/` and `test/`
@@ -378,28 +319,11 @@ can narrow on typed event payloads.
     Callers pass `kind` strings; the legacy `event_type_key` argument
     is gone.
 
-  - **Timeline event-data response-model field**: discovery by the
-    type-checker sweep after the `event_data` annotation changes to
-    the discriminated union (F-CC-4). Callers —
-    `src/cli_agent_orchestrator/services/agent_identity_timeline.py`
-    and the timeline route handlers in
-    `src/cli_agent_orchestrator/api/main.py` — construct response
-    payloads with typed event instances rather than `Dict[str, Any]`
-    payloads.
-
-  - **Frontend event-view registry and known event view modules**:
-    discovery is exhaustive over
-    `web/src/components/timelineEventViews.tsx` and every file under
-    `web/src/components/timelineEventViews/`. Callers consume the
-    OpenAPI-generated discriminated union (F-CC-5) and narrow on
-    `kind`; no caller imports `web/src/generated/caoEventTypeKeys.ts`
-    after F-CC-5 lands.
-
-  - **References to `event_type_key`**: discovery by
-    `rg 'event_type_key' src/ test/ web/src/`. Every match is migrated
-    to read `kind` or removed alongside its surrounding code
-    (consistent with F-CC-7's removal of the wire field, helper, and
-    column).
+  - **Internal/storage references to `event_type_key`**: discovery by
+    `rg 'event_type_key' src/ test/`. Every match is classified as
+    public API compatibility (deferred to F-CC-12) or internal/storage
+    usage (migrated to `kind` or removed alongside its surrounding code,
+    consistent with F-CC-7's removal of the helper and column).
 
   **Illustration.** Not compliant: a task migrates the callers it
   noticed by reading adjacent files and reports the slice complete; a
@@ -413,6 +337,53 @@ can narrow on typed event payloads.
   migrates or removes every match. The Defence cites the commands and
   their matched paths.
 
+- **F-CC-9 — Event reconstruction equality and protocol attributes are
+  preserved.** Round-tripping a published event through the persistence
+  layer yields an instance equal to the original under dataclass equality
+  before and after the discriminator pivot. The `CaoEvent` protocol's
+  required attributes (`event_id`, `source`, `occurred_at`,
+  `correlation_id`, `causation_id`) remain present on every member of
+  `LINEAR_CAO_EVENTS + RUNTIME_CAO_EVENTS` with their existing types.
+
+- **F-CC-10 — Frontend codegen replacement surfaces are removed with
+  their replacements.** The frontend codegen refactor's end state
+  contains one generated source for event payload typing and public
+  compatibility constants. `scripts/generate_cao_event_type_keys.py` and
+  `web/src/generated/caoEventTypeKeys.ts` are removed or replaced in the
+  same task that lands the new schema-generated artifact. Frontend
+  hand-typed Python-style event type key strings are removed from
+  `web/src/`; public API compatibility constants, if still needed, come
+  from the new generated artifact.
+
+  Not compliant: keeping `scripts/generate_cao_event_type_keys.py` as a
+  thin re-export wrapper over the new `openapi-typescript` output to
+  avoid touching callers.
+
+- **F-CC-11 — Frontend codegen caller migration is exhaustive and
+  verifiable.** Frontend callers of the retired generated event constants
+  and hand-typed event key strings, plus codegen script wiring that
+  invokes the retired generator, migrate to the new generated artifact
+  and `openapi-typescript` pipeline in the task that lands it. Discovery is exhaustive over
+  `web/src/components/timelineEventViews.tsx`, every file under
+  `web/src/components/timelineEventViews/`, and
+  `rg 'caoEventTypeKeys|event_type_key|cli_agent_orchestrator\\.' web/src/`,
+  plus `rg 'generate_cao_event_type_keys|generate:event-types|openapi-typescript' web/package.json web/package-lock.json`.
+  The task's Coding Code Contract Defence records every matched caller
+  and whether it migrated to generated payload typing, generated public
+  API compatibility constants, or the new codegen command.
+
+- **F-CC-12 — Public timeline compatibility callers are classified and
+  defended.** Timeline response construction internals in
+  `src/cli_agent_orchestrator/services/agent_identity_timeline.py` and
+  timeline route handlers in `src/cli_agent_orchestrator/api/main.py`
+  preserve the public envelope required by F-CC-4 after the persistence
+  and frontend codegen replacements have landed. Discovery is by the
+  type-checker sweep, existing API route tests, frontend timeline tests,
+  and `rg 'event_type_key' src/ test/ web/src/`. Every remaining match is
+  classified as public API compatibility, generated compatibility
+  constant usage, or a contract violation that must be removed before the
+  feature completes.
+
 ## Feature-Specific Code Obligations
 
 None beyond the architectural commitments above. Lower-level code-shape
@@ -420,5 +391,5 @@ obligations whose `when:` requires research to evaluate — Pydantic
 `config`/`ConfigDict` choices, factory function adjustments,
 `NewType` annotation handling at the field boundary, migration mechanics
 for the new column, retirement choreography for the legacy generator
-script, frontend registry self-registration shape after the OpenAPI
-import — belong in each task's Coding Code Contract.
+script, frontend registry self-registration shape after the generated
+schema import — belong in each task's Coding Code Contract.

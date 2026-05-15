@@ -7,7 +7,7 @@ import {
   AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
   AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT,
   LINEAR_AGENT_MENTIONED_EVENT,
-} from '../generated/caoEventTypeKeys'
+} from '../generated/caoEventPayloadTypes'
 
 function identity(
   agent_identity_id: string,

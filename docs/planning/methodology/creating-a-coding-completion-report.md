@@ -41,6 +41,33 @@ implementation. If implementation revealed an upstream contract clause was
 inadequate or wrong, the escalation result is recorded here: the
 amendment and re-issued slice are named.
 
+### Contract boundary and escalation check
+
+A concrete account of whether implementation evidence showed any assigned
+feature-level Code or Test clause crossing the task's behavior-preservation
+boundary, public-surface boundary, or system boundary.
+
+This section does not create a new compatibility policy. It reconciles the
+finished implementation against the policies already in force from the
+assigned slices, especially feature-level Code Contract clauses selected
+under `backward-compatibility-policy`,
+`replaced-surface-lifecycle-policy`, and `caller-migration-policy`.
+
+The report states whether the task:
+
+- stayed within the assigned behavior and preservation boundary;
+- changed a public surface, wire/storage shape, developer command, generated
+  artifact, or other observer-facing surface;
+- added or retained compatibility scaffolding, duplicate old/new paths,
+  long-lived shims, adapters, facades, compatibility re-exports, or
+  dual-shape storage;
+- found that an assigned clause was wrong, over-broad, infeasible, or
+  incompatible with the actual system boundary.
+
+If no boundary issue was found, say so with the evidence basis. If a boundary
+issue was found, name the upstream escalation, the amended artifact or
+re-issued slice, and the final policy the implementation followed.
+
 ### Verification result
 
 The exact Verification Command from the task definition was run, and the
@@ -112,15 +139,23 @@ alongside the report.
    behavioral, Code, and Test contracts; confirm each clause still fits
    the finished implementation. If a clause is wrong, escalate upstream
    and pause until the slice is re-issued.
-3. **Draft this report.** Implementation summary, plan divergence,
+3. **Run the contract boundary and escalation check.** Reconcile the
+   finished implementation against the assigned behavior/preservation
+   boundary and the assigned compatibility, replacement-lifecycle, and
+   caller-migration policies. If the implementation crossed a boundary,
+   added unsupported compatibility scaffolding, or revealed a wrong
+   upstream clause, escalate upstream and pause until the slice is
+   re-issued.
+4. **Draft this report.** Implementation summary, plan divergence,
+   slice-adequacy self-check, contract boundary and escalation check,
    verification result, spec sync, files changed, observations, hiccups,
    optimization opportunities, risks.
-4. **Draft the per-contract defences** alongside this report — one each
+5. **Draft the per-contract defences** alongside this report — one each
    for behavioral, Code, and Test contracts.
-5. **Self-check.** If anything in the summary cannot be defended with
+6. **Self-check.** If anything in the summary cannot be defended with
    concrete evidence, fix the implementation, tests, upstream artifacts,
    or report until the claim is honest.
-6. **Persist** the Coding Completion Report and the per-contract defences
+7. **Persist** the Coding Completion Report and the per-contract defences
    to their task-level paths.
 
 If subsequent work materially changes the implementation or the evidence,

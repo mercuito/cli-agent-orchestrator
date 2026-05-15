@@ -13,27 +13,25 @@ are a task-level concern, recorded in each task's Coding Test Contract.
 |-----------|----------------|
 | [stable-test-clause-ids](../../planning/methodology/criteria/feature-test-contract/stable-test-clause-ids.md) | Always applies; every clause below carries a stable `F-TC-<n>` ID for slicing in `feature-tasks.md`, handoffs, and Test Contract Defences. |
 | [proof-shape-not-test-instance](../../planning/methodology/criteria/feature-test-contract/proof-shape-not-test-instance.md) | The clauses below describe proof shape (preservation baseline, seam-crossing scenarios, characterization); they do not enumerate specific tests, which are decided at task altitude. |
-| [seam-proof-crosses-components](../../planning/methodology/criteria/feature-test-contract/seam-proof-crosses-components.md) | The refactor introduces multiple cross-component seams (kind round-trip, schema correspondence, migration/read path) where per-component unit tests would mask failures the integration only reveals. |
-| [preservation-baseline-discoverable](../../planning/methodology/criteria/feature-test-contract/preservation-baseline-discoverable.md) | This is pure refactor work and F-TC-1 names a preservation baseline enumerated by file path. |
+| [seam-proof-crosses-components](../../planning/methodology/criteria/feature-test-contract/seam-proof-crosses-components.md) | The refactor introduces multiple cross-component seams (kind round-trip, generated-schema correspondence, migration/read path) where per-component unit tests would mask failures the integration only reveals. |
+| [preservation-baseline-discoverable](../../planning/methodology/criteria/feature-test-contract/preservation-baseline-discoverable.md) | This is pure refactor work and the task-specific preservation baseline clauses name baselines enumerated by file path. |
 
 ## Standing Proof Shapes
 
-- **F-TC-1 — Preservation baseline.** The preservation baseline for
-  this refactor is the union of:
+- **F-TC-1 — Kinded persistence preservation baseline.** The
+  preservation baseline for the backend persistence foundation task is:
 
   - `test/events/test_cao_event_persistence.py`
   - `test/api/test_agent_identity_routes.py`
   - `test/runtime/test_agent_runtime.py`
-  - `web/src/test/agent-identity-timeline-panel.test.tsx`
-  - `web/src/test/agent-panel-deeplink.test.tsx`
-  - `web/src/test/api.test.ts`
 
-  Every task in this feature leaves these tests passing at the task's
-  Verification Command boundary. The universal `test-validity-preserved`
-  criterion governs at the coding altitude: assertions in these files
-  may not weaken or replace any existing assertion's original target
-  behavior. Baseline additions, removals, or splits during the feature
-  amend this contract; tasks do not extend the baseline silently.
+  The task owning this slice leaves these tests passing at its
+  Verification Command boundary. The universal
+  `test-validity-preserved` criterion governs at the coding altitude:
+  assertions in these files may not weaken or replace any existing
+  assertion's original target behavior. Baseline additions, removals, or
+  splits during the feature amend this contract; tasks do not extend the
+  baseline silently.
 
 - **F-TC-2 — Kind round-trip seam is proven end-to-end.** Proof at the
   event-class ↔ serializer ↔ storage ↔ deserializer seam requires a
@@ -50,33 +48,32 @@ are a task-level concern, recorded in each task's Coding Test Contract.
   collision between two events) only surface when the stages run
   together against the production code paths.
 
-- **F-TC-3a — Backend schema emission seam is proven.** Proof at the
-  registered-events ↔ OpenAPI emission seam requires that, for every
-  member of `LINEAR_CAO_EVENTS + RUNTIME_CAO_EVENTS`, the FastAPI-
-  emitted OpenAPI document carries exactly one `oneOf` branch keyed
-  on its `kind` literal under each timeline response model's
-  `event_data` schema. Inspecting `app.openapi()` (or equivalent
-  schema-shape introspection of the running FastAPI app) satisfies
-  the obligation; per-model unit tests that do not exercise the
-  FastAPI emission step do not satisfy it, because the seam concern
-  is whether registration flows through to the published schema.
+- **F-TC-3 — Backend event schema emission seam is proven.** Proof at
+  the registered-events ↔ generated-schema seam requires that, for every
+  member of `LINEAR_CAO_EVENTS + RUNTIME_CAO_EVENTS`, the backend schema
+  document used for frontend event-payload codegen carries exactly one
+  branch keyed on its `kind` literal. Inspecting the production schema
+  generation path satisfies the obligation; per-model unit tests that do
+  not exercise schema generation do not satisfy it, because the seam
+  concern is whether registered events flow through to the schema
+  artifact consumed by codegen.
 
-- **F-TC-3b — Codegen-freshness seam is proven.** Proof at the
-  OpenAPI ↔ generated-TS-types seam requires that the OpenAPI-derived
-  TypeScript declarations consumed by the frontend carry a
-  discriminated union branch for every member of
+- **F-TC-4 — Codegen-freshness seam is proven.** Proof at the
+  generated-schema ↔ generated-TS-types seam requires that the
+  schema-derived TypeScript declarations consumed by the frontend carry a
+  branch for every member of
   `LINEAR_CAO_EVENTS + RUNTIME_CAO_EVENTS`, each branch matching its
   corresponding `kind` literal. A codegen-freshness check that re-
-  runs `openapi-typescript` against the live OpenAPI document and
+  runs `openapi-typescript` against the generated schema document and
   compares against the committed generated file satisfies the
   obligation. Inspecting the committed generated file without re-
   running the generator does not satisfy this clause, because the
   seam concern is whether the committed file remains in sync with the
-  live schema rather than whether it once was. F-TC-3a and F-TC-3b
+  generated schema rather than whether it once was. F-TC-3 and F-TC-4
   together close the schema-correspondence seam end-to-end; satisfying
   one without the other leaves the other half of the seam unproven.
 
-- **F-TC-4 — Migration ↔ read-path seam is proven over pre-existing
+- **F-TC-5 — Migration ↔ read-path seam is proven over pre-existing
   rows.** Proof at the legacy-storage ↔ migration ↔ production-read-
   path seam requires a scenario shape that seeds `cao_events` with
   rows matching the pre-migration schema (legacy `event_type_key`
@@ -93,19 +90,68 @@ are a task-level concern, recorded in each task's Coding Test Contract.
   post-migration rows read back.
 
   After the migration task lands, the proof set contains no assertion
-  path that reads rows by the legacy `event_type_key` discriminator
+  path that reads storage rows by the legacy `event_type_key` discriminator
   (such assertions are removed alongside the column they exercise,
   per F-CC-7).
 
+- **F-TC-7 — Frontend codegen preservation baseline.** The preservation
+  baseline for the generated event payload types task is:
+
+  - `web/src/test/agent-identity-timeline-panel.test.tsx`
+  - `web/src/test/agent-panel-deeplink.test.tsx`
+  - `web/src/test/api.test.ts`
+
+  The task owning this slice leaves these tests passing at its
+  Verification Command boundary. The universal `test-validity-preserved`
+  criterion governs at the coding altitude: assertions in these files
+  may not weaken or replace any existing assertion's original target
+  behavior. Baseline additions, removals, or splits during the feature
+  amend this contract; tasks do not extend the baseline silently.
+
+- **F-TC-8 — Final public compatibility preservation baseline.** The
+  final compatibility sweep proves the full preservation baseline after
+  the backend persistence and frontend codegen tasks have landed. The
+  full baseline is the union of:
+
+  - `test/events/test_cao_event_persistence.py`
+  - `test/api/test_agent_identity_routes.py`
+  - `test/runtime/test_agent_runtime.py`
+  - `web/src/test/agent-identity-timeline-panel.test.tsx`
+  - `web/src/test/agent-panel-deeplink.test.tsx`
+  - `web/src/test/api.test.ts`
+
+  The task owning this slice leaves the full baseline passing at its
+  Verification Command boundary and verifies that remaining
+  `event_type_key` observations are public API compatibility behavior,
+  not storage/read-path dependence on the retired discriminator column.
+
 ## Feature-Specific Proof Obligations
 
-- **F-TC-5 — Characterization tests for uncovered preserved behavior.**
-  When research at task altitude surfaces preexisting behavior in this
-  refactor's affected surfaces (per the scope preamble of
-  `feature-code-contract.md`) that the F-TC-1 baseline does not assert,
-  the task adds characterization tests describing that preexisting
-  behavior before changing the surface. Characterization assertions
-  describe what the system already does; they do not lock in behavior
-  the system did not previously exhibit. New assertions that would
-  encode novel behavior belong on the behavior-changing path and are
-  out of scope for this refactor.
+- **F-TC-6 — Backend/storage characterization for uncovered preserved
+  behavior.** When research in the backend persistence foundation task
+  surfaces preexisting behavior in backend event declaration, serializer,
+  storage, or read-path surfaces that the F-TC-1 baseline does not
+  assert, that task adds characterization tests describing the
+  preexisting behavior before changing the surface. Characterization
+  assertions describe what the system already does; they do not lock in
+  behavior the system did not previously exhibit.
+
+- **F-TC-9 — Frontend/codegen characterization for uncovered preserved
+  behavior.** When research in the generated event payload types task
+  surfaces preexisting behavior in frontend event-view typing, generated
+  event constants, or event-view registry surfaces that the F-TC-7
+  baseline does not assert, that task adds characterization tests
+  describing the preexisting behavior before changing the surface.
+  Characterization assertions describe what the system already does; they
+  do not lock in behavior the system did not previously exhibit.
+
+- **F-TC-10 — Public compatibility characterization for uncovered
+  preserved behavior.** When research in the final compatibility sweep
+  surfaces preexisting behavior in the public timeline API response
+  envelope or remaining frontend consumption of that envelope that the
+  F-TC-8 baseline does not assert, that task adds characterization tests
+  describing the preexisting behavior before changing the surface.
+  Characterization assertions describe what the system already does; they
+  do not lock in behavior the system did not previously exhibit. New
+  assertions that would encode novel behavior belong on the
+  behavior-changing path and are out of scope for this refactor.
