@@ -14,10 +14,77 @@ Comments clarify intent or constraints, not obvious code.
 
 ## Illustrations
 
-**Bad - hidden drop.** `normalizeEntries()` silently removes invalid entries.
-**Good:** `filterValidEntries()` or a short comment states that invalid entries
-are dropped.
+### Naming Reveals Hidden Filtering
 
-**Bad - unexplained side effect.** `getConfig()` creates directories.
-**Good:** Rename or document the side effect at the boundary.
+```markdown
+plan.md
+# The supervisor lists active agents
+- [ ] Add `list_agents` to the agent registry
+...
+```
 
+**Bad - hidden filtering.** The function is named `list_agents` but silently
+drops agents in `stopped` and `failed` states.
+
+```python
+def list_agents() -> list[Agent]:
+    # Bad: drops non-running agents with no signal in the name or signature
+    return [a for a in _agents if a.state == "running"]
+```
+
+**Good:** The name (or signature) makes the filter visible.
+
+```python
+def list_running_agents() -> list[Agent]:
+    return [a for a in _agents if a.state == "running"]
+
+# or, if both are needed:
+def list_agents(states: set[AgentState] | None = None) -> list[Agent]:
+    if states is None:
+        return list(_agents)
+    return [a for a in _agents if a.state in states]
+```
+
+### Comments Clarify Intent, Not The Obvious
+
+**Bad - noise comment.** The comment restates what the code already says.
+
+```python
+# Bad: tells the reader nothing the code doesn't
+# Increment the counter by one
+counter += 1
+```
+
+**Good:** The comment captures a non-obvious constraint or reason.
+
+```python
+# tmux pane indexes are 1-based; the registry stores them 0-based
+counter += 1
+```
+
+### Side Effects Are Visible
+
+**Bad - mutation hidden in a "getter".** `get_session` looks like a pure
+lookup, but it also persists the access timestamp.
+
+```python
+def get_session(session_id: str) -> Session:
+    session = _store[session_id]
+    # Bad: side effect hidden behind a read-shaped name
+    session.last_accessed = now()
+    _store.save(session)
+    return session
+```
+
+**Good:** The name reflects the mutation, or the mutation is split out.
+
+```python
+def get_session(session_id: str) -> Session:
+    return _store[session_id]
+
+def touch_session(session_id: str) -> Session:
+    session = _store[session_id]
+    session.last_accessed = now()
+    _store.save(session)
+    return session
+```

@@ -5,20 +5,59 @@ when: Any implementation task adds code, helpers, fixtures, or abstractions.
 
 # Existing Suitable Code Is Reused
 
-Before adding new code, search for existing functions, constants, helpers,
-fixtures, and abstractions that satisfy or nearly satisfy the need. Reuse
-or extend suitable existing code instead of duplicating logic.
-
-Small idioms may remain inline when extraction would obscure intent. Repeated
-logic, vocabulary, and multi-step behavior must not be copied.
+Existing code must be reused when it is suitable for the new need. If reusable code exists but is behind an unsuitable interface, a refactor must be done to make the shared code suitable for both use cases.
 
 ## Illustrations
 
-**Bad - duplicated constant.** A test defines `DEFAULT_TIMEOUT = 5000` instead
-of importing the existing constant.
-**Good:** The test imports the shared timeout source.
+### Reusing Existing Helpers
 
-**Bad - copied validation.** Two services implement the same field validation
-with separate branches.
-**Good:** Shared validation is reused or extracted.
+```markdown
+plan.md
+# Add a `cao list-agents` command that prints active agents
+- [ ] Implement the command and format the output the same way as `cao status`
+...
+```
 
+**Bad - reimplemented formatter.** The new command writes its own table
+formatter even though `cao status` already has one.
+
+```python
+# commands/list_agents.py
+def render(agents: list[Agent]) -> str:
+    # Bad: duplicates the formatter already in commands/status.py
+    rows = [f"{a.id:<20} {a.kind:<10} {a.state}" for a in agents]
+    return "\n".join(rows)
+```
+
+**Good:** The existing formatter is reused. If its interface is too narrow, it
+is refactored to serve both commands.
+
+```python
+# shared/agent_table.py  (lifted from commands/status.py)
+def format_agent_table(agents: list[Agent]) -> str: ...
+
+# commands/list_agents.py
+from shared.agent_table import format_agent_table
+print(format_agent_table(agents))
+```
+
+### Refactoring When The Interface Doesn't Fit
+
+**Bad - copy-paste with a tweak.** The existing helper returns a string; the
+new caller needs a list of rows, so the helper is copied and modified.
+
+```python
+def format_agent_table(agents) -> str: ...
+
+# Bad: near-duplicate forked because the return shape didn't match
+def format_agent_rows(agents) -> list[str]: ...
+```
+
+**Good:** The shared helper is refactored so both callers use it.
+
+```python
+def agent_rows(agents) -> list[str]: ...
+
+def format_agent_table(agents) -> str:
+    return "\n".join(agent_rows(agents))
+```

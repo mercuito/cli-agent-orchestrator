@@ -10,16 +10,53 @@ package, module, subsystem, and ownership boundaries. Deep internal imports
 require an explicit note naming the missing public surface and a follow-up path
 to add it.
 
-Tests are not exempt when they are proving consumer-visible behavior.
-
 ## Illustrations
 
-**Bad - deep import.** A route imports another subsystem's private parser helper
-because it is convenient.
-**Good:** The route uses the subsystem's exported parser surface, or records
-the missing public API and files follow-up work.
+### Importing Through The Package's Public API
 
-**Bad - private helper reliance.** Tests depend on a private helper owned by
-another subsystem.
-**Good:** Tests exercise the owner surface or use a test helper owned by that
-subsystem.
+```markdown
+plan.md
+# The dispatcher needs to look up a session by id
+- [ ] Use the session package's lookup API from the dispatcher
+...
+```
+
+**Bad - deep internal import.** The dispatcher reaches into the session
+package's internal module.
+
+```python
+# dispatcher.py
+# Bad: imports a private module across a package boundary
+from cao.session._store import SessionStoreImpl
+
+store = SessionStoreImpl.load()
+record = store._records_by_id[session_id]
+```
+
+**Good:** The dispatcher consumes the session package's documented public
+surface.
+
+```python
+# dispatcher.py
+from cao.session import get_session
+
+record = get_session(session_id)
+```
+
+### Naming The Missing Surface When You Must Reach In
+
+**Bad - silent deep import.** A consumer imports an internal helper without
+acknowledgement.
+
+```python
+from cao.tmux._panes import find_pane_by_title  # internal
+```
+
+**Good:** If no suitable public API exists, the deep import is annotated and a
+follow-up is filed to add the missing public surface.
+
+```python
+# TODO(cao-tmux): no public API for "find pane by title"; tracked in #1234.
+# Replace with `cao.tmux.find_pane(title=...)` once that lands.
+from cao.tmux._panes import find_pane_by_title
+```
