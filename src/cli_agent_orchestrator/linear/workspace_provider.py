@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import dataclass
@@ -10,13 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional
 
-import tomli
-
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentity,
-    AgentIdentityConfigError,
-    AgentIdentityRegistry,
-    load_agent_identity_registry,
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentConfigError,
+    AgentRegistry,
+    load_agent_registry,
+    patch_agent_section,
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER, SESSION_PREFIX
 from cli_agent_orchestrator.linear.provider_tools import (
@@ -24,31 +22,17 @@ from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_PROJECT_TOOL,
     ISSUE_TARGETING_TOOLS,
     LINEAR_PROVIDER_TOOLS,
-    UPDATE_ISSUE_FIELDS,
-    UPDATE_ISSUE_TOOL,
     LinearToolAccess,
     LinearToolProvider,
+    UPDATE_ISSUE_FIELDS,
+    UPDATE_ISSUE_TOOL,
 )
 from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
-from cli_agent_orchestrator.utils.env import load_env_vars, set_env_var
-from cli_agent_orchestrator.workspace_providers.registry import (
-    is_workspace_provider_enabled,
-    workspace_provider_config_exists,
-)
+from cli_agent_orchestrator.utils.env import load_env_vars
 from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
 
-LINEAR_PROVIDER_CONFIG_PATH = CAO_HOME_DIR / "workspace-providers" / "linear.toml"
 APP_KEY_PATTERN = re.compile(r"[^A-Za-z0-9]+")
-TOOL_ACCESS_ISSUES_KEY = "issues"
-TOOL_ACCESS_CREATE_TEAM_IDS_KEY = "create_team_ids"
-TOOL_ACCESS_CREATE_PROJECT_IDS_KEY = "create_project_ids"
-TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY = "create_parent_issues"
-TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY = "allow_top_level_create"
-TOOL_ACCESS_UPDATE_FIELDS_KEY = "update_fields"
-TOOL_ACCESS_REASON_KEY = "reason"
-AGENT_POLICIES_SECTION = "agent_policies"
-AGENT_POLICIES_ENABLED_KEY = "enabled"
 _default_linear_workspace_provider: Optional["LinearWorkspaceProvider"] = None
 
 
@@ -80,13 +64,13 @@ LinearCredentialChecker = Callable[[LinearPresence], Mapping[str, Any]]
 
 @dataclass(frozen=True)
 class LinearProviderConfig:
-    """Linear workspace-provider config loaded from structured TOML or legacy env."""
+    """Linear workspace-provider config loaded from durable agent configs."""
 
     public_url: Optional[str]
     presences: dict[str, LinearPresence]
     tool_access: dict[str, LinearToolAccess]
     agent_policies_enabled: bool = False
-    source: str = "structured"
+    source: str = "agents"
 
     def presence_by_app_key(self, app_key: str) -> Optional[LinearPresence]:
         normalized = normalize_app_key(app_key)
@@ -128,10 +112,10 @@ class LinearProviderConfig:
 
 @dataclass(frozen=True)
 class LinearResolvedPresence:
-    """Resolved Linear presence plus the CAO runtime identity it maps to."""
+    """Resolved Linear presence plus the CAO runtime agent it maps to."""
 
     presence: LinearPresence
-    identity: AgentIdentity
+    identity: Agent
 
 
 def linear_env(name: str) -> Optional[str]:
@@ -158,13 +142,12 @@ def linear_app_env(
     app_key: Optional[str],
     name: str,
     *,
-    config_path: Optional[Path] = None,
+    agents_root: Optional[Path] = None,
     env_reader: Callable[[str], Optional[str]] = linear_env,
 ) -> Optional[str]:
-    """Read a Linear presence field, preferring structured config over legacy env."""
+    """Read a Linear presence field from an agent's ``[linear]`` config."""
     config = load_linear_provider_config(
-        config_path=config_path,
-        allow_legacy_env=False,
+        agents_root=agents_root,
         env_reader=env_reader,
     )
     if config is not None:
@@ -172,46 +155,35 @@ def linear_app_env(
             return None
         presence = config.presence_by_app_key(app_key)
         return _presence_field(presence, name) if presence is not None else None
-
-    if app_key:
-        value = env_reader(f"{app_env_prefix(app_key)}_{name}")
-        if value:
-            return value
-    return env_reader(f"LINEAR_{name}")
+    return None
 
 
 def configured_app_keys(
     *,
-    config_path: Optional[Path] = None,
+    agents_root: Optional[Path] = None,
     env_reader: Callable[[str], Optional[str]] = linear_env,
 ) -> list[str]:
-    """Return Linear app keys, preferring structured config over legacy env."""
+    """Return Linear app keys configured in agent directories."""
     config = load_linear_provider_config(
-        config_path=config_path,
-        allow_legacy_env=False,
+        agents_root=agents_root,
         env_reader=env_reader,
     )
     if config is not None:
         return [presence.app_key for presence in config.presences.values()]
-
-    raw = env_reader("LINEAR_APP_KEYS")
-    if not raw:
-        return []
-    return [normalize_app_key(item) for item in raw.split(",") if item.strip()]
+    return []
 
 
 def configured_app_key_for_oauth_state(
     state: Optional[str],
     *,
-    config_path: Optional[Path] = None,
+    agents_root: Optional[Path] = None,
     env_reader: Callable[[str], Optional[str]] = linear_env,
 ) -> Optional[str]:
-    """Resolve a structured Linear app key from a configured OAuth nonce."""
+    """Resolve a Linear app key from an agent-owned OAuth nonce."""
     if not state:
         return None
     config = load_linear_provider_config(
-        config_path=config_path,
-        allow_legacy_env=False,
+        agents_root=agents_root,
         env_reader=env_reader,
     )
     if config is None:
@@ -224,11 +196,11 @@ def required_linear_app_env(
     app_key: Optional[str],
     name: str,
     *,
-    config_path: Optional[Path] = None,
+    agents_root: Optional[Path] = None,
     env_reader: Callable[[str], Optional[str]] = linear_env,
 ) -> str:
-    """Read a required Linear config value from structured config or legacy env."""
-    value = linear_app_env(app_key, name, config_path=config_path, env_reader=env_reader)
+    """Read a required Linear config value from an agent's ``[linear]`` config."""
+    value = linear_app_env(app_key, name, agents_root=agents_root, env_reader=env_reader)
     if value:
         return value
     if app_key:
@@ -263,185 +235,6 @@ def _optional_str(table: Mapping[str, Any], key: str) -> Optional[str]:
         raise LinearWorkspaceProviderConfigError(f"{key} must be a string")
     value = value.strip()
     return value or None
-
-
-def _optional_str_list(
-    table: Mapping[str, Any],
-    key: str,
-    *,
-    location: str,
-    required: bool = False,
-) -> tuple[str, ...]:
-    value = table.get(key)
-    if value is None:
-        if required:
-            raise LinearWorkspaceProviderConfigError(
-                f"{location}.{key} must be a non-empty string list"
-            )
-        return ()
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise LinearWorkspaceProviderConfigError(
-            f"{location}.{key} must be a non-empty string list"
-        )
-    normalized = tuple(item.strip() for item in value if item.strip())
-    if required and not normalized:
-        raise LinearWorkspaceProviderConfigError(
-            f"{location}.{key} must be a non-empty string list"
-        )
-    return normalized
-
-
-def _optional_bool(table: Mapping[str, Any], key: str, *, location: str) -> bool:
-    value = table.get(key)
-    if value is None:
-        return False
-    if not isinstance(value, bool):
-        raise LinearWorkspaceProviderConfigError(f"{location}.{key} must be a boolean")
-    return value
-
-
-def _load_linear_agent_policies_enabled(data: Mapping[str, Any]) -> bool:
-    raw_table = data.get(AGENT_POLICIES_SECTION, {})
-    if raw_table is None:
-        return False
-    if not isinstance(raw_table, Mapping):
-        raise LinearWorkspaceProviderConfigError(f"{AGENT_POLICIES_SECTION} must be a table")
-    return _optional_bool(
-        raw_table,
-        AGENT_POLICIES_ENABLED_KEY,
-        location=AGENT_POLICIES_SECTION,
-    )
-
-
-def _load_linear_tool_access(data: Mapping[str, Any]) -> dict[str, LinearToolAccess]:
-    raw_table = data.get("tool_access", {})
-    if raw_table is None:
-        return {}
-    if not isinstance(raw_table, Mapping):
-        raise LinearWorkspaceProviderConfigError("tool_access must be a table")
-
-    tool_access: dict[str, LinearToolAccess] = {}
-    for raw_access_id, raw_config in raw_table.items():
-        access_id = str(raw_access_id).strip()
-        location = f"tool_access.{access_id or '<empty>'}"
-        if not access_id:
-            raise LinearWorkspaceProviderConfigError("Linear tool_access id must be non-empty")
-        if not isinstance(raw_config, Mapping):
-            raise LinearWorkspaceProviderConfigError(f"{location} must be a table")
-
-        agent_id = _optional_str(raw_config, "agent_id")
-        agent_profile = _optional_str(raw_config, "agent_profile")
-        if bool(agent_id) == bool(agent_profile):
-            raise LinearWorkspaceProviderConfigError(
-                f"{location} must configure exactly one of agent_id or agent_profile"
-            )
-        tools = _optional_str_list(raw_config, "tools", location=location, required=True)
-        for index, tool in enumerate(tools):
-            if tool not in LINEAR_PROVIDER_TOOLS:
-                raise LinearWorkspaceProviderConfigError(
-                    f"{location}.tools[{index}] unknown Linear tool: {tool}"
-                )
-        issues = _optional_str_list(
-            raw_config,
-            TOOL_ACCESS_ISSUES_KEY,
-            location=location,
-            required=any(tool in ISSUE_TARGETING_TOOLS for tool in tools),
-        )
-        create_team_ids = _optional_str_list(
-            raw_config,
-            TOOL_ACCESS_CREATE_TEAM_IDS_KEY,
-            location=location,
-            required=CREATE_ISSUE_TOOL in tools or CREATE_PROJECT_TOOL in tools,
-        )
-        create_project_ids = _optional_str_list(
-            raw_config,
-            TOOL_ACCESS_CREATE_PROJECT_IDS_KEY,
-            location=location,
-        )
-        create_parent_issues = _optional_str_list(
-            raw_config,
-            TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY,
-            location=location,
-        )
-        allow_top_level_create = _optional_bool(
-            raw_config,
-            TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY,
-            location=location,
-        )
-        if CREATE_ISSUE_TOOL in tools and not allow_top_level_create and not create_parent_issues:
-            raise LinearWorkspaceProviderConfigError(
-                f"{location} must allow top-level issue creation or configure "
-                "create_parent_issues for cao_linear.create_issue"
-            )
-        update_fields = _optional_str_list(
-            raw_config,
-            TOOL_ACCESS_UPDATE_FIELDS_KEY,
-            location=location,
-            required=UPDATE_ISSUE_TOOL in tools,
-        )
-        for index, field in enumerate(update_fields):
-            if field not in UPDATE_ISSUE_FIELDS:
-                raise LinearWorkspaceProviderConfigError(
-                    f"{location}.update_fields[{index}] unknown Linear update field: {field}"
-                )
-        reason = _optional_str(raw_config, TOOL_ACCESS_REASON_KEY)
-        tool_access[access_id] = LinearToolAccess(
-            access_id=access_id,
-            agent_id=agent_id,
-            agent_profile=agent_profile,
-            tools=tools,
-            issues=issues,
-            create_team_ids=create_team_ids,
-            create_project_ids=create_project_ids,
-            create_parent_issues=create_parent_issues,
-            allow_top_level_create=allow_top_level_create,
-            update_fields=update_fields,
-            reason=reason,
-        )
-    return tool_access
-
-
-def _load_structured_linear_config(path: Path) -> LinearProviderConfig:
-    try:
-        data = tomli.loads(path.read_text())
-    except tomli.TOMLDecodeError as exc:
-        raise LinearWorkspaceProviderConfigError(f"Invalid Linear provider config: {exc}") from exc
-
-    presences_table = data.get("presences")
-    if not isinstance(presences_table, Mapping):
-        raise LinearWorkspaceProviderConfigError("linear.toml must contain a [presences] table")
-
-    presences: dict[str, LinearPresence] = {}
-    for raw_presence_id, raw_config in presences_table.items():
-        presence_id = str(raw_presence_id).strip()
-        if not presence_id:
-            raise LinearWorkspaceProviderConfigError("Linear presence id must be non-empty")
-        if not isinstance(raw_config, Mapping):
-            raise LinearWorkspaceProviderConfigError(f"presences.{presence_id} must be a table")
-        presences[presence_id] = LinearPresence(
-            presence_id=presence_id,
-            agent_id=_require_str(raw_config, "agent_id", presence_id=presence_id),
-            app_key=normalize_app_key(_require_str(raw_config, "app_key", presence_id=presence_id)),
-            client_id=_optional_str(raw_config, "client_id"),
-            client_secret=_optional_str(raw_config, "client_secret"),
-            webhook_secret=_optional_str(raw_config, "webhook_secret"),
-            oauth_redirect_uri=_optional_str(raw_config, "oauth_redirect_uri"),
-            oauth_state=_optional_str(raw_config, "oauth_state"),
-            access_token=_optional_str(raw_config, "access_token"),
-            refresh_token=_optional_str(raw_config, "refresh_token"),
-            app_user_id=_optional_str(raw_config, "app_user_id"),
-            app_user_name=_optional_str(raw_config, "app_user_name"),
-            token_expires_at=_optional_str(raw_config, "token_expires_at"),
-        )
-
-    public_url = _optional_str(data, "public_url")
-    return LinearProviderConfig(
-        public_url=public_url,
-        presences=presences,
-        tool_access=_load_linear_tool_access(data),
-        agent_policies_enabled=_load_linear_agent_policies_enabled(data),
-        source="structured",
-    )
 
 
 def _legacy_configured_app_keys(env_reader: Callable[[str], Optional[str]]) -> list[str]:
@@ -505,32 +298,123 @@ def _load_legacy_linear_config(
     )
 
 
+def _linear_presence_from_agent(agent: Agent) -> Optional[LinearPresence]:
+    linear = agent.linear
+    if linear is None or linear.app_key is None:
+        return None
+    return LinearPresence(
+        presence_id=agent.id,
+        agent_id=agent.id,
+        app_key=normalize_app_key(linear.app_key),
+        client_id=linear.client_id,
+        client_secret=linear.client_secret,
+        webhook_secret=linear.webhook_secret,
+        oauth_redirect_uri=linear.oauth_redirect_uri,
+        oauth_state=linear.oauth_state,
+        access_token=linear.access_token,
+        refresh_token=linear.refresh_token,
+        app_user_id=linear.app_user_id,
+        app_user_name=linear.app_user_name,
+        token_expires_at=linear.token_expires_at,
+    )
+
+
+def _linear_tool_access_from_agent(agent: Agent) -> tuple[LinearToolAccess, ...]:
+    linear = agent.linear
+    if linear is None:
+        return ()
+    for access in linear.tool_access:
+        _validate_linear_tool_access(agent, access)
+    return tuple(
+        LinearToolAccess(
+            access_id=access.access_id,
+            agent_id=agent.id,
+            agent_profile=None,
+            tools=access.tools,
+            issues=access.issues,
+            create_team_ids=access.create_team_ids,
+            create_project_ids=access.create_project_ids,
+            create_parent_issues=access.create_parent_issues,
+            allow_top_level_create=access.allow_top_level_create,
+            update_fields=access.update_fields,
+            reason=access.reason,
+            source_location=f"agents.{agent.id}.linear.tool_access.{access.access_id}",
+        )
+        for access in linear.tool_access
+    )
+
+
+def _validate_linear_tool_access(agent: Agent, access: Any) -> None:
+    location = f"agents.{agent.id}.linear.tool_access.{access.access_id}"
+    for index, tool in enumerate(access.tools):
+        if tool not in LINEAR_PROVIDER_TOOLS:
+            raise LinearWorkspaceProviderConfigError(
+                f"{location}.tools[{index}] unknown Linear tool: {tool}"
+            )
+    if any(tool in ISSUE_TARGETING_TOOLS for tool in access.tools) and not access.issues:
+        raise LinearWorkspaceProviderConfigError(
+            f"{location}.issues must be a non-empty string list"
+        )
+    if (
+        CREATE_ISSUE_TOOL in access.tools or CREATE_PROJECT_TOOL in access.tools
+    ) and not access.create_team_ids:
+        raise LinearWorkspaceProviderConfigError(
+            f"{location}.create_team_ids must be a non-empty string list"
+        )
+    if (
+        CREATE_ISSUE_TOOL in access.tools
+        and not access.allow_top_level_create
+        and not access.create_parent_issues
+    ):
+        raise LinearWorkspaceProviderConfigError(
+            f"{location} must allow top-level issue creation or configure "
+            "create_parent_issues for cao_linear.create_issue"
+        )
+    if UPDATE_ISSUE_TOOL in access.tools and not access.update_fields:
+        raise LinearWorkspaceProviderConfigError(
+            f"{location}.update_fields must be a non-empty string list"
+        )
+    for index, field in enumerate(access.update_fields):
+        if field not in UPDATE_ISSUE_FIELDS:
+            raise LinearWorkspaceProviderConfigError(
+                f"{location}.update_fields[{index}] unknown Linear update field: {field}"
+            )
+
+
 def load_linear_provider_config(
     *,
-    config_path: Optional[Path] = None,
-    agent_registry: Optional[AgentIdentityRegistry] = None,
-    allow_legacy_env: bool = True,
+    agents_root: Optional[Path] = None,
+    agent_registry: Optional[AgentRegistry] = None,
     env_reader: Callable[[str], Optional[str]] = linear_env,
 ) -> Optional[LinearProviderConfig]:
-    """Load Linear workspace-provider config, using legacy env only as fallback."""
-    path = LINEAR_PROVIDER_CONFIG_PATH if config_path is None else config_path
-    config: Optional[LinearProviderConfig]
-    if path.exists():
-        config = _load_structured_linear_config(path)
-    elif allow_legacy_env:
-        config = _load_legacy_linear_config(env_reader)
-    else:
-        config = None
-
-    if config is not None:
-        validate_linear_provider_config(config, agent_registry=agent_registry)
+    """Load Linear workspace-provider config from durable agent directories."""
+    registry = agent_registry or load_agent_registry(agents_root)
+    agents = registry.all()
+    presences: dict[str, LinearPresence] = {}
+    tool_access: dict[str, LinearToolAccess] = {}
+    for agent in agents.values():
+        presence = _linear_presence_from_agent(agent)
+        if presence is not None:
+            presences[presence.presence_id] = presence
+        for access in _linear_tool_access_from_agent(agent):
+            tool_access[access.location] = access
+    if not presences and not tool_access:
+        return None
+    config = LinearProviderConfig(
+        public_url=None,
+        presences=presences,
+        tool_access=tool_access,
+        agent_policies_enabled=False,
+        source="agents",
+    )
+    validate_linear_provider_config(config, agent_registry=registry)
     return config
 
 
 def validate_linear_provider_config(
     config: LinearProviderConfig,
     *,
-    agent_registry: Optional[AgentIdentityRegistry] = None,
+    agent_registry: Optional[AgentRegistry] = None,
 ) -> None:
     """Validate Linear presence uniqueness and optional CAO identity references."""
     app_keys: set[str] = set()
@@ -577,13 +461,13 @@ def validate_linear_provider_config(
             )
         agent_ids.add(presence.agent_id)
 
-        if agent_registry is not None and config.source != "legacy_env":
+        if agent_registry is not None:
             try:
                 agent_registry.get(presence.agent_id)
-            except AgentIdentityConfigError as exc:
+            except AgentConfigError as exc:
                 raise LinearWorkspaceProviderConfigError(
                     f"Linear presence {presence.presence_id} references missing CAO agent "
-                    f"identity: {presence.agent_id}"
+                    f"agent: {presence.agent_id}"
                 ) from exc
 
     for access in config.tool_access.values():
@@ -659,144 +543,6 @@ def preflight_linear_provider_credentials(
             )
 
 
-def _format_toml_value(value: Any) -> str:
-    if isinstance(value, str):
-        return json.dumps(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(_format_toml_value(item) for item in value) + "]"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    raise TypeError(f"Unsupported TOML value type: {type(value).__name__}")
-
-
-def save_linear_provider_config(
-    config: LinearProviderConfig,
-    *,
-    config_path: Optional[Path] = None,
-) -> None:
-    """Write Linear provider config with owner-only permissions."""
-    path = LINEAR_PROVIDER_CONFIG_PATH if config_path is None else config_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines: list[str] = []
-    if config.public_url:
-        lines.append(f"public_url = {_format_toml_value(config.public_url)}")
-        lines.append("")
-    lines.append(
-        "# WIP agent-presence policy guardrails. Keep disabled while workflow shape is "
-        "being explored."
-    )
-    lines.append(f"[{AGENT_POLICIES_SECTION}]")
-    lines.append(
-        f"{AGENT_POLICIES_ENABLED_KEY} = " f"{_format_toml_value(config.agent_policies_enabled)}"
-    )
-    lines.append("")
-    for presence_id in sorted(config.presences):
-        presence = config.presences[presence_id]
-        lines.append(f"[presences.{presence_id}]")
-        for field in (
-            "agent_id",
-            "app_key",
-            "client_id",
-            "client_secret",
-            "webhook_secret",
-            "oauth_redirect_uri",
-            "oauth_state",
-            "access_token",
-            "refresh_token",
-            "app_user_id",
-            "app_user_name",
-            "token_expires_at",
-        ):
-            value = getattr(presence, field)
-            if value:
-                lines.append(f"{field} = {_format_toml_value(value)}")
-        lines.append("")
-    for access_id in sorted(config.tool_access):
-        access = config.tool_access[access_id]
-        lines.append(f"[tool_access.{access_id}]")
-        if access.agent_id:
-            lines.append(f"agent_id = {_format_toml_value(access.agent_id)}")
-        if access.agent_profile:
-            lines.append(f"agent_profile = {_format_toml_value(access.agent_profile)}")
-        lines.append(f"tools = {_format_toml_value(list(access.tools))}")
-        if access.issues:
-            lines.append(f"{TOOL_ACCESS_ISSUES_KEY} = {_format_toml_value(list(access.issues))}")
-        if access.create_team_ids:
-            lines.append(
-                f"{TOOL_ACCESS_CREATE_TEAM_IDS_KEY} = "
-                f"{_format_toml_value(list(access.create_team_ids))}"
-            )
-        if access.create_project_ids:
-            lines.append(
-                f"{TOOL_ACCESS_CREATE_PROJECT_IDS_KEY} = "
-                f"{_format_toml_value(list(access.create_project_ids))}"
-            )
-        if access.create_parent_issues:
-            lines.append(
-                f"{TOOL_ACCESS_CREATE_PARENT_ISSUES_KEY} = "
-                f"{_format_toml_value(list(access.create_parent_issues))}"
-            )
-        if access.allow_top_level_create:
-            lines.append(
-                f"{TOOL_ACCESS_ALLOW_TOP_LEVEL_CREATE_KEY} = "
-                f"{_format_toml_value(access.allow_top_level_create)}"
-            )
-        if access.update_fields:
-            lines.append(
-                f"{TOOL_ACCESS_UPDATE_FIELDS_KEY} = "
-                f"{_format_toml_value(list(access.update_fields))}"
-            )
-        if access.reason:
-            lines.append(f"{TOOL_ACCESS_REASON_KEY} = {_format_toml_value(access.reason)}")
-        lines.append("")
-    path.write_text("\n".join(lines).rstrip() + "\n")
-    path.chmod(0o600)
-
-
-def _toml_section_bounds(lines: list[str], section: str) -> tuple[int, int] | None:
-    header = f"[{section}]"
-    start: int | None = None
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if start is None:
-            if stripped == header:
-                start = index
-            continue
-        if stripped.startswith("[") and stripped.endswith("]"):
-            return start, index
-    if start is None:
-        return None
-    return start, len(lines)
-
-
-def _patch_toml_section_values(
-    text: str,
-    *,
-    section: str,
-    values: Mapping[str, Any],
-) -> str:
-    lines = text.splitlines()
-    bounds = _toml_section_bounds(lines, section)
-    if bounds is None:
-        return text
-    start, end = bounds
-    pending = dict(values)
-    key_pattern = re.compile(r"^(\s*)([A-Za-z0-9_]+)\s*=.*$")
-    for index in range(start + 1, end):
-        match = key_pattern.match(lines[index])
-        if match is None:
-            continue
-        indent, key = match.groups()
-        if key in pending:
-            lines[index] = f"{indent}{key} = {_format_toml_value(pending.pop(key))}"
-    insert_at = end
-    for key, value in pending.items():
-        lines.insert(insert_at, f"{key} = {_format_toml_value(value)}")
-        insert_at += 1
-    trailing_newline = "\n" if text.endswith("\n") else ""
-    return "\n".join(lines) + trailing_newline
-
-
 def update_linear_presence_tokens(
     app_key: str,
     *,
@@ -805,11 +551,10 @@ def update_linear_presence_tokens(
     app_user_id: Optional[str] = None,
     app_user_name: Optional[str] = None,
     token_expires_at: Optional[str] = None,
-    config_path: Optional[Path] = None,
+    agents_root: Optional[Path] = None,
 ) -> bool:
-    """Persist OAuth token data to structured Linear config when available."""
-    path = LINEAR_PROVIDER_CONFIG_PATH if config_path is None else config_path
-    config = load_linear_provider_config(config_path=path, allow_legacy_env=False)
+    """Persist OAuth token data into the matching agent's ``[linear]`` config."""
+    config = load_linear_provider_config(agents_root=agents_root)
     if config is None:
         return False
     presence = config.presence_by_app_key(app_key)
@@ -824,13 +569,12 @@ def update_linear_presence_tokens(
         updates["app_user_name"] = app_user_name
     if token_expires_at:
         updates["token_expires_at"] = token_expires_at
-    patched = _patch_toml_section_values(
-        path.read_text(),
-        section=f"presences.{presence.presence_id}",
-        values=updates,
+    patch_agent_section(
+        presence.agent_id,
+        "linear",
+        updates,
+        agents_root=agents_root,
     )
-    path.write_text(patched)
-    path.chmod(0o600)
     return True
 
 
@@ -842,14 +586,10 @@ def persist_linear_oauth_install(
     app_user_id: Optional[str] = None,
     app_user_name: Optional[str] = None,
     token_expires_at: Optional[str] = None,
-    config_path: Optional[Path] = None,
+    agents_root: Optional[Path] = None,
     env_writer: Optional[Callable[[str, str], None]] = None,
 ) -> bool:
-    """Persist Linear OAuth install data at the provider config edge.
-
-    Returns True when structured provider config was updated. A False return
-    means the legacy env compatibility path was used.
-    """
+    """Persist Linear OAuth install data at the agent config edge."""
     if app_key and update_linear_presence_tokens(
         app_key,
         access_token=access_token,
@@ -857,21 +597,9 @@ def persist_linear_oauth_install(
         token_expires_at=token_expires_at,
         app_user_id=app_user_id,
         app_user_name=app_user_name,
-        config_path=config_path,
+        agents_root=agents_root,
     ):
         return True
-
-    write_env = env_writer or set_env_var
-    prefix = app_env_prefix(app_key) if app_key else "LINEAR"
-    write_env(f"{prefix}_ACCESS_TOKEN", access_token)
-    if refresh_token:
-        write_env(f"{prefix}_REFRESH_TOKEN", refresh_token)
-    if token_expires_at:
-        write_env(f"{prefix}_TOKEN_EXPIRES_AT", token_expires_at)
-    if app_user_id:
-        write_env(f"{prefix}_APP_USER_ID", app_user_id)
-    if app_user_name:
-        write_env(f"{prefix}_APP_USER_NAME", app_user_name)
     return False
 
 
@@ -962,14 +690,14 @@ class LinearWorkspaceProvider:
     def __init__(
         self,
         *,
-        agent_registry: Optional[AgentIdentityRegistry] = None,
-        config_path: Optional[Path] = None,
+        agent_registry: Optional[AgentRegistry] = None,
+        agents_root: Optional[Path] = None,
         env_reader: Callable[[str], Optional[str]] = linear_env,
         preflight_credentials: bool = True,
         credential_checker: Optional[LinearCredentialChecker] = None,
     ) -> None:
-        self._agent_registry = agent_registry or load_agent_identity_registry()
-        self._config_path = config_path
+        self._agent_registry = agent_registry or load_agent_registry(agents_root)
+        self._agents_root = agents_root
         self._env_reader = env_reader
         self._preflight_credentials = preflight_credentials
         self._credential_checker = credential_checker or _default_check_linear_presence_credentials
@@ -983,9 +711,8 @@ class LinearWorkspaceProvider:
         """Return whether Linear config declares CAO-mediated tool access."""
         try:
             config = load_linear_provider_config(
-                config_path=self._config_path,
+                agents_root=self._agents_root,
                 agent_registry=self._agent_registry,
-                allow_legacy_env=False,
                 env_reader=self._env_reader,
             )
         except LinearWorkspaceProviderConfigError:
@@ -1003,9 +730,8 @@ class LinearWorkspaceProvider:
 
     def initialize(self) -> None:
         self._config = load_linear_provider_config(
-            config_path=self._config_path,
+            agents_root=self._agents_root,
             agent_registry=self._agent_registry,
-            allow_legacy_env=True,
             env_reader=self._env_reader,
         )
         if self._config is None:
@@ -1024,7 +750,7 @@ class LinearWorkspaceProvider:
         return LinearToolProvider(
             config=config,
             agent_registry=self._agent_registry,
-            profile_exists=_agent_profile_exists,
+            profile_exists=lambda profile: False,
         ).provider_tool_access()
 
     def _load_config(self) -> LinearProviderConfig:
@@ -1089,14 +815,11 @@ class LinearWorkspaceProvider:
             app_user_name=_extract_app_user_name(payload),
         )
 
-    def resolve_identity_for_presence(self, presence: LinearPresence) -> AgentIdentity:
-        config = self._load_config()
-        if config.source == "legacy_env":
-            return _legacy_identity_for_presence(presence, self._env_reader)
+    def resolve_identity_for_presence(self, presence: LinearPresence) -> Agent:
         return self._agent_registry.get(presence.agent_id)
 
-    def resolve_identity_for_agent_id(self, agent_id: str) -> AgentIdentity:
-        """Resolve a CAO agent identity through this provider's presence mapping."""
+    def resolve_identity_for_agent_id(self, agent_id: str) -> Agent:
+        """Resolve a CAO agent through this provider's presence mapping."""
         config = self._load_config()
         presence = next(
             (
@@ -1108,14 +831,14 @@ class LinearWorkspaceProvider:
         )
         if presence is None:
             raise LinearWorkspaceProviderConfigError(
-                f"Linear provider has no presence for CAO agent identity: {agent_id}"
+                f"Linear provider has no presence for CAO agent: {agent_id}"
             )
         return self.resolve_identity_for_presence(presence)
 
-    def list_agent_identities(self) -> tuple[AgentIdentity, ...]:
-        """Return provider-backed CAO identities from configured Linear presences."""
+    def list_agent_identities(self) -> tuple[Agent, ...]:
+        """Return provider-backed CAO agents from configured Linear presences."""
         config = self._load_config()
-        identities: dict[str, AgentIdentity] = {}
+        identities: dict[str, Agent] = {}
         for presence in config.presences.values():
             identity = self.resolve_identity_for_presence(presence)
             identities[identity.id] = identity
@@ -1159,13 +882,12 @@ def should_enable_linear_agent_policies() -> bool:
 
 def webhook_secret_presences(
     *,
-    config_path: Optional[Path] = None,
+    agents_root: Optional[Path] = None,
     env_reader: Callable[[str], Optional[str]] = linear_env,
 ) -> Iterable[LinearPresence]:
     """Yield configured Linear presences that can verify webhooks."""
     config = load_linear_provider_config(
-        config_path=config_path,
-        allow_legacy_env=True,
+        agents_root=agents_root,
         env_reader=env_reader,
     )
     if config is None:
@@ -1183,10 +905,11 @@ def has_legacy_linear_provider_config(
 def should_enable_linear_routes() -> bool:
     """Return whether Linear routes should be available for this CAO process.
 
-    Structured workspace-provider config is the primary path. Legacy no-config
-    route availability is retained only when legacy Linear env config is
-    actually present.
+    Agent-owned Linear config is the hard-cutover route source.
     """
-    if workspace_provider_config_exists():
-        return is_workspace_provider_enabled("linear", default_when_unconfigured=False)
-    return has_legacy_linear_provider_config()
+    try:
+        return load_linear_provider_config() is not None
+    except LinearWorkspaceProviderConfigError:
+        raise
+    except Exception:
+        return False

@@ -1,4 +1,4 @@
-"""Tests for Linear workspace-provider config and presence resolution."""
+"""Tests for Linear provider config loaded from durable agents."""
 
 from __future__ import annotations
 
@@ -6,7 +6,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentRegistry,
+    LinearConfig,
+    LinearToolAccessConfig,
+    load_agent,
+    write_agent,
+)
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearAgentMentionedEvent,
     LinearAgentSessionLifecycleActivityEvent,
@@ -25,54 +32,46 @@ from cli_agent_orchestrator.linear.workspace_provider import (
 )
 
 
-def _agents() -> AgentIdentityRegistry:
-    return AgentIdentityRegistry(
-        {
-            "implementation_partner": AgentIdentity(
-                id="implementation_partner",
-                display_name="Implementation Partner",
-                agent_profile="developer",
-                cli_provider="codex",
-                workdir="/repo",
-                session_name="implementation-partner",
-            ),
-            "discovery_partner": AgentIdentity(
-                id="discovery_partner",
-                display_name="Discovery Partner",
-                agent_profile="reviewer",
-                cli_provider="claude_code",
-                workdir="/other",
-                session_name="discovery-partner",
-            ),
-        }
-    )
-
-
-def _linear_config(tmp_path, body: str):
-    path = tmp_path / "workspace-providers" / "linear.toml"
-    path.parent.mkdir(parents=True)
-    path.write_text(body)
-    return path
-
-
 def _future_token_expires_at() -> str:
     return (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
 
-def test_configured_linear_app_key_resolves_to_cao_identity(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-app_user_name = "Implementation Partner"
-""",
+def _agent(agent_id: str = "implementation_partner", **overrides: object) -> Agent:
+    values = {
+        "id": agent_id,
+        "display_name": agent_id.replace("_", " ").title(),
+        "cli_provider": "codex",
+        "workdir": "/repo",
+        "session_name": agent_id.replace("_", "-"),
+        "prompt": "# Agent\n",
+        "linear": LinearConfig(app_key=agent_id),
+    }
+    values.update(overrides)
+    return Agent(**values)
+
+
+def _registry(*agents: Agent) -> AgentRegistry:
+    return AgentRegistry({agent.id: agent for agent in agents})
+
+
+def _write_agents(tmp_path, *agents: Agent):
+    agents_root = tmp_path / "agents"
+    for agent in agents:
+        write_agent(agent, agents_root=agents_root)
+    return agents_root
+
+
+def test_configured_linear_app_key_resolves_to_cao_agent():
+    agent = _agent(
+        "implementation_partner",
+        linear=LinearConfig(
+            app_key="implementation_partner",
+            app_user_id="app-user-impl",
+            app_user_name="Implementation Partner",
+        ),
     )
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
+        agent_registry=_registry(agent),
         preflight_credentials=False,
     )
     provider.initialize()
@@ -83,20 +82,9 @@ app_user_name = "Implementation Partner"
     assert resolved.identity.session_name == "implementation-partner"
 
 
-def test_linear_workspace_provider_declares_subscribable_cao_events(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-app_user_name = "Implementation Partner"
-""",
-    )
+def test_linear_workspace_provider_declares_subscribable_cao_events():
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
+        agent_registry=_registry(_agent()),
         preflight_credentials=False,
     )
 
@@ -112,62 +100,19 @@ app_user_name = "Implementation Partner"
     }
 
 
-def test_linear_agent_policies_default_disabled(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-""",
-    )
-
-    loaded = load_linear_provider_config(
-        config_path=config,
-        agent_registry=_agents(),
-        allow_legacy_env=False,
-    )
+def test_linear_agent_policies_default_disabled():
+    loaded = load_linear_provider_config(agent_registry=_registry(_agent()))
 
     assert loaded is not None
     assert loaded.agent_policies_enabled is False
 
 
-def test_linear_agent_policies_can_be_enabled(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[agent_policies]
-enabled = true
-
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-""",
-    )
-
-    loaded = load_linear_provider_config(
-        config_path=config,
-        agent_registry=_agents(),
-        allow_legacy_env=False,
-    )
-
-    assert loaded is not None
-    assert loaded.agent_policies_enabled is True
-
-
-def test_configured_linear_app_user_id_resolves_to_cao_identity(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-""",
+def test_configured_linear_app_user_id_resolves_to_cao_agent():
+    agent = _agent(
+        linear=LinearConfig(app_key="implementation_partner", app_user_id="app-user-impl")
     )
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
+        agent_registry=_registry(agent),
         preflight_credentials=False,
     )
     provider.initialize()
@@ -178,18 +123,9 @@ app_user_id = "app-user-impl"
     assert resolved.identity.id == "implementation_partner"
 
 
-def test_configured_linear_app_key_tolerates_unstored_app_user_id(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-""",
-    )
+def test_configured_linear_app_key_tolerates_unstored_app_user_id():
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
+        agent_registry=_registry(_agent()),
         preflight_credentials=False,
     )
     provider.initialize()
@@ -205,24 +141,18 @@ app_key = "implementation_partner"
     assert resolved.identity.id == "implementation_partner"
 
 
-def test_configured_linear_app_key_rejects_conflicting_app_user_id(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-
-[presences.discovery_partner]
-agent_id = "discovery_partner"
-app_key = "discovery_partner"
-app_user_id = "app-user-discovery"
-""",
-    )
+def test_configured_linear_app_key_rejects_conflicting_app_user_id():
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
+        agent_registry=_registry(
+            _agent(
+                "implementation_partner",
+                linear=LinearConfig(app_key="implementation_partner", app_user_id="app-user-impl"),
+            ),
+            _agent(
+                "discovery_partner",
+                linear=LinearConfig(app_key="discovery_partner", app_user_id="app-user-discovery"),
+            ),
+        ),
         preflight_credentials=False,
     )
     provider.initialize()
@@ -239,18 +169,9 @@ app_user_id = "app-user-discovery"
         )
 
 
-def test_unknown_linear_app_key_is_rejected(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-""",
-    )
+def test_unknown_linear_app_key_is_rejected():
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
+        agent_registry=_registry(_agent()),
         preflight_credentials=False,
     )
     provider.initialize()
@@ -259,218 +180,145 @@ app_key = "implementation_partner"
         provider.resolve_event({"_cao_linear_app_key": "unknown"})
 
 
-def test_duplicate_linear_app_key_mapping_is_rejected(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.impl]
-agent_id = "implementation_partner"
-app_key = "same"
-
-[presences.discovery]
-agent_id = "discovery_partner"
-app_key = "same"
-""",
-    )
-
+def test_duplicate_linear_app_key_mapping_is_rejected():
     with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear app_key"):
-        load_linear_provider_config(config_path=config, agent_registry=_agents())
+        load_linear_provider_config(
+            agent_registry=_registry(
+                _agent("implementation_partner", linear=LinearConfig(app_key="same")),
+                _agent("discovery_partner", linear=LinearConfig(app_key="same")),
+            )
+        )
 
 
-def test_duplicate_linear_app_user_id_mapping_is_rejected(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.impl]
-agent_id = "implementation_partner"
-app_key = "impl"
-app_user_id = "same-user"
-
-[presences.discovery]
-agent_id = "discovery_partner"
-app_key = "discovery"
-app_user_id = "same-user"
-""",
-    )
-
+def test_duplicate_linear_app_user_id_mapping_is_rejected():
     with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear app_user_id"):
-        load_linear_provider_config(config_path=config, agent_registry=_agents())
+        load_linear_provider_config(
+            agent_registry=_registry(
+                _agent(
+                    "implementation_partner",
+                    linear=LinearConfig(app_key="impl", app_user_id="same-user"),
+                ),
+                _agent(
+                    "discovery_partner",
+                    linear=LinearConfig(app_key="discovery", app_user_id="same-user"),
+                ),
+            )
+        )
 
 
-def test_duplicate_linear_app_user_name_mapping_is_rejected(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.impl]
-agent_id = "implementation_partner"
-app_key = "impl"
-app_user_name = "Same User"
-
-[presences.discovery]
-agent_id = "discovery_partner"
-app_key = "discovery"
-app_user_name = "Same User"
-""",
-    )
-
+def test_duplicate_linear_app_user_name_mapping_is_rejected():
     with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear app_user_name"):
-        load_linear_provider_config(config_path=config, agent_registry=_agents())
+        load_linear_provider_config(
+            agent_registry=_registry(
+                _agent(
+                    "implementation_partner",
+                    linear=LinearConfig(app_key="impl", app_user_name="Same User"),
+                ),
+                _agent(
+                    "discovery_partner",
+                    linear=LinearConfig(app_key="discovery", app_user_name="Same User"),
+                ),
+            )
+        )
 
 
-def test_duplicate_linear_oauth_state_mapping_is_rejected(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.impl]
-agent_id = "implementation_partner"
-app_key = "impl"
-oauth_state = "same-state"
-
-[presences.discovery]
-agent_id = "discovery_partner"
-app_key = "discovery"
-oauth_state = "same-state"
-""",
-    )
-
+def test_duplicate_linear_oauth_state_mapping_is_rejected():
     with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear oauth_state"):
-        load_linear_provider_config(config_path=config, agent_registry=_agents())
+        load_linear_provider_config(
+            agent_registry=_registry(
+                _agent(
+                    "implementation_partner",
+                    linear=LinearConfig(app_key="impl", oauth_state="same-state"),
+                ),
+                _agent(
+                    "discovery_partner",
+                    linear=LinearConfig(app_key="discovery", oauth_state="same-state"),
+                ),
+            )
+        )
 
 
-def test_duplicate_linear_webhook_secret_mapping_is_rejected(tmp_path):
-    config = _linear_config(
+def test_agent_linear_config_is_primary_over_legacy_linear_app_env(tmp_path):
+    agents_root = _write_agents(
         tmp_path,
-        """
-[presences.impl]
-agent_id = "implementation_partner"
-app_key = "impl"
-webhook_secret = "same-secret"
-
-[presences.discovery]
-agent_id = "discovery_partner"
-app_key = "discovery"
-webhook_secret = "same-secret"
-""",
-    )
-
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear webhook_secret"):
-        load_linear_provider_config(config_path=config, agent_registry=_agents())
-
-
-def test_missing_cao_agent_reference_is_rejected(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.impl]
-agent_id = "missing_agent"
-app_key = "impl"
-""",
-    )
-
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="references missing CAO agent"):
-        load_linear_provider_config(config_path=config, agent_registry=_agents())
-
-
-def test_structured_config_is_primary_over_legacy_linear_app_env(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.impl]
-agent_id = "implementation_partner"
-app_key = "impl"
-client_id = "structured-client"
-""",
+        _agent(
+            "implementation_partner", linear=LinearConfig(app_key="impl", client_id="agent-client")
+        ),
     )
     env = {
         "LINEAR_APP_KEYS": "legacy",
         "LINEAR_APP_IMPL_CLIENT_ID": "legacy-client",
     }
 
-    assert configured_app_keys(config_path=config, env_reader=env.get) == ["impl"]
-    assert linear_app_env("impl", "CLIENT_ID", config_path=config, env_reader=env.get) == (
-        "structured-client"
+    assert configured_app_keys(agents_root=agents_root, env_reader=env.get) == ["impl"]
+    assert (
+        linear_app_env("impl", "CLIENT_ID", agents_root=agents_root, env_reader=env.get)
+        == "agent-client"
     )
 
 
-def test_structured_config_missing_field_does_not_fall_back_to_legacy_env(tmp_path):
-    config = _linear_config(
+def test_agent_linear_config_missing_field_does_not_fall_back_to_legacy_env(tmp_path):
+    agents_root = _write_agents(
         tmp_path,
-        """
-[presences.impl]
-agent_id = "implementation_partner"
-app_key = "impl"
-client_id = "structured-client"
-""",
+        _agent(
+            "implementation_partner", linear=LinearConfig(app_key="impl", client_id="agent-client")
+        ),
     )
     env = {
         "LINEAR_APP_IMPL_CLIENT_SECRET": "legacy-secret",
         "LINEAR_CLIENT_SECRET": "legacy-global-secret",
     }
 
-    assert linear_app_env("impl", "CLIENT_SECRET", config_path=config, env_reader=env.get) is None
+    assert (
+        linear_app_env("impl", "CLIENT_SECRET", agents_root=agents_root, env_reader=env.get) is None
+    )
 
 
 def test_enabled_linear_provider_requires_config(tmp_path):
-    missing_config = tmp_path / "workspace-providers" / "linear.toml"
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=missing_config,
-        env_reader=lambda name: None,
+        agents_root=tmp_path / "agents", env_reader=lambda name: None
     )
 
     with pytest.raises(LinearWorkspaceProviderConfigError, match="no Linear config"):
         provider.initialize()
 
 
-def test_linear_provider_preflight_rejects_missing_access_token(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-""",
-    )
-    provider = LinearWorkspaceProvider(agent_registry=_agents(), config_path=config)
+def test_linear_provider_preflight_rejects_missing_access_token():
+    provider = LinearWorkspaceProvider(agent_registry=_registry(_agent()))
 
     with pytest.raises(LinearWorkspaceProviderConfigError, match="missing access_token"):
         provider.initialize()
 
 
-def test_linear_provider_preflight_rejects_expired_access_token(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-access_token = "access-token"
-token_expires_at = "2026-05-01T00:00:00+00:00"
-""",
+def test_linear_provider_preflight_rejects_expired_access_token():
+    provider = LinearWorkspaceProvider(
+        agent_registry=_registry(
+            _agent(
+                linear=LinearConfig(
+                    app_key="implementation_partner",
+                    access_token="access-token",
+                    token_expires_at="2026-05-01T00:00:00+00:00",
+                )
+            )
+        )
     )
-    provider = LinearWorkspaceProvider(agent_registry=_agents(), config_path=config)
 
     with pytest.raises(LinearWorkspaceProviderConfigError, match="access token expired"):
         provider.initialize()
 
 
-def test_linear_provider_preflight_rejects_authenticated_app_user_mismatch(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        f"""
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "expected-app-user"
-access_token = "access-token"
-token_expires_at = "{_future_token_expires_at()}"
-""",
-    )
+def test_linear_provider_preflight_rejects_authenticated_app_user_mismatch():
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
+        agent_registry=_registry(
+            _agent(
+                linear=LinearConfig(
+                    app_key="implementation_partner",
+                    app_user_id="expected-app-user",
+                    access_token="access-token",
+                    token_expires_at=_future_token_expires_at(),
+                )
+            )
+        ),
         credential_checker=lambda presence: {"id": "other-app-user", "name": "Wrong App"},
     )
 
@@ -478,178 +326,133 @@ token_expires_at = "{_future_token_expires_at()}"
         provider.initialize()
 
 
-def test_linear_provider_preflight_accepts_authenticated_credentials(tmp_path):
+def test_linear_provider_preflight_accepts_authenticated_credentials():
     checked = []
-    config = _linear_config(
-        tmp_path,
-        f"""
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-access_token = "access-token"
-token_expires_at = "{_future_token_expires_at()}"
-""",
-    )
-
-    def check(presence):
-        checked.append(presence.app_key)
-        return {"id": "app-user-impl", "name": "Implementation Partner"}
-
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
-        credential_checker=check,
+        agent_registry=_registry(
+            _agent(
+                linear=LinearConfig(
+                    app_key="implementation_partner",
+                    app_user_id="app-user-impl",
+                    access_token="access-token",
+                    token_expires_at=_future_token_expires_at(),
+                )
+            )
+        ),
+        credential_checker=lambda presence: checked.append(presence.app_key)
+        or {"id": "app-user-impl", "name": "Implementation Partner"},
     )
     provider.initialize()
 
     assert checked == ["implementation_partner"]
 
 
-def test_legacy_discovery_partner_env_fallback_is_at_linear_config_edge(tmp_path):
-    missing_config = tmp_path / "workspace-providers" / "linear.toml"
-    env = {
-        "LINEAR_WEBHOOK_SECRET": "legacy-secret",
-        "LINEAR_DISCOVERY_SESSION_NAME": "linear-discovery-partner",
-        "LINEAR_DISCOVERY_AGENT_PROFILE": "developer",
-        "LINEAR_DISCOVERY_PROVIDER": "codex",
-        "LINEAR_DISCOVERY_WORKDIR": "/repo",
+def test_agent_tool_access_is_loaded_per_agent_without_profile_targeting():
+    agent = _agent(
+        linear=LinearConfig(
+            app_key="implementation_partner",
+            tool_access=(
+                LinearToolAccessConfig(
+                    access_id="reads",
+                    tools=("cao_linear.get_issue", "cao_linear.list_comments"),
+                    issues=("CAO-28", "issue-28"),
+                    reason="Implementation Partner is limited to the bridge planning issue.",
+                ),
+            ),
+        )
+    )
+
+    loaded = load_linear_provider_config(agent_registry=_registry(agent))
+
+    assert loaded is not None
+    access = loaded.tool_access["agents.implementation_partner.linear.tool_access.reads"]
+    assert access.agent_id == "implementation_partner"
+    assert access.agent_profile is None
+    assert access.tools == ("cao_linear.get_issue", "cao_linear.list_comments")
+    assert access.issues == ("CAO-28", "issue-28")
+
+
+def test_agent_tool_access_ids_are_agent_local():
+    loaded = load_linear_provider_config(
+        agent_registry=_registry(
+            _agent(
+                "implementation_partner",
+                linear=LinearConfig(
+                    app_key="implementation_partner",
+                    tool_access=(
+                        LinearToolAccessConfig(
+                            access_id="reads",
+                            tools=("cao_linear.get_issue",),
+                            issues=("CAO-28",),
+                        ),
+                    ),
+                ),
+            ),
+            _agent(
+                "discovery_partner",
+                linear=LinearConfig(
+                    app_key="discovery_partner",
+                    tool_access=(
+                        LinearToolAccessConfig(
+                            access_id="reads",
+                            tools=("cao_linear.list_comments",),
+                            issues=("CAO-29",),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    assert loaded is not None
+    assert set(loaded.tool_access) == {
+        "agents.implementation_partner.linear.tool_access.reads",
+        "agents.discovery_partner.linear.tool_access.reads",
     }
-
-    config = load_linear_provider_config(config_path=missing_config, env_reader=env.get)
-
-    assert config is not None
-    assert config.source == "legacy_env"
-    presence = config.presence_by_app_key("discovery_partner")
-    assert presence is not None
-    assert presence.webhook_secret == "legacy-secret"
-
-
-def test_persist_linear_oauth_install_uses_legacy_global_env_at_provider_edge(monkeypatch):
-    saved = {}
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.update_linear_presence_tokens",
-        lambda *args, **kwargs: False,
+    assert (
+        loaded.tool_access["agents.implementation_partner.linear.tool_access.reads"].agent_id
+        == "implementation_partner"
+    )
+    assert (
+        loaded.tool_access["agents.discovery_partner.linear.tool_access.reads"].agent_id
+        == "discovery_partner"
     )
 
-    structured = persist_linear_oauth_install(
-        app_key=None,
-        access_token="access-token",
-        refresh_token="refresh-token",
-        app_user_id="app-user-1",
-        app_user_name="Discovery Partner",
-        token_expires_at="2026-05-06T00:00:00+00:00",
-        env_writer=lambda key, value: saved.update({key: value}),
-    )
 
-    assert structured is False
-    assert saved == {
-        "LINEAR_ACCESS_TOKEN": "access-token",
-        "LINEAR_REFRESH_TOKEN": "refresh-token",
-        "LINEAR_APP_USER_ID": "app-user-1",
-        "LINEAR_APP_USER_NAME": "Discovery Partner",
-        "LINEAR_TOKEN_EXPIRES_AT": "2026-05-06T00:00:00+00:00",
-    }
-
-
-def test_persist_linear_oauth_install_uses_legacy_app_env_at_provider_edge(monkeypatch):
-    saved = {}
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.update_linear_presence_tokens",
-        lambda *args, **kwargs: False,
-    )
-
-    structured = persist_linear_oauth_install(
-        app_key="implementation_partner",
-        access_token="implementation-access-token",
-        app_user_id="impl-user-1",
-        app_user_name="Implementation Partner",
-        env_writer=lambda key, value: saved.update({key: value}),
-    )
-
-    assert structured is False
-    assert saved == {
-        "LINEAR_APP_IMPLEMENTATION_PARTNER_ACCESS_TOKEN": "implementation-access-token",
-        "LINEAR_APP_IMPLEMENTATION_PARTNER_APP_USER_ID": "impl-user-1",
-        "LINEAR_APP_IMPLEMENTATION_PARTNER_APP_USER_NAME": "Implementation Partner",
-    }
-
-
-def test_structured_token_update_preserves_linear_tool_access(tmp_path):
-    config = _linear_config(
+def test_oauth_install_patches_matching_agent_linear_section(tmp_path):
+    agents_root = _write_agents(
         tmp_path,
-        """
-# User-authored Linear provider config.
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-access_token = "old-token"
-# Keep this comment next to the token block.
-
-[tool_access.implementation_partner_reads]
-agent_id = "implementation_partner"
-tools = ["cao_linear.get_issue", "cao_linear.list_comments", "cao_linear.create_comment", "cao_linear.create_issue", "cao_linear.update_issue"]
-issues = ["CAO-28", "issue-28"]
-create_team_ids = ["team-cao"]
-create_project_ids = ["project-bridge"]
-create_parent_issues = ["CAO-25"]
-allow_top_level_create = true
-update_fields = ["title", "description", "state_id", "assignee_id", "project_id", "parent_issue", "label_ids", "priority"]
-reason = "Implementation Partner is limited to the bridge planning issue during policy validation."
-custom_authored_key = "preserve me"
-""",
+        _agent(
+            linear=LinearConfig(
+                app_key="implementation_partner",
+                access_token="old-token",
+                tool_access=(
+                    LinearToolAccessConfig(
+                        access_id="reads",
+                        tools=("cao_linear.get_issue",),
+                        issues=("CAO-28",),
+                    ),
+                ),
+            )
+        ),
     )
 
     updated = persist_linear_oauth_install(
         app_key="implementation_partner",
         access_token="new-token",
         refresh_token="refresh-token",
-        config_path=config,
+        app_user_id="app-user-1",
+        app_user_name="Implementation Partner",
+        token_expires_at="2026-05-06T00:00:00+00:00",
+        agents_root=agents_root,
     )
 
-    reloaded = load_linear_provider_config(
-        config_path=config,
-        agent_registry=_agents(),
-        allow_legacy_env=False,
-    )
+    reloaded = load_agent("implementation_partner", agents_root=agents_root)
     assert updated is True
-    raw = config.read_text()
-    assert "# User-authored Linear provider config." in raw
-    assert "# Keep this comment next to the token block." in raw
-    assert 'custom_authored_key = "preserve me"' in raw
-    assert reloaded is not None
-    presence = reloaded.presence_by_app_key("implementation_partner")
-    assert presence is not None
-    assert presence.access_token == "new-token"
-    assert presence.refresh_token == "refresh-token"
-    assert reloaded.tool_access["implementation_partner_reads"].tools == (
-        "cao_linear.get_issue",
-        "cao_linear.list_comments",
-        "cao_linear.create_comment",
-        "cao_linear.create_issue",
-        "cao_linear.update_issue",
-    )
-    assert reloaded.tool_access["implementation_partner_reads"].issues == (
-        "CAO-28",
-        "issue-28",
-    )
-    assert reloaded.tool_access["implementation_partner_reads"].create_team_ids == ("team-cao",)
-    assert reloaded.tool_access["implementation_partner_reads"].create_project_ids == (
-        "project-bridge",
-    )
-    assert reloaded.tool_access["implementation_partner_reads"].create_parent_issues == ("CAO-25",)
-    assert reloaded.tool_access["implementation_partner_reads"].allow_top_level_create is True
-    assert reloaded.tool_access["implementation_partner_reads"].update_fields == (
-        "title",
-        "description",
-        "state_id",
-        "assignee_id",
-        "project_id",
-        "parent_issue",
-        "label_ids",
-        "priority",
-    )
-    assert (
-        reloaded.tool_access["implementation_partner_reads"].reason
-        == "Implementation Partner is limited to the bridge planning issue during policy validation."
-    )
+    assert reloaded.linear is not None
+    assert reloaded.linear.access_token == "new-token"
+    assert reloaded.linear.refresh_token == "refresh-token"
+    assert reloaded.linear.app_user_id == "app-user-1"
+    assert reloaded.linear.app_user_name == "Implementation Partner"
+    assert reloaded.linear.token_expires_at == "2026-05-06T00:00:00+00:00"
+    assert reloaded.linear.tool_access[0].tools == ("cao_linear.get_issue",)

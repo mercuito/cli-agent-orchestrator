@@ -11,10 +11,18 @@ import pytest
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentity,
-    AgentIdentityRegistry,
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
+
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentConfigError,
+    AgentRegistry,
     AgentWorkspaceContextConfig,
+    LinearConfig,
+    LinearToolAccessConfig,
 )
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.events import CaoEventDispatcher, agent_participants_for
@@ -91,38 +99,91 @@ def test_provider_tools_imports_without_workspace_provider_import_order():
     assert result.returncode == 0, result.stderr
 
 
-def _agents(*, workspace_context_enabled: bool = False) -> AgentIdentityRegistry:
-    return AgentIdentityRegistry(
+def _agents(
+    *,
+    workspace_context_enabled: bool = False,
+    tool_access_by_agent: Mapping[str, tuple[LinearToolAccessConfig, ...]] | None = None,
+) -> AgentRegistry:
+    tool_access_by_agent = tool_access_by_agent or {}
+    return AgentRegistry(
         {
-            "implementation_partner": AgentIdentity(
+            "implementation_partner": Agent(
                 id="implementation_partner",
                 display_name="Implementation Partner",
-                agent_profile="developer",
                 cli_provider="codex",
                 workdir="/repo",
                 session_name="implementation-partner",
+                prompt="# Implementation Partner\n",
                 workspace_context=AgentWorkspaceContextConfig(
                     enabled=workspace_context_enabled,
                     resolver_id="linear_planning" if workspace_context_enabled else None,
                 ),
+                linear=LinearConfig(
+                    app_key="implementation_partner",
+                    access_token="access-token",
+                    tool_access=tool_access_by_agent.get("implementation_partner", ()),
+                ),
             ),
-            "discovery_partner": AgentIdentity(
+            "discovery_partner": Agent(
                 id="discovery_partner",
                 display_name="Discovery Partner",
-                agent_profile="reviewer",
                 cli_provider="codex",
                 workdir="/other",
                 session_name="discovery-partner",
+                prompt="# Discovery Partner\n",
+                linear=LinearConfig(
+                    app_key="discovery_partner",
+                    access_token="discovery-token",
+                    tool_access=tool_access_by_agent.get("discovery_partner", ()),
+                ),
             ),
         }
     )
 
 
-def _linear_config(tmp_path, body: str):
-    path = tmp_path / "workspace-providers" / "linear.toml"
-    path.parent.mkdir(parents=True)
-    path.write_text(body)
-    return path
+def _tool_access_from_body(body: str) -> dict[str, tuple[LinearToolAccessConfig, ...]]:
+    parsed = tomllib.loads(body or "")
+    grouped: dict[str, list[LinearToolAccessConfig]] = {}
+
+    def tuple_field(raw: Mapping[str, Any], key: str, *, required: bool = False) -> tuple[str, ...]:
+        value = raw.get(key)
+        if value is None:
+            if required:
+                raise LinearWorkspaceProviderConfigError(
+                    f"tool_access.{access_id}.{key} must be a non-empty string list"
+                )
+            return ()
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise LinearWorkspaceProviderConfigError(
+                f"tool_access.{access_id}.{key} must be a non-empty string list"
+            )
+        result = tuple(item.strip() for item in value if item.strip())
+        if required and not result:
+            raise LinearWorkspaceProviderConfigError(
+                f"tool_access.{access_id}.{key} must be a non-empty string list"
+            )
+        return result
+
+    for access_id, raw_access in parsed.get("tool_access", {}).items():
+        agent_id = raw_access.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise LinearWorkspaceProviderConfigError(
+                f"tool_access.{access_id} must configure agent_id"
+            )
+        grouped.setdefault(agent_id.strip(), []).append(
+            LinearToolAccessConfig(
+                access_id=str(access_id),
+                tools=tuple_field(raw_access, "tools", required=True),
+                issues=tuple_field(raw_access, "issues"),
+                create_team_ids=tuple_field(raw_access, "create_team_ids"),
+                create_project_ids=tuple_field(raw_access, "create_project_ids"),
+                create_parent_issues=tuple_field(raw_access, "create_parent_issues"),
+                allow_top_level_create=raw_access.get("allow_top_level_create", False),
+                update_fields=tuple_field(raw_access, "update_fields"),
+                reason=raw_access.get("reason"),
+            )
+        )
+    return {agent_id: tuple(entries) for agent_id, entries in grouped.items()}
 
 
 def _provider(
@@ -131,25 +192,11 @@ def _provider(
     *,
     workspace_context_enabled: bool = False,
 ) -> LinearWorkspaceProvider:
-    config = _linear_config(
-        tmp_path,
-        f"""
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-access_token = "access-token"
-
-[presences.discovery_partner]
-agent_id = "discovery_partner"
-app_key = "discovery_partner"
-access_token = "discovery-token"
-
-{tool_access_body}
-""",
-    )
     provider = LinearWorkspaceProvider(
-        agent_registry=_agents(workspace_context_enabled=workspace_context_enabled),
-        config_path=config,
+        agent_registry=_agents(
+            workspace_context_enabled=workspace_context_enabled,
+            tool_access_by_agent=_tool_access_from_body(tool_access_body),
+        ),
         preflight_credentials=False,
     )
     provider.initialize()
@@ -1773,7 +1820,10 @@ reason = "Implementation Partner may only comment on assigned planning issues."
         )
     message = str(exc_info.value)
     assert "unauthorized_linear_issue" in message
-    assert "'CAO-51' is not authorized by tool_access.implementation_partner_comments" in message
+    assert (
+        "'CAO-51' is not authorized by "
+        "agents.implementation_partner.linear.tool_access.implementation_partner_comments"
+    ) in message
     assert "Implementation Partner may only comment on assigned planning issues." in message
     with pytest.raises(ToolError, match="wrong_provider_ref"):
         await mcp.call_tool(
@@ -2773,55 +2823,23 @@ def test_linear_tool_access_config_rejects_malformed_entries(
     tool_access_body,
     expected,
 ):
-    config = _linear_config(
-        tmp_path,
-        f"""
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-access_token = "access-token"
-
-{tool_access_body}
-""",
-    )
-
-    provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
-        preflight_credentials=False,
-    )
-
     with pytest.raises(LinearWorkspaceProviderConfigError) as exc_info:
-        provider.initialize()
+        _provider(tmp_path, tool_access_body)
 
     assert expected in str(exc_info.value)
 
 
-def test_linear_profile_tool_access_requires_presence_for_each_matching_identity(tmp_path):
-    config = _linear_config(
-        tmp_path,
-        """
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-access_token = "access-token"
-
+def test_linear_profile_tool_access_targeting_is_rejected(tmp_path):
+    with pytest.raises(LinearWorkspaceProviderConfigError) as exc_info:
+        _provider(
+            tmp_path,
+            """
 [tool_access.reviewer_reads]
 agent_profile = "reviewer"
 tools = ["cao_linear.get_issue"]
 issues = ["CAO-28"]
 """,
-    )
-    provider = LinearWorkspaceProvider(
-        agent_registry=_agents(),
-        config_path=config,
-        preflight_credentials=False,
-    )
-    provider.initialize()
-
-    with pytest.raises(ProviderToolAccessConfigError) as exc_info:
-        provider.provider_tool_access()
+        )
 
     assert "tool_access.reviewer_reads" in str(exc_info.value)
-    assert "identity 'discovery_partner'" in str(exc_info.value)
-    assert "no Linear presence" in str(exc_info.value)
+    assert "must configure agent_id" in str(exc_info.value)

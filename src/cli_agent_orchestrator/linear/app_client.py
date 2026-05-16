@@ -89,7 +89,7 @@ def app_env_prefix(app_key: str) -> str:
 
 
 def linear_app_env(app_key: Optional[str], name: str) -> Optional[str]:
-    """Read a Linear app-specific variable, falling back to legacy global config."""
+    """Read a Linear app-specific variable from agent-owned config."""
     try:
         return linear_provider.linear_app_env(app_key, name, env_reader=linear_env)
     except linear_provider.LinearWorkspaceProviderConfigError as exc:
@@ -104,7 +104,7 @@ def required_linear_app_env(app_key: Optional[str], name: str) -> str:
 
 
 def configured_app_keys() -> list[str]:
-    """Return configured Linear app keys from structured config or legacy env."""
+    """Return configured Linear app keys from agent-owned config."""
     try:
         return linear_provider.configured_app_keys(env_reader=linear_env)
     except linear_provider.LinearWorkspaceProviderConfigError as exc:
@@ -158,7 +158,7 @@ def validate_oauth_state(state: Optional[str], *, app_key: Optional[str] = None)
     if effective_app_key:
         expected_state = linear_app_env(effective_app_key, "OAUTH_STATE")
     else:
-        expected_state = linear_env("LINEAR_OAUTH_STATE")
+        expected_state = None
     if not expected_state:
         return False
     if not state_to_compare or not hmac.compare_digest(state_to_compare, expected_state):
@@ -221,7 +221,6 @@ def _configured_presence(
     app_key: Optional[str],
 ) -> Optional[linear_provider.LinearPresence]:
     config = linear_provider.load_linear_provider_config(
-        allow_legacy_env=True,
         env_reader=linear_env,
     )
     if config is None:
@@ -423,7 +422,7 @@ def install_linear_app(code: str, state: Optional[str]) -> Dict[str, Any]:
 
 def public_cao_url() -> Optional[str]:
     """Return the public CAO URL used for Linear callbacks, if configured."""
-    config = linear_provider.load_linear_provider_config(allow_legacy_env=False)
+    config = linear_provider.load_linear_provider_config()
     if config is not None and config.public_url:
         return config.public_url.rstrip("/")
 

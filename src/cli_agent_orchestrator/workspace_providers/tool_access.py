@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Mapping, Protocol
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import Agent, AgentRegistry
 
 
 class ProviderToolHookPhase(str, Enum):
@@ -79,7 +79,7 @@ class ProviderToolAccess:
     provider_name: str
     tool_name: str
     agent_identity_id: str
-    agent_profile: str
+    agent_profile: str | None
     pre_hooks: tuple[str, ...]
     post_hooks: tuple[str, ...]
     source_location: str
@@ -113,7 +113,7 @@ class ProviderToolInvocationContext:
     provider_name: str
     tool_name: str
     terminal_id: str
-    agent_identity: AgentIdentity
+    agent_identity: Agent
     arguments: Mapping[str, Any]
     access: ProviderToolAccess
     hook_name: str | None = None
@@ -250,7 +250,7 @@ def normalize_provider_tool_access(
     tools: tuple[ProviderMediatedToolDefinition, ...],
     hooks: tuple[ProviderToolHookDefinition, ...],
     access_requests: tuple[ProviderToolAccessRequest, ...],
-    agent_registry: AgentIdentityRegistry,
+    agent_registry: AgentRegistry,
     profile_exists: Callable[[str], bool],
 ) -> ProviderToolAccessPolicy:
     """Validate provider declarations and normalize config to identity access.
@@ -271,7 +271,6 @@ def normalize_provider_tool_access(
     access: list[ProviderToolAccess] = []
     seen_effective_entries: dict[tuple[str, str], ProviderToolAccess] = {}
 
-    identities_by_profile = _identities_by_profile(agent_registry)
     identity_by_id = agent_registry.all()
 
     for request_index, request in enumerate(access_requests):
@@ -306,11 +305,9 @@ def normalize_provider_tool_access(
         target_profile = request.agent_profile.strip() if request.agent_profile else None
         target_identities = _resolve_target_identities(
             identity_by_id=identity_by_id,
-            identities_by_profile=identities_by_profile,
             agent_identity_id=target_id,
             agent_profile=target_profile,
             location=request_location,
-            profile_exists=profile_exists,
             issues=issues,
         )
 
@@ -322,7 +319,7 @@ def normalize_provider_tool_access(
                 provider_name=normalized_provider,
                 tool_name=tool_name,
                 agent_identity_id=identity.id,
-                agent_profile=identity.agent_profile,
+                agent_profile=None,
                 pre_hooks=pre_hooks,
                 post_hooks=post_hooks,
                 source_location=request_location,
@@ -465,14 +462,12 @@ def _validate_hooks(
 
 def _resolve_target_identities(
     *,
-    identity_by_id: Mapping[str, AgentIdentity],
-    identities_by_profile: Mapping[str, tuple[AgentIdentity, ...]],
+    identity_by_id: Mapping[str, Agent],
     agent_identity_id: str | None,
     agent_profile: str | None,
     location: str,
-    profile_exists: Callable[[str], bool],
     issues: list[ProviderToolAccessIssue],
-) -> tuple[AgentIdentity, ...]:
+) -> tuple[Agent, ...]:
     if bool(agent_identity_id) == bool(agent_profile):
         issues.append(
             ProviderToolAccessIssue(
@@ -495,33 +490,13 @@ def _resolve_target_identities(
         return (identity,)
 
     assert agent_profile is not None
-    if not profile_exists(agent_profile):
-        issues.append(
-            ProviderToolAccessIssue(
-                f"{location}.agent_profile",
-                f"unknown CAO agent profile: {agent_profile}",
-            )
+    issues.append(
+        ProviderToolAccessIssue(
+            f"{location}.agent_profile",
+            "agent_profile targeting is not supported; configure agent_identity_id",
         )
-        return ()
-
-    identities = identities_by_profile.get(agent_profile, ())
-    if not identities:
-        issues.append(
-            ProviderToolAccessIssue(
-                f"{location}.agent_profile",
-                f"no configured CAO agent identities use profile: {agent_profile}",
-            )
-        )
-    return identities
-
-
-def _identities_by_profile(
-    agent_registry: AgentIdentityRegistry,
-) -> dict[str, tuple[AgentIdentity, ...]]:
-    grouped: dict[str, list[AgentIdentity]] = {}
-    for identity in agent_registry.all().values():
-        grouped.setdefault(identity.agent_profile, []).append(identity)
-    return {profile: tuple(identities) for profile, identities in grouped.items()}
+    )
+    return ()
 
 
 __all__ = [

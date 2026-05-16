@@ -197,9 +197,12 @@ class LinearToolAccess:
     allow_top_level_create: bool = False
     update_fields: tuple[str, ...] = ()
     reason: str | None = None
+    source_location: str | None = None
 
     @property
     def location(self) -> str:
+        if self.source_location is not None:
+            return self.source_location
         return f"tool_access.{self.access_id}"
 
 
