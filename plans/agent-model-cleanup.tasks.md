@@ -13,6 +13,15 @@ identifies every entry whose `when` clause applies to the task's changes,
 and confirms the landed code satisfies it. This is not a one-time sweep at
 the end of the plan — it runs per task, against that task's diff.
 
+This is hard-cutover work. The `do-not-assume-backwards-compatibility`
+criterion applies to every task. Specifically forbidden: shims, facades,
+fallback chains, feature flags, deprecation warnings, function/module
+aliases preserving old import paths, optional fields preserving old
+defaults, and runtime translators between old and new shapes. There are no
+carve-outs. Legacy call sites are migrated to the new shape or deleted,
+never bridged. If a task's natural implementation seems to require any of
+the forbidden patterns, raise back to the operator rather than improvising.
+
 ## Phase 1 — New model and tooling (parallel, no behavior change)
 
 ### T01 — Agent data model and file format spec
@@ -37,6 +46,10 @@ the end of the plan — it runs per task, against that task's diff.
   - the spec explicitly enumerates which fields are required vs optional
   - the model rejects invalid combinations at construction time
     (e.g. workspace_context.enabled true without resolver_id)
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -62,6 +75,10 @@ the end of the plan — it runs per task, against that task's diff.
   - errors include the agent id and file path for diagnosis
   - reading two agents that share field names (e.g. two `[linear]` sections)
     produces independent `Agent` values with no shared state
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -89,12 +106,16 @@ the end of the plan — it runs per task, against that task's diff.
   - the OAuth callback writer's expected usage pattern (patching
     access_token, refresh_token, app_user_id, token_expires_at) is exercised
     by a test
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
     landed code
 
-### T04 — Validation and migration script
+### T04 — Validation
 
 - owner_role: developer
 - dispatch_mode: handoff
@@ -103,32 +124,25 @@ the end of the plan — it runs per task, against that task's diff.
   - validation pass over an agent dir: required fields present, types
     correct, Linear `[tool_access]` references only fields that exist in
     `LINEAR_PROVIDER_TOOLS` and `UPDATE_ISSUE_FIELDS`, agent_id matches
-    directory name
-  - migration script that reads `agents.toml` +
-    `workspace-providers/linear.toml` + each referenced
-    `agent_profile` markdown, and writes per-agent directories under
-    `~/.aws/cli-agent-orchestrator/agents/<id>/`
-  - migration is idempotent (re-running with directories present is a
-    no-op or refresh, never a corruption)
-  - migration expands any Linear `tool_access` entries that target
-    `agent_profile` into per-agent entries, one per identity using that
-    profile
-  - migration preserves existing OAuth tokens (`access_token`,
-    `refresh_token`, `app_user_id`, etc.) from `linear.toml`
-  - migration refuses to run if Linear config is `legacy_env` only —
-    surfaces a clear message that legacy env users must convert to
-    structured `linear.toml` first
-  - unit tests covering the migration with synthetic source files
+    directory name, `prompt.md` exists and is non-empty, `agent.toml`
+    has 0600 permissions, `prompt.md` has 0644 permissions
+  - exposed as a CLI subcommand or callable function the developer can
+    run against `~/.aws/cli-agent-orchestrator/agents/` to verify the
+    hand-performed migration before the T05 landing
+  - clear error messages identifying the offending agent, file, and field
+  - unit tests covering happy path and each failure mode
 - acceptance:
-  - on a developer machine with the current `agents.toml` + `linear.toml`,
-    the script produces three agent directories (`discovery_partner`,
-    `implementation_partner`, `linear_smoke_tester`) each with valid
-    `agent.toml` + `prompt.md`
-  - per-`agent_profile` Linear tool access policies are correctly expanded
-    (e.g. a policy targeting `agent_profile = "developer"` becomes a policy
-    entry on every identity using `developer`)
-  - running the script a second time leaves the result unchanged
-  - existing per-agent state directories (e.g. `contexts/`) are untouched
+  - given a hand-written agent directory matching the spec, validation
+    passes silently with exit code 0
+  - given a directory missing a required field, validation produces an
+    error naming the agent id, file path, and missing field
+  - given a Linear `[tool_access]` entry with an unknown tool name, the
+    error names the unknown tool
+  - given a file with wrong permissions, validation flags it
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -155,10 +169,18 @@ the end of the plan — it runs per task, against that task's diff.
     workspace_context entirely
   - updated tests covering identity API endpoints under the new shape
 - acceptance:
+  - prior to landing: developer has performed a one-shot manual migration
+    of `agents.toml` + `linear.toml` + `agent_store/` references into
+    `~/.aws/cli-agent-orchestrator/agents/<id>/` per the plan's Migration
+    shape section, and T04 validation passes against the result
   - the `/agents/identities/<id>` endpoint returns every field present in
     the agent's `agent.toml`
   - the Agents tab in the web UI continues to render identity rosters
     correctly (no UI changes yet — read path only)
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -186,6 +208,10 @@ the end of the plan — it runs per task, against that task's diff.
     catches duplicate `app_user_id` / `app_user_name` / `oauth_state`
   - tool access policies are resolved per agent without `agent_profile`
     targeting
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -210,8 +236,6 @@ the end of the plan — it runs per task, against that task's diff.
     `_load_legacy_linear_config`, `has_legacy_linear_provider_config`,
     every `LINEAR_DISCOVERY_*` env var lookup, the `config.source ==
     "legacy_env"` branches
-  - migration script invoked as part of the upgrade boot path (or run
-    once manually on the developer machine, then file is removed)
   - delete `~/.aws/cli-agent-orchestrator/agents.toml`,
     `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml`,
     `~/.aws/cli-agent-orchestrator/agent-store/` on the developer machine
@@ -223,6 +247,10 @@ the end of the plan — it runs per task, against that task's diff.
     directories present on disk
   - all existing tests pass or are deleted as obsolete (no skipped tests
     for "old shape")
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -251,6 +279,10 @@ the end of the plan — it runs per task, against that task's diff.
     anonymous-spawn rows are removed
   - schema enforces NOT NULL on `agent_id`
   - all read sites (services, API, web) use `agent_id`
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -276,6 +308,10 @@ the end of the plan — it runs per task, against that task's diff.
   - a second spawn attempt for the same agent receives a clear error and
     a reference to the live terminal
   - the constraint survives process restart (it's not in-memory only)
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -303,6 +339,10 @@ the end of the plan — it runs per task, against that task's diff.
   - end-to-end: create an agent via API, start it, edit a field while
     running (allowed), stop it, delete it
   - delete with live instance is refused with a clear error
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -331,6 +371,10 @@ the end of the plan — it runs per task, against that task's diff.
   - `cao agent start discovery_partner` opens a working terminal
   - `cao agent create foo` produces a valid stub at
     `~/.aws/cli-agent-orchestrator/agents/foo/`
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -348,6 +392,10 @@ the end of the plan — it runs per task, against that task's diff.
 - acceptance:
   - `cao launch` returns a "command not found" error
   - no doc, comment, or example references `cao launch`
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -376,6 +424,10 @@ the end of the plan — it runs per task, against that task's diff.
     selecting or creating an agent
   - existing live agents cannot be "started" again — the button is
     disabled with a tooltip pointing to the running terminal
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -403,6 +455,10 @@ the end of the plan — it runs per task, against that task's diff.
   - editing `agent_profile` (now embedded — i.e. model, prompt, tools)
     works through the same UI
   - the IDENTITY TIMELINE section continues to function unchanged
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the
@@ -435,6 +491,10 @@ the end of the plan — it runs per task, against that task's diff.
     or `agent-store`
   - CHANGELOG entry mentions Linear `legacy_env` removal and points
     affected users at the migration script
+  - no backwards-compatibility layer introduced — no shims, facades,
+    fallback chains, feature flags, deprecation warnings, aliases, or
+    runtime shape translators; legacy call sites are migrated or deleted,
+    not bridged
   - criteria catalog applied: every entry in
     `docs/criteria/implementation/` and `docs/criteria/tests/` whose
     `when` clause matches this task's changes has been satisfied by the

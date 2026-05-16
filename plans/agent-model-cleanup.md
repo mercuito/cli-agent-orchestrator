@@ -68,36 +68,69 @@ deprecation.
 
 ## Migration shape
 
-Hard cutover; no deprecation period. The migration script reads:
+Hard cutover; no deprecation period; no automated migration script. The
+agent roster is small enough (currently 3) that the developer performs a
+one-shot manual migration of their own config before the read-path cutover
+(T05) lands. The validator from T04 verifies the new directory shape is
+well-formed.
 
-- `~/.aws/cli-agent-orchestrator/agents.toml` (per-agent durable config)
-- `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml` (per-agent
-  Linear bindings keyed by `agent_id`, plus tool access policies)
-- The `agent_profile` markdown referenced by each agent (system prompt and
-  template-level config: MCP servers, tools allowlist, model, etc.)
+For each existing agent:
 
-…and emits one directory per agent at `~/.aws/cli-agent-orchestrator/agents/<id>/`
-containing `agent.toml` (with merged config including the Linear bindings) and
-`prompt.md` (with the system prompt). Existing per-agent state subdirectories
-at the same path are preserved.
+1. Read the entry in `~/.aws/cli-agent-orchestrator/agents.toml` and the
+   referenced `agent_profile` markdown in `agent_store/`.
+2. Read the corresponding `[presences.<id>]` and any matching
+   `[tool_access.<id>]` blocks in
+   `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml`.
+3. Hand-write `~/.aws/cli-agent-orchestrator/agents/<id>/agent.toml`
+   containing the merged config (workdir, session_name, provider, plus
+   profile-level config — MCP servers, tools allowlist, model, etc. —
+   plus a `[linear]` section with the OAuth bindings and tool access
+   policy if applicable).
+4. Hand-write `~/.aws/cli-agent-orchestrator/agents/<id>/prompt.md` with
+   the system prompt body from the original `agent_profile` markdown.
+5. Run T04's validator to confirm the directory is well-formed.
 
-Linear tool access policies that target `agent_profile` (fan-out targeting,
-matching all identities using a given profile) are expanded at migration time
-into per-agent policies. The `agent_profile` targeting capability does not
-survive into the new model.
+Linear `tool_access` entries that target `agent_profile` (fan-out
+targeting, matching all identities using a given profile) are expanded by
+hand into one entry per affected agent during migration. The
+`agent_profile` targeting capability does not survive into the new model.
 
 The Linear `legacy_env` path (`_legacy_identity_for_presence`,
-`_legacy_configured_app_keys`, all `LINEAR_DISCOVERY_*` env var lookups) is
-removed outright. Users on legacy env config must migrate to a structured
-config first; this is documented in the migration notes but not enforced by
-backwards-compatible shims.
+`_legacy_configured_app_keys`, all `LINEAR_DISCOVERY_*` env var lookups)
+is removed outright. The developer does not currently use legacy env
+config; if they did, they would convert to structured `linear.toml` first
+before performing the manual migration above.
 
-After migration the old files are deleted:
+After manual migration and the T05/T06/T07 landings, the following files
+no longer exist on the developer machine:
 
 - `~/.aws/cli-agent-orchestrator/agents.toml`
 - `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml`
 - `~/.aws/cli-agent-orchestrator/agent-store/` (templates moved to repo
   `examples/`)
+
+## Forbidden compatibility patterns
+
+This is hard-cutover work and the `do-not-assume-backwards-compatibility`
+criterion (`docs/criteria/implementation/`, `when: Always`) is unusually
+load-bearing here. No task may introduce any of the following:
+
+- Shims that detect the old shape and fall back to it.
+- Facades preserving old types as wrappers around new types (e.g. keeping
+  `AgentProfile` as a thin wrapper around `Agent`).
+- Fallback chains (`try new format; on failure, try old format`).
+- Feature flags switching between old and new behavior at runtime.
+- Deprecation warnings emitted instead of removing the old path.
+- Function or module aliases keeping old import paths working.
+- Optional fields preserving old defaults where the new model requires
+  them.
+- Runtime translators between old and new shapes.
+
+No compatibility carve-outs exist in this plan. Every legacy call site is
+migrated to the new shape or deleted. None are bridged.
+
+If a task's natural implementation seems to require any of the above,
+raise back to the operator rather than improvising.
 
 ## Goals
 
