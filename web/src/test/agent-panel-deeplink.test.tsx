@@ -11,6 +11,42 @@ const storeState = vi.hoisted(() => ({
   activeSession: null as string | null,
   activeSessionDetail: null as any,
 }))
+const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => ({
+  agent_id: agentId,
+  display_name: displayName,
+  cli_provider: 'codex',
+  workdir: '/repo',
+  session_name: `${agentId}-session`,
+  config: {
+    id: agentId,
+    display_name: displayName,
+    cli_provider: 'codex',
+    workdir: '/repo',
+    session_name: `${agentId}-session`,
+    prompt: '# Agent\n',
+    description: null,
+    model: null,
+    reasoning_effort: null,
+    mcp_servers: {},
+    tools: [],
+    tool_aliases: {},
+    tools_settings: {},
+    cao_tools: null,
+    skills: [],
+    tags: [],
+    resources: [],
+    hooks: {},
+    use_legacy_mcp_json: null,
+    runtime_capabilities: null,
+    codex_config: {},
+    workspace_context: { enabled: false, resolver_id: null },
+    linear: null,
+  },
+  active: false,
+  active_terminal_id: null,
+  active_workspace_context_id: null,
+  last_active_at: null,
+}))
 const getTerminal = vi.hoisted(() =>
   vi.fn(() =>
     Promise.resolve({
@@ -40,35 +76,17 @@ const getAgentRuntimeTerminal = vi.hoisted(() =>
     }),
   ),
 )
-const listAgentIdentities = vi.hoisted(() =>
+const listAgents = vi.hoisted(() =>
   vi.fn(() =>
     Promise.resolve([
-      {
-        agent_identity_id: 'aria',
-        display_name: 'Aria',
-        agent_profile: 'partner',
-        cli_provider: 'codex',
-        active: false,
-        active_terminal_id: null,
-        active_workspace_context_id: null,
-        last_active_at: null,
-      },
+      agentStatus('aria', 'Aria'),
     ]),
   ),
 )
-const getAgentIdentityTimeline = vi.hoisted(() =>
+const getAgentTimeline = vi.hoisted(() =>
   vi.fn(() =>
     Promise.resolve({
-      identity: {
-        agent_identity_id: 'aria',
-        display_name: 'Aria',
-        agent_profile: 'partner',
-        cli_provider: 'codex',
-        active: false,
-        active_terminal_id: null,
-        active_workspace_context_id: null,
-        last_active_at: null,
-      },
+      agent: agentStatus('aria', 'Aria'),
       events: [
         {
           event_id: 'linear:agent_mentioned:mention',
@@ -95,9 +113,9 @@ vi.mock('../api', () => ({
   api: {
     listProviders: vi.fn(() => Promise.resolve([{ name: 'codex', binary: 'codex', installed: true }])),
     listProfiles: vi.fn(() => Promise.resolve([{ name: 'developer', description: 'Developer', source: 'built-in' }])),
-    listAgentIdentities,
-    getAgentIdentityTimeline,
-    getAgentIdentityRelatedEvents: vi.fn(() => Promise.resolve({
+    listAgents,
+    getAgentTimeline,
+    getAgentRelatedEvents: vi.fn(() => Promise.resolve({
       event: null,
       correlation_events: [],
       causation_events: { direct_cause: null, direct_effects: [] },
@@ -149,8 +167,8 @@ describe('AgentPanel', () => {
       expect(await screen.findByRole('button', { name: /aria/i })).toBeInTheDocument()
       expect(await screen.findByTestId('identity-timeline')).toBeInTheDocument()
       expect(screen.getByText('linear:agent_mentioned:mention')).toBeInTheDocument()
-      expect(listAgentIdentities).toHaveBeenCalled()
-      expect(getAgentIdentityTimeline).toHaveBeenCalledWith('aria')
+      expect(listAgents).toHaveBeenCalled()
+      expect(getAgentTimeline).toHaveBeenCalledWith('aria')
     })
   })
 
@@ -246,17 +264,8 @@ describe('AgentPanel', () => {
     })
 
     it('focuses a runtime delivery terminal reference through the existing terminal open flow', async () => {
-      getAgentIdentityTimeline.mockResolvedValueOnce({
-        identity: {
-          agent_identity_id: 'aria',
-          display_name: 'Aria',
-          agent_profile: 'partner',
-          cli_provider: 'codex',
-          active: false,
-          active_terminal_id: null,
-          active_workspace_context_id: null,
-          last_active_at: null,
-        },
+      getAgentTimeline.mockResolvedValueOnce({
+        agent: agentStatus('aria', 'Aria'),
         events: [
           {
             event_id: 'runtime:event:delivery-ops-417',

@@ -6,7 +6,12 @@ from typing import ClassVar, Literal
 
 from pydantic.dataclasses import dataclass
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentConfigError,
+    LinearConfig,
+    LinearToolAccessConfig,
+)
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.events import (
     AgentParticipant,
@@ -26,7 +31,7 @@ from cli_agent_orchestrator.runtime.events import (
     notification_delivery_event,
     workspace_runtime_event,
 )
-from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityStatus
+from cli_agent_orchestrator.services.agent_manager import AgentStatus
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
 
@@ -47,8 +52,8 @@ class _ExperimentalAuditEvent:
 
 
 @std_dataclass
-class _FakeIdentityManager:
-    statuses: tuple[AgentIdentityStatus, ...]
+class _FakeAgentManager:
+    statuses: tuple[AgentStatus, ...]
     status_calls: tuple[str, ...] = ()
 
     def list_statuses(self, *, active=None):
@@ -56,24 +61,68 @@ class _FakeIdentityManager:
             return self.statuses
         return tuple(status for status in self.statuses if status.active is active)
 
-    def status_for_identity(self, agent_id: str):
+    def status_for_agent(self, agent_id: str):
         self.status_calls = (*self.status_calls, agent_id)
         for status in self.statuses:
-            if status.agent_identity_id == agent_id:
+            if status.agent_id == agent_id:
                 return status
-        raise AgentIdentityConfigError(f"Unknown CAO agent identity: {agent_id}")
+        raise AgentConfigError(f"Unknown CAO agent: {agent_id}")
+
+
+def _agent(agent_id: str = "implementation_partner") -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name="Implementation Partner",
+        cli_provider="codex",
+        workdir="/repo",
+        session_name=agent_id.replace("_", "-"),
+        prompt="# Agent\n",
+        description="Developer Agent in a multi-agent system",
+        model="gpt-5.2",
+        reasoning_effort="medium",
+        mcp_servers={"cao-mcp-server": {"command": "cao-mcp-server"}},
+        tools=("bash",),
+        tool_aliases={"shell": "bash"},
+        tools_settings={"bash": {"timeout": 120}},
+        cao_tools=("send_message",),
+        skills=("coding-discipline",),
+        tags=("implementation",),
+        resources=("file:///repo/README.md",),
+        hooks={"pre": {"command": "true"}},
+        use_legacy_mcp_json=False,
+        runtime_capabilities=("@builtin",),
+        codex_config={"model": "gpt-5.2"},
+        linear=LinearConfig(
+            app_key=agent_id,
+            client_id="client-1",
+            client_secret="secret-1",
+            oauth_redirect_uri="https://example.test/linear/oauth/callback",
+            access_token="access-1",
+            tool_access=(
+                LinearToolAccessConfig(
+                    access_id="workflow",
+                    tools=("cao_linear.get_issue",),
+                    issues=("CAO-1",),
+                    update_fields=("title",),
+                ),
+            ),
+        ),
+    )
 
 
 def _status(
     agent_id: str = "implementation_partner",
     *,
     active: bool = False,
-) -> AgentIdentityStatus:
-    return AgentIdentityStatus(
-        agent_identity_id=agent_id,
-        display_name="Implementation Partner",
-        agent_profile="developer",
-        cli_provider="codex",
+) -> AgentStatus:
+    agent = _agent(agent_id)
+    return AgentStatus(
+        agent_id=agent_id,
+        display_name=agent.display_name,
+        cli_provider=agent.cli_provider,
+        workdir=agent.workdir,
+        session_name=agent.session_name,
+        agent=agent,
         active=active,
         active_terminal_id="abcd1234" if active else None,
         active_workspace_context_id="wctx_abc" if active else None,
@@ -81,67 +130,62 @@ def _status(
     )
 
 
-def test_list_agent_identities_returns_stable_status_shape(client, monkeypatch):
+def test_list_agents_returns_stable_status_shape(client, monkeypatch):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_agent_identity_manager",
-        lambda: _FakeIdentityManager((_status(active=True), _status("reviewer"))),
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=True), _status("reviewer"))),
     )
 
-    response = client.get("/agents/identities")
+    response = client.get("/agents")
 
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "agent_identity_id": "implementation_partner",
-            "display_name": "Implementation Partner",
-            "agent_profile": "developer",
-            "cli_provider": "codex",
-            "active": True,
-            "active_terminal_id": "abcd1234",
-            "active_workspace_context_id": "wctx_abc",
-            "last_active_at": "2026-05-13T12:00:00",
-        },
-        {
-            "agent_identity_id": "reviewer",
-            "display_name": "Implementation Partner",
-            "agent_profile": "developer",
-            "cli_provider": "codex",
-            "active": False,
-            "active_terminal_id": None,
-            "active_workspace_context_id": None,
-            "last_active_at": None,
-        },
-    ]
+    body = response.json()
+    assert body[0]["agent_id"] == "implementation_partner"
+    assert body[0]["config"]["workdir"] == "/repo"
+    assert body[0]["config"]["session_name"] == "implementation-partner"
+    assert body[0]["config"]["mcp_servers"] == {"cao-mcp-server": {"command": "cao-mcp-server"}}
+    assert body[0]["config"]["reasoning_effort"] == "medium"
+    assert body[0]["config"]["tool_aliases"] == {"shell": "bash"}
+    assert body[0]["config"]["tools_settings"] == {"bash": {"timeout": 120}}
+    assert body[0]["config"]["cao_tools"] == ["send_message"]
+    assert body[0]["config"]["runtime_capabilities"] == ["@builtin"]
+    assert body[0]["config"]["codex_config"] == {"model": "gpt-5.2"}
+    assert body[0]["config"]["linear"]["app_key"] == "implementation_partner"
+    assert body[0]["config"]["linear"]["client_secret_configured"] is True
+    assert body[0]["config"]["linear"]["access_token_configured"] is True
+    assert body[0]["config"]["linear"]["tool_access"][0]["tools"] == ["cao_linear.get_issue"]
+    assert body[0]["active_terminal_id"] == "abcd1234"
+    assert body[1]["agent_id"] == "reviewer"
 
 
-def test_list_agent_identities_active_filter(client, monkeypatch):
+def test_list_agents_active_filter(client, monkeypatch):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_agent_identity_manager",
-        lambda: _FakeIdentityManager((_status(active=True), _status("reviewer"))),
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=True), _status("reviewer"))),
     )
 
-    response = client.get("/agents/identities?active=true")
+    response = client.get("/agents?active=true")
 
     assert response.status_code == 200
-    assert [row["agent_identity_id"] for row in response.json()] == ["implementation_partner"]
+    assert [row["agent_id"] for row in response.json()] == ["implementation_partner"]
 
 
-def test_get_agent_identity_unknown_returns_404(client, monkeypatch):
+def test_get_agent_unknown_returns_404(client, monkeypatch):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_agent_identity_manager",
-        lambda: _FakeIdentityManager((_status(active=True),)),
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=True),)),
     )
 
-    response = client.get("/agents/identities/missing")
+    response = client.get("/agents/missing")
 
     assert response.status_code == 404
-    assert "Unknown CAO agent identity" in response.json()["detail"]
+    assert "Unknown CAO agent" in response.json()["detail"]
 
 
-def test_runtime_terminal_endpoint_uses_identity_manager_status(client, monkeypatch):
+def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_agent_identity_manager",
-        lambda: _FakeIdentityManager((_status(active=True),)),
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=True),)),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.terminal_service.get_terminal",
@@ -230,31 +274,21 @@ def _linear_mentioned_event(
     )
 
 
-def _manager_with_timeline_identities(
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
-):
-    return agent_identity_manager_factory(
-        implementation_partner_identity_factory(),
-        implementation_partner_identity_factory(
-            id="reviewer",
-            display_name="Reviewer",
-            session_name="reviewer",
-        ),
-    )
+def _manager_with_timeline_agents():
+    return _FakeAgentManager((_status(), _status("reviewer")))
 
 
-def _patch_default_identity_manager(monkeypatch, manager):
+def _patch_default_agent_manager(monkeypatch, manager):
     status_calls = []
-    original_status_for_identity = manager.status_for_identity
+    original_status_for_agent = manager.status_for_agent
 
-    def _status_for_identity(agent_id: str):
+    def _status_for_agent(agent_id: str):
         status_calls.append(agent_id)
-        return original_status_for_identity(agent_id)
+        return original_status_for_agent(agent_id)
 
-    monkeypatch.setattr(manager, "status_for_identity", _status_for_identity)
+    monkeypatch.setattr(manager, "status_for_agent", _status_for_agent)
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_agent_identity_manager",
+        "cli_agent_orchestrator.api.main.default_agent_manager",
         lambda: manager,
     )
     return status_calls
@@ -337,15 +371,15 @@ def _event_ids(response_events):
     return [event["event_id"] for event in response_events]
 
 
-def test_agent_identity_timeline_openapi_preserves_public_event_envelope(client):
+def test_agent_timeline_openapi_preserves_public_event_envelope(client):
     response = client.get("/openapi.json")
 
     assert response.status_code == 200
     schemas = response.json()["components"]["schemas"]
-    timeline_event_schema = schemas["AgentIdentityTimelineEventResponse"]
-    timeline_response_schema = schemas["AgentIdentityTimelineResponse"]
-    related_response_schema = schemas["AgentIdentityRelatedEventsResponse"]
-    causation_response_schema = schemas["AgentIdentityCausationRelatedEventsResponse"]
+    timeline_event_schema = schemas["AgentTimelineEventResponse"]
+    timeline_response_schema = schemas["AgentTimelineResponse"]
+    related_response_schema = schemas["AgentRelatedEventsResponse"]
+    causation_response_schema = schemas["AgentCausationRelatedEventsResponse"]
     event_data_schema = timeline_event_schema["properties"]["event_data"]
 
     assert timeline_event_schema["properties"]["event_type_key"] == {
@@ -357,38 +391,33 @@ def test_agent_identity_timeline_openapi_preserves_public_event_envelope(client)
     assert event_data_schema["additionalProperties"] is True
     assert "event_data" in timeline_event_schema["required"]
     assert timeline_response_schema["properties"]["events"]["items"] == {
-        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+        "$ref": "#/components/schemas/AgentTimelineEventResponse"
     }
     assert related_response_schema["properties"]["event"] == {
-        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+        "$ref": "#/components/schemas/AgentTimelineEventResponse"
     }
     assert related_response_schema["properties"]["correlation_events"]["items"] == {
-        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+        "$ref": "#/components/schemas/AgentTimelineEventResponse"
     }
     assert related_response_schema["properties"]["causation_events"] == {
-        "$ref": "#/components/schemas/AgentIdentityCausationRelatedEventsResponse"
+        "$ref": "#/components/schemas/AgentCausationRelatedEventsResponse"
     }
     assert causation_response_schema["properties"]["direct_cause"]["anyOf"] == [
-        {"$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"},
+        {"$ref": "#/components/schemas/AgentTimelineEventResponse"},
         {"type": "null"},
     ]
     assert causation_response_schema["properties"]["direct_effects"]["items"] == {
-        "$ref": "#/components/schemas/AgentIdentityTimelineEventResponse"
+        "$ref": "#/components/schemas/AgentTimelineEventResponse"
     }
 
 
-def test_agent_identity_timeline_route_returns_participant_index_rows(
+def test_agent_timeline_route_returns_participant_index_rows(
     client,
     monkeypatch,
     runtime_inbox_db_session,
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
 ):
-    manager = _manager_with_timeline_identities(
-        agent_identity_manager_factory,
-        implementation_partner_identity_factory,
-    )
-    status_calls = _patch_default_identity_manager(monkeypatch, manager)
+    manager = _manager_with_timeline_agents()
+    status_calls = _patch_default_agent_manager(monkeypatch, manager)
     mention, delivery, broadcast, workspace = _publish_identity_timeline_scenario(
         mention_correlation_id="thread-1",
         broadcast_correlation_id="thread-broadcast",
@@ -397,12 +426,12 @@ def test_agent_identity_timeline_route_returns_participant_index_rows(
         workspace_correlation_id="workspace-refresh",
     )
 
-    response = client.get("/agents/identities/implementation_partner/timeline")
+    response = client.get("/agents/implementation_partner/timeline")
 
     assert response.status_code == 200
     body = response.json()
     assert status_calls == ["implementation_partner"]
-    assert body["identity"]["agent_identity_id"] == "implementation_partner"
+    assert body["agent"]["agent_id"] == "implementation_partner"
     assert _event_ids(body["events"]) == [
         str(mention.event_id),
         str(delivery.event_id),
@@ -425,18 +454,13 @@ def test_agent_identity_timeline_route_returns_participant_index_rows(
     assert body["events"][1]["causation_id"] == str(mention.event_id)
 
 
-def test_agent_identity_timeline_route_preserves_broadcast_viewpoint(
+def test_agent_timeline_route_preserves_broadcast_viewpoint(
     client,
     monkeypatch,
     runtime_inbox_db_session,
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
 ):
-    manager = _manager_with_timeline_identities(
-        agent_identity_manager_factory,
-        implementation_partner_identity_factory,
-    )
-    _patch_default_identity_manager(monkeypatch, manager)
+    manager = _manager_with_timeline_agents()
+    _patch_default_agent_manager(monkeypatch, manager)
     _, _, broadcast, _ = _publish_identity_timeline_scenario(
         mention_correlation_id="thread-1",
         broadcast_correlation_id="thread-broadcast",
@@ -445,8 +469,8 @@ def test_agent_identity_timeline_route_preserves_broadcast_viewpoint(
         workspace_correlation_id="workspace-refresh",
     )
 
-    partner_response = client.get("/agents/identities/implementation_partner/timeline")
-    reviewer_response = client.get("/agents/identities/reviewer/timeline")
+    partner_response = client.get("/agents/implementation_partner/timeline")
+    reviewer_response = client.get("/agents/reviewer/timeline")
 
     assert partner_response.status_code == 200
     assert reviewer_response.status_code == 200
@@ -479,33 +503,26 @@ def test_agent_identity_timeline_route_preserves_broadcast_viewpoint(
     ]
 
 
-def test_agent_identity_timeline_route_unknown_identity_returns_404(
+def test_agent_timeline_route_unknown_agent_returns_404(
     client,
     monkeypatch,
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
 ):
-    manager = agent_identity_manager_factory(implementation_partner_identity_factory())
-    _patch_default_identity_manager(monkeypatch, manager)
+    manager = _FakeAgentManager((_status(),))
+    _patch_default_agent_manager(monkeypatch, manager)
 
-    response = client.get("/agents/identities/missing/timeline")
+    response = client.get("/agents/missing/timeline")
 
     assert response.status_code == 404
-    assert "Unknown CAO agent identity" in response.json()["detail"]
+    assert "Unknown CAO agent" in response.json()["detail"]
 
 
-def test_agent_identity_related_events_route_uses_envelope_threads(
+def test_agent_related_events_route_uses_envelope_threads(
     client,
     monkeypatch,
     runtime_inbox_db_session,
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
 ):
-    manager = _manager_with_timeline_identities(
-        agent_identity_manager_factory,
-        implementation_partner_identity_factory,
-    )
-    _patch_default_identity_manager(monkeypatch, manager)
+    manager = _manager_with_timeline_agents()
+    _patch_default_agent_manager(monkeypatch, manager)
     mention, delivery, _, _ = _publish_identity_timeline_scenario(
         mention_correlation_id="thread-1",
         broadcast_correlation_id="thread-broadcast",
@@ -515,10 +532,10 @@ def test_agent_identity_related_events_route_uses_envelope_threads(
     )
 
     mention_response = client.get(
-        f"/agents/identities/implementation_partner/events/{mention.event_id}/related"
+        f"/agents/implementation_partner/events/{mention.event_id}/related"
     )
     delivery_response = client.get(
-        f"/agents/identities/implementation_partner/events/{delivery.event_id}/related"
+        f"/agents/implementation_partner/events/{delivery.event_id}/related"
     )
 
     assert mention_response.status_code == 200
@@ -551,18 +568,13 @@ def test_agent_identity_related_events_route_uses_envelope_threads(
     )
 
 
-def test_agent_identity_related_events_route_keeps_untaught_events_related_and_roleful(
+def test_agent_related_events_route_keeps_untaught_events_related_and_roleful(
     client,
     monkeypatch,
     runtime_inbox_db_session,
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
 ):
-    manager = _manager_with_timeline_identities(
-        agent_identity_manager_factory,
-        implementation_partner_identity_factory,
-    )
-    _patch_default_identity_manager(monkeypatch, manager)
+    manager = _manager_with_timeline_agents()
+    _patch_default_agent_manager(monkeypatch, manager)
     root = _ExperimentalAuditEvent(
         event_id=CaoEventId("experimental:audit:event-1"),
         source=CaoEventSourceRef(
@@ -597,9 +609,7 @@ def test_agent_identity_related_events_route_keeps_untaught_events_related_and_r
     dispatcher.publish(effect)
     dispatcher.publish(root)
 
-    response = client.get(
-        f"/agents/identities/implementation_partner/events/{root.event_id}/related"
-    )
+    response = client.get(f"/agents/implementation_partner/events/{root.event_id}/related")
 
     assert response.status_code == 200
     body = response.json()
@@ -617,15 +627,13 @@ def test_agent_identity_related_events_route_keeps_untaught_events_related_and_r
     )
 
 
-def test_agent_identity_related_events_route_handles_missing_relatedness_and_unknown_event(
+def test_agent_related_events_route_handles_missing_relatedness_and_unknown_event(
     client,
     monkeypatch,
     runtime_inbox_db_session,
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
 ):
-    manager = agent_identity_manager_factory(implementation_partner_identity_factory())
-    _patch_default_identity_manager(monkeypatch, manager)
+    manager = _FakeAgentManager((_status(),))
+    _patch_default_agent_manager(monkeypatch, manager)
     isolated = _linear_mentioned_event(
         event_id="linear:agent_mentioned:isolated",
         correlation_id=None,
@@ -634,12 +642,8 @@ def test_agent_identity_related_events_route_handles_missing_relatedness_and_unk
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
     dispatcher.publish(isolated)
 
-    response = client.get(
-        f"/agents/identities/implementation_partner/events/{isolated.event_id}/related"
-    )
-    missing_response = client.get(
-        "/agents/identities/implementation_partner/events/missing-event/related"
-    )
+    response = client.get(f"/agents/implementation_partner/events/{isolated.event_id}/related")
+    missing_response = client.get("/agents/implementation_partner/events/missing-event/related")
 
     assert response.status_code == 200
     assert response.json()["correlation_events"] == []

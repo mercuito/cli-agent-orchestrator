@@ -13,7 +13,7 @@ import { MonitoringIndicator } from './MonitoringIndicator'
 import { BatonIndicator } from './BatonIndicator'
 import { MonitoringButton } from './MonitoringButton'
 import { OutputViewer } from './OutputViewer'
-import { AgentIdentityTimelinePanel } from './AgentIdentityTimelinePanel'
+import { AgentTimelinePanel } from './AgentTimelinePanel'
 
 const FALLBACK_PROVIDERS = ['kiro_cli', 'claude_code', 'q_cli', 'codex', 'gemini_cli', 'kimi_cli', 'copilot_cli']
 
@@ -264,7 +264,7 @@ export function AgentPanel({
 
   return (
     <div className="space-y-6">
-      <AgentIdentityTimelinePanel onFocusTerminal={focusTimelineTerminal} />
+      <AgentTimelinePanel onFocusTerminal={focusTimelineTerminal} />
 
       {/* Sessions List */}
       <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-5">

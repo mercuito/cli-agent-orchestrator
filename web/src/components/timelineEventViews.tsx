@@ -1,5 +1,5 @@
 import { Clock3, GitBranch, Link2 } from 'lucide-react'
-import { AgentIdentityTimelineEvent } from '../api'
+import { AgentTimelineEvent } from '../api'
 import type { CaoEventPayloadForTypeKey, CaoEventTypeKey } from '../generated/caoEventPayloadTypes'
 
 type TimelineEventViewSurface = 'main' | 'related'
@@ -8,7 +8,7 @@ export type OpenExternalReference = (url: string) => void
 export type FocusTerminalReference = (terminalId: string) => void | Promise<void>
 
 export interface TimelineEventViewProps {
-  event: AgentIdentityTimelineEvent
+  event: AgentTimelineEvent
   surface: TimelineEventViewSurface
   onOpenExternalReference?: OpenExternalReference
   onFocusTerminal?: FocusTerminalReference
@@ -17,7 +17,7 @@ export interface TimelineEventViewProps {
 export type TimelineEventView = (props: TimelineEventViewProps) => JSX.Element
 
 export type KnownTimelineEvent<T extends CaoEventTypeKey> = Omit<
-  AgentIdentityTimelineEvent,
+  AgentTimelineEvent,
   'event_type_key' | 'event_data'
 > & {
   event_type_key: T
@@ -100,7 +100,7 @@ function primitiveFactValue(value: unknown): string | null {
   return null
 }
 
-function displayableEventDataFacts(event: AgentIdentityTimelineEvent) {
+function displayableEventDataFacts(event: AgentTimelineEvent) {
   return Object.entries(event.event_data)
     .map(([key, value]) => [key, primitiveFactValue(value)] as const)
     .filter((entry): entry is readonly [string, string] => entry[1] !== null)

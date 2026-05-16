@@ -31,7 +31,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
+from cli_agent_orchestrator.agent import Agent, AgentConfigError
 from cli_agent_orchestrator.clients.database import (
     create_inbox_delivery,
     get_baton_record,
@@ -57,14 +57,14 @@ from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
 from cli_agent_orchestrator.providers.manager import provider_manager
-from cli_agent_orchestrator.services.agent_identity_manager import (
-    AgentIdentityStatus,
-    default_agent_identity_manager,
+from cli_agent_orchestrator.services.agent_manager import (
+    AgentStatus,
+    default_agent_manager,
 )
-from cli_agent_orchestrator.services.agent_identity_timeline import (
-    AgentIdentityTimelineService,
+from cli_agent_orchestrator.services.agent_timeline import (
+    AgentTimelineRead,
+    AgentTimelineService,
     CausationRelatedEventsRead,
-    IdentityTimelineRead,
     RelatedEventsRead,
     TimelineEventRead,
     UnknownTimelineEventError,
@@ -166,12 +166,14 @@ def _terminal_rows_with_dashboard_tokens(terminals: List[Dict]) -> List[Dict]:
     """Attach websocket tokens to raw terminal-list rows for dashboard clients."""
 
     return [
-        {
-            **terminal,
-            "terminal_token": create_terminal_dashboard_token(str(terminal["id"])),
-        }
-        if isinstance(terminal, dict) and terminal.get("id")
-        else terminal
+        (
+            {
+                **terminal,
+                "terminal_token": create_terminal_dashboard_token(str(terminal["id"])),
+            }
+            if isinstance(terminal, dict) and terminal.get("id")
+            else terminal
+        )
         for terminal in terminals
     ]
 
@@ -204,31 +206,157 @@ class TerminalOutputResponse(BaseModel):
 
 
 class AgentRuntimeTerminalResponse(BaseModel):
-    """Current terminal manifestation for a durable CAO agent identity."""
+    """Current terminal manifestation for a durable CAO agent."""
 
     terminal: Terminal
     terminal_token: str
 
 
-class AgentIdentityStatusResponse(BaseModel):
-    """Current CAO identity summary/status."""
+class AgentWorkspaceContextResponse(BaseModel):
+    enabled: bool
+    resolver_id: Optional[str] = None
 
-    agent_identity_id: str
+
+class LinearToolAccessResponse(BaseModel):
+    access_id: str
+    tools: List[str]
+    issues: List[str]
+    create_team_ids: List[str]
+    create_project_ids: List[str]
+    create_parent_issues: List[str]
+    allow_top_level_create: bool
+    update_fields: List[str]
+    reason: Optional[str] = None
+
+
+class LinearConfigResponse(BaseModel):
+    app_key: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret_configured: bool
+    webhook_secret_configured: bool
+    oauth_redirect_uri: Optional[str] = None
+    access_token_configured: bool
+    refresh_token_configured: bool
+    token_expires_at: Optional[str] = None
+    app_user_id: Optional[str] = None
+    app_user_name: Optional[str] = None
+    oauth_state_configured: bool
+    tool_access: List[LinearToolAccessResponse]
+
+
+class AgentConfigResponse(BaseModel):
+    """Full durable CAO agent configuration exposed by the read API."""
+
+    id: str
     display_name: str
-    agent_profile: str
     cli_provider: str
+    workdir: str
+    session_name: str
+    prompt: str
+    description: Optional[str] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    mcp_servers: Dict[str, Any]
+    tools: List[str]
+    tool_aliases: Dict[str, str]
+    tools_settings: Dict[str, Any]
+    cao_tools: Optional[List[str]] = None
+    skills: List[str]
+    tags: List[str]
+    resources: List[str]
+    hooks: Dict[str, Any]
+    use_legacy_mcp_json: Optional[bool] = None
+    runtime_capabilities: Optional[List[str]] = None
+    codex_config: Dict[str, Any]
+    workspace_context: AgentWorkspaceContextResponse
+    linear: Optional[LinearConfigResponse] = None
+
+    @classmethod
+    def from_agent(cls, agent: Agent) -> "AgentConfigResponse":
+        linear = None
+        if agent.linear is not None:
+            linear = LinearConfigResponse(
+                app_key=agent.linear.app_key,
+                client_id=agent.linear.client_id,
+                client_secret_configured=agent.linear.client_secret is not None,
+                webhook_secret_configured=agent.linear.webhook_secret is not None,
+                oauth_redirect_uri=agent.linear.oauth_redirect_uri,
+                access_token_configured=agent.linear.access_token is not None,
+                refresh_token_configured=agent.linear.refresh_token is not None,
+                token_expires_at=agent.linear.token_expires_at,
+                app_user_id=agent.linear.app_user_id,
+                app_user_name=agent.linear.app_user_name,
+                oauth_state_configured=agent.linear.oauth_state is not None,
+                tool_access=[
+                    LinearToolAccessResponse(
+                        access_id=access.access_id,
+                        tools=list(access.tools),
+                        issues=list(access.issues),
+                        create_team_ids=list(access.create_team_ids),
+                        create_project_ids=list(access.create_project_ids),
+                        create_parent_issues=list(access.create_parent_issues),
+                        allow_top_level_create=access.allow_top_level_create,
+                        update_fields=list(access.update_fields),
+                        reason=access.reason,
+                    )
+                    for access in agent.linear.tool_access
+                ],
+            )
+        return cls(
+            id=agent.id,
+            display_name=agent.display_name,
+            cli_provider=agent.cli_provider,
+            workdir=agent.workdir,
+            session_name=agent.session_name,
+            prompt=agent.prompt,
+            description=agent.description,
+            model=agent.model,
+            reasoning_effort=agent.reasoning_effort,
+            mcp_servers=dict(agent.mcp_servers),
+            tools=list(agent.tools),
+            tool_aliases=dict(agent.tool_aliases),
+            tools_settings=dict(agent.tools_settings),
+            cao_tools=list(agent.cao_tools) if agent.cao_tools is not None else None,
+            skills=list(agent.skills),
+            tags=list(agent.tags),
+            resources=list(agent.resources),
+            hooks=dict(agent.hooks),
+            use_legacy_mcp_json=agent.use_legacy_mcp_json,
+            runtime_capabilities=(
+                list(agent.runtime_capabilities) if agent.runtime_capabilities is not None else None
+            ),
+            codex_config=dict(agent.codex_config),
+            workspace_context=AgentWorkspaceContextResponse(
+                enabled=agent.workspace_context.enabled,
+                resolver_id=agent.workspace_context.resolver_id,
+            ),
+            linear=linear,
+        )
+
+
+class AgentStatusResponse(BaseModel):
+    """Current CAO agent config and runtime summary."""
+
+    agent_id: str
+    display_name: str
+    cli_provider: str
+    workdir: str
+    session_name: str
+    config: AgentConfigResponse
     active: bool
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
     last_active_at: Optional[datetime] = None
 
     @classmethod
-    def from_status(cls, status: AgentIdentityStatus) -> "AgentIdentityStatusResponse":
+    def from_status(cls, status: AgentStatus) -> "AgentStatusResponse":
         return cls(
-            agent_identity_id=status.agent_identity_id,
+            agent_id=status.agent_id,
             display_name=status.display_name,
-            agent_profile=status.agent_profile,
             cli_provider=status.cli_provider,
+            workdir=status.workdir,
+            session_name=status.session_name,
+            config=AgentConfigResponse.from_agent(status.agent),
             active=status.active,
             active_terminal_id=status.active_terminal_id,
             active_workspace_context_id=status.active_workspace_context_id,
@@ -236,8 +364,8 @@ class AgentIdentityStatusResponse(BaseModel):
         )
 
 
-class AgentIdentityTimelineEventResponse(BaseModel):
-    """Envelope-level CAO event row for one identity timeline."""
+class AgentTimelineEventResponse(BaseModel):
+    """Envelope-level CAO event row for one agent timeline."""
 
     event_id: str
     event_name: str
@@ -251,7 +379,7 @@ class AgentIdentityTimelineEventResponse(BaseModel):
     participant_role: Optional[str] = None
 
     @classmethod
-    def from_read(cls, read: TimelineEventRead) -> "AgentIdentityTimelineEventResponse":
+    def from_read(cls, read: TimelineEventRead) -> "AgentTimelineEventResponse":
         return cls(
             event_id=read.event_id,
             event_name=read.event_name,
@@ -266,65 +394,58 @@ class AgentIdentityTimelineEventResponse(BaseModel):
         )
 
 
-class AgentIdentityTimelineResponse(BaseModel):
-    """Timeline read response for one manager-resolved CAO identity."""
+class AgentTimelineResponse(BaseModel):
+    """Timeline read response for one manager-resolved CAO agent."""
 
-    identity: AgentIdentityStatusResponse
-    events: List[AgentIdentityTimelineEventResponse]
+    agent: AgentStatusResponse
+    events: List[AgentTimelineEventResponse]
 
     @classmethod
-    def from_read(cls, read: IdentityTimelineRead) -> "AgentIdentityTimelineResponse":
+    def from_read(cls, read: AgentTimelineRead) -> "AgentTimelineResponse":
         return cls(
-            identity=AgentIdentityStatusResponse.from_status(read.identity),
-            events=[
-                AgentIdentityTimelineEventResponse.from_read(event)
-                for event in read.events
-            ],
+            agent=AgentStatusResponse.from_status(read.agent),
+            events=[AgentTimelineEventResponse.from_read(event) for event in read.events],
         )
 
 
-class AgentIdentityCausationRelatedEventsResponse(BaseModel):
+class AgentCausationRelatedEventsResponse(BaseModel):
     """Direct cause and direct effect event reads for a CAO event."""
 
-    direct_cause: Optional[AgentIdentityTimelineEventResponse] = None
-    direct_effects: List[AgentIdentityTimelineEventResponse]
+    direct_cause: Optional[AgentTimelineEventResponse] = None
+    direct_effects: List[AgentTimelineEventResponse]
 
     @classmethod
     def from_read(
         cls,
         read: CausationRelatedEventsRead,
-    ) -> "AgentIdentityCausationRelatedEventsResponse":
+    ) -> "AgentCausationRelatedEventsResponse":
         return cls(
             direct_cause=(
-                AgentIdentityTimelineEventResponse.from_read(read.direct_cause)
+                AgentTimelineEventResponse.from_read(read.direct_cause)
                 if read.direct_cause is not None
                 else None
             ),
             direct_effects=[
-                AgentIdentityTimelineEventResponse.from_read(event)
-                for event in read.direct_effects
+                AgentTimelineEventResponse.from_read(event) for event in read.direct_effects
             ],
         )
 
 
-class AgentIdentityRelatedEventsResponse(BaseModel):
+class AgentRelatedEventsResponse(BaseModel):
     """Envelope-based related event threads for one canonical CAO event."""
 
-    event: AgentIdentityTimelineEventResponse
-    correlation_events: List[AgentIdentityTimelineEventResponse]
-    causation_events: AgentIdentityCausationRelatedEventsResponse
+    event: AgentTimelineEventResponse
+    correlation_events: List[AgentTimelineEventResponse]
+    causation_events: AgentCausationRelatedEventsResponse
 
     @classmethod
-    def from_read(cls, read: RelatedEventsRead) -> "AgentIdentityRelatedEventsResponse":
+    def from_read(cls, read: RelatedEventsRead) -> "AgentRelatedEventsResponse":
         return cls(
-            event=AgentIdentityTimelineEventResponse.from_read(read.event),
+            event=AgentTimelineEventResponse.from_read(read.event),
             correlation_events=[
-                AgentIdentityTimelineEventResponse.from_read(event)
-                for event in read.correlation_events
+                AgentTimelineEventResponse.from_read(event) for event in read.correlation_events
             ],
-            causation_events=AgentIdentityCausationRelatedEventsResponse.from_read(
-                read.causation_events
-            ),
+            causation_events=AgentCausationRelatedEventsResponse.from_read(read.causation_events),
         )
 
 
@@ -552,83 +673,79 @@ async def list_providers_endpoint() -> List[Dict]:
     return result
 
 
-@app.get("/agents/identities", response_model=List[AgentIdentityStatusResponse])
-async def list_agent_identities_endpoint(
+@app.get("/agents", response_model=List[AgentStatusResponse])
+async def list_agents_endpoint(
     active: Optional[bool] = Query(default=None),
-) -> List[AgentIdentityStatusResponse]:
-    """List CAO agent identities and current terminal status."""
+) -> List[AgentStatusResponse]:
+    """List CAO agents and current terminal status."""
     try:
         return [
-            AgentIdentityStatusResponse.from_status(identity_status)
-            for identity_status in default_agent_identity_manager().list_statuses(active=active)
+            AgentStatusResponse.from_status(agent_status)
+            for agent_status in default_agent_manager().list_statuses(active=active)
         ]
-    except AgentIdentityConfigError as e:
+    except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list agent identities: {str(e)}",
+            detail=f"Failed to list agents: {str(e)}",
         )
 
 
-@app.get("/agents/identities/{agent_id}", response_model=AgentIdentityStatusResponse)
-async def get_agent_identity_endpoint(agent_id: str) -> AgentIdentityStatusResponse:
-    """Resolve one CAO agent identity and current terminal status."""
+@app.get("/agents/{agent_id}", response_model=AgentStatusResponse)
+async def get_agent_endpoint(agent_id: str) -> AgentStatusResponse:
+    """Resolve one CAO agent and current terminal status."""
     try:
-        return AgentIdentityStatusResponse.from_status(
-            default_agent_identity_manager().status_for_identity(agent_id)
-        )
-    except AgentIdentityConfigError as e:
+        return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent_id))
+    except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to resolve agent identity: {str(e)}",
+            detail=f"Failed to resolve agent: {str(e)}",
         )
 
 
 @app.get(
-    "/agents/identities/{agent_id}/timeline",
-    response_model=AgentIdentityTimelineResponse,
+    "/agents/{agent_id}/timeline",
+    response_model=AgentTimelineResponse,
 )
-async def get_agent_identity_timeline_endpoint(agent_id: str) -> AgentIdentityTimelineResponse:
-    """Resolve one CAO identity timeline from the durable event participant index."""
+async def get_agent_timeline_endpoint(agent_id: str) -> AgentTimelineResponse:
+    """Resolve one CAO agent timeline from the durable event participant index."""
     try:
-        timeline = AgentIdentityTimelineService(
-            default_agent_identity_manager()
-        ).timeline_for_identity(agent_id)
-        return AgentIdentityTimelineResponse.from_read(timeline)
-    except AgentIdentityConfigError as e:
+        timeline = AgentTimelineService(default_agent_manager()).timeline_for_agent(agent_id)
+        return AgentTimelineResponse.from_read(timeline)
+    except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to resolve agent identity timeline: {str(e)}",
+            detail=f"Failed to resolve agent timeline: {str(e)}",
         )
 
 
 @app.get(
-    "/agents/identities/{agent_id}/events/{event_id}/related",
-    response_model=AgentIdentityRelatedEventsResponse,
+    "/agents/{agent_id}/events/{event_id}/related",
+    response_model=AgentRelatedEventsResponse,
 )
-async def get_agent_identity_related_events_endpoint(
+async def get_agent_related_events_endpoint(
     agent_id: str,
     event_id: str,
-) -> AgentIdentityRelatedEventsResponse:
+) -> AgentRelatedEventsResponse:
     """Resolve correlation and causation threads for one canonical CAO event."""
     try:
-        related_events = AgentIdentityTimelineService(
-            default_agent_identity_manager()
-        ).related_events_for_identity_event(agent_id, event_id)
-        return AgentIdentityRelatedEventsResponse.from_read(related_events)
-    except AgentIdentityConfigError as e:
+        related_events = AgentTimelineService(
+            default_agent_manager()
+        ).related_events_for_agent_event(agent_id, event_id)
+        return AgentRelatedEventsResponse.from_read(related_events)
+    except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except UnknownTimelineEventError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to resolve agent identity related events: {str(e)}",
+            detail=f"Failed to resolve agent related events: {str(e)}",
         )
 
 
@@ -839,27 +956,27 @@ async def get_agent_runtime_terminal(
     request: Request,
     agent_token: Optional[str] = Query(default=None),
 ) -> AgentRuntimeTerminalResponse:
-    """Resolve a durable CAO agent identity to its current terminal manifestation."""
+    """Resolve a durable CAO agent to its current terminal manifestation."""
     if not _agent_dashboard_request_authorized(request, agent_id, agent_token):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Agent dashboard link token is required",
         )
     try:
-        identity_status = default_agent_identity_manager().status_for_identity(agent_id)
-        if not identity_status.active_terminal_id:
+        agent_status = default_agent_manager().status_for_agent(agent_id)
+        if not agent_status.active_terminal_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Agent runtime '{agent_id}' has no running terminal",
             )
-        terminal = Terminal(**terminal_service.get_terminal(identity_status.active_terminal_id))
+        terminal = Terminal(**terminal_service.get_terminal(agent_status.active_terminal_id))
         return AgentRuntimeTerminalResponse(
             terminal=terminal,
-            terminal_token=create_terminal_dashboard_token(identity_status.active_terminal_id),
+            terminal_token=create_terminal_dashboard_token(agent_status.active_terminal_id),
         )
     except HTTPException:
         raise
-    except AgentIdentityConfigError as e:
+    except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to resolve agent runtime {agent_id}: {e}")

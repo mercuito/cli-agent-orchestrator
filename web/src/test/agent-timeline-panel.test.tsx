@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { AgentIdentityTimelinePanel } from '../components/AgentIdentityTimelinePanel'
+import { AgentTimelinePanel } from '../components/AgentTimelinePanel'
 import { eventTimelineViewRegistry } from '../components/timelineEventViews'
-import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline } from '../api'
+import { api, AgentRelatedEvents, AgentStatus, AgentTimeline } from '../api'
 import {
   AGENT_RUNTIME_LIFECYCLE_EVENT,
   AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT,
@@ -19,15 +19,42 @@ import {
 } from '../generated/caoEventPayloadTypes'
 
 function identity(
-  agent_identity_id: string,
+  agent_id: string,
   display_name: string,
-  overrides: Partial<AgentIdentityStatus> = {},
-): AgentIdentityStatus {
+  overrides: Partial<AgentStatus> = {},
+): AgentStatus {
+  const session_name = `${agent_id}-session`
   return {
-    agent_identity_id,
+    agent_id,
     display_name,
-    agent_profile: `${agent_identity_id}-profile`,
     cli_provider: 'codex',
+    workdir: '/repo',
+    session_name,
+    config: {
+      id: agent_id,
+      display_name,
+      cli_provider: 'codex',
+      workdir: '/repo',
+      session_name,
+      prompt: '# Agent\n',
+      description: null,
+      model: null,
+      reasoning_effort: null,
+      mcp_servers: {},
+      tools: [],
+      tool_aliases: {},
+      tools_settings: {},
+      cao_tools: null,
+      skills: [],
+      tags: [],
+      resources: [],
+      hooks: {},
+      use_legacy_mcp_json: null,
+      runtime_capabilities: null,
+      codex_config: {},
+      workspace_context: { enabled: false, resolver_id: null },
+      linear: null,
+    },
     active: false,
     active_terminal_id: null,
     active_workspace_context_id: null,
@@ -41,8 +68,8 @@ function event(
   event_name: string,
   occurred_at: string,
   participant_role: string | null,
-  overrides: Partial<AgentIdentityTimeline['events'][number]> = {},
-): AgentIdentityTimeline['events'][number] {
+  overrides: Partial<AgentTimeline['events'][number]> = {},
+): AgentTimeline['events'][number] {
   return {
     event_id,
     event_name,
@@ -396,22 +423,22 @@ const deliveryWithMissingOptionalFacts = event(
   },
 )
 
-const timelines: Record<string, AgentIdentityTimeline> = {
+const timelines: Record<string, AgentTimeline> = {
   aria: {
-    identity: aria,
+    agent: aria,
     events: [mention, delivery, broadcastForAria],
   },
   cael: {
-    identity: cael,
+    agent: cael,
     events: [broadcastForCael],
   },
   unused: {
-    identity: unused,
+    agent: unused,
     events: [],
   },
 }
 
-const relatedForDelivery: AgentIdentityRelatedEvents = {
+const relatedForDelivery: AgentRelatedEvents = {
   event: delivery,
   correlation_events: [mention, delivery],
   causation_events: {
@@ -420,16 +447,16 @@ const relatedForDelivery: AgentIdentityRelatedEvents = {
   },
 }
 
-describe('AgentIdentityTimelinePanel', () => {
+describe('AgentTimelinePanel', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(api, 'listAgentIdentities').mockResolvedValue([aria, cael, unused])
-    vi.spyOn(api, 'getAgentIdentityTimeline').mockImplementation(async (agentId) => {
+    vi.spyOn(api, 'listAgents').mockResolvedValue([aria, cael, unused])
+    vi.spyOn(api, 'getAgentTimeline').mockImplementation(async (agentId) => {
       const timeline = timelines[agentId]
       if (!timeline) throw new Error(`unknown identity ${agentId}`)
       return timeline
     })
-    vi.spyOn(api, 'getAgentIdentityRelatedEvents').mockResolvedValue(relatedForDelivery)
+    vi.spyOn(api, 'getAgentRelatedEvents').mockResolvedValue(relatedForDelivery)
   })
 
   afterEach(() => {
@@ -452,7 +479,7 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('lists configured identities and opens the selected identity timeline', async () => {
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     expect(await screen.findByRole('button', { name: /aria/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /cael/i })).toBeInTheDocument()
@@ -475,7 +502,7 @@ describe('AgentIdentityTimelinePanel', () => {
   it('refreshes the watched identity timeline without surfacing non-participant workspace events', async () => {
     vi.useFakeTimers()
     let ariaTimelineFetches = 0
-    vi.mocked(api.getAgentIdentityTimeline).mockImplementation(async (agentId) => {
+    vi.mocked(api.getAgentTimeline).mockImplementation(async (agentId) => {
       const timeline = timelines[agentId]
       if (!timeline) throw new Error(`unknown identity ${agentId}`)
       if (agentId !== 'aria') return timeline
@@ -484,12 +511,12 @@ describe('AgentIdentityTimelinePanel', () => {
       if (ariaTimelineFetches === 1) return timeline
 
       return {
-        identity: aria,
+        agent: aria,
         events: [liveMention, ...timeline.events],
       }
     })
 
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     await act(async () => {})
     await act(async () => {})
@@ -511,13 +538,13 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('replaces details and timeline when another identity is selected', async () => {
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     await screen.findByText('term-aria')
     fireEvent.click(screen.getByRole('button', { name: /cael/i }))
 
     await waitFor(() => {
-      expect(api.getAgentIdentityTimeline).toHaveBeenLastCalledWith('cael')
+      expect(api.getAgentTimeline).toHaveBeenLastCalledWith('cael')
     })
     expect(screen.getByRole('heading', { name: 'Cael' })).toBeInTheDocument()
     expect(screen.queryByText('term-aria')).not.toBeInTheDocument()
@@ -527,12 +554,12 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('expands causation and correlation related event groups from the related endpoint', async () => {
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     await screen.findByText('Agent Runtime Notification Delivery')
     fireEvent.click(screen.getByRole('button', { name: /inspect related events for runtime:notification_delivery:delivery/i }))
 
-    expect(api.getAgentIdentityRelatedEvents).toHaveBeenCalledWith(
+    expect(api.getAgentRelatedEvents).toHaveBeenCalledWith(
       'aria',
       'runtime:notification_delivery:delivery',
     )
@@ -555,11 +582,11 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('renders untaught event kinds through fallback views on the timeline and related panel', async () => {
-    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
-      identity: aria,
+    vi.mocked(api.getAgentTimeline).mockResolvedValue({
+      agent: aria,
       events: [unknownAudit],
     })
-    vi.mocked(api.getAgentIdentityRelatedEvents).mockResolvedValue({
+    vi.mocked(api.getAgentRelatedEvents).mockResolvedValue({
       event: unknownAudit,
       correlation_events: [unknownAudit, relatedUnknownAudit],
       causation_events: {
@@ -568,7 +595,7 @@ describe('AgentIdentityTimelinePanel', () => {
       },
     })
 
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     expect(await screen.findByText('Experimental Audit Event')).toBeInTheDocument()
     expect(screen.getByText('Participant')).toBeInTheDocument()
@@ -591,8 +618,8 @@ describe('AgentIdentityTimelinePanel', () => {
 
   it('renders taught Linear and runtime event kinds through registered typed views', async () => {
     // Given
-    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
-      identity: aria,
+    vi.mocked(api.getAgentTimeline).mockResolvedValue({
+      agent: aria,
       events: [
         knownLinearMention,
         knownLinearDelegated,
@@ -611,7 +638,7 @@ describe('AgentIdentityTimelinePanel', () => {
     })
 
     // When
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     // Then
     const timeline = await screen.findByTestId('identity-timeline')
@@ -667,11 +694,11 @@ describe('AgentIdentityTimelinePanel', () => {
 
   it('renders related events through the same taught views and fallback view as main rows', async () => {
     // Given
-    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
-      identity: aria,
+    vi.mocked(api.getAgentTimeline).mockResolvedValue({
+      agent: aria,
       events: [knownLinearMention],
     })
-    vi.mocked(api.getAgentIdentityRelatedEvents).mockResolvedValue({
+    vi.mocked(api.getAgentRelatedEvents).mockResolvedValue({
       event: knownLinearMention,
       correlation_events: [knownRuntimeDelivery, knownLinearDelegated, knownRuntimeAccepted, unknownAudit],
       causation_events: {
@@ -681,7 +708,7 @@ describe('AgentIdentityTimelinePanel', () => {
     })
 
     // When
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     await screen.findByText('Nia mentioned this agent')
     fireEvent.click(screen.getByRole('button', { name: /inspect related events for linear:event:mention-ops-417/i }))
@@ -698,12 +725,12 @@ describe('AgentIdentityTimelinePanel', () => {
 
   it('opens the Linear issue external entity reference from authored event data', async () => {
     const openExternalReference = vi.spyOn(window, 'open').mockImplementation(() => null)
-    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
-      identity: aria,
+    vi.mocked(api.getAgentTimeline).mockResolvedValue({
+      agent: aria,
       events: [knownLinearMention],
     })
 
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     fireEvent.click(await screen.findByRole('button', { name: /open linear issue ops-417/i }))
 
@@ -715,12 +742,12 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('keeps Linear issue context readable without a broken external reference when issue_url is absent', async () => {
-    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
-      identity: aria,
+    vi.mocked(api.getAgentTimeline).mockResolvedValue({
+      agent: aria,
       events: [knownLinearMentionWithoutIssueUrl],
     })
 
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     const timeline = await screen.findByTestId('identity-timeline')
     expect(within(timeline).getByText('OPS-418')).toBeInTheDocument()
@@ -730,12 +757,12 @@ describe('AgentIdentityTimelinePanel', () => {
 
   it('focuses the runtime delivery terminal through the internal entity reference callback', async () => {
     const focusTerminal = vi.fn()
-    vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
-      identity: aria,
+    vi.mocked(api.getAgentTimeline).mockResolvedValue({
+      agent: aria,
       events: [knownRuntimeDelivery],
     })
 
-    render(<AgentIdentityTimelinePanel onFocusTerminal={focusTerminal} />)
+    render(<AgentTimelinePanel onFocusTerminal={focusTerminal} />)
 
     fireEvent.click(await screen.findByRole('button', { name: /open terminal term-aria-main/i }))
 
@@ -743,8 +770,8 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('does not reuse related-event results fetched under a different selected identity', async () => {
-    let resolveAriaRelated: (related: AgentIdentityRelatedEvents) => void = () => {}
-    vi.mocked(api.getAgentIdentityRelatedEvents).mockImplementation((agentId, eventId) => {
+    let resolveAriaRelated: (related: AgentRelatedEvents) => void = () => {}
+    vi.mocked(api.getAgentRelatedEvents).mockImplementation((agentId, eventId) => {
       if (agentId === 'aria' && eventId === 'linear:agent_mentioned:broadcast') {
         return new Promise(resolve => {
           resolveAriaRelated = resolve
@@ -760,18 +787,18 @@ describe('AgentIdentityTimelinePanel', () => {
       })
     })
 
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     await screen.findByTestId('identity-timeline')
     fireEvent.click(screen.getByRole('button', { name: /inspect related events for linear:agent_mentioned:broadcast/i }))
-    expect(api.getAgentIdentityRelatedEvents).toHaveBeenCalledWith(
+    expect(api.getAgentRelatedEvents).toHaveBeenCalledWith(
       'aria',
       'linear:agent_mentioned:broadcast',
     )
 
     fireEvent.click(screen.getByRole('button', { name: /cael/i }))
     await waitFor(() => {
-      expect(api.getAgentIdentityTimeline).toHaveBeenLastCalledWith('cael')
+      expect(api.getAgentTimeline).toHaveBeenLastCalledWith('cael')
     })
 
     await act(async () => {
@@ -788,7 +815,7 @@ describe('AgentIdentityTimelinePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /inspect related events for linear:agent_mentioned:broadcast/i }))
 
     await waitFor(() => {
-      expect(api.getAgentIdentityRelatedEvents).toHaveBeenCalledWith(
+      expect(api.getAgentRelatedEvents).toHaveBeenCalledWith(
         'cael',
         'linear:agent_mentioned:broadcast',
       )
@@ -796,7 +823,7 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('shows no recent activity separately from loading and unreachable states', async () => {
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     await screen.findByRole('button', { name: /unused agent/i })
     fireEvent.click(screen.getByRole('button', { name: /unused agent/i }))
@@ -808,13 +835,13 @@ describe('AgentIdentityTimelinePanel', () => {
 
   it('shows unreachable timeline state when the selected timeline cannot load', async () => {
     let rejectTimeline: (error: Error) => void = () => {}
-    vi.mocked(api.getAgentIdentityTimeline).mockReturnValueOnce(
+    vi.mocked(api.getAgentTimeline).mockReturnValueOnce(
       new Promise((_, reject) => {
         rejectTimeline = reject
       }),
     )
 
-    render(<AgentIdentityTimelinePanel />)
+    render(<AgentTimelinePanel />)
 
     expect(await screen.findByText(/loading identity timeline/i)).toBeInTheDocument()
     await act(async () => {

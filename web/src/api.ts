@@ -50,18 +50,69 @@ export interface AgentRuntimeTerminalLink {
   terminal_token: string
 }
 
-export interface AgentIdentityStatus {
-  agent_identity_id: string
+export interface AgentConfig {
+  id: string
   display_name: string
-  agent_profile: string
   cli_provider: string
+  workdir: string
+  session_name: string
+  prompt: string
+  description: string | null
+  model: string | null
+  reasoning_effort: string | null
+  mcp_servers: Record<string, unknown>
+  tools: string[]
+  tool_aliases: Record<string, string>
+  tools_settings: Record<string, unknown>
+  cao_tools: string[] | null
+  skills: string[]
+  tags: string[]
+  resources: string[]
+  hooks: Record<string, unknown>
+  use_legacy_mcp_json: boolean | null
+  runtime_capabilities: string[] | null
+  codex_config: Record<string, unknown>
+  workspace_context: { enabled: boolean; resolver_id: string | null }
+  linear: {
+    app_key: string | null
+    client_id: string | null
+    client_secret_configured: boolean
+    webhook_secret_configured: boolean
+    oauth_redirect_uri: string | null
+    access_token_configured: boolean
+    refresh_token_configured: boolean
+    token_expires_at: string | null
+    app_user_id: string | null
+    app_user_name: string | null
+    oauth_state_configured: boolean
+    tool_access: Array<{
+      access_id: string
+      tools: string[]
+      issues: string[]
+      create_team_ids: string[]
+      create_project_ids: string[]
+      create_parent_issues: string[]
+      allow_top_level_create: boolean
+      update_fields: string[]
+      reason: string | null
+    }>
+  } | null
+}
+
+export interface AgentStatus {
+  agent_id: string
+  display_name: string
+  cli_provider: string
+  workdir: string
+  session_name: string
+  config: AgentConfig
   active: boolean
   active_terminal_id: string | null
   active_workspace_context_id: string | null
   last_active_at: string | null
 }
 
-export interface AgentIdentityTimelineEvent {
+export interface AgentTimelineEvent {
   event_id: string
   event_name: string
   event_type_key: string
@@ -74,20 +125,20 @@ export interface AgentIdentityTimelineEvent {
   participant_role: string | null
 }
 
-export interface AgentIdentityTimeline {
-  identity: AgentIdentityStatus
-  events: AgentIdentityTimelineEvent[]
+export interface AgentTimeline {
+  agent: AgentStatus
+  events: AgentTimelineEvent[]
 }
 
-export interface AgentIdentityCausationRelatedEvents {
-  direct_cause: AgentIdentityTimelineEvent | null
-  direct_effects: AgentIdentityTimelineEvent[]
+export interface AgentCausationRelatedEvents {
+  direct_cause: AgentTimelineEvent | null
+  direct_effects: AgentTimelineEvent[]
 }
 
-export interface AgentIdentityRelatedEvents {
-  event: AgentIdentityTimelineEvent
-  correlation_events: AgentIdentityTimelineEvent[]
-  causation_events: AgentIdentityCausationRelatedEvents
+export interface AgentRelatedEvents {
+  event: AgentTimelineEvent
+  correlation_events: AgentTimelineEvent[]
+  causation_events: AgentCausationRelatedEvents
 }
 
 export interface AgentProfileInfo {
@@ -192,14 +243,14 @@ export const api = {
       `/agents/runtime/${encodeURIComponent(agentId)}/terminal${query}`,
     )
   },
-  listAgentIdentities: () => fetchJSON<AgentIdentityStatus[]>('/agents/identities'),
-  getAgentIdentityTimeline: (agentId: string) =>
-    fetchJSON<AgentIdentityTimeline>(
-      `/agents/identities/${encodeURIComponent(agentId)}/timeline`,
+  listAgents: () => fetchJSON<AgentStatus[]>('/agents'),
+  getAgentTimeline: (agentId: string) =>
+    fetchJSON<AgentTimeline>(
+      `/agents/${encodeURIComponent(agentId)}/timeline`,
     ),
-  getAgentIdentityRelatedEvents: (agentId: string, eventId: string) =>
-    fetchJSON<AgentIdentityRelatedEvents>(
-      `/agents/identities/${encodeURIComponent(agentId)}/events/${encodeURIComponent(eventId)}/related`,
+  getAgentRelatedEvents: (agentId: string, eventId: string) =>
+    fetchJSON<AgentRelatedEvents>(
+      `/agents/${encodeURIComponent(agentId)}/events/${encodeURIComponent(eventId)}/related`,
     ),
   getTerminalStatus: (id: string) =>
     fetchJSON<Terminal>(`/terminals/${id}`).then(t => t.status),

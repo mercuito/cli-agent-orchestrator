@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline, AgentIdentityTimelineEvent } from '../api'
+import { api, AgentRelatedEvents, AgentStatus, AgentTimeline, AgentTimelineEvent } from '../api'
 import { AlertCircle, Bot, ChevronDown, ChevronRight, Radio, Search } from 'lucide-react'
 import {
   eventTimelineViewRegistry,
@@ -7,34 +7,34 @@ import {
   type OpenExternalReference,
 } from './timelineEventViews'
 
-const IDENTITY_TIMELINE_REFRESH_MS = 5000
+const AGENT_TIMELINE_REFRESH_MS = 5000
 
-function activeLabel(identity: AgentIdentityStatus): string {
-  return identity.active ? 'Active' : 'Inactive'
+function activeLabel(agent: AgentStatus): string {
+  return agent.active ? 'Active' : 'Inactive'
 }
 
 function relatedEventCacheKey(agentId: string, eventId: string): string {
   return `${agentId}::${eventId}`
 }
 
-function eventTimeMillis(event: AgentIdentityTimelineEvent): number {
+function eventTimeMillis(event: AgentTimelineEvent): number {
   const parsed = Date.parse(event.occurred_at)
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
-function newestEventsFirst(events: AgentIdentityTimelineEvent[]): AgentIdentityTimelineEvent[] {
+function newestEventsFirst(events: AgentTimelineEvent[]): AgentTimelineEvent[] {
   return [...events].sort((left, right) => {
     const byTime = eventTimeMillis(right) - eventTimeMillis(left)
     return byTime || right.event_id.localeCompare(left.event_id)
   })
 }
 
-function IdentityRosterItem({
-  identity,
+function AgentRosterItem({
+  agent,
   selected,
   onSelect,
 }: {
-  identity: AgentIdentityStatus
+  agent: AgentStatus
   selected: boolean
   onSelect: () => void
 }) {
@@ -53,27 +53,27 @@ function IdentityRosterItem({
           <div className="flex items-center gap-2">
             <Bot size={15} className={selected ? 'text-emerald-300' : 'text-gray-500'} />
             <span className="truncate text-sm font-semibold text-gray-100">
-              {identity.display_name}
+              {agent.display_name}
             </span>
           </div>
           <div className="mt-1 truncate font-mono text-xs text-gray-500">
-            {identity.agent_identity_id}
+            {agent.agent_id}
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <span className="rounded bg-gray-800 px-2 py-0.5 text-[11px] text-gray-300">
-              {identity.agent_profile}
+              {agent.session_name}
             </span>
             <span className="rounded bg-gray-800 px-2 py-0.5 text-[11px] text-gray-300">
-              {identity.cli_provider}
+              {agent.cli_provider}
             </span>
           </div>
         </div>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
-          identity.active
+          agent.active
             ? 'bg-emerald-900/60 text-emerald-300'
             : 'bg-gray-800 text-gray-400'
         }`}>
-          {activeLabel(identity)}
+          {activeLabel(agent)}
         </span>
       </div>
     </button>
@@ -99,7 +99,7 @@ function RelatedEventList({
   onFocusTerminal,
 }: {
   title: string
-  events: AgentIdentityTimelineEvent[]
+  events: AgentTimelineEvent[]
   emptyLabel: string
   onOpenExternalReference: OpenExternalReference
   onFocusTerminal?: FocusTerminalReference
@@ -147,9 +147,9 @@ function TimelineRow({
   onOpenExternalReference,
   onFocusTerminal,
 }: {
-  event: AgentIdentityTimelineEvent
+  event: AgentTimelineEvent
   expanded: boolean
-  related: AgentIdentityRelatedEvents | null
+  related: AgentRelatedEvents | null
   loading: boolean
   error: string | null
   onToggle: () => void
@@ -230,7 +230,7 @@ function TimelineRow({
   )
 }
 
-interface AgentIdentityTimelinePanelProps {
+interface AgentTimelinePanelProps {
   onOpenExternalReference?: OpenExternalReference
   onFocusTerminal?: FocusTerminalReference
 }
@@ -239,20 +239,20 @@ function openExternalReference(url: string) {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-export function AgentIdentityTimelinePanel({
+export function AgentTimelinePanel({
   onOpenExternalReference = openExternalReference,
   onFocusTerminal,
-}: AgentIdentityTimelinePanelProps = {}) {
-  const [identities, setIdentities] = useState<AgentIdentityStatus[]>([])
+}: AgentTimelinePanelProps = {}) {
+  const [agents, setAgents] = useState<AgentStatus[]>([])
   const [rosterLoading, setRosterLoading] = useState(true)
   const [rosterError, setRosterError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [timeline, setTimeline] = useState<AgentIdentityTimeline | null>(null)
+  const [timeline, setTimeline] = useState<AgentTimeline | null>(null)
   const [timelineLoading, setTimelineLoading] = useState(false)
   const [timelineError, setTimelineError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null)
-  const [relatedByEvent, setRelatedByEvent] = useState<Record<string, AgentIdentityRelatedEvents>>({})
+  const [relatedByEvent, setRelatedByEvent] = useState<Record<string, AgentRelatedEvents>>({})
   const [relatedLoadingKey, setRelatedLoadingKey] = useState<string | null>(null)
   const [relatedErrors, setRelatedErrors] = useState<Record<string, string>>({})
 
@@ -260,11 +260,11 @@ export function AgentIdentityTimelinePanel({
     let cancelled = false
     setRosterLoading(true)
     setRosterError(null)
-    api.listAgentIdentities()
+    api.listAgents()
       .then(result => {
         if (cancelled) return
-        setIdentities(result)
-        setSelectedId(current => current ?? result[0]?.agent_identity_id ?? null)
+        setAgents(result)
+        setSelectedId(current => current ?? result[0]?.agent_id ?? null)
       })
       .catch(() => {
         if (!cancelled) setRosterError('Unable to load agent identities.')
@@ -289,7 +289,7 @@ export function AgentIdentityTimelinePanel({
         setTimelineError(null)
       }
       try {
-        const result = await api.getAgentIdentityTimeline(selectedId)
+        const result = await api.getAgentTimeline(selectedId)
         if (cancelled) return
         setTimeline(result)
         setTimelineError(null)
@@ -308,24 +308,24 @@ export function AgentIdentityTimelinePanel({
     fetchTimeline(true)
     const interval = setInterval(() => {
       fetchTimeline(false)
-    }, IDENTITY_TIMELINE_REFRESH_MS)
+    }, AGENT_TIMELINE_REFRESH_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
   }, [selectedId])
 
-  const filteredIdentities = useMemo(() => {
+  const filteredAgents = useMemo(() => {
     const query = search.trim().toLowerCase()
-    if (!query) return identities
-    return identities.filter(identity =>
-      identity.display_name.toLowerCase().includes(query) ||
-      identity.agent_identity_id.toLowerCase().includes(query) ||
-      identity.agent_profile.toLowerCase().includes(query)
+    if (!query) return agents
+    return agents.filter(agent =>
+      agent.display_name.toLowerCase().includes(query) ||
+      agent.agent_id.toLowerCase().includes(query) ||
+      agent.session_name.toLowerCase().includes(query)
     )
-  }, [identities, search])
+  }, [agents, search])
 
-  const selectedIdentity = timeline?.identity ?? identities.find(identity => identity.agent_identity_id === selectedId) ?? null
+  const selectedAgent = timeline?.agent ?? agents.find(agent => agent.agent_id === selectedId) ?? null
   const timelineEvents = useMemo(
     () => newestEventsFirst(timeline?.events ?? []),
     [timeline?.events],
@@ -341,7 +341,7 @@ export function AgentIdentityTimelinePanel({
     setRelatedLoadingKey(cacheKey)
     setRelatedErrors(prev => ({ ...prev, [cacheKey]: '' }))
     try {
-      const related = await api.getAgentIdentityRelatedEvents(selectedId, eventId)
+      const related = await api.getAgentRelatedEvents(selectedId, eventId)
       setRelatedByEvent(prev => ({ ...prev, [cacheKey]: related }))
     } catch {
       setRelatedErrors(prev => ({
@@ -359,7 +359,7 @@ export function AgentIdentityTimelinePanel({
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-300">
-              Agent Identities ({identities.length})
+              Agent Identities ({agents.length})
             </h3>
             <p className="mt-1 text-xs text-gray-500">
               Configured identities independent of current terminals.
@@ -385,18 +385,18 @@ export function AgentIdentityTimelinePanel({
           <div className="rounded-lg border border-red-900/50 bg-red-950/30 p-3 text-sm text-red-300">
             {rosterError}
           </div>
-        ) : filteredIdentities.length === 0 ? (
+        ) : filteredAgents.length === 0 ? (
           <div className="rounded-lg border border-gray-700/40 bg-gray-900/50 p-3 text-sm text-gray-500">
             No configured identities match this search.
           </div>
         ) : (
           <div className="space-y-2">
-            {filteredIdentities.map(identity => (
-              <IdentityRosterItem
-                key={identity.agent_identity_id}
-                identity={identity}
-                selected={identity.agent_identity_id === selectedId}
-                onSelect={() => setSelectedId(identity.agent_identity_id)}
+            {filteredAgents.map(agent => (
+              <AgentRosterItem
+                key={agent.agent_id}
+                agent={agent}
+                selected={agent.agent_id === selectedId}
+                onSelect={() => setSelectedId(agent.agent_id)}
               />
             ))}
           </div>
@@ -405,30 +405,30 @@ export function AgentIdentityTimelinePanel({
 
       <div className="space-y-4 min-w-0">
         <div className="rounded-xl border border-gray-700/50 bg-gray-800/60 p-4">
-          {selectedIdentity ? (
+          {selectedAgent ? (
             <>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="truncate text-lg font-semibold text-white">{selectedIdentity.display_name}</h3>
+                    <h3 className="truncate text-lg font-semibold text-white">{selectedAgent.display_name}</h3>
                     <span className={`rounded-full px-2 py-0.5 text-xs ${
-                      selectedIdentity.active
+                      selectedAgent.active
                         ? 'bg-emerald-900/60 text-emerald-300'
                         : 'bg-gray-700 text-gray-400'
                     }`}>
-                      {activeLabel(selectedIdentity)}
+                      {activeLabel(selectedAgent)}
                     </span>
                   </div>
                   <div className="mt-1 truncate font-mono text-xs text-gray-500">
-                    {selectedIdentity.agent_identity_id}
+                    {selectedAgent.agent_id}
                   </div>
                 </div>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <DetailValue label="Profile" value={selectedIdentity.agent_profile} />
-                <DetailValue label="Provider" value={selectedIdentity.cli_provider} />
-                <DetailValue label="Terminal" value={selectedIdentity.active_terminal_id} />
-                <DetailValue label="Workspace" value={selectedIdentity.active_workspace_context_id} />
+                <DetailValue label="Session" value={selectedAgent.session_name} />
+                <DetailValue label="Provider" value={selectedAgent.cli_provider} />
+                <DetailValue label="Terminal" value={selectedAgent.active_terminal_id} />
+                <DetailValue label="Workspace" value={selectedAgent.active_workspace_context_id} />
               </div>
             </>
           ) : (

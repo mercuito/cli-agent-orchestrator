@@ -138,34 +138,50 @@ describe('API wrapper', () => {
     expect(result).toEqual(providers)
   })
 
-  it('listAgentIdentities fetches the committed identity roster endpoint', async () => {
-    const identities = [
+  it('listAgents fetches the committed agent roster endpoint', async () => {
+    const agents = [
       {
-        agent_identity_id: 'aria',
+        agent_id: 'aria',
         display_name: 'Aria',
-        agent_profile: 'partner',
         cli_provider: 'codex',
+        workdir: '/repo',
+        session_name: 'aria-session',
+        config: {
+          id: 'aria',
+          display_name: 'Aria',
+          cli_provider: 'codex',
+          workdir: '/repo',
+          session_name: 'aria-session',
+        },
         active: false,
         active_terminal_id: null,
         active_workspace_context_id: null,
         last_active_at: null,
       },
     ]
-    mockResponse(identities)
+    mockResponse(agents)
 
-    const result = await api.listAgentIdentities()
+    const result = await api.listAgents()
 
-    expect(result).toEqual(identities)
-    expect(mockFetch).toHaveBeenCalledWith('/agents/identities', expect.any(Object))
+    expect(result).toEqual(agents)
+    expect(mockFetch).toHaveBeenCalledWith('/agents', expect.any(Object))
   })
 
-  it('getAgentIdentityTimeline URL-encodes the selected identity id', async () => {
+  it('getAgentTimeline URL-encodes the selected agent id', async () => {
     const timeline = {
-      identity: {
-        agent_identity_id: 'aria/linear',
+      agent: {
+        agent_id: 'aria/linear',
         display_name: 'Aria',
-        agent_profile: 'partner',
         cli_provider: 'codex',
+        workdir: '/repo',
+        session_name: 'aria-session',
+        config: {
+          id: 'aria/linear',
+          display_name: 'Aria',
+          cli_provider: 'codex',
+          workdir: '/repo',
+          session_name: 'aria-session',
+        },
         active: true,
         active_terminal_id: 'term-1',
         active_workspace_context_id: 'wctx-1',
@@ -175,16 +191,16 @@ describe('API wrapper', () => {
     }
     mockResponse(timeline)
 
-    const result = await api.getAgentIdentityTimeline('aria/linear')
+    const result = await api.getAgentTimeline('aria/linear')
 
     expect(result).toEqual(timeline)
     expect(mockFetch).toHaveBeenCalledWith(
-      '/agents/identities/aria%2Flinear/timeline',
+      '/agents/aria%2Flinear/timeline',
       expect.any(Object),
     )
   })
 
-  it('getAgentIdentityRelatedEvents URL-encodes identity and event ids', async () => {
+  it('getAgentRelatedEvents URL-encodes agent and event ids', async () => {
     const related = {
       event: {
         event_id: 'linear:agent_mentioned:event/1',
@@ -209,25 +225,33 @@ describe('API wrapper', () => {
     }
     mockResponse(related)
 
-    const result = await api.getAgentIdentityRelatedEvents(
+    const result = await api.getAgentRelatedEvents(
       'aria/linear',
       'linear:agent_mentioned:event/1',
     )
 
     expect(result).toEqual(related)
     expect(mockFetch).toHaveBeenCalledWith(
-      '/agents/identities/aria%2Flinear/events/linear%3Aagent_mentioned%3Aevent%2F1/related',
+      '/agents/aria%2Flinear/events/linear%3Aagent_mentioned%3Aevent%2F1/related',
       expect.any(Object),
     )
   })
 
-  it('getAgentIdentityTimeline preserves typed event data in returned rows', async () => {
+  it('getAgentTimeline preserves typed event data in returned rows', async () => {
     const timeline = {
-      identity: {
-        agent_identity_id: 'aria',
+      agent: {
+        agent_id: 'aria',
         display_name: 'Aria',
-        agent_profile: 'partner',
         cli_provider: 'codex',
+        workdir: '/repo',
+        session_name: 'aria-session',
+        config: {
+          id: 'aria',
+          display_name: 'Aria',
+          cli_provider: 'codex',
+          workdir: '/repo',
+          session_name: 'aria-session',
+        },
         active: true,
         active_terminal_id: 'term-1',
         active_workspace_context_id: 'wctx-1',
@@ -253,7 +277,7 @@ describe('API wrapper', () => {
     }
     mockResponse(timeline)
 
-    const result = await api.getAgentIdentityTimeline('aria')
+    const result = await api.getAgentTimeline('aria')
 
     expect(result.events[0].event_data).toEqual({
       audit_kind: 'workspace_scan',

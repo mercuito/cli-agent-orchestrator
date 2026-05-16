@@ -1,4 +1,4 @@
-"""Backend read service for agent identity CAO event timelines."""
+"""Backend read service for agent CAO event timelines."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from typing import Any
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import CaoEventRecord
-from cli_agent_orchestrator.services.agent_identity_manager import (
-    AgentIdentityManager,
-    AgentIdentityStatus,
+from cli_agent_orchestrator.services.agent_manager import (
+    AgentManager,
+    AgentStatus,
 )
 
 
@@ -20,7 +20,7 @@ class UnknownTimelineEventError(ValueError):
 
 @dataclass(frozen=True)
 class TimelineEventRead:
-    """Envelope-level CAO event facts for dashboard identity timeline reads."""
+    """Envelope-level CAO event facts for dashboard agent timeline reads."""
 
     event_id: str
     event_name: str
@@ -35,10 +35,10 @@ class TimelineEventRead:
 
 
 @dataclass(frozen=True)
-class IdentityTimelineRead:
-    """One manager-resolved identity plus its participant-index timeline."""
+class AgentTimelineRead:
+    """One manager-resolved agent plus its participant-index timeline."""
 
-    identity: AgentIdentityStatus
+    agent: AgentStatus
     events: tuple[TimelineEventRead, ...]
 
 
@@ -59,21 +59,21 @@ class RelatedEventsRead:
     causation_events: CausationRelatedEventsRead
 
 
-class AgentIdentityTimelineService:
-    """Compose manager-owned identities with durable CAO event-log reads."""
+class AgentTimelineService:
+    """Compose manager-owned agents with durable CAO event-log reads."""
 
-    def __init__(self, identity_manager: AgentIdentityManager) -> None:
-        self._identity_manager = identity_manager
+    def __init__(self, agent_manager: AgentManager) -> None:
+        self._agent_manager = agent_manager
 
-    def timeline_for_identity(self, agent_id: str) -> IdentityTimelineRead:
-        """Return one identity's participant-index timeline."""
+    def timeline_for_agent(self, agent_id: str) -> AgentTimelineRead:
+        """Return one agent's participant-index timeline."""
 
-        identity_status = self._identity_manager.status_for_identity(agent_id)
+        agent_status = self._agent_manager.status_for_agent(agent_id)
         participant_records = db_module.list_cao_event_participants_by_agent_identity(
-            identity_status.agent_identity_id
+            agent_status.agent_id
         )
-        return IdentityTimelineRead(
-            identity=identity_status,
+        return AgentTimelineRead(
+            agent=agent_status,
             events=tuple(
                 _timeline_event_from_record(
                     participant_record.record,
@@ -83,13 +83,11 @@ class AgentIdentityTimelineService:
             ),
         )
 
-    def related_events_for_identity_event(self, agent_id: str, event_id: str) -> RelatedEventsRead:
-        """Return envelope-related CAO event threads for a manager-resolved identity."""
+    def related_events_for_agent_event(self, agent_id: str, event_id: str) -> RelatedEventsRead:
+        """Return envelope-related CAO event threads for a manager-resolved agent."""
 
-        identity_status = self._identity_manager.status_for_identity(agent_id)
-        participant_roles = _participant_roles_by_event_id(
-            identity_status.agent_identity_id
-        )
+        agent_status = self._agent_manager.status_for_agent(agent_id)
+        participant_roles = _participant_roles_by_event_id(agent_status.agent_id)
         record = db_module.get_cao_event(event_id)
         if record is None:
             raise UnknownTimelineEventError(f"Unknown CAO event: {event_id}")
@@ -155,10 +153,8 @@ def _timeline_event_from_record(
     )
 
 
-def _participant_roles_by_event_id(agent_identity_id: str) -> dict[str, str]:
+def _participant_roles_by_event_id(agent_id: str) -> dict[str, str]:
     return {
         participant_record.record.event_id: participant_record.participant_role
-        for participant_record in db_module.list_cao_event_participants_by_agent_identity(
-            agent_identity_id
-        )
+        for participant_record in db_module.list_cao_event_participants_by_agent_identity(agent_id)
     }
