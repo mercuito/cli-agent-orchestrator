@@ -91,6 +91,14 @@ explicitly; do not infer.
 - `grep -rn "agent_profile" src/` returns hits only in migration code, in
   documentation explaining the rename, or in test fixtures verifying the
   rename — not in live data models, API responses, or runtime services.
+- `grep -rn "AgentIdentity\|agent_identity\|agent_identity_id" src/ web/src/`
+  returns no hits. The "identity" vocabulary is gone from the new code
+  surface: `AgentIdentityManager` → `AgentManager`,
+  `AgentIdentityRegistry` → `AgentRegistry`, the
+  `/agents/identities*` HTTP paths → `/agents*`, the
+  `terminals.agent_identity_id` column → `agent_id`, the
+  `AgentIdentityTimelinePanel.tsx` component → renamed (e.g.
+  `AgentDetailPanel.tsx`), and all UI labels updated.
 - The following modules/files are deleted:
   - `src/cli_agent_orchestrator/models/agent_profile.py`
   - `src/cli_agent_orchestrator/utils/agent_profiles.py`
@@ -99,7 +107,8 @@ explicitly; do not infer.
 - The following HTTP endpoints are removed:
   - `GET /agents/profiles`
   - `GET /settings/agent-dirs` (and its PUT counterpart)
-  - Identity-blind spawn endpoints (replaced or rejected)
+  - Anonymous spawn endpoints accepting loose profile/provider/workdir
+    (replaced by `/agents/<id>/start` or equivalent)
 - The `cao launch` command is unregistered. `cao launch ...` returns a
   shell-level "command not found" or the CLI's equivalent unknown-subcommand
   error.

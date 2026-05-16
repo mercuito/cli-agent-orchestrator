@@ -5,7 +5,7 @@ Status: draft
 This document captures the cleanup of CAO's agent concepts: unifying the
 existing `AgentProfile` (template) + `AgentIdentity` (instance config) split
 into a single `Agent` concept, hardening the boundary between configuration
-and runtime, and removing identity-blind spawn paths.
+and runtime, and removing anonymous (no-agent) spawn paths.
 
 The motivating problems are:
 
@@ -181,12 +181,15 @@ reachable from tests but not yet wired into the running system.
 
 ### Phase 2 — Read-path cutover (atomic)
 
-Run migration on developer machines to convert existing config. Swap all
-readers (identity manager, Linear provider, API endpoints, web) to the new
-model in a single landing. Delete the old subsystems: `AgentProfile`,
-`agent_profiles.py`, `agent_store/` at the old location, the `legacy_env`
-path, multi-source discovery plumbing, `/agents/profiles` endpoint,
-`linear.toml`.
+Developer performs the one-shot manual config migration on their machine.
+Swap all readers (agent manager/registry, Linear provider, API endpoints,
+web) to the new model — including renaming `AgentIdentityManager` →
+`AgentManager` and `AgentIdentityRegistry` → `AgentRegistry`, and renaming
+the `/agents/identities*` HTTP paths to `/agents*`. Delete the old
+subsystems: `AgentProfile`, `agent_profiles.py`, `agent_store/` at the
+old location, the `legacy_env` path, multi-source discovery plumbing,
+`/agents/profiles` endpoint, `linear.toml`. No "identity" vocabulary
+survives in the new code surface.
 
 ### Phase 3 — Spawn lockdown
 

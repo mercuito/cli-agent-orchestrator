@@ -152,31 +152,44 @@ the forbidden patterns, raise back to the operator rather than improvising.
 
 ## Phase 2 — Read-path cutover (atomic)
 
-### T05 — Swap identity manager and API readers
+### T05 — Rename agent manager/registry and swap API readers
 
 - owner_role: developer
 - dispatch_mode: handoff
 - depends_on: [T04]
 - deliverables:
-  - `AgentIdentityManager` and `AgentIdentityRegistry` rewritten to read
-    from the new agent directory shape (or replaced by new abstractions)
-  - `/agents/identities`, `/agents/identities/{id}`,
-    `/agents/identities/{id}/timeline` endpoints continue to function,
-    sourcing data from the new loader
-  - response models extended to expose the full agent config (workdir,
-    session_name, provider, Linear binding presence flags, tool access
-    summary) — the previous response missed workdir/session_name/
-    workspace_context entirely
-  - updated tests covering identity API endpoints under the new shape
+  - `AgentIdentityManager` renamed to `AgentManager`, rewritten to read
+    from the new agent directory shape; all references in the codebase
+    updated
+  - `AgentIdentityRegistry` renamed to `AgentRegistry`, rewritten as a
+    dumb lookup table backed by the new loader; all references updated
+  - module file `src/cli_agent_orchestrator/agent_identity.py` renamed to
+    `agent.py` (or split into smaller modules if cleaner)
+  - HTTP endpoints renamed: `/agents/identities` → `/agents`,
+    `/agents/identities/{id}` → `/agents/{id}`,
+    `/agents/identities/{id}/timeline` → `/agents/{id}/timeline`,
+    `/agents/identities/{id}/events/{event_id}/related` →
+    `/agents/{id}/events/{event_id}/related`. The old paths are removed,
+    not aliased.
+  - response models renamed (`AgentIdentityStatusResponse` →
+    `AgentStatusResponse`, `AgentIdentityTimelineResponse` →
+    `AgentTimelineResponse`, and similar) and extended to expose the full
+    agent config (workdir, session_name, provider, Linear binding
+    presence flags, tool access summary) — the previous responses missed
+    workdir/session_name/workspace_context entirely
+  - no `AgentIdentity*` class or symbol names and no `/agents/identities*`
+    paths remain in code introduced or modified by this task
+  - updated tests covering the renamed agent API endpoints
 - acceptance:
   - prior to landing: developer has performed a one-shot manual migration
     of `agents.toml` + `linear.toml` + `agent_store/` references into
     `~/.aws/cli-agent-orchestrator/agents/<id>/` per the plan's Migration
     shape section, and T04 validation passes against the result
-  - the `/agents/identities/<id>` endpoint returns every field present in
-    the agent's `agent.toml`
-  - the Agents tab in the web UI continues to render identity rosters
-    correctly (no UI changes yet — read path only)
+  - the `/agents/{id}` endpoint returns every field present in the
+    agent's `agent.toml`
+  - the Agents tab in the web UI continues to render the agent roster
+    correctly (no UI label changes yet — read-path swap only; T14 owns
+    the UI text renames)
   - no backwards-compatibility layer introduced — no shims, facades,
     fallback chains, feature flags, deprecation warnings, aliases, or
     runtime shape translators; legacy call sites are migrated or deleted,
@@ -241,8 +254,10 @@ the forbidden patterns, raise back to the operator rather than improvising.
     `~/.aws/cli-agent-orchestrator/agent-store/` on the developer machine
   - test suite passes with all old code removed
 - acceptance:
-  - `grep -r "AgentProfile\|agent_profiles\|legacy_env\|LINEAR_DISCOVERY"
-    src/` returns no hits
+  - `grep -rn "AgentProfile\|agent_profiles\|legacy_env\|LINEAR_DISCOVERY\|AgentIdentity"
+    src/` returns no hits — no "identity" class or module vocabulary
+    survives (the lowercase `agent_identity_id` column rename happens at
+    T08)
   - the running CAO process starts cleanly with only the new agent
     directories present on disk
   - all existing tests pass or are deleted as obsolete (no skipped tests
@@ -279,6 +294,8 @@ the forbidden patterns, raise back to the operator rather than improvising.
     anonymous-spawn rows are removed
   - schema enforces NOT NULL on `agent_id`
   - all read sites (services, API, web) use `agent_id`
+  - `grep -rn "agent_identity_id\|agent_identity" src/ web/src/` returns
+    no hits (column, ORM attribute, and field-level rename complete)
   - no backwards-compatibility layer introduced — no shims, facades,
     fallback chains, feature flags, deprecation warnings, aliases, or
     runtime shape translators; legacy call sites are migrated or deleted,
@@ -449,12 +466,23 @@ the forbidden patterns, raise back to the operator rather than improvising.
     callback
   - validation errors from the server are surfaced inline against the
     offending fields
+  - UI text renamed: "AGENT IDENTITIES (N)" heading → "AGENTS (N)";
+    "IDENTITY TIMELINE" heading → "AGENT TIMELINE"; any remaining
+    "identity" wording in the panel updated to "agent"
+  - component file `AgentIdentityTimelinePanel.tsx` renamed (e.g.
+    `AgentDetailPanel.tsx`); imports and references updated
 - acceptance:
   - editing `display_name` and saving updates `agent.toml` and the UI
     reflects the change
-  - editing `agent_profile` (now embedded — i.e. model, prompt, tools)
-    works through the same UI
-  - the IDENTITY TIMELINE section continues to function unchanged
+  - editing prompt/MCP/tools fields (previously locked inside the
+    profile markdown) works through the same UI
+  - the agent timeline view (formerly "IDENTITY TIMELINE") renders all
+    events for the selected agent with no regression from the previous
+    implementation, including the related-events expansion behavior
+  - `grep -rn "Identity\|identity" web/src/` returns hits only in
+    historic file references kept for git history or in comments
+    explaining the rename — not in component names, headings, or
+    user-visible strings
   - no backwards-compatibility layer introduced — no shims, facades,
     fallback chains, feature flags, deprecation warnings, aliases, or
     runtime shape translators; legacy call sites are migrated or deleted,
