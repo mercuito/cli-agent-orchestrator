@@ -1,12 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { AgentIdentityTimelinePanel } from '../components/AgentIdentityTimelinePanel'
+import { eventTimelineViewRegistry } from '../components/timelineEventViews'
 import { api, AgentIdentityRelatedEvents, AgentIdentityStatus, AgentIdentityTimeline } from '../api'
 import {
   AGENT_RUNTIME_LIFECYCLE_EVENT,
+  AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT,
   AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
   AGENT_RUNTIME_WORKSPACE_CONTEXT_SWITCH_EVENT,
+  CAO_EVENT_TYPE_KEYS,
+  LINEAR_AGENT_SESSION_LIFECYCLE_ACTIVITY_EVENT,
+  LINEAR_AGENT_SESSION_PROMPTED_EVENT,
+  LINEAR_AGENT_SESSION_STOP_REQUESTED_EVENT,
   LINEAR_AGENT_MENTIONED_EVENT,
+  LINEAR_ISSUE_CREATED_EVENT,
+  LINEAR_ISSUE_DELEGATED_TO_AGENT_EVENT,
+  RUNTIME_WORKSPACE_EVENT,
 } from '../generated/caoEventPayloadTypes'
 
 function identity(
@@ -227,6 +236,150 @@ const knownRuntimeLifecycle = event(
   },
 )
 
+const knownRuntimeAccepted = event(
+  'runtime:event:notification-accepted',
+  'agent_runtime_notification_accepted',
+  '2026-05-13T12:04:00',
+  'notification_target',
+  {
+    event_type_key: AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT,
+    source_type: 'cao_runtime',
+    source_id: 'notification:41',
+    event_data: {
+      inbox_notification_id: 41,
+      inbox_receiver_id: 'aria',
+      sender_id: 'linear-user-rj',
+      source_kind: 'linear_mention',
+      source_id: 'msg-accepted-41',
+      workspace_context_id: 'yards',
+    },
+  },
+)
+
+const knownRuntimeWorkspace = event(
+  'runtime:event:workspace-refresh',
+  'runtime_workspace',
+  '2026-05-13T12:05:00',
+  'workspace_observer',
+  {
+    event_type_key: RUNTIME_WORKSPACE_EVENT,
+    source_type: 'cao_runtime',
+    source_id: 'workspace:yards',
+    event_data: {
+      workspace_context_id: 'yards',
+      action: 'refresh',
+      runtime_status: 'ready',
+      error: 'none',
+    },
+  },
+)
+
+const knownLinearDelegated = event(
+  'linear:event:issue-delegated',
+  'issue_delegated_to_agent',
+  '2026-05-13T12:06:00',
+  'delegated',
+  {
+    event_type_key: LINEAR_ISSUE_DELEGATED_TO_AGENT_EVENT,
+    source_type: 'linear',
+    source_id: 'msg-delegated',
+    event_data: {
+      issue_identifier: 'OPS-501',
+      issue_title: 'Delegate timeline triage',
+      issue_state: 'In Progress',
+      issue_url: 'https://linear.app/yards/issue/OPS-501/delegate-timeline-triage',
+      agent_id: 'aria',
+      app_user_name: 'RJ Wilson',
+      message_body: 'Please take ownership of the timeline event presentation.',
+    },
+  },
+)
+
+const knownLinearPrompted = event(
+  'linear:event:session-prompted',
+  'agent_session_prompted',
+  '2026-05-13T12:07:00',
+  'prompted',
+  {
+    event_type_key: LINEAR_AGENT_SESSION_PROMPTED_EVENT,
+    source_type: 'linear',
+    source_id: 'msg-prompted',
+    event_data: {
+      issue_identifier: 'OPS-502',
+      issue_title: 'Prompt active agent session',
+      thread_id: 'thread-502',
+      thread_url: 'https://linear.app/yards/thread/thread-502',
+      agent_session_id: 'session-502',
+      app_user_name: 'Nia',
+      prompt_context: 'Follow up with the reviewer after tests pass.',
+    },
+  },
+)
+
+const knownLinearLifecycleActivity = event(
+  'linear:event:session-lifecycle',
+  'agent_session_lifecycle_activity',
+  '2026-05-13T12:08:00',
+  'lifecycle_activity',
+  {
+    event_type_key: LINEAR_AGENT_SESSION_LIFECYCLE_ACTIVITY_EVENT,
+    source_type: 'linear',
+    source_id: 'msg-lifecycle',
+    event_data: {
+      issue_identifier: 'OPS-503',
+      issue_title: 'Track session lifecycle',
+      agent_session_id: 'session-503',
+      action: 'resume',
+      message_kind: 'status_update',
+      should_notify_agent: false,
+      suppression_reason: 'agent already processing',
+    },
+  },
+)
+
+const knownLinearStopRequested = event(
+  'linear:event:session-stop',
+  'agent_session_stop_requested',
+  '2026-05-13T12:09:00',
+  'stop_requested',
+  {
+    event_type_key: LINEAR_AGENT_SESSION_STOP_REQUESTED_EVENT,
+    source_type: 'linear',
+    source_id: 'msg-stop',
+    event_data: {
+      issue_identifier: 'OPS-504',
+      issue_title: 'Stop stale agent session',
+      agent_session_id: 'session-504',
+      app_user_name: 'RJ Wilson',
+      action: 'stop',
+      message_body: 'Stop this stale run before dispatching the new plan.',
+    },
+  },
+)
+
+const knownLinearIssueCreated = event(
+  'linear:event:issue-created',
+  'issue_created',
+  '2026-05-13T12:10:00',
+  'created_issue',
+  {
+    event_type_key: LINEAR_ISSUE_CREATED_EVENT,
+    source_type: 'linear',
+    source_id: 'OPS-505',
+    event_data: {
+      terminal_id: 'term-create-issue',
+      agent_identity_id: 'aria',
+      tool_name: 'create_issue',
+      issue: {
+        identifier: 'OPS-505',
+        title: 'Created from CAO timeline',
+        state: 'Backlog',
+        url: 'https://linear.app/yards/issue/OPS-505/created-from-cao-timeline',
+      },
+    },
+  },
+)
+
 const deliveryWithMissingOptionalFacts = event(
   'runtime:event:delivery-missing-optional',
   'agent_runtime_notification_delivery',
@@ -281,6 +434,21 @@ describe('AgentIdentityTimelinePanel', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('registers a taught timeline view for every generated CAO event type key', () => {
+    // Given
+    const fallbackView = eventTimelineViewRegistry.viewFor('unknown.event.Type')
+
+    // When
+    const taughtViews = Object.values(CAO_EVENT_TYPE_KEYS).map(eventTypeKey =>
+      eventTimelineViewRegistry.viewFor(eventTypeKey)
+    )
+
+    // Then
+    taughtViews.forEach(view => {
+      expect(view).not.toBe(fallbackView)
+    })
   })
 
   it('lists configured identities and opens the selected identity timeline', async () => {
@@ -422,28 +590,66 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('renders taught Linear and runtime event kinds through registered typed views', async () => {
+    // Given
     vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
       identity: aria,
       events: [
         knownLinearMention,
+        knownLinearDelegated,
+        knownLinearPrompted,
+        knownLinearLifecycleActivity,
+        knownLinearStopRequested,
+        knownLinearIssueCreated,
+        knownRuntimeAccepted,
         knownRuntimeDelivery,
         knownWorkspaceSwitch,
         knownRuntimeLifecycle,
+        knownRuntimeWorkspace,
         deliveryWithMissingOptionalFacts,
         unknownAudit,
       ],
     })
 
+    // When
     render(<AgentIdentityTimelinePanel />)
 
+    // Then
     const timeline = await screen.findByTestId('identity-timeline')
     expect(within(timeline).getByText('OPS-417')).toBeInTheDocument()
     expect(within(timeline).getByText('Restore dashboard event detail')).toBeInTheDocument()
-    expect(within(timeline).getByText('Nia')).toBeInTheDocument()
+    expect(within(timeline).getAllByText('Nia').length).toBeGreaterThan(0)
     expect(within(timeline).getAllByText('Aria, can you trace the stuck inbox delivery?').length).toBeGreaterThan(1)
     expect(within(timeline).getByText('Linear issue')).toBeInTheDocument()
 
-    expect(within(timeline).getByText('Linear Mention')).toBeInTheDocument()
+    expect(within(timeline).getByText('OPS-501')).toBeInTheDocument()
+    expect(within(timeline).getByText('Delegate timeline triage')).toBeInTheDocument()
+    expect(within(timeline).getAllByText('aria').length).toBeGreaterThan(0)
+    expect(within(timeline).getByText('Please take ownership of the timeline event presentation.')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('thread-502')).toBeInTheDocument()
+    expect(within(timeline).getByText('session-502')).toBeInTheDocument()
+    expect(within(timeline).getByText('Follow up with the reviewer after tests pass.')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('session-503')).toBeInTheDocument()
+    expect(within(timeline).getByText('resume')).toBeInTheDocument()
+    expect(within(timeline).getByText('status_update')).toBeInTheDocument()
+    expect(within(timeline).getByText('agent already processing')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('session-504')).toBeInTheDocument()
+    expect(within(timeline).getByText('Stop this stale run before dispatching the new plan.')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('term-create-issue')).toBeInTheDocument()
+    expect(within(timeline).getByText('create_issue')).toBeInTheDocument()
+    expect(within(timeline).getByText('Created from CAO timeline')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('linear-user-rj')).toBeInTheDocument()
+    expect(within(timeline).getByText('msg-accepted-41')).toBeInTheDocument()
+    expect(within(timeline).getByText('Notification 41 accepted')).toBeInTheDocument()
+
+    expect(within(timeline).getByText('Runtime refresh')).toBeInTheDocument()
+    expect(within(timeline).getByText('none')).toBeInTheDocument()
+
+    expect(within(timeline).getAllByText('Linear Mention').length).toBeGreaterThan(0)
     expect(within(timeline).getAllByText('term-aria-main').length).toBeGreaterThan(1)
 
     expect(within(timeline).getByText('cli-agent-orchestrator')).toBeInTheDocument()
@@ -460,28 +666,33 @@ describe('AgentIdentityTimelinePanel', () => {
   })
 
   it('renders related events through the same taught views and fallback view as main rows', async () => {
+    // Given
     vi.mocked(api.getAgentIdentityTimeline).mockResolvedValue({
       identity: aria,
       events: [knownLinearMention],
     })
     vi.mocked(api.getAgentIdentityRelatedEvents).mockResolvedValue({
       event: knownLinearMention,
-      correlation_events: [knownRuntimeDelivery, unknownAudit],
+      correlation_events: [knownRuntimeDelivery, knownLinearDelegated, knownRuntimeAccepted, unknownAudit],
       causation_events: {
         direct_cause: null,
-        direct_effects: [knownRuntimeDelivery, unknownAudit],
+        direct_effects: [knownRuntimeDelivery, knownLinearDelegated, knownRuntimeAccepted, unknownAudit],
       },
     })
 
+    // When
     render(<AgentIdentityTimelinePanel />)
 
     await screen.findByText('Nia mentioned this agent')
     fireEvent.click(screen.getByRole('button', { name: /inspect related events for linear:event:mention-ops-417/i }))
 
+    // Then
     const relatedGrid = await screen.findByTestId('related-events-grid')
     expect(within(relatedGrid).getAllByText('Mention delivered to terminal term-aria-main').length).toBeGreaterThan(0)
     expect(within(relatedGrid).getAllByText('Linear Mention').length).toBeGreaterThan(0)
     expect(within(relatedGrid).getAllByText('Aria, can you trace the stuck inbox delivery?').length).toBeGreaterThan(0)
+    expect(within(relatedGrid).getAllByText('Delegate timeline triage').length).toBeGreaterThan(0)
+    expect(within(relatedGrid).getAllByText('linear-user-rj').length).toBeGreaterThan(0)
     expect(within(relatedGrid).getAllByText('Experimental Audit Event').length).toBeGreaterThan(0)
   })
 
