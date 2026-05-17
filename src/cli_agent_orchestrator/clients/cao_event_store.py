@@ -20,7 +20,7 @@ CAO_EVENT_AGENT_PARTICIPANTS_TABLE = "cao_event_agent_participants"
 CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX = "ix_cao_event_agent_participants_agent_occurred"
 CAO_EVENT_ID_COLUMN = "event_id"
 CAO_EVENT_OCCURRED_AT_COLUMN = "occurred_at"
-CAO_EVENT_AGENT_IDENTITY_ID_COLUMN = "agent_identity_id"
+CAO_EVENT_AGENT_ID_COLUMN = "agent_id"
 CAO_EVENT_PARTICIPANT_ROLE_COLUMN = "participant_role"
 
 
@@ -58,13 +58,13 @@ class CaoEventAgentParticipantModel(Base):
     __table_args__ = (
         UniqueConstraint(
             CAO_EVENT_ID_COLUMN,
-            CAO_EVENT_AGENT_IDENTITY_ID_COLUMN,
+            CAO_EVENT_AGENT_ID_COLUMN,
             CAO_EVENT_PARTICIPANT_ROLE_COLUMN,
             name="uq_cao_event_agent_participant",
         ),
         Index(
             CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX,
-            CAO_EVENT_AGENT_IDENTITY_ID_COLUMN,
+            CAO_EVENT_AGENT_ID_COLUMN,
             CAO_EVENT_OCCURRED_AT_COLUMN,
             CAO_EVENT_ID_COLUMN,
         ),
@@ -77,8 +77,8 @@ class CaoEventAgentParticipantModel(Base):
         ForeignKey(f"{CAO_EVENTS_TABLE}.{CAO_EVENT_ID_COLUMN}", ondelete="CASCADE"),
         nullable=False,
     )
-    agent_identity_id = Column(
-        CAO_EVENT_AGENT_IDENTITY_ID_COLUMN,
+    agent_id = Column(
+        CAO_EVENT_AGENT_ID_COLUMN,
         String,
         nullable=False,
         index=True,
@@ -108,7 +108,7 @@ class CaoEventParticipantRecord:
     """Persisted CAO event plus one selected agent participant role."""
 
     record: CaoEventRecord
-    agent_identity_id: str
+    agent_id: str
     participant_role: str
 
 
@@ -140,7 +140,7 @@ def persist_cao_event(event: CaoEvent) -> CaoEventRecord:
                     .values(
                         **{
                             CAO_EVENT_ID_COLUMN: str(event.event_id),
-                            CAO_EVENT_AGENT_IDENTITY_ID_COLUMN: participant.agent_identity_id,
+                            CAO_EVENT_AGENT_ID_COLUMN: participant.agent_id,
                             CAO_EVENT_PARTICIPANT_ROLE_COLUMN: (
                                 participant.role or _NO_PARTICIPANT_ROLE
                             ),
@@ -150,7 +150,7 @@ def persist_cao_event(event: CaoEvent) -> CaoEventRecord:
                     .on_conflict_do_nothing(
                         index_elements=[
                             CAO_EVENT_ID_COLUMN,
-                            CAO_EVENT_AGENT_IDENTITY_ID_COLUMN,
+                            CAO_EVENT_AGENT_ID_COLUMN,
                             CAO_EVENT_PARTICIPANT_ROLE_COLUMN,
                         ]
                     )
@@ -171,8 +171,8 @@ def get_cao_event(event_id: str) -> CaoEventRecord | None:
         return _record_from_model(row) if row is not None else None
 
 
-def list_cao_events_by_agent_identity(agent_identity_id: str) -> tuple[CaoEventRecord, ...]:
-    """List events involving one agent identity, ordered by occurrence time."""
+def list_cao_events_by_agent(agent_id: str) -> tuple[CaoEventRecord, ...]:
+    """List events involving one agent, ordered by occurrence time."""
 
     with _session_local()() as session:
         rows = (
@@ -181,7 +181,7 @@ def list_cao_events_by_agent_identity(agent_identity_id: str) -> tuple[CaoEventR
                 CaoEventAgentParticipantModel,
                 CaoEventAgentParticipantModel.event_id == CaoEventModel.event_id,
             )
-            .filter(CaoEventAgentParticipantModel.agent_identity_id == agent_identity_id)
+            .filter(CaoEventAgentParticipantModel.agent_id == agent_id)
             .distinct()
             .order_by(
                 CaoEventAgentParticipantModel.occurred_at.asc(),
@@ -192,10 +192,10 @@ def list_cao_events_by_agent_identity(agent_identity_id: str) -> tuple[CaoEventR
         return tuple(_record_from_model(row) for row in rows)
 
 
-def list_cao_event_participants_by_agent_identity(
-    agent_identity_id: str,
+def list_cao_event_participants_by_agent(
+    agent_id: str,
 ) -> tuple[CaoEventParticipantRecord, ...]:
-    """List events and selected participant roles for one agent identity."""
+    """List events and selected participant roles for one agent."""
 
     with _session_local()() as session:
         rows = (
@@ -204,7 +204,7 @@ def list_cao_event_participants_by_agent_identity(
                 CaoEventAgentParticipantModel,
                 CaoEventAgentParticipantModel.event_id == CaoEventModel.event_id,
             )
-            .filter(CaoEventAgentParticipantModel.agent_identity_id == agent_identity_id)
+            .filter(CaoEventAgentParticipantModel.agent_id == agent_id)
             .order_by(
                 CaoEventAgentParticipantModel.occurred_at.asc(),
                 CaoEventAgentParticipantModel.event_id.asc(),
@@ -215,7 +215,7 @@ def list_cao_event_participants_by_agent_identity(
         return tuple(
             CaoEventParticipantRecord(
                 record=_record_from_model(event_row),
-                agent_identity_id=agent_identity_id,
+                agent_id=agent_id,
                 participant_role=participant_role if participant_role else "",
             )
             for event_row, participant_role in rows

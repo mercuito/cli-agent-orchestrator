@@ -20,7 +20,7 @@ class FlowModel(Base):
     name = Column(String, primary_key=True)
     file_path = Column(String, nullable=False)
     schedule = Column(String, nullable=False)
-    agent_profile = Column(String, nullable=False)
+    agent_id = Column(String, nullable=False)
     provider = Column(String, nullable=False)
     script = Column(String, nullable=True)
     last_run = Column(DateTime, nullable=True)
@@ -40,7 +40,7 @@ def flow_from_model(row: FlowModel) -> Flow:
         name=row.name,
         file_path=row.file_path,
         schedule=row.schedule,
-        agent_profile=row.agent_profile,
+        agent_id=row.agent_id,
         provider=row.provider,
         script=row.script,
         last_run=row.last_run,
@@ -53,7 +53,7 @@ def create_flow(
     name: str,
     file_path: str,
     schedule: str,
-    agent_profile: str,
+    agent_id: str,
     provider: str,
     script: str,
     next_run: datetime,
@@ -64,7 +64,7 @@ def create_flow(
             name=name,
             file_path=file_path,
             schedule=schedule,
-            agent_profile=agent_profile,
+            agent_id=agent_id,
             provider=provider,
             script=script,
             next_run=next_run,

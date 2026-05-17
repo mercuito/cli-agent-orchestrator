@@ -41,7 +41,7 @@ class TestFlowAddCommand:
         mock_flow = MagicMock()
         mock_flow.name = "test-flow"
         mock_flow.schedule = "0 9 * * *"
-        mock_flow.agent_profile = "developer"
+        mock_flow.agent_id = "developer"
         mock_flow.next_run = datetime(2024, 1, 1, 9, 0)
         mock_service.add_flow.return_value = mock_flow
 
@@ -97,7 +97,7 @@ class TestFlowListCommand:
         mock_flow = MagicMock()
         mock_flow.name = "test-flow"
         mock_flow.schedule = "0 9 * * *"
-        mock_flow.agent_profile = "developer"
+        mock_flow.agent_id = "developer"
         mock_flow.last_run = datetime(2024, 1, 1, 8, 0)
         mock_flow.next_run = datetime(2024, 1, 2, 9, 0)
         mock_flow.enabled = True
@@ -116,7 +116,7 @@ class TestFlowListCommand:
         mock_flow = MagicMock()
         mock_flow.name = "new-flow"
         mock_flow.schedule = "0 9 * * *"
-        mock_flow.agent_profile = "developer"
+        mock_flow.agent_id = "developer"
         mock_flow.last_run = None
         mock_flow.next_run = None
         mock_flow.enabled = False

@@ -19,7 +19,7 @@ class InboxMessageRecord(BaseModel):
     """Durable communicated inbox message."""
 
     id: int = Field(..., description="Durable message ID")
-    sender_id: str = Field(..., description="Sender/source identity")
+    sender_id: str = Field(..., description="Sender/source agent")
     body: str = Field(..., description="Agent-visible message body")
     source_kind: str = Field(..., description="Provider-neutral source kind")
     source_id: str = Field(..., description="Provider-neutral source ID")
@@ -43,7 +43,7 @@ class InboxNotification(BaseModel):
     """
 
     id: int = Field(..., description="Notification ID")
-    receiver_id: str = Field(..., description="Recipient identity")
+    receiver_id: str = Field(..., description="Recipient agent")
     body: str = Field(..., description="Agent-visible notification body")
     source_kind: str = Field(..., description="Provider-neutral notification source kind")
     source_id: str = Field(..., description="Provider-neutral notification source ID")

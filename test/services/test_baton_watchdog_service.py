@@ -41,11 +41,14 @@ def _config(*, grace_seconds=1, rate_limit_seconds=60):
 
 
 def _create_terminal(terminal_id: str):
+    agent_id = f"{terminal_id}_agent"
     db_module.create_terminal(
         terminal_id=terminal_id,
         tmux_session="cao-test",
         tmux_window=terminal_id,
         provider="codex",
+        agent_id=agent_id,
+        workspace_context_id=db_module.ensure_default_workspace_context(agent_id).id,
     )
 
 

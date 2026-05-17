@@ -61,7 +61,7 @@ class TestParseFlowFile:
             f.write("""---
 name: test-flow
 schedule: "* * * * *"
-agent_profile: developer
+agent_id: developer
 provider: kiro_cli
 ---
 
@@ -73,7 +73,7 @@ This is the prompt template.
 
             assert metadata["name"] == "test-flow"
             assert metadata["schedule"] == "* * * * *"
-            assert metadata["agent_profile"] == "developer"
+            assert metadata["agent_id"] == "developer"
             assert metadata["provider"] == "kiro_cli"
             assert "prompt template" in content
 
@@ -88,7 +88,7 @@ This is the prompt template.
             f.write("""---
 name: scripted-flow
 schedule: "0 * * * *"
-agent_profile: developer
+agent_id: developer
 script: ./check.sh
 ---
 
@@ -112,7 +112,7 @@ class TestAddFlow:
             name="test-flow",
             file_path="/path/to/flow.md",
             schedule="* * * * *",
-            agent_profile="developer",
+            agent_id="developer",
             provider="kiro_cli",
             enabled=True,
             next_run=datetime.now(),
@@ -123,7 +123,7 @@ class TestAddFlow:
             f.write("""---
 name: test-flow
 schedule: "* * * * *"
-agent_profile: developer
+agent_id: developer
 ---
 
 Test prompt.
@@ -142,7 +142,7 @@ Test prompt.
 name: incomplete-flow
 ---
 
-Missing schedule and agent_profile.
+Missing schedule and agent_id.
 """)
             f.flush()
 
@@ -155,7 +155,7 @@ Missing schedule and agent_profile.
             f.write("""---
 name: bad-cron-flow
 schedule: "not a cron"
-agent_profile: developer
+agent_id: developer
 ---
 
 Test prompt.
@@ -172,7 +172,7 @@ Test prompt.
             name="custom-provider-flow",
             file_path="/path/to/flow.md",
             schedule="0 9 * * *",
-            agent_profile="developer",
+            agent_id="developer",
             provider="claude_code",
             enabled=True,
             next_run=datetime.now(),
@@ -183,7 +183,7 @@ Test prompt.
             f.write("""---
 name: custom-provider-flow
 schedule: "0 9 * * *"
-agent_profile: developer
+agent_id: developer
 provider: claude_code
 ---
 
@@ -206,7 +206,7 @@ class TestListFlows:
                 name="flow1",
                 file_path="/path1",
                 schedule="* * * * *",
-                agent_profile="dev",
+                agent_id="dev",
                 provider="kiro_cli",
                 enabled=True,
                 next_run=datetime.now(),
@@ -215,7 +215,7 @@ class TestListFlows:
                 name="flow2",
                 file_path="/path2",
                 schedule="0 * * * *",
-                agent_profile="dev",
+                agent_id="dev",
                 provider="kiro_cli",
                 enabled=False,
                 next_run=datetime.now(),
@@ -249,7 +249,7 @@ class TestGetFlow:
             name="test-flow",
             file_path="/path/flow.md",
             schedule="* * * * *",
-            agent_profile="developer",
+            agent_id="developer",
             provider="kiro_cli",
             enabled=True,
             next_run=datetime.now(),
@@ -325,7 +325,7 @@ class TestEnableFlow:
             name="test-flow",
             file_path="/path/flow.md",
             schedule="* * * * *",
-            agent_profile="developer",
+            agent_id="developer",
             provider="kiro_cli",
             enabled=False,
             next_run=datetime.now(),
@@ -372,7 +372,7 @@ class TestExecuteFlow:
             f.write("""---
 name: simple-flow
 schedule: "* * * * *"
-agent_profile: developer
+agent_id: developer
 ---
 
 Simple prompt without variables.
@@ -384,7 +384,7 @@ Simple prompt without variables.
             name="simple-flow",
             file_path=flow_path,
             schedule="* * * * *",
-            agent_profile="developer",
+            agent_id="developer",
             provider="kiro_cli",
             script="",
             enabled=True,
@@ -427,7 +427,7 @@ Simple prompt without variables.
             flow_path.write_text("""---
 name: scripted-flow
 schedule: "* * * * *"
-agent_profile: developer
+agent_id: developer
 script: ./check.sh
 ---
 
@@ -440,7 +440,7 @@ Value is [[value]].
                 name="scripted-flow",
                 file_path=str(flow_path),
                 schedule="* * * * *",
-                agent_profile="developer",
+                agent_id="developer",
                 provider="kiro_cli",
                 script="./check.sh",
                 enabled=True,
@@ -483,7 +483,7 @@ Value is [[value]].
             flow_path.write_text("""---
 name: skip-flow
 schedule: "* * * * *"
-agent_profile: developer
+agent_id: developer
 script: ./check.sh
 ---
 
@@ -496,7 +496,7 @@ Prompt.
                 name="skip-flow",
                 file_path=str(flow_path),
                 schedule="* * * * *",
-                agent_profile="developer",
+                agent_id="developer",
                 provider="kiro_cli",
                 script="./check.sh",
                 enabled=True,
@@ -534,7 +534,7 @@ Prompt.
             flow_path.write_text("""---
 name: fail-flow
 schedule: "* * * * *"
-agent_profile: developer
+agent_id: developer
 script: ./check.sh
 ---
 
@@ -547,7 +547,7 @@ Prompt.
                 name="fail-flow",
                 file_path=str(flow_path),
                 schedule="* * * * *",
-                agent_profile="developer",
+                agent_id="developer",
                 provider="kiro_cli",
                 script="./check.sh",
                 enabled=True,
@@ -571,7 +571,7 @@ Prompt.
             flow_path.write_text("""---
 name: bad-json-flow
 schedule: "* * * * *"
-agent_profile: developer
+agent_id: developer
 script: ./check.sh
 ---
 
@@ -584,7 +584,7 @@ Prompt.
                 name="bad-json-flow",
                 file_path=str(flow_path),
                 schedule="* * * * *",
-                agent_profile="developer",
+                agent_id="developer",
                 provider="kiro_cli",
                 script="./check.sh",
                 enabled=True,
@@ -611,7 +611,7 @@ class TestGetFlowsToRun:
                 name="due-flow",
                 file_path="/path/flow.md",
                 schedule="* * * * *",
-                agent_profile="developer",
+                agent_id="developer",
                 provider="kiro_cli",
                 enabled=True,
                 next_run=datetime.now(),

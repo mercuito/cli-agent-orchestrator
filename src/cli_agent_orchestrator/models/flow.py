@@ -14,7 +14,7 @@ class Flow(BaseModel):
     name: str = Field(..., description="Unique flow identifier")
     file_path: str = Field(..., description="Path to flow definition file")
     schedule: str = Field(..., description="Cron expression")
-    agent_profile: str = Field(..., description="Agent profile to use")
+    agent_id: str = Field(..., description="Agent to use")
     provider: str = Field(default=DEFAULT_PROVIDER, description="Provider to use")
     script: str = Field("", description="Path to poll script (optional)")
     last_run: Optional[datetime] = Field(None, description="Last execution time")

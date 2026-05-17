@@ -34,7 +34,7 @@ def test_terminals_get_human_output():
         "name": "w0",
         "provider": "codex",
         "session_name": "cao-test",
-        "agent_profile": "developer",
+        "agent_id": "developer",
         "status": "idle",
         "last_active": "2026-02-06T00:00:00",
     }
@@ -48,7 +48,7 @@ def test_terminals_get_human_output():
     assert "status=idle" in result.output
     assert "provider=codex" in result.output
     assert "session=cao-test" in result.output
-    assert "agent_profile=developer" in result.output
+    assert "agent_id=developer" in result.output
 
 
 def test_terminals_get_json_output():
@@ -59,7 +59,7 @@ def test_terminals_get_json_output():
         "name": "w0",
         "provider": "codex",
         "session_name": "cao-test",
-        "agent_profile": "developer",
+        "agent_id": "developer",
         "status": "idle",
     }
 
@@ -125,7 +125,7 @@ def test_terminals_list_human_output():
             "tmux_session": "cao-test",
             "tmux_window": "w0",
             "provider": "codex",
-            "agent_profile": "developer",
+            "agent_id": "developer",
             "last_active": "2026-02-06T00:00:00",
         }
     ]
@@ -150,7 +150,7 @@ def test_terminals_list_json_output():
             "tmux_session": "cao-test",
             "tmux_window": "w0",
             "provider": "codex",
-            "agent_profile": "developer",
+            "agent_id": "developer",
             "last_active": "2026-02-06T00:00:00",
         }
     ]

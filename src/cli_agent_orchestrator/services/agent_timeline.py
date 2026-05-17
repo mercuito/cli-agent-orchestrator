@@ -69,7 +69,7 @@ class AgentTimelineService:
         """Return one agent's participant-index timeline."""
 
         agent_status = self._agent_manager.status_for_agent(agent_id)
-        participant_records = db_module.list_cao_event_participants_by_agent_identity(
+        participant_records = db_module.list_cao_event_participants_by_agent(
             agent_status.agent_id
         )
         return AgentTimelineRead(
@@ -156,5 +156,5 @@ def _timeline_event_from_record(
 def _participant_roles_by_event_id(agent_id: str) -> dict[str, str]:
     return {
         participant_record.record.event_id: participant_record.participant_role
-        for participant_record in db_module.list_cao_event_participants_by_agent_identity(agent_id)
+        for participant_record in db_module.list_cao_event_participants_by_agent(agent_id)
     }

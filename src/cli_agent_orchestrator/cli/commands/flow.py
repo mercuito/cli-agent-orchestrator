@@ -23,7 +23,7 @@ def add(file_path):
         flow = flow_service.add_flow(file_path)
         click.echo(f"Flow '{flow.name}' added successfully")
         click.echo(f"  Schedule: {flow.schedule}")
-        click.echo(f"  Agent: {flow.agent_profile}")
+        click.echo(f"  Agent: {flow.agent_id}")
         click.echo(f"  Next run: {flow.next_run}")
     except Exception as e:
         raise click.ClickException(str(e))
@@ -49,7 +49,7 @@ def list():
             enabled = "Yes" if f.enabled else "No"
 
             click.echo(
-                f"{f.name:<20} {f.schedule:<15} {f.agent_profile:<15} {last_run:<20} {next_run:<20} {enabled:<8}"
+                f"{f.name:<20} {f.schedule:<15} {f.agent_id:<15} {last_run:<20} {next_run:<20} {enabled:<8}"
             )
     except Exception as e:
         raise click.ClickException(str(e))

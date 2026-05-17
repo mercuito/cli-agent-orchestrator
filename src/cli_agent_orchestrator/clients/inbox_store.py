@@ -88,17 +88,17 @@ def _session_local():
     return db_module.SessionLocal
 
 
-def _validate_complete_identity(
-    kind: Optional[str], identity_id: Optional[str], label: str
+def _validate_complete_agent(
+    kind: Optional[str], agent_id: Optional[str], label: str
 ) -> None:
-    if (kind is None) != (identity_id is None):
+    if (kind is None) != (agent_id is None):
         raise ValueError(f"{label}_kind and {label}_id must be provided together")
 
 
-def _resolve_source_identity(
+def _resolve_source_agent(
     sender_id: str, source_kind: Optional[str], source_id: Optional[str]
 ) -> Tuple[str, str]:
-    _validate_complete_identity(source_kind, source_id, "source")
+    _validate_complete_agent(source_kind, source_id, "source")
     if source_kind is None and source_id is None:
         return "terminal", sender_id
     assert source_kind is not None and source_id is not None
@@ -265,10 +265,10 @@ def create_inbox_delivery(
     db: Optional[Session] = None,
 ) -> InboxDelivery:
     """Create one durable inbox message and one attention notification."""
-    effective_source_kind, effective_source_id = _resolve_source_identity(
+    effective_source_kind, effective_source_id = _resolve_source_agent(
         sender_id, source_kind, source_id
     )
-    _validate_complete_identity(route_kind, route_id, "route")
+    _validate_complete_agent(route_kind, route_id, "route")
 
     def _add_delivery(session: Session) -> InboxDelivery:
         message_row = InboxMessageModel(
@@ -321,10 +321,10 @@ def create_inbox_message_record(
     db: Optional[Session] = None,
 ) -> InboxMessageRecord:
     """Create a durable inbox message without creating delivery state."""
-    effective_source_kind, effective_source_id = _resolve_source_identity(
+    effective_source_kind, effective_source_id = _resolve_source_agent(
         sender_id, source_kind, source_id
     )
-    _validate_complete_identity(route_kind, route_id, "route")
+    _validate_complete_agent(route_kind, route_id, "route")
 
     def _add_message(session: Session) -> InboxMessageRecord:
         message_row = InboxMessageModel(
@@ -362,7 +362,7 @@ def create_inbox_notification(
     db: Optional[Session] = None,
 ) -> InboxNotification:
     """Create an attention notification for an existing durable inbox message."""
-    _validate_complete_identity(source_kind, source_id, "source")
+    _validate_complete_agent(source_kind, source_id, "source")
 
     def _add_notification(session: Session) -> InboxNotification:
         message_row = session.get(InboxMessageModel, message_id)
@@ -408,7 +408,7 @@ def create_inbox_notification_event(
         raise ValueError("notification body is required")
     if not receiver_id:
         raise ValueError("receiver_id is required")
-    _validate_complete_identity(source_kind, source_id, "source")
+    _validate_complete_agent(source_kind, source_id, "source")
 
     def _add_notification(session: Session) -> InboxNotification:
         notification_row = InboxNotificationModel(

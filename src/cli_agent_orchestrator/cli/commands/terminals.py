@@ -75,7 +75,7 @@ def get_terminal(terminal_id: str, json_output: bool) -> None:
         f"status={terminal.get('status')} "
         f"provider={terminal.get('provider')} "
         f"session={terminal.get('session_name')} "
-        f"agent_profile={terminal.get('agent_profile')}"
+        f"agent_id={terminal.get('agent_id')}"
     )
 
 
@@ -151,7 +151,7 @@ def list_terminals(session_name: str, json_output: bool) -> None:
             f"{t.get('id', ''):<10} "
             f"{t.get('tmux_window', ''):<25} "
             f"{t.get('provider', ''):<12} "
-            f"{(t.get('agent_profile') or ''):<18} "
+            f"{(t.get('agent_id') or ''):<18} "
             f"{t.get('last_active', '')}"
         )
 

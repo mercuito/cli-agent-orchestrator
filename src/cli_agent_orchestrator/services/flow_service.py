@@ -61,14 +61,14 @@ def add_flow(file_path: str) -> Flow:
         metadata, _ = _parse_flow_file(path)
 
         # Validate required fields
-        required_fields = ["name", "schedule", "agent_profile"]
+        required_fields = ["name", "schedule", "agent_id"]
         for field in required_fields:
             if field not in metadata:
                 raise ValueError(f"Missing required field: {field}")
 
         name = metadata["name"]
         schedule = metadata["schedule"]
-        agent_profile = metadata["agent_profile"]
+        agent_id = metadata["agent_id"]
         provider = metadata.get(
             "provider", DEFAULT_PROVIDER
         )  # Optional, defaults to DEFAULT_PROVIDER
@@ -85,7 +85,7 @@ def add_flow(file_path: str) -> Flow:
             name=name,
             file_path=str(path),
             schedule=schedule,
-            agent_profile=agent_profile,
+            agent_id=agent_id,
             provider=provider,
             script=script,
             next_run=next_run,
@@ -215,7 +215,7 @@ def execute_flow(name: str) -> bool:
         terminal = create_terminal(
             session_name=session_name,
             provider=flow.provider,
-            agent_profile=flow.agent_profile,
+            agent_id=flow.agent_id,
             new_session=True,
         )
 
