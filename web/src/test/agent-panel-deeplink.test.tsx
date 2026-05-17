@@ -432,6 +432,11 @@ describe('AgentPanel', () => {
       fireEvent.click(screen.getByRole('button', { name: /create new agent/i }))
       fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'new-agent' } })
       fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New Agent' } })
+      // The CLI provider dropdown is sourced from ``GET /providers``;
+      // the test mock returns only ``codex``. The user has to pick it
+      // explicitly because the form no longer carries a hardcoded
+      // default per the agent-config-editor plan's forbidden patterns.
+      fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'codex' } })
       fireEvent.change(screen.getByLabelText('Workdir'), { target: { value: '/tmp/new-agent' } })
       fireEvent.click(screen.getByRole('button', { name: /create agent/i }))
 
@@ -443,7 +448,11 @@ describe('AgentPanel', () => {
           workdir: '/tmp/new-agent',
         }))
       })
-      expect(await screen.findByLabelText('new-agent agent.toml')).toBeInTheDocument()
+      // After create, the new agent is selected and its structured form
+      // shows the display_name. We assert on the form input rather than
+      // an old ``aria-label="<agent> agent.toml"`` selector since the
+      // raw TOML is now collapsed by default and behind a disclosure.
+      expect(await screen.findByLabelText('new-agent display_name')).toBeInTheDocument()
     })
 
     it('disables already-running agents in the spawn modal with the running terminal in the tooltip', async () => {

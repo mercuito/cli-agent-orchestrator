@@ -26,15 +26,11 @@ function appendValue(lines: string[], key: string, value: unknown) {
   lines.push(`${formatTomlKey(key)} = ${formatTomlValue(value)}`)
 }
 
-export function formatAgentToml(config: AgentConfig): string {
-  return renderAgentToml(config, new Set())
-}
-
 /**
- * Same as ``formatAgentToml`` but omits the named top-level keys plus
- * the always-immutable ``id`` field from the output. Used by the Config
- * tab's raw-TOML section to suppress fields owned by the structured form
- * (and ``id``, which is owned by the directory name and never editable).
+ * Render an ``agent.toml`` view, omitting the named top-level keys plus
+ * the always-immutable ``id`` field. Used by the Config tab's raw-TOML
+ * section to suppress fields owned by the structured form (and ``id``,
+ * which is owned by the directory name and never editable).
  */
 export function formatAgentTomlExcluding(
   config: AgentConfig,

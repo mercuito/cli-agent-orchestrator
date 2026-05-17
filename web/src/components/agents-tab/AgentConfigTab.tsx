@@ -3,7 +3,6 @@ import { Edit3, Eye, EyeOff, RotateCcw, Save } from 'lucide-react'
 import { api, AgentStatus } from '../../api'
 import { useProviderSchema } from '../../hooks/useProviderSchema'
 import {
-  formatAgentToml,
   formatAgentTomlExcluding,
   linearFieldStatus,
   parseAgentTomlDraft,

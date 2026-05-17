@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bot, ChevronRight, FileText, Mail, Monitor, Play, Plus, Send, Terminal as TermIcon, Trash2, X } from 'lucide-react'
 import { api, AgentStatus, TerminalMeta } from '../api'
+import { useProviderSchema } from '../hooks/useProviderSchema'
 import { useStore } from '../store'
 import { AgentConfigTab } from './agents-tab/AgentConfigTab'
 import { AgentDetailPanel } from './agents-tab/AgentDetailPanel'
@@ -25,7 +26,7 @@ interface AgentPanelProps {
 const emptyCreateDraft = {
   id: '',
   display_name: '',
-  cli_provider: 'codex',
+  cli_provider: '',
   workdir: '',
 }
 
@@ -37,6 +38,7 @@ export function AgentPanel({
   onInitialDeepLinkConsumed,
 }: AgentPanelProps) {
   const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, deleteSession, terminalStatuses, setTerminalStatus, setActiveMonitoringSessions, setActiveBatons, showSnackbar } = useStore()
+  const providerSchema = useProviderSchema()
   const [agents, setAgents] = useState<AgentStatus[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showSpawnModal, setShowSpawnModal] = useState(false)
@@ -143,12 +145,17 @@ export function AgentPanel({
   const handleCreateAgent = async () => {
     const agentId = createDraft.id.trim()
     if (!agentId) return
+    const providerChoice = createDraft.cli_provider.trim()
+    if (!providerChoice) {
+      showSnackbar({ type: 'error', message: 'Pick a CLI provider' })
+      return
+    }
     setCreatingAgent(true)
     try {
       const created = await api.createAgent({
         id: agentId,
         display_name: createDraft.display_name.trim() || agentId,
-        cli_provider: createDraft.cli_provider.trim() || 'codex',
+        cli_provider: providerChoice,
         workdir: createDraft.workdir.trim() || '/',
       })
       setAgents(previous => [...previous.filter(agent => agent.agent_id !== created.agent_id), created])
@@ -399,13 +406,35 @@ export function AgentPanel({
                   </label>
                   <label className="block text-xs text-gray-400">
                     Provider
-                    <input value={createDraft.cli_provider} onChange={event => setCreateDraft(previous => ({ ...previous, cli_provider: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none" />
+                    {providerSchema.status === 'ready' && providerSchema.schemas ? (
+                      <select
+                        value={createDraft.cli_provider}
+                        onChange={event => setCreateDraft(previous => ({ ...previous, cli_provider: event.target.value }))}
+                        className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none"
+                      >
+                        <option value="">Select a provider…</option>
+                        {providerSchema.schemas.map(schema => (
+                          <option key={schema.name} value={schema.name}>
+                            {schema.name}
+                            {schema.installed ? '' : '  (not installed)'}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={createDraft.cli_provider}
+                        onChange={event => setCreateDraft(previous => ({ ...previous, cli_provider: event.target.value }))}
+                        placeholder={providerSchema.status === 'loading' ? 'Loading providers…' : 'Provider name'}
+                        disabled={providerSchema.status === 'loading'}
+                        className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                      />
+                    )}
                   </label>
                   <label className="block text-xs text-gray-400">
                     Workdir
                     <input value={createDraft.workdir} onChange={event => setCreateDraft(previous => ({ ...previous, workdir: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none" />
                   </label>
-                  <button onClick={handleCreateAgent} disabled={creatingAgent || !createDraft.id.trim()} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors">
+                  <button onClick={handleCreateAgent} disabled={creatingAgent || !createDraft.id.trim() || !createDraft.cli_provider.trim()} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors">
                     <Plus size={14} /> {creatingAgent ? 'Creating...' : 'Create Agent'}
                   </button>
                 </div>
