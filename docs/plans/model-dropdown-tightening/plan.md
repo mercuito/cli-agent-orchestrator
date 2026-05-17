@@ -22,37 +22,41 @@ own rejection message). The same approach applies to models.
 - The dashboard's `model` field becomes a **strict dropdown**, not a
   combobox. No free-text entry.
 - Each provider declares its supported model namespace via
-  `supported_models() -> tuple[str, ...] | None`. The existing
-  `suggested_models()` method is renamed (hard cutover; no alias).
+  `supported_models() -> tuple[str, ...]`. The return is a non-empty
+  tuple — every provider has a meaningful enumeration; none "accepts
+  arbitrary strings." The existing `suggested_models()` method is
+  renamed (hard cutover; no alias).
+- The base provider's `supported_models()` is **abstract / raises**.
+  Concrete providers must implement it; there is no defaulting to
+  None or empty. This guarantees the dashboard always has a
+  non-empty dropdown for every provider.
 - `GET /providers` returns `supported_models` (renamed from
-  `suggested_models`) in the response schema.
+  `suggested_models`) in the response schema, always non-null.
 - Save-time validation in the agent dataclass rejects a `model` value
   that the selected provider's `supported_models()` doesn't contain
   (with field-level detail in the 400 response).
-- When a provider returns `None` for `supported_models`, the dashboard
-  treats the field the same way it treats `reasoning_effort`-when-null:
-  the dropdown is rendered **disabled** with an explanatory tooltip.
-  Same UX pattern across both fields.
 
 ### Provider-by-provider expected outcome
 
-Authoritative model lists come from each provider's own validator,
-extracted empirically when possible (the way codex's reasoning_effort
-enum was extracted in `provider-capability-audit` T01-T02). When
-extraction isn't feasible, providers declare `None` and the dashboard
-disables the field for them — honest is better than guessed.
+Every provider declares a real, non-empty list. Where the CLI's own
+validator exposes an enum, extract it empirically (the same way
+codex's reasoning_effort enum was extracted in
+`provider-capability-audit` T01-T02). Where the CLI is more
+permissive, declare a curated list of supported/recommended models for
+that provider — this is the authoritative list from the dashboard's
+perspective, even if the underlying CLI/API would accept more.
 
-| Provider | Expected `supported_models` source |
+| Provider | Approach |
 |---|---|
 | `claude_code` | curated list of common Claude models (the existing `suggested_models` set is a reasonable starting point — promote to authoritative) |
-| `codex` | extracted from the codex CLI's `model` validator if it has an enum; otherwise audit codex's own model namespace and declare a curated set of common GPT-5-family models |
-| `gemini_cli` | audit Google's documented Gemini CLI models; declare or None |
-| `q_cli`, `kiro_cli`, `kimi_cli`, `copilot_cli` | audit each; many are likely passthrough to backends that accept anything, in which case declare `None` |
+| `codex` | extracted from codex CLI's model validator if it has an enum; otherwise curated list of common GPT-5-family models |
+| `gemini_cli` | curated list of Google's documented Gemini models |
+| `q_cli`, `kiro_cli`, `kimi_cli`, `copilot_cli` | audit each; declare a curated list of common/recommended models per provider. Empty / None is not a permitted outcome — if the audit can't surface anything, escalate. |
 
-If a provider's CLI happens to accept arbitrary strings (no validator),
-declaring a curated list is still reasonable for the dashboard's sake —
-as long as the list is documented in the provider class as a curated
-recommendation, not an authoritative ceiling.
+The principle: from the dashboard's perspective, every provider has a
+finite, declared model namespace. The dashboard never has to fall back
+to free text. Users who need a model outside the curated list edit the
+raw TOML escape hatch.
 
 ## Goals
 
@@ -61,8 +65,9 @@ recommendation, not an authoritative ceiling.
   derived empirically when possible.
 - Save-time validation enforces membership at the agent dataclass /
   service layer, not only at the HTTP boundary.
-- The dashboard treats `model` and `reasoning_effort` consistently when
-  a provider returns null: disabled with tooltip.
+- The `model` dropdown is always populated and enabled — every
+  provider declares a real non-empty list. Unlike `reasoning_effort`,
+  there is no disabled-when-null path for `model`.
 
 ## Non-goals
 
@@ -83,8 +88,11 @@ Inherits the hard-cutover discipline. Forbidden in any task:
   backward compatibility. The rename is hard cutover.
 - Hardcoding model lists in the dashboard. Lists come exclusively
   from the `/providers` response.
-- Falling back to free-text entry when the dropdown is empty. If a
-  provider returns null, the field is disabled; users use raw TOML.
+- Declaring `None` or an empty tuple from any provider's
+  `supported_models()`. Every provider implements the method with
+  a non-empty tuple. If a provider's audit can't surface a list,
+  escalate.
+- Falling back to free-text entry anywhere in the dashboard.
 - Adding the validation only at the HTTP boundary while leaving the
   dataclass / writer paths permissive.
 
@@ -133,10 +141,15 @@ catalog. No criteria applicable to the completed diff may be violated.
   - rename the classmethod on `BaseProvider` from `suggested_models`
     to `supported_models` (drop "suggested" language; the new
     semantics are authoritative)
+  - make `BaseProvider.supported_models()` abstract (raises
+    `NotImplementedError`) so concrete providers MUST implement it;
+    no None / empty defaults — every provider declares a non-empty
+    tuple
   - update the docstring on `BaseProvider.supported_models()` to
-    state the new contract: "Return the model names this provider
-    accepts; declared values are validated at agent save time. Return
-    None when this provider does not enumerate a model namespace."
+    state the new contract: "Return the non-empty tuple of model
+    names this provider accepts. Every concrete provider must
+    declare a real list — the dashboard never falls back to free
+    text. Declared values are validated at agent save time."
   - update `ClaudeCodeProvider.suggested_models` → `supported_models`
     accordingly (the existing list stays as-is; it becomes
     authoritative)
@@ -170,28 +183,34 @@ catalog. No criteria applicable to the completed diff may be violated.
 - deliverables:
   - audit each provider's CLI for its actual model namespace, using
     the same empirical approach as `provider-capability-audit` T01-T02
-    (run the CLI with an invalid model, capture the rejection's
-    enum if any)
+    (run the CLI with an invalid model, capture the rejection's enum
+    if any)
   - for `codex`: extract its model enum if the validator has one;
     otherwise declare a curated set of common GPT-5-family models
     based on codex 0.130.0's documented support
-  - for `gemini_cli`: audit and declare or leave None
-  - for `q_cli`, `kiro_cli`, `kimi_cli`, `copilot_cli`: audit each;
-    declare honestly. If a provider's CLI accepts arbitrary strings
-    with no validator, declare `None` so the dashboard disables the
-    field for it rather than offering a misleading list.
+  - for `gemini_cli`: declare a curated list of Google's documented
+    Gemini CLI models
+  - for `q_cli`, `kiro_cli`, `kimi_cli`, `copilot_cli`: audit each
+    CLI's accepted models or backend's documented models. Every
+    provider gets a real non-empty list — if extraction fails AND no
+    documented set is available, escalate rather than declaring None
+    or empty.
   - record the audit findings per provider in the commit message
     (where the value came from, whether it's an authoritative
     enumeration or a curated recommendation, the provider CLI
     version at audit time)
   - update each provider's unit test to pin its declared values
 - acceptance:
-  - at minimum, `codex` declares a meaningful supported_models set
-    so codex agents can pick a model in the dashboard
+  - every provider's `supported_models()` returns a non-empty tuple
+    (no None, no `()`)
   - the audit covers all seven providers (`q_cli`, `kiro_cli`,
     `claude_code`, `codex`, `kimi_cli`, `gemini_cli`, `copilot_cli`)
   - each declared value is exercised through a test that confirms
     the launch path (or its closest seam) doesn't reject it
+  - a unit test on the base `Provider` interface confirms calling
+    `supported_models()` on the abstract base raises (so any future
+    provider that forgets to implement it fails loudly at class
+    instantiation, not silently at dashboard render time)
   - no backwards-compatibility layer introduced
   - criteria catalog applied
 
@@ -202,32 +221,30 @@ catalog. No criteria applicable to the completed diff may be violated.
 - depends_on: [T02]
 - deliverables:
   - `PUT /agents/{id}` rejects requests where `model` is set and the
-    selected provider's `supported_models()` is non-None but doesn't
-    include the submitted value (400 with field-level detail naming
-    the offending value and the provider)
-  - `PUT /agents/{id}` accepts a `model` value when the provider's
-    `supported_models()` is `None` (no constraint, since the provider
-    didn't declare one — same shape as today's reasoning_effort
-    handling)
+    selected provider's `supported_models()` doesn't include the
+    submitted value (400 with field-level detail naming the
+    offending value and the provider)
+  - `PUT /agents/{id}` accepts a `model` value that is in the
+    selected provider's `supported_models()` tuple
+  - `PUT /agents/{id}` with `model` unset succeeds regardless of
+    provider (the field stays optional in the dataclass; the
+    dashboard always picks a value, but raw TOML edits or migration
+    artifacts may legitimately leave it unset)
   - validation happens at the agent dataclass / service layer, not
     only in the HTTP handler — direct calls to the agent writer can't
     bypass it
-  - unit and integration tests covering: valid model for a declaring
-    provider, invalid model for a declaring provider, any model for a
-    None-declaring provider, model unset entirely
+  - unit and integration tests covering: valid model for each
+    provider, invalid model for each provider, model unset entirely
 - acceptance:
   - a `PUT` setting `model = "bogus-model"` on a claude_code agent
     returns 400 naming both the value and the supported set
   - a `PUT` with model unset succeeds regardless of provider
-  - a `PUT` setting `model` on a provider whose `supported_models` is
-    None succeeds (treated as unconstrained, with raw TOML being the
-    authoritative editor for such cases)
   - validation cannot be bypassed by going through the service or
     dataclass layer directly
   - no backwards-compatibility layer introduced
   - criteria catalog applied
 
-### T04 — Dashboard: strict dropdown for `model`, disabled when N/A
+### T04 — Dashboard: strict dropdown for `model`
 
 - owner_role: developer
 - dispatch_mode: handoff
@@ -235,28 +252,25 @@ catalog. No criteria applicable to the completed diff may be violated.
 - deliverables:
   - the structured form's `model` field renders as a strict
     `<select>` dropdown populated from the selected provider's
-    `supported_models` value
+    `supported_models` tuple (always non-empty, always enabled)
   - free-text typing is no longer possible in the dropdown (the
-    combobox affordance is removed)
-  - when the selected provider returns `None` for `supported_models`,
-    the dropdown is rendered visibly **disabled** with the same
-    tooltip pattern used for `reasoning_effort`-when-null ("This
-    provider doesn't enumerate a model namespace; edit raw TOML if
-    you need to set one")
+    combobox affordance and the text-input fallback that's currently
+    in place are both removed)
   - changing `cli_provider` updates the `model` dropdown's options
-    and enabled/disabled state without a save round-trip
+    without a save round-trip; if the previously-selected model
+    isn't in the new provider's list, the field falls back to the
+    new list's first entry (or is cleared, depending on what the
+    raw-TOML merge expects)
   - inline error display surfaces backend validation errors against
     the offending field
   - component tests covering: dropdown populates from schema,
     selecting an option triggers state update, save sends the value,
-    invalid value (set via the raw TOML escape hatch) surfaces inline
-    on save, disabled state and tooltip when provider returns None,
-    options update when provider changes
+    options update when provider changes, the dashboard never
+    presents an empty dropdown for any provider
 - acceptance:
   - selecting a claude_code agent shows a dropdown with claude_code's
-    supported models; selecting a codex agent shows codex's
-  - selecting a provider whose `supported_models` is None shows the
-    field disabled with the tooltip
+    supported models; selecting a codex agent shows codex's; every
+    provider's dropdown is populated and enabled
   - the dashboard does not allow saving a model outside the dropdown's
     options (no free-text path)
   - `grep -rn "claude-opus\|claude-sonnet\|gpt-5\|gemini-" web/src/components/agents-tab/` returns no hits inside option arrays — all model values come from the schema
