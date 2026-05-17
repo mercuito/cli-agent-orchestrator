@@ -16,6 +16,11 @@ vi.mock('../api', async () => {
   }
 })
 
+// Test schemas mirror the real backend provider declarations: ``claude_code``
+// and ``codex`` both declare ``supported_reasoning_efforts``; ``q_cli`` does
+// not (its launch path does not consume reasoning_effort). Keep this fixture
+// in sync with each provider's ``supported_reasoning_efforts`` classmethod
+// so the dashboard tests exercise the same shape ``/providers`` returns.
 const SCHEMAS: ProviderSchema[] = [
   {
     name: 'claude_code',
@@ -27,6 +32,13 @@ const SCHEMAS: ProviderSchema[] = [
   {
     name: 'codex',
     binary: 'codex',
+    installed: true,
+    supported_reasoning_efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+    suggested_models: null,
+  },
+  {
+    name: 'q_cli',
+    binary: 'q',
     installed: true,
     supported_reasoning_efforts: null,
     suggested_models: null,
@@ -181,6 +193,7 @@ describe('AgentConfigTab', () => {
     expect(Array.from(providerSelect.options).map(option => option.value)).toEqual([
       'claude_code',
       'codex',
+      'q_cli',
     ])
     expect(screen.getByLabelText('aria model')).toHaveValue('claude-opus-4-7')
     const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
@@ -195,20 +208,23 @@ describe('AgentConfigTab', () => {
   })
 
   it('disables reasoning_effort with a tooltip when the selected provider returns null', async () => {
+    // ``q_cli`` is used because its launch path does not consume
+    // ``reasoning_effort`` (per the provider capability audit), so it
+    // correctly declares no supported set.
     const { AgentConfigTab } = await loadConfigTab()
 
     render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
 
     fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
     fireEvent.change(screen.getByLabelText('aria cli_provider'), {
-      target: { value: 'codex' },
+      target: { value: 'q_cli' },
     })
 
     const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
     expect(effortSelect.disabled).toBe(true)
     expect(effortSelect).toHaveAttribute(
       'title',
-      'codex does not support reasoning_effort',
+      'q_cli does not support reasoning_effort',
     )
   })
 
@@ -246,8 +262,10 @@ describe('AgentConfigTab', () => {
   })
 
   it('clears reasoning_effort when the selected provider does not support it', async () => {
+    // ``q_cli`` is the example non-supporting provider (audited launch path
+    // does not consume ``reasoning_effort``).
     const updated: AgentStatus = ariaStatus({
-      cli_provider: 'codex',
+      cli_provider: 'q_cli',
       reasoning_effort: null,
     })
     updateAgent.mockResolvedValueOnce(updated)
@@ -257,7 +275,7 @@ describe('AgentConfigTab', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
     fireEvent.change(screen.getByLabelText('aria cli_provider'), {
-      target: { value: 'codex' },
+      target: { value: 'q_cli' },
     })
     // The disabled select still shows the prior value visually; the user
     // must explicitly clear it to ship a valid save payload. Simulate
@@ -272,7 +290,7 @@ describe('AgentConfigTab', () => {
       expect(updateAgent).toHaveBeenCalledWith(
         'aria',
         expect.objectContaining({
-          cli_provider: 'codex',
+          cli_provider: 'q_cli',
           reasoning_effort: null,
         }),
       )
