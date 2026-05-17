@@ -276,6 +276,51 @@ describe('AgentPanel', () => {
       expect(screen.getByText(/# Updated Agent/)).toBeInTheDocument()
     })
 
+    it('saves Linear binding and tool-access edits through the durable agent update API', async () => {
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+      const editor = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
+      fireEvent.change(editor, {
+        target: {
+          value: editor.value
+            .replace('app_key = "aria"', 'app_key = "aria-prod"')
+            .replace('issues = ["CAO-1"]', 'issues = ["CAO-2"]')
+            .replace('reason = "assigned work"', 'reason = "reviewed access"'),
+        },
+      })
+      fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+      await waitFor(() => {
+        expect(updateAgent).toHaveBeenCalledWith('aria', expect.objectContaining({
+          linear: expect.objectContaining({
+            app_key: 'aria-prod',
+            tool_access: [
+              expect.objectContaining({
+                access_id: 'workflow',
+                issues: ['CAO-2'],
+                reason: 'reviewed access',
+              }),
+            ],
+          }),
+        }))
+      })
+    })
+
+    it('surfaces save failures inline against the editor', async () => {
+      updateAgent.mockRejectedValueOnce(new Error('400 Bad Request: linear.tool_access.workflow.tools is required'))
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+      fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('linear.tool_access.workflow.tools is required')
+      expect(showSnackbar).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'error',
+        message: expect.stringContaining('linear.tool_access.workflow.tools is required'),
+      }))
+    })
+
     it('offers a separate create-agent entry in the spawn modal', async () => {
       render(<AgentPanel />)
 
