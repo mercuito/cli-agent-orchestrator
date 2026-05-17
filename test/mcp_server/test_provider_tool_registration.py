@@ -104,7 +104,6 @@ def _policy(fake_tool: FakeProviderTool):
             ),
         ),
         agent_registry=_agents(),
-        profile_exists=lambda profile: profile in {"developer", "reviewer"},
     )
 
 

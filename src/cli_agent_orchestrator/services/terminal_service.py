@@ -64,10 +64,10 @@ class OutputMode(str, Enum):
 
 @dataclass(frozen=True)
 class TerminalRuntimeInputs:
-    """Resolved profile-derived inputs shared by terminal launch and freshness."""
+    """Resolved agent inputs shared by terminal launch and freshness."""
 
     allowed_tools: Optional[list]
-    profile_material: dict
+    agent_material: dict
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,7 @@ def resolve_terminal_runtime_inputs(
 
     return TerminalRuntimeInputs(
         allowed_tools=resolved_allowed_tools,
-        profile_material={
+        agent_material={
             "id": agent.id,
             "display_name": agent.display_name,
             "cli_provider": agent.cli_provider,
@@ -147,9 +147,7 @@ def resolve_terminal_runtime_inputs(
             "cao_tools": None if agent.cao_tools is None else list(agent.cao_tools),
             "skills": list(agent.skills),
             "runtime_capabilities": (
-                None
-                if agent.runtime_capabilities is None
-                else list(agent.runtime_capabilities)
+                None if agent.runtime_capabilities is None else list(agent.runtime_capabilities)
             ),
             "codex_config": dict(agent.codex_config),
         },
@@ -203,8 +201,7 @@ def create_terminal_for_agent(agent: Agent) -> Terminal:
     workspace_context_id = agent.current_workspace_context_id
     if workspace_context_id is None:
         raise ValueError(
-            "create_terminal_for_agent requires an agent bound "
-            "to current_workspace_context_id"
+            "create_terminal_for_agent requires an agent bound " "to current_workspace_context_id"
         )
     return _create_terminal_core(
         provider=agent.cli_provider,

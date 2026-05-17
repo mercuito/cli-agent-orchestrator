@@ -652,7 +652,6 @@ class LinearWorkspaceProvider:
         return LinearToolProvider(
             config=config,
             agent_registry=self._agent_registry,
-            profile_exists=lambda profile: False,
         ).provider_tool_access()
 
     def _load_config(self) -> LinearProviderConfig:

@@ -452,9 +452,7 @@ def test_context_runtime_ignores_terminals_for_other_contexts(test_session, agen
         workspace_context_id=context_a.id,
     )
 
-    assert (
-        AgentRuntimeHandle(agent, workspace_context_id=context_b.id).current_terminal() is None
-    )
+    assert AgentRuntimeHandle(agent, workspace_context_id=context_b.id).current_terminal() is None
 
 
 def test_context_runtime_switches_by_stopping_other_agent_terminal(
@@ -589,7 +587,9 @@ def test_context_runtime_defers_switch_when_other_agent_terminal_is_busy(
     delete_terminal = Mock()
     create_terminal = Mock()
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
-    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal)
+    monkeypatch.setattr(
+        runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal
+    )
 
     result = AgentRuntimeHandle(agent, workspace_context_id=context_b.id).notify(
         "Deliver later in context B.",
@@ -831,11 +831,11 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     runtime_inputs_v1 = runtime_agent.terminal_service.TerminalRuntimeInputs(
         allowed_tools=["Read"],
-        profile_material={"name": "developer", "system_prompt": "old prompt"},
+        agent_material={"id": "implementation_partner", "prompt": "old prompt"},
     )
     runtime_inputs_v2 = runtime_agent.terminal_service.TerminalRuntimeInputs(
         allowed_tools=["Read"],
-        profile_material={"name": "developer", "system_prompt": "new prompt"},
+        agent_material={"id": "implementation_partner", "prompt": "new prompt"},
     )
     monkeypatch.setattr(
         runtime_agent.terminal_service,
@@ -1016,7 +1016,10 @@ def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(
         _provider_runtime_payload("session-a"),
         _provider_runtime_payload("session-a"),
     ]
-    assert create_terminal.call_args.args[0].current_workspace_context_id == handle.workspace_context_id
+    assert (
+        create_terminal.call_args.args[0].current_workspace_context_id
+        == handle.workspace_context_id
+    )
     assert result.delivery.delivered is True
     send_input.assert_called_once_with(
         "terminal-2",
@@ -1078,7 +1081,10 @@ def test_stale_refresh_with_no_current_session_restarts_without_resume_payload(
 
     assert result.freshness is not None
     assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
-    assert create_terminal.call_args.args[0].current_workspace_context_id == handle.workspace_context_id
+    assert (
+        create_terminal.call_args.args[0].current_workspace_context_id
+        == handle.workspace_context_id
+    )
     assert capability.deserialized_payloads == []
     assert result.delivery.delivered is True
     send_input.assert_called_once_with("terminal-2", "Deliver without provider resume.")
@@ -1106,7 +1112,9 @@ def test_stale_refresh_surfaces_provider_discovery_failure_without_restarting(
     delete_terminal = Mock()
     create_terminal = Mock()
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
-    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal)
+    monkeypatch.setattr(
+        runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal
+    )
 
     result = handle.notify(
         "Do not deliver after provider failure.",
@@ -1316,7 +1324,9 @@ def test_stale_idle_runtime_does_not_restart_when_old_terminal_stop_fails(
         "delete_terminal",
         Mock(side_effect=RuntimeError("failed to stop old terminal")),
     )
-    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal)
+    monkeypatch.setattr(
+        runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal
+    )
 
     result = handle.try_deliver_pending()
 

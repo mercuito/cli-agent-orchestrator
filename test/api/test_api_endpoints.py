@@ -1,6 +1,6 @@
 """Tests for uncovered API endpoints in main.py.
 
-Covers: health, agents/agents, agents/providers, sessions CRUD,
+Covers: health, removed agent discovery endpoints, sessions CRUD,
 terminals CRUD (create in session, list, get, input, output, delete),
 flow_daemon, lifespan, and the main() entry point.
 """

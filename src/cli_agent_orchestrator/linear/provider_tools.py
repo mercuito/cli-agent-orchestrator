@@ -569,11 +569,9 @@ class LinearToolProvider:
         *,
         config: Any,
         agent_registry: Any,
-        profile_exists: Any,
     ) -> None:
         self._config = config
         self._agent_registry = agent_registry
-        self._profile_exists = profile_exists
         self._access_by_location: dict[str, LinearToolAccess] = {
             access.location: access for access in config.tool_access.values()
         }
@@ -585,7 +583,6 @@ class LinearToolProvider:
             hooks=self._hooks(),
             access_requests=self._access_requests(),
             agent_registry=self._agent_registry,
-            profile_exists=self._profile_exists,
         )
         issues: list[ProviderToolAccessIssue] = []
         for access in policy.access:

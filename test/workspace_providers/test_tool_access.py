@@ -102,18 +102,13 @@ def _hooks() -> tuple[ProviderToolHookDefinition, ...]:
     )
 
 
-def _normalize(
-    requests: tuple[ProviderToolAccessRequest, ...],
-    *,
-    profile_exists=lambda profile: profile in {"developer", "reviewer"},
-):
+def _normalize(requests: tuple[ProviderToolAccessRequest, ...]):
     return normalize_provider_tool_access(
         provider_name="fake",
         tools=_tools(),
         hooks=_hooks(),
         access_requests=requests,
         agent_registry=_agents(),
-        profile_exists=profile_exists,
     )
 
 
@@ -126,14 +121,9 @@ class FakeProvider:
         self,
         provider_config: Mapping[str, Mapping[str, Any]],
         agent_registry: AgentRegistry,
-        *,
-        profile_exists=None,
     ) -> None:
         self._provider_config = provider_config
         self._agent_registry = agent_registry
-        self._profile_exists = profile_exists or (
-            lambda profile: profile in {"developer", "reviewer"}
-        )
 
     def initialize(self) -> None:
         self._policy = normalize_provider_tool_access(
@@ -142,7 +132,6 @@ class FakeProvider:
             hooks=_hooks(),
             access_requests=self._access_requests_from_provider_config(),
             agent_registry=self._agent_registry,
-            profile_exists=self._profile_exists,
         )
 
     def provider_tool_access(self):
@@ -173,12 +162,8 @@ def _fake_provider_config(
     }
 
 
-def _initialize_fake_provider(
-    provider_config: Mapping[str, Mapping[str, Any]],
-    *,
-    profile_exists=None,
-) -> FakeProvider:
-    provider = FakeProvider(provider_config, _agents(), profile_exists=profile_exists)
+def _initialize_fake_provider(provider_config: Mapping[str, Mapping[str, Any]]) -> FakeProvider:
+    provider = FakeProvider(provider_config, _agents())
     provider.initialize()
     return provider
 

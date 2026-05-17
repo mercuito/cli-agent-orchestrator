@@ -71,9 +71,7 @@ class FakeProviderRecorder:
     def handler(
         self, context: ProviderToolInvocationContext, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
-        self.events.append(
-            f"handler:{context.agent.id}:{context.tool_name}:{arguments['query']}"
-        )
+        self.events.append(f"handler:{context.agent.id}:{context.tool_name}:{arguments['query']}")
         return self.handler_result
 
     def allow_hook(
@@ -123,7 +121,6 @@ class FakeProvider:
             hooks=self._hooks(),
             access_requests=self._access_requests_from_provider_config(),
             agent_registry=self._agent_registry,
-            profile_exists=lambda profile: profile in {"developer", "reviewer"},
         )
 
     def provider_tool_access(self) -> ProviderToolAccessPolicy:

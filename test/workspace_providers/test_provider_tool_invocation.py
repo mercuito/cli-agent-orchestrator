@@ -40,9 +40,7 @@ class InvocationRecorder:
     def handler(
         self, context: ProviderToolInvocationContext, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
-        self.events.append(
-            f"handler:{context.agent.id}:{context.tool_name}:{arguments['query']}"
-        )
+        self.events.append(f"handler:{context.agent.id}:{context.tool_name}:{arguments['query']}")
         if self.fail_handler:
             raise ValueError("provider handler exploded")
         return self.handler_result
@@ -61,8 +59,7 @@ class InvocationRecorder:
         self.events.append(f"{context.phase.value}:{context.hook_name}")
         return ProviderToolPreCallResult.deny(
             self.denial_reason,
-            self.denial_diagnostics
-            or {"agent": context.agent.id, "tool": context.tool_name},
+            self.denial_diagnostics or {"agent": context.agent.id, "tool": context.tool_name},
         )
 
     def post_hook(self, context: ProviderToolInvocationContext) -> ProviderToolPreCallResult | None:
@@ -154,7 +151,6 @@ def _policy(
             ),
         ),
         agent_registry=agents or _agents(),
-        profile_exists=lambda profile: profile in {"developer", "reviewer"},
     )
 
 

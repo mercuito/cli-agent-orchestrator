@@ -48,6 +48,7 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeHandle,
     AgentRuntimeNotification,
     AgentRuntimeNotifyResult,
+    AgentRuntimeTerminal,
 )
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.workspace_contexts import (
@@ -427,12 +428,12 @@ def _require_linear_issue_context_event(
     return provider_event
 
 
-def _terminal_for_resolved_presence(resolved: LinearResolvedPresence) -> Dict[str, Any]:
-    return _runtime_handle_for_resolved_presence(resolved).ensure_started().as_terminal_metadata()
+def _terminal_for_resolved_presence(resolved: LinearResolvedPresence) -> AgentRuntimeTerminal:
+    return _runtime_handle_for_resolved_presence(resolved).ensure_started()
 
 
-def ensure_discovery_terminal(*, app_key: Optional[str] = None) -> Dict[str, Any]:
-    """Start or reuse the Linear-mapped CAO terminal for compatibility callers."""
+def ensure_discovery_terminal(*, app_key: Optional[str] = None) -> AgentRuntimeTerminal:
+    """Start or reuse the Linear-mapped CAO agent terminal."""
     provider = get_linear_workspace_provider()
     presence = provider.resolve_presence(app_key=normalize_app_key(app_key) if app_key else None)
     return _terminal_for_resolved_presence(

@@ -134,7 +134,6 @@ def _policy(
             ),
         ),
         agent_registry=_agents(),
-        profile_exists=lambda profile: True,
     )
 
 

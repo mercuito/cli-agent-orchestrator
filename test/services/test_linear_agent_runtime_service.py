@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -168,9 +169,9 @@ def test_build_terminal_message_uses_prompted_body():
 
 
 def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolved_presence):
-    terminal = {"id": "terminal-1", "tmux_session": "cao-linear-discovery-partner"}
+    terminal = SimpleNamespace(id="terminal-1", session_name="cao-linear-discovery-partner")
     handle = Mock()
-    handle.ensure_started.return_value.as_terminal_metadata.return_value = terminal
+    handle.ensure_started.return_value = terminal
     resolved = resolved_presence(session_name="linear-discovery-partner")
     provider = Mock()
     provider.resolve_presence.return_value = resolved.presence
@@ -184,10 +185,10 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolve
 
 def test_terminal_config_comes_from_cao_agent_mapping(monkeypatch, resolved_presence):
     handle = Mock()
-    handle.ensure_started.return_value.as_terminal_metadata.return_value = {"id": "terminal-1"}
+    handle.ensure_started.return_value = SimpleNamespace(id="terminal-1")
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
 
-    assert runtime._terminal_for_resolved_presence(resolved_presence())["id"] == "terminal-1"
+    assert runtime._terminal_for_resolved_presence(resolved_presence()).id == "terminal-1"
     handle.ensure_started.assert_called_once()
 
 

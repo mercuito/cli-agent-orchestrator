@@ -40,6 +40,7 @@ RUNTIME_FINGERPRINT_SCHEMA_VERSION = "cao-agent-runtime-fingerprint.v1"
 RUNTIME_STATE_SCHEMA_VERSION = "cao-agent-runtime-state.v1"
 RUNTIME_STATE_FILENAME = "runtime-state.json"
 
+
 class AgentRuntimeStatus(str, Enum):
     """Provider-friendly status for a mapped CAO agent runtime."""
 
@@ -74,19 +75,6 @@ class AgentRuntimeTerminal:
     provider: str
     resume_supported: bool
     context_preservation: str
-
-    def as_terminal_metadata(self) -> dict[str, object]:
-        """Return the legacy terminal metadata shape used by compatibility callers."""
-        return {
-            "id": self.id,
-            "agent_id": self.agent_id,
-            "workspace_context_id": self.workspace_context_id,
-            "tmux_session": self.session_name,
-            "tmux_window": self.window_name,
-            "provider": self.provider,
-            "resume_supported": self.resume_supported,
-            "context_preservation": self.context_preservation,
-        }
 
 
 @dataclass(frozen=True)
@@ -669,8 +657,7 @@ class AgentRuntimeHandle:
         terminals = db_module.list_terminals_by_agent(self.agent.id)
         if len(terminals) > 1:
             raise AgentRuntimeInvariantError(
-                "Multiple terminal manifestations exist for CAO agent "
-                f"{self.agent.id!r}"
+                "Multiple terminal manifestations exist for CAO agent " f"{self.agent.id!r}"
             )
         terminals = [
             terminal
@@ -681,8 +668,7 @@ class AgentRuntimeHandle:
             return None
         if len(terminals) > 1:
             raise AgentRuntimeInvariantError(
-                "Multiple terminal manifestations exist for CAO agent "
-                f"{self.agent.id!r}"
+                "Multiple terminal manifestations exist for CAO agent " f"{self.agent.id!r}"
             )
         return _terminal_from_metadata(terminals[0])
 
@@ -690,8 +676,7 @@ class AgentRuntimeHandle:
         terminals = db_module.list_terminals_by_agent(self.agent.id)
         if len(terminals) > 1:
             raise AgentRuntimeInvariantError(
-                "Multiple terminal manifestations exist for CAO agent "
-                f"{self.agent.id!r}"
+                "Multiple terminal manifestations exist for CAO agent " f"{self.agent.id!r}"
             )
         if not terminals:
             return None
@@ -961,7 +946,7 @@ class AgentRuntimeHandle:
                 "workdir": os.path.realpath(self.agent.workdir or os.getcwd()),
                 "session_name": self.session_name,
                 "allowed_tools": runtime_inputs.allowed_tools,
-                "profile_material": runtime_inputs.profile_material,
+                "agent_material": runtime_inputs.agent_material,
             },
             "provider": {
                 "schema_version": provider_descriptor.schema_version,

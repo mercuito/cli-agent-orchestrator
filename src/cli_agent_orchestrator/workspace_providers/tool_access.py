@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry
 
@@ -249,7 +249,6 @@ def normalize_provider_tool_access(
     hooks: tuple[ProviderToolHookDefinition, ...],
     access_requests: tuple[ProviderToolAccessRequest, ...],
     agent_registry: AgentRegistry,
-    profile_exists: Callable[[str], bool],
 ) -> ProviderToolAccessPolicy:
     """Validate provider declarations and normalize config to agent access.
 
