@@ -27,6 +27,39 @@ AGENT_PROMPT_MODE = 0o644
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
+class FrozenConfigDict(dict[str, Any]):
+    """Dict-compatible immutable view for nested agent config maps."""
+
+    def _immutable(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("agent config mappings are immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+
+class FrozenConfigList(list[Any]):
+    """List-compatible immutable view for nested agent config sequences."""
+
+    def _immutable(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("agent config sequences are immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    append = _immutable
+    clear = _immutable
+    extend = _immutable
+    insert = _immutable
+    pop = _immutable
+    remove = _immutable
+    reverse = _immutable
+    sort = _immutable
+
+
 class AgentConfigError(ValueError):
     """Raised when durable CAO agent configuration is invalid."""
 
@@ -77,8 +110,8 @@ class LinearToolAccessConfig:
 
     def __post_init__(self) -> None:
         _safe_path_segment(self.access_id, label="linear.tool_access id")
-        _require_str_tuple(self.tools, "linear.tool_access.tools")
-        _require_str_tuple(self.issues, "linear.tool_access.issues")
+        _require_non_empty_str_tuple(self.tools, "linear.tool_access.tools")
+        _require_non_empty_str_tuple(self.issues, "linear.tool_access.issues")
         _require_str_tuple(self.create_team_ids, "linear.tool_access.create_team_ids")
         _require_str_tuple(self.create_project_ids, "linear.tool_access.create_project_ids")
         _require_str_tuple(self.create_parent_issues, "linear.tool_access.create_parent_issues")
@@ -123,6 +156,10 @@ class LinearConfig:
             value = getattr(self, field_name)
             if value is not None:
                 _required_str(value, f"linear.{field_name}")
+        if not isinstance(self.tool_access, tuple) or not all(
+            isinstance(access, LinearToolAccessConfig) for access in self.tool_access
+        ):
+            raise AgentConfigError("linear.tool_access must contain LinearToolAccessConfig values")
 
 
 @dataclass(frozen=True)
@@ -175,17 +212,42 @@ class Agent:
             _required_str(self.model, f"agents.{self.id}.model")
         if self.reasoning_effort is not None:
             _required_str(self.reasoning_effort, f"agents.{self.id}.reasoning_effort")
+        object.__setattr__(
+            self,
+            "mcp_servers",
+            _freeze_mapping(self.mcp_servers, f"agents.{self.id}.mcp_servers"),
+        )
         _require_str_tuple(self.tools, f"agents.{self.id}.tools")
         _require_str_mapping(self.tool_aliases, f"agents.{self.id}.tool_aliases")
+        object.__setattr__(
+            self,
+            "tool_aliases",
+            _freeze_mapping(self.tool_aliases, f"agents.{self.id}.tool_aliases"),
+        )
+        object.__setattr__(
+            self,
+            "tools_settings",
+            _freeze_mapping(self.tools_settings, f"agents.{self.id}.tools_settings"),
+        )
         if self.cao_tools is not None:
             _require_str_tuple(self.cao_tools, f"agents.{self.id}.cao_tools")
         _require_str_tuple(self.skills, f"agents.{self.id}.skills")
         _require_str_tuple(self.tags, f"agents.{self.id}.tags")
         _require_str_tuple(self.resources, f"agents.{self.id}.resources")
+        object.__setattr__(
+            self,
+            "hooks",
+            _freeze_mapping(self.hooks, f"agents.{self.id}.hooks"),
+        )
         if self.use_legacy_mcp_json is not None and not isinstance(self.use_legacy_mcp_json, bool):
             raise AgentConfigError(f"agents.{self.id}.use_legacy_mcp_json must be a boolean")
         if self.runtime_capabilities is not None:
             _require_str_tuple(self.runtime_capabilities, f"agents.{self.id}.runtime_capabilities")
+        object.__setattr__(
+            self,
+            "codex_config",
+            _freeze_mapping(self.codex_config, f"agents.{self.id}.codex_config"),
+        )
         if not isinstance(self.workspace_context, AgentWorkspaceContextConfig):
             raise AgentConfigError(
                 f"agents.{self.id}.workspace_context must be AgentWorkspaceContextConfig"
@@ -412,16 +474,10 @@ def patch_agent_config(
         "resources": list(agent.resources),
         "use_legacy_mcp_json": agent.use_legacy_mcp_json,
         "runtime_capabilities": (
-            list(agent.runtime_capabilities)
-            if agent.runtime_capabilities is not None
-            else None
+            list(agent.runtime_capabilities) if agent.runtime_capabilities is not None else None
         ),
     }
-    root_patch = {
-        key: value
-        for key, value in root_fields.items()
-        if key in changed_fields
-    }
+    root_patch = {key: value for key, value in root_fields.items() if key in changed_fields}
     if root_patch:
         text = _patch_toml_root_values(text, root_patch)
 
@@ -851,9 +907,7 @@ def _patch_toml_root_values(text: str, values: Mapping[str, object | None]) -> s
         len(lines),
     )
     rendered_values = {
-        key: _format_toml_value(value)
-        for key, value in values.items()
-        if value is not None
+        key: _format_toml_value(value) for key, value in values.items() if value is not None
     }
     remove_keys = {key for key, value in values.items() if value is None}
     existing_keys: set[str] = set()
@@ -867,7 +921,9 @@ def _patch_toml_root_values(text: str, values: Mapping[str, object | None]) -> s
                     deleted_indexes.add(index)
                     existing_keys.add(key)
                     continue
-                prefix = patched_lines[index][: len(patched_lines[index]) - len(patched_lines[index].lstrip())]
+                prefix = patched_lines[index][
+                    : len(patched_lines[index]) - len(patched_lines[index].lstrip())
+                ]
                 patched_lines[index] = f"{prefix}{key} = {rendered_values[key]}".rstrip()
                 existing_keys.add(key)
     patched_lines = [
@@ -878,9 +934,7 @@ def _patch_toml_root_values(text: str, values: Mapping[str, object | None]) -> s
         len(patched_lines),
     )
     additions = [
-        f"{key} = {rendered_values[key]}"
-        for key in rendered_values
-        if key not in existing_keys
+        f"{key} = {rendered_values[key]}" for key in rendered_values if key not in existing_keys
     ]
     if additions:
         patched_lines[first_section:first_section] = additions
@@ -1124,12 +1178,36 @@ def _require_str_tuple(values: tuple[str, ...], label: str) -> None:
         raise AgentConfigError(f"{label} must be a tuple of non-empty strings")
 
 
+def _require_non_empty_str_tuple(values: tuple[str, ...], label: str) -> None:
+    _require_str_tuple(values, label)
+    if not values:
+        raise AgentConfigError(f"{label} must be a non-empty tuple of strings")
+
+
 def _require_str_mapping(values: Mapping[str, str], label: str) -> None:
     if not isinstance(values, Mapping) or not all(
         isinstance(key, str) and key and isinstance(value, str) and value
         for key, value in values.items()
     ):
         raise AgentConfigError(f"{label} must be a mapping of non-empty strings")
+
+
+def _freeze_mapping(values: Mapping[str, Any], label: str) -> Mapping[str, Any]:
+    if not isinstance(values, Mapping):
+        raise AgentConfigError(f"{label} must be a mapping")
+    return FrozenConfigDict(
+        {str(key): _freeze_config_value(value, f"{label}.{key}") for key, value in values.items()}
+    )
+
+
+def _freeze_config_value(value: Any, label: str) -> Any:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(value, label)
+    if isinstance(value, list):
+        return FrozenConfigList(_freeze_config_value(item, label) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_config_value(item, label) for item in value)
+    return value
 
 
 def _safe_path_segment(value: str, *, label: str) -> str:

@@ -41,7 +41,14 @@ Each agent directory contains:
 - `[codex_config]`: Codex-specific config overlay.
 
 The old profile `provider` field is represented by required `cli_provider`.
-The old profile markdown body is represented by `prompt.md`.
+The old profile prompt fields are flattened into the two-file agent shape:
+
+- `AgentProfile.prompt` and `AgentProfile.system_prompt` are represented by
+  `prompt.md`; there is no separate prompt reference or template lookup.
+- `AgentIdentity.agent_profile` is removed as a live link. Profile-level
+  settings that used to be reached through that link are copied into the
+  agent's own `agent.toml` fields, and the durable agent `id` is the runtime
+  identity.
 
 ## Workspace Context
 

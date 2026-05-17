@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import FrozenInstanceError
 
 import pytest
 
@@ -72,6 +73,40 @@ def _agent(**overrides: object) -> Agent:
 def test_agent_model_rejects_invalid_workspace_context_combination():
     with pytest.raises(AgentConfigError, match="resolver_id is required"):
         _agent(workspace_context=AgentWorkspaceContextConfig(enabled=True))
+
+
+def test_agent_model_rejects_invalid_linear_tool_access_at_construction():
+    with pytest.raises(AgentConfigError, match="tools must be a non-empty tuple"):
+        LinearToolAccessConfig(
+            access_id="empty_tools",
+            tools=(),
+            issues=("CAO-1",),
+        )
+
+    with pytest.raises(AgentConfigError, match="issues must be a non-empty tuple"):
+        LinearToolAccessConfig(
+            access_id="empty_issues",
+            tools=("cao_linear.get_issue",),
+            issues=(),
+        )
+
+    with pytest.raises(AgentConfigError, match="linear.tool_access must contain"):
+        LinearConfig(tool_access=("not-a-policy",))  # type: ignore[arg-type]
+
+
+def test_agent_model_has_frozen_value_semantics():
+    agent = _agent()
+    equal_agent = _agent()
+
+    with pytest.raises(FrozenInstanceError):
+        agent.display_name = "Mutated"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        agent.mcp_servers["cao-mcp-server"] = {"command": "changed"}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        agent.mcp_servers["cao-mcp-server"]["command"] = "changed"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        agent.mcp_servers["cao-mcp-server"].setdefault("args", []).append("--changed")
+    assert agent == equal_agent
 
 
 def test_write_then_load_agent_round_trips_and_sets_permissions(tmp_path):
@@ -204,8 +239,7 @@ def test_patch_agent_config_preserves_unrelated_formatting_and_updates_prompt(tm
     given_agent = _agent()
     write_agent(given_agent, agents_root=tmp_path)
     config_path = tmp_path / given_agent.id / "agent.toml"
-    config_path.write_text(
-        """
+    config_path.write_text("""
 # keep this operator note
 id = "implementation_partner"
 display_name = "Implementation Partner"
@@ -228,8 +262,7 @@ oauth_redirect_uri = "https://example.test/linear/oauth/callback"
 tools = ["cao_linear.get_issue"]
 issues = ["CAO-1"]
 update_fields = ["title"]
-""".lstrip()
-    )
+""".lstrip())
     updated = _agent(
         model="gpt-5.4",
         tools=(),
