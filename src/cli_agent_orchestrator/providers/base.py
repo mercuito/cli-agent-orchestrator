@@ -210,6 +210,27 @@ class BaseProvider(ABC):
             },
         )
 
+    @classmethod
+    def supported_reasoning_efforts(cls) -> tuple[str, ...] | None:
+        """Return the ``reasoning_effort`` values this provider accepts.
+
+        Returns ``None`` when ``reasoning_effort`` is not a meaningful concept
+        for this provider. Override on subclasses that surface a reasoning
+        effort flag to their underlying CLI.
+        """
+        return None
+
+    @classmethod
+    def suggested_models(cls) -> tuple[str, ...] | None:
+        """Return suggested model names for the ``model`` field.
+
+        Returns ``None`` when the provider has no curated suggestions; the UI
+        leaves ``model`` as a free-text input in that case. These are
+        suggestions only — they are not enforced at save time, since model
+        namespaces shift faster than CAO releases.
+        """
+        return None
+
     @abstractmethod
     def initialize(self) -> bool:
         """Initialize the provider (e.g., start CLI tool, send setup commands).

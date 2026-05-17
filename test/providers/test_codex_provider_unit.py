@@ -1075,6 +1075,14 @@ class TestCodexProviderMisc:
         message = provider.extract_last_message_from_script(output)
         assert message == "Hello\nSecond line"
 
+    def test_supported_reasoning_efforts_is_none(self):
+        """Codex does not pass reasoning_effort to its CLI."""
+        assert CodexProvider.supported_reasoning_efforts() is None
+
+    def test_suggested_models_is_none(self):
+        """Codex does not curate model suggestions in v1."""
+        assert CodexProvider.suggested_models() is None
+
 
 class TestCodexRuntimeStateCapability:
     def test_payload_serializes_to_minimal_schema_and_thread_id_only(self, tmp_path):

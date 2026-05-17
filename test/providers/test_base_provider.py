@@ -121,3 +121,11 @@ class TestBaseProvider:
 
         assert provider.interrupt() is True
         mock_tmux.send_special_key.assert_called_once_with("session-1", "window-0", "C-c")
+
+    def test_supported_reasoning_efforts_default_is_none(self):
+        """Providers without a reasoning_effort concept return None by default."""
+        assert ConcreteProvider.supported_reasoning_efforts() is None
+
+    def test_suggested_models_default_is_none(self):
+        """Providers without curated model suggestions return None by default."""
+        assert ConcreteProvider.suggested_models() is None

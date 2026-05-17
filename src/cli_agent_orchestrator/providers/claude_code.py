@@ -217,6 +217,31 @@ class ClaudeCodeProvider(BaseProvider):
         """Expose Claude's runtime/session restoration capability."""
         return ClaudeRuntimeStateCapability()
 
+    @classmethod
+    def supported_reasoning_efforts(cls) -> tuple[str, ...]:
+        """Return the ``--effort`` values Claude Code accepts.
+
+        Claude Code's launch path in ``_build_claude_command`` passes
+        ``--effort <value>`` when an agent declares a ``reasoning_effort``.
+        These three values are the accepted set — keep this list and the
+        launch path in sync.
+        """
+        return ("low", "medium", "high")
+
+    @classmethod
+    def suggested_models(cls) -> tuple[str, ...]:
+        """Return curated Claude model suggestions for the ``model`` field.
+
+        These are not enforced at save time — Claude's model namespace shifts
+        too fast for CAO to maintain a hard registry. They surface as
+        dropdown options that a user can still override with free text.
+        """
+        return (
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        )
+
     @staticmethod
     def prepare_terminal_runtime(
         *,

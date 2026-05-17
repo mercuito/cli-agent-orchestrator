@@ -1059,3 +1059,27 @@ def test_claude_runtime_state_capability_rejects_invalid_payload(tmp_path: Path)
             {"schema_version": "old", "session_id": "session"},
             provider_data_dir=tmp_path,
         )
+
+
+def test_supported_reasoning_efforts_matches_launch_path():
+    """Claude's declared efforts cover the launch path's ``--effort`` consumer.
+
+    The launch path passes whatever the agent declares to ``claude --effort``;
+    the dashboard must offer exactly the set the launch path will accept.
+    Keep this list in sync with the dropdown source and the
+    ``_build_claude_command`` consumer.
+    """
+    efforts = ClaudeCodeProvider.supported_reasoning_efforts()
+
+    assert efforts == ("low", "medium", "high")
+
+
+def test_suggested_models_contains_current_curated_set():
+    """Claude exposes a curated, non-enforcing set of model suggestions."""
+    models = ClaudeCodeProvider.suggested_models()
+
+    assert models == (
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+    )
