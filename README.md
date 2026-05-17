@@ -22,7 +22,7 @@ CLI Agent Orchestrator (CAO) implements a hierarchical multi-agent system that e
 * **Flow - Scheduled runs** – Automated execution of workflows at specified intervals using cron-like scheduling, enabling routine tasks and monitoring workflows to run unattended.
 * **Context preservation** – The supervisor agent provides only necessary context to each worker agent, avoiding context pollution while maintaining workflow coherence.
 * **Direct worker interaction and steering** – Users can interact directly with worker agents to provide additional steering, distinguishing from sub-agents features by allowing real-time guidance and course correction.
-* **Tool restrictions** – Control what each agent can do through `role` and `allowedTools`. Built-in roles (`supervisor`, `developer`, `reviewer`) provide sensible defaults, while `allowedTools` gives fine-grained control. CAO translates restrictions to each provider's native enforcement mechanism. See [Tool Restrictions](#tool-restrictions-allowedtools).
+* **Tool restrictions** – Control what each durable agent can do through `runtime_capabilities`, `cao_tools`, provider-native `tools`, and provider access sections such as `[linear.tool_access.*]`. CAO translates restrictions to each provider's native enforcement mechanism. See [Tool Restrictions](#tool-restrictions).
 * **Advanced CLI integration** – CAO agents have full access to advanced features of the developer CLI, such as the [sub-agents](https://docs.claude.com/en/docs/claude-code/sub-agents) feature of Claude Code, [Custom Agent](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line-custom-agents.html) of Amazon Q Developer for CLI and so on.
 
 For detailed project structure and architecture, see [CODEBASE.md](CODEBASE.md).
@@ -107,29 +107,37 @@ Before using CAO, install at least one supported CLI agent tool:
 
 ## Quick Start
 
-### 1. Install Agents
+### 1. Create Durable Agents
 
-Install the supervisor agent (the orchestrator that delegates to other agents):
-
-```bash
-cao install code_supervisor
-```
-
-Optionally install additional worker agents:
+Each CAO agent lives in `~/.aws/cli-agent-orchestrator/agents/<id>/` with an
+`agent.toml` config file and a `prompt.md` prompt file. Create a supervisor
+agent in the current project:
 
 ```bash
-cao install developer
-cao install reviewer
+cao agent create code_supervisor --provider codex --workdir "$PWD"
+cp examples/agents/code_supervisor.md ~/.aws/cli-agent-orchestrator/agents/code_supervisor/prompt.md
 ```
 
-You can also install agents from local files or URLs:
+Create worker agents the same way:
 
 ```bash
-cao install ./my-custom-agent.md
-cao install https://example.com/agents/custom-agent.md
+cao agent create developer --provider codex --workdir "$PWD"
+cp examples/agents/developer.md ~/.aws/cli-agent-orchestrator/agents/developer/prompt.md
+
+cao agent create reviewer --provider codex --workdir "$PWD"
+cp examples/agents/reviewer.md ~/.aws/cli-agent-orchestrator/agents/reviewer/prompt.md
 ```
 
-For details on creating custom agents, see [docs/agents.md](docs/agents.md).
+Use `cao agent edit <id>` to change provider, model, MCP servers, tools, Linear
+access, or workspace settings in `agent.toml`. You can also copy any markdown
+file into a new agent directory's `prompt.md` after `cao agent create`.
+
+```bash
+cao agent edit code_supervisor
+cao agent list
+```
+
+For the full agent file format, see [docs/agents.md](docs/agents.md).
 
 ### 2. Start the Server
 
@@ -347,10 +355,11 @@ Flows allow you to schedule agent sessions to run automatically based on cron ex
 
 ### Prerequisites
 
-Install the agent you want to use:
+Create the durable agent you want to use:
 
 ```bash
-cao install developer
+cao agent create developer --provider codex --workdir "$PWD"
+cp examples/agents/developer.md ~/.aws/cli-agent-orchestrator/agents/developer/prompt.md
 ```
 
 ### Quick Start
@@ -484,13 +493,21 @@ For ready-to-use examples, see [`examples/cross-provider/`](examples/cross-provi
 
 ## Tool Restrictions
 
-CAO controls what tools each agent can use through `role` in the agent. Built-in roles (`supervisor`, `developer`, `reviewer`) map to sensible defaults, and `allowedTools` provides fine-grained override when needed. CAO translates restrictions to each provider's native enforcement mechanism — 5 of 7 providers support hard enforcement.
+CAO controls what tools each durable agent can use through explicit config in
+`agent.toml`. Use `runtime_capabilities` for broad provider-native access,
+`cao_tools` for named CAO MCP tools, provider-native `tools` for external CLI
+tool settings, and provider sections such as `[linear.tool_access.<id>]` for
+mediated provider tools. CAO translates restrictions to each provider's native
+enforcement mechanism where available.
 
-```yaml
----
-name: my_agent
-role: supervisor  # @cao-mcp-server, fs_read, fs_list
----
+```toml
+id = "reviewer"
+display_name = "Reviewer"
+cli_provider = "codex"
+workdir = "/path/to/project"
+session_name = "reviewer"
+runtime_capabilities = ["@builtin", "fs_read", "fs_list"]
+cao_tools = ["send_message"]
 ```
 
 ```bash
