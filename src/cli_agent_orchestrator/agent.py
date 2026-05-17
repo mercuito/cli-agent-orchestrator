@@ -684,17 +684,15 @@ def _linear_config(raw: object, *, path: Path) -> Optional[LinearConfig]:
                 f"linear.tool_access.{access_id}.tools",
                 path,
             )
-            issues = _require_mapping_value(
-                access,
-                "issues",
-                f"linear.tool_access.{access_id}.issues",
-                path,
-            )
             access_entries.append(
                 LinearToolAccessConfig(
                     access_id=str(access_id),
                     tools=_tuple_of_strs(tools, "linear.tool_access.tools", path),
-                    issues=_tuple_of_strs(issues, "linear.tool_access.issues", path),
+                    issues=_tuple_of_strs(
+                        access.get("issues", ()),
+                        "linear.tool_access.issues",
+                        path,
+                    ),
                     create_team_ids=_tuple_of_strs(
                         access.get("create_team_ids", ()),
                         "linear.tool_access.create_team_ids",

@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, cast
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import requests
 
@@ -429,14 +429,7 @@ def public_cao_url() -> Optional[str]:
     explicit_url = linear_env("LINEAR_CAO_PUBLIC_URL")
     if explicit_url:
         return explicit_url.rstrip("/")
-
-    redirect_uri = linear_env("LINEAR_OAUTH_REDIRECT_URI")
-    if not redirect_uri:
-        return None
-    parsed = urlsplit(redirect_uri)
-    if not parsed.scheme or not parsed.netloc:
-        return None
-    return f"{parsed.scheme}://{parsed.netloc}"
+    return None
 
 
 def public_cao_terminal_url(terminal_id: str) -> Optional[str]:

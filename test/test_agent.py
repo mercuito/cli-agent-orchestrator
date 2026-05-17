@@ -512,7 +512,6 @@ allow_top_level_create = "false"
     ("tool_access_body", "missing_field"),
     [
         ('issues = ["*"]', "tools"),
-        ('tools = ["cao_linear.get_issue"]', "issues"),
     ],
 )
 def test_validate_agents_root_rejects_missing_required_linear_tool_access_fields(
@@ -540,6 +539,30 @@ session_name = "implementation-partner"
 
     with pytest.raises(AgentValidationError, match=missing_field):
         validate_agents_root(agents_root=tmp_path)
+
+
+def test_validate_agents_root_accepts_create_only_linear_access_without_issues(tmp_path):
+    agent_dir = tmp_path / "implementation_partner"
+    agent_dir.mkdir()
+    config = agent_dir / "agent.toml"
+    prompt = agent_dir / "prompt.md"
+    config.write_text("""
+id = "implementation_partner"
+display_name = "Implementation Partner"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "implementation-partner"
+
+[linear.tool_access.create_only]
+tools = ["cao_linear.create_issue"]
+create_team_ids = ["team-1"]
+allow_top_level_create = true
+""".lstrip())
+    prompt.write_text("# Agent\n")
+    os.chmod(config, AGENT_CONFIG_MODE)
+    os.chmod(prompt, AGENT_PROMPT_MODE)
+
+    validate_agents_root(agents_root=tmp_path)
 
 
 def test_validate_agents_root_passes_for_hand_written_shape(tmp_path):

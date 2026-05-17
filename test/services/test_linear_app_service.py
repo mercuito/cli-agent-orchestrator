@@ -443,6 +443,20 @@ def test_public_cao_terminal_url_points_to_dashboard(monkeypatch):
     )
 
 
+def test_public_cao_url_does_not_derive_from_oauth_redirect_uri(monkeypatch):
+    monkeypatch.setattr(
+        app_client,
+        "linear_env",
+        lambda name: (
+            "https://callback.test/linear/oauth/callback"
+            if name == "LINEAR_OAUTH_REDIRECT_URI"
+            else None
+        ),
+    )
+
+    assert app_client.public_cao_url() is None
+
+
 def test_public_cao_agent_url_points_to_stable_agent_deep_link(monkeypatch):
     monkeypatch.setattr(
         app_client,
