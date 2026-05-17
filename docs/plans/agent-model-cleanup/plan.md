@@ -214,4 +214,4 @@ agent config inline and support inline editing.
 Move `src/cli_agent_orchestrator/agent_store/*.md` to `examples/`. Sweep for
 stragglers. Update README and CHANGELOG.
 
-The full task breakdown lives in `plans/agent-model-cleanup.tasks.md`.
+The full task breakdown lives in `docs/plans/agent-model-cleanup/tasks.md`.

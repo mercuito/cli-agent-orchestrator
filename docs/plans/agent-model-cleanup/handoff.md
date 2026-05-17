@@ -3,10 +3,11 @@
 ## Goal
 
 Execute the CAO agent model cleanup end to end as specified in
-`plans/agent-model-cleanup.md` and `plans/agent-model-cleanup.tasks.md`.
-Land the work in dependency order across the six phases. Each task lands as
-its own commit (or PR), gated by reviewer, with the criteria-catalog
-acceptance bullet satisfied against the task's diff.
+`docs/plans/agent-model-cleanup/plan.md` and
+`docs/plans/agent-model-cleanup/tasks.md`. Land the work in dependency order
+across the six phases. Each task lands as its own commit (or PR), gated by
+reviewer, with the criteria-catalog acceptance bullet satisfied against the
+task's diff.
 
 Do not deviate from the plan's locked design (two-layer model, directory
 shape, dropped templates, `cao agent <subcmd>` CLI, hard cutover) without
@@ -14,9 +15,9 @@ raising the change back to the operator first.
 
 ## Sources of truth (read these first)
 
-- `plans/agent-model-cleanup.md` — locked design, migration shape, goals,
-  non-goals, phasing overview.
-- `plans/agent-model-cleanup.tasks.md` — 15 tasks with deliverables,
+- `docs/plans/agent-model-cleanup/plan.md` — locked design, migration shape,
+  goals, non-goals, phasing overview.
+- `docs/plans/agent-model-cleanup/tasks.md` — 15 tasks with deliverables,
   acceptance criteria, and dependency edges.
 - `docs/criteria/implementation/` and `docs/criteria/tests/` — the criteria
   catalog. Run `python scripts/catalog_criteria.py` to browse. Every task

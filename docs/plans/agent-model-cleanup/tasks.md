@@ -1,6 +1,6 @@
 # CAO Agent Model Cleanup Tasks (Draft v1)
 
-This task list derives from `plans/agent-model-cleanup.md`.
+This task list derives from `docs/plans/agent-model-cleanup/plan.md`.
 
 Policy: any task that changes code requires reviewer gate before it is
 considered complete. The cutover (T07) is atomic — its deliverables land
