@@ -193,6 +193,29 @@ enabled = true
     assert "workspace_context.resolver_id" in message
 
 
+def test_load_agent_path_only_semantic_errors_get_agent_context(tmp_path):
+    agent_dir = tmp_path / "implementation_partner"
+    agent_dir.mkdir()
+    config_path = agent_dir / "agent.toml"
+    config_path.write_text("""
+id = "implementation_partner"
+display_name = "Implementation Partner"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "implementation-partner"
+mcp_servers = "not-a-table"
+""".lstrip())
+    (agent_dir / "prompt.md").write_text("# Agent\n")
+
+    with pytest.raises(AgentConfigError) as exc_info:
+        load_agent("implementation_partner", agents_root=tmp_path)
+
+    message = str(exc_info.value)
+    assert "Agent 'implementation_partner'" in message
+    assert str(config_path) in message
+    assert "mcp_servers must be a table" in message
+
+
 def test_load_agent_errors_on_malformed_toml(tmp_path):
     agent_dir = tmp_path / "implementation_partner"
     agent_dir.mkdir()

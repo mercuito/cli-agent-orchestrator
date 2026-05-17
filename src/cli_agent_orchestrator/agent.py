@@ -391,7 +391,7 @@ def load_agent(agent_id: str, *, agents_root: Optional[Path] = None) -> Agent:
         return _agent_from_config(safe_id, raw_config, prompt_path.read_text(), config_path)
     except (AgentConfigError, AgentPathError) as exc:
         message = str(exc)
-        if safe_id in message and str(config_path) in message:
+        if f"Agent {safe_id!r}" in message and str(config_path) in message:
             raise
         raise AgentConfigError(
             f"Agent {safe_id!r} invalid config at {config_path}: {message}"
