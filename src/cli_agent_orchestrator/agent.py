@@ -40,6 +40,7 @@ class FrozenConfigDict(dict[str, Any]):
     popitem = _immutable
     setdefault = _immutable
     update = _immutable
+    __ior__ = _immutable
 
 
 class FrozenConfigList(list[Any]):
@@ -58,6 +59,8 @@ class FrozenConfigList(list[Any]):
     remove = _immutable
     reverse = _immutable
     sort = _immutable
+    __iadd__ = _immutable
+    __imul__ = _immutable
 
 
 class AgentConfigError(ValueError):

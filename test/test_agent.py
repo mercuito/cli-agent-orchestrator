@@ -95,8 +95,8 @@ def test_agent_model_rejects_invalid_linear_tool_access_at_construction():
 
 
 def test_agent_model_has_frozen_value_semantics():
-    agent = _agent()
-    equal_agent = _agent()
+    agent = _agent(mcp_servers={"cao-mcp-server": {"command": "cao-mcp-server", "args": []}})
+    equal_agent = _agent(mcp_servers={"cao-mcp-server": {"command": "cao-mcp-server", "args": []}})
 
     with pytest.raises(FrozenInstanceError):
         agent.display_name = "Mutated"  # type: ignore[misc]
@@ -106,6 +106,12 @@ def test_agent_model_has_frozen_value_semantics():
         agent.mcp_servers["cao-mcp-server"]["command"] = "changed"  # type: ignore[index]
     with pytest.raises(TypeError):
         agent.mcp_servers["cao-mcp-server"].setdefault("args", []).append("--changed")
+    with pytest.raises(TypeError):
+        agent.mcp_servers["cao-mcp-server"] |= {"command": "changed"}
+    with pytest.raises(TypeError):
+        agent.mcp_servers["cao-mcp-server"]["args"] += ["--changed"]
+    with pytest.raises(TypeError):
+        agent.mcp_servers["cao-mcp-server"]["args"] *= 2
     assert agent == equal_agent
 
 
