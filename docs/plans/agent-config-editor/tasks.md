@@ -175,7 +175,7 @@ new shapes. Legacy call sites are migrated or deleted, not bridged.
 
 ## Phase 3 — Structured form
 
-### T05 — Six-field structured form section in `AgentConfigTab`
+### T05 — Five-field structured form section in `AgentConfigTab`
 
 - owner_role: developer
 - dispatch_mode: handoff
@@ -191,12 +191,17 @@ new shapes. Legacy call sites are migrated or deleted, not bridged.
       suggestions come from the selected provider's
       `suggested_models`)
     - `reasoning_effort` (dropdown sourced from selected provider's
-      `supported_reasoning_efforts`; hidden when null)
-    - `workdir` (text input; on blur, hits a lightweight validation
-      check — initially client-side "looks like a path" only;
-      stretch: hit a backend endpoint to confirm directory exists)
-  - read mode shows current values as labeled text; edit mode flips
-    the section into inputs
+      `supported_reasoning_efforts`; rendered DISABLED with a
+      tooltip explaining the selected provider doesn't support it
+      when the provider returns null — the field is always visible,
+      never hidden, so users learn that the concept exists and which
+      providers support it)
+  - read-only display of `id`, `session_name`, and `workdir` in the
+    panel header area (these are not in the editable form for v1;
+    raw-TOML editing remains the escape hatch for `session_name`
+    and `workdir`; `id` is also filtered out of raw TOML per T06)
+  - read mode shows current structured values as labeled text;
+    edit mode flips the section into inputs
   - save flow: form values get serialized back into the agent.toml
     representation by overriding the relevant top-level keys; the
     raw-TOML section's contents (from T06) provide everything else;
@@ -207,13 +212,16 @@ new shapes. Legacy call sites are migrated or deleted, not bridged.
   - component tests covering: read mode renders each field, edit
     mode flips to inputs, dropdown options reflect the schema, save
     sends the merged TOML, server-side errors surface inline,
-    `reasoning_effort` is hidden when the selected provider returns
-    null for it
+    `reasoning_effort` is disabled (not hidden) when the selected
+    provider returns null and shows a tooltip explaining why
 - acceptance:
-  - selecting an agent and clicking Edit shows the six fields as
-    inputs/dropdowns with current values pre-filled
+  - selecting an agent and clicking Edit shows the five structured
+    fields as inputs/dropdowns with current values pre-filled
   - changing `cli_provider` updates `reasoning_effort`'s
-    options/visibility without a save round-trip
+    enabled/disabled state and option set without a save round-trip
+  - selecting a provider that returns null for
+    `supported_reasoning_efforts` leaves the `reasoning_effort`
+    dropdown visibly disabled with an explanatory tooltip
   - typing an invalid `reasoning_effort` (e.g. via combobox) gets
     caught client-side or by the backend with the error surfaced
     inline
@@ -238,10 +246,13 @@ new shapes. Legacy call sites are migrated or deleted, not bridged.
     collapsible disclosure (default collapsed)
   - the raw TOML's textarea content (in edit mode) is filtered to
     exclude the structured-form fields (`display_name`,
-    `description`, `cli_provider`, `model`, `reasoning_effort`,
-    `workdir`) so users can't double-edit those keys
+    `description`, `cli_provider`, `model`, `reasoning_effort`) so
+    users can't double-edit those keys
   - the `id` line is also filtered out of the raw textarea (the id
     is immutable; editing it would corrupt the save)
+  - `workdir` and `session_name` REMAIN in the raw textarea as the
+    escape hatch for advanced edits (they appear read-only in the
+    header but are still editable via raw TOML)
   - existing `prompt.md` view/edit and Linear secrets summary
     preserved unchanged below
   - single Edit / Save / Cancel button row applies to the entire
@@ -255,15 +266,16 @@ new shapes. Legacy call sites are migrated or deleted, not bridged.
     fields, save merges structured + raw correctly, no fields are
     dropped or duplicated
 - acceptance:
-  - by default, a selected agent shows the six structured fields
+  - by default, a selected agent shows the five structured fields
     visibly and the raw TOML hidden behind a disclosure
   - editing `display_name` via the form and any unstructured field
     via the raw TOML and saving produces an agent.toml with both
     changes
   - the raw TOML never contains a duplicate `display_name`,
-    `description`, `cli_provider`, `model`, `reasoning_effort`,
-    `workdir`, or `id` key — those are owned by the structured
-    section
+    `description`, `cli_provider`, `model`, `reasoning_effort`, or
+    `id` key — those are owned by the structured section (or, for
+    `id`, the directory name); `workdir` and `session_name` remain
+    in the raw TOML as editable escape-hatch fields
   - no backwards-compatibility layer introduced — same forbidden
     patterns as above
   - criteria catalog applied: every entry in

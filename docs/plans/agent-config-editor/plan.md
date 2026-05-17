@@ -20,7 +20,7 @@ schema to the dashboard.
 
 ## Locked design
 
-**Tier 1 editable fields (six):**
+**Tier 1 editable fields (five):**
 
 | Field | UI control | Strictness | Source of truth |
 |---|---|---|---|
@@ -28,16 +28,20 @@ schema to the dashboard.
 | `description` | textarea | free | n/a |
 | `cli_provider` | dropdown | hard enum | `ProviderType` enum + `/providers` install status |
 | `model` | combobox | soft suggestions | per-provider `suggested_models()`, free text allowed |
-| `reasoning_effort` | dropdown | hard enum, per-provider | per-provider `supported_reasoning_efforts()`; hidden when provider returns None |
-| `workdir` | text input + path-exists validation | free | filesystem check |
+| `reasoning_effort` | dropdown | hard enum, per-provider | per-provider `supported_reasoning_efforts()`; rendered disabled with a tooltip when provider returns None |
 
 **Read-only fields (header):**
 
 - `id` — agent id, immutable. Shown in the panel header next to display
   name. The form does not expose it as editable; the raw TOML editor
   filters it out so users never type a change that would fail save.
-- `session_name` — implementation-detail. Shown in the header or
-  metadata strip; not editable in v1.
+- `session_name` — implementation-detail. Shown in the header; not
+  editable in v1.
+- `workdir` — the agent's starting directory. Shown in the header so
+  users can see which project the agent is bound to, but not promoted
+  to a structured form field in v1 (changing it has consequences that
+  need their own UX design). The raw TOML escape hatch still permits
+  edits for advanced users.
 
 **Read-only Linear secrets summary:** preserved as today (mask + reveal
 toggle for client_secret/webhook_secret; OAuth tokens labeled "Managed
@@ -129,9 +133,9 @@ them inline against the offending input.
 │                   [_______________________________]    │
 │ cli_provider      [claude_code ▾]                      │
 │ model             [claude-opus-4-7 ▾]                  │
-│ reasoning_effort  [medium ▾]   (hidden if provider     │
-│                                 returns None)          │
-│ workdir           [/path/to/repo___________]           │
+│ reasoning_effort  [medium ▾]   (disabled with tooltip   │
+│                                 when provider doesn't   │
+│                                 support it)             │
 └─────────────────────────────────────────────────────────┘
 ┌─ Raw TOML (collapsible, default collapsed) ─────────────┐
 │ ▸ Show raw TOML  (everything not in the form above)     │
@@ -213,12 +217,13 @@ Enforced per-task by the criteria-catalog acceptance bullet in
 
 ## Goals
 
-- Six Tier-1 fields editable through proper form controls.
+- Five Tier-1 fields editable through proper form controls.
 - Provider-aware dropdowns backed by authoritative backend sources.
 - Save-time validation rejects bad `cli_provider` / `reasoning_effort`
   values with field-level errors surfaced inline.
 - Raw TOML remains accessible (collapsible) for fields not yet in the
-  structured form.
+  structured form, including `workdir` and `session_name` for users
+  who need to edit them.
 - The `id` field is never editable through the dashboard.
 
 ## Non-goals
@@ -251,7 +256,7 @@ provider-aware dropdowns.
 
 ### Phase 3 — Structured form
 
-T05 builds the six-field form section inside `AgentConfigTab`,
+T05 builds the five-field form section inside `AgentConfigTab`,
 consuming the schema fetcher and surfacing validation errors. T06
 reorganizes the panel layout: structured form on top, raw TOML
 collapsible below filtered to exclude structured-form fields, with the

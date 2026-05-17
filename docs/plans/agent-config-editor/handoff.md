@@ -9,11 +9,12 @@ order across the four phases. Each task lands as its own commit (or
 PR), gated by reviewer, with the criteria-catalog acceptance bullet
 satisfied against the task's diff.
 
-The plan replaces raw-TOML editing for the six most-commonly-edited
-agent config fields (`display_name`, `description`, `cli_provider`,
-`model`, `reasoning_effort`, `workdir`) with proper form controls,
-while keeping raw TOML available as a collapsible escape hatch for
-unstructured fields. The form's dropdowns are backed by a restored
+The plan replaces raw-TOML editing for five commonly-edited agent
+config fields (`display_name`, `description`, `cli_provider`, `model`,
+`reasoning_effort`) with proper form controls, while keeping raw TOML
+available as a collapsible escape hatch for unstructured fields
+(including `workdir` and `session_name`, which are shown read-only in
+the header but remain editable via raw TOML). The form's dropdowns are backed by a restored
 `GET /providers` endpoint that exposes per-provider capability
 declarations.
 
@@ -133,22 +134,25 @@ explicitly; do not infer.
 
 ### Frontend
 
-- The Agents tab Config view shows six structured input fields above
-  a collapsible raw-TOML disclosure, with `id` shown read-only in
-  the panel header (via the existing AgentDetailPanel header).
+- The Agents tab Config view shows five structured input fields
+  above a collapsible raw-TOML disclosure, with `id`,
+  `session_name`, and `workdir` shown read-only in the panel header
+  (via the existing AgentDetailPanel header).
 - Dropdown options for `cli_provider` and `reasoning_effort` come
   from `GET /providers` — `grep -rn "claude_code\|codex\|gemini_cli"
   web/src/components/agents-tab/` returns no hits inside option
   arrays, switch statements, or literal-string dropdowns.
-- `reasoning_effort` is hidden when the selected provider's
-  capability is null.
+- `reasoning_effort` is rendered disabled with an explanatory
+  tooltip (NOT hidden) when the selected provider returns null for
+  `supported_reasoning_efforts`.
 - Save sends the merged structured + raw + prompt content to
   `PUT /agents/{id}`. Inline errors surface against the offending
   input on 400 responses.
 - The `id` field never appears in the editable structured form and
   is stripped from the raw textarea contents in edit mode.
-- The raw textarea also strips the six structured-form keys so
-  users cannot double-edit them.
+- The raw textarea also strips the five structured-form keys so
+  users cannot double-edit them. `workdir` and `session_name`
+  REMAIN in the raw textarea as the escape hatch.
 
 ### Tests
 
