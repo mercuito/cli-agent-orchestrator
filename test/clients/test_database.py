@@ -46,7 +46,9 @@ from cli_agent_orchestrator.clients.database import (
     update_last_active,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import create_notification_for_message
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    create_notification_for_message,
+)
 
 
 def _notification_fk_targets(connection, table_name: str) -> list[str]:
@@ -982,13 +984,54 @@ class TestInitDb:
         database_migrations._migrate_add_terminal_agent_id()
 
         with test_engine.connect() as connection:
-            columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(terminals)")}
+            table_info = connection.exec_driver_sql("PRAGMA table_info(terminals)").fetchall()
+            columns = {row[1] for row in table_info}
+            not_null_by_column = {row[1]: bool(row[3]) for row in table_info}
             row = connection.exec_driver_sql(
                 "SELECT agent_id FROM terminals WHERE id = 'terminal-1'"
             ).fetchone()
 
         assert "agent_id" in columns
+        assert not_null_by_column["agent_id"] is True
+        assert "agent_profile" not in columns
         assert row == ("developer",)
+
+    def test_terminal_agent_migration_refuses_anonymous_rows(self, tmp_path, monkeypatch):
+        """Anonymous terminal rows must be deleted before the hard-cutover migration."""
+        old_agent_column = "agent_" + "identity_id"
+        db_path = tmp_path / "anonymous-terminals.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql(f"""
+                CREATE TABLE terminals (
+                    id VARCHAR NOT NULL,
+                    tmux_session VARCHAR NOT NULL,
+                    tmux_window VARCHAR NOT NULL,
+                    provider VARCHAR NOT NULL,
+                    {old_agent_column} VARCHAR,
+                    agent_profile VARCHAR,
+                    PRIMARY KEY (id)
+                )
+            """)
+            connection.exec_driver_sql(f"""
+                INSERT INTO terminals (
+                    id, tmux_session, tmux_window, provider, {old_agent_column}, agent_profile
+                )
+                VALUES
+                    ('terminal-null', 'cao-session', 'window-a', 'codex', NULL, 'developer'),
+                    ('terminal-blank', 'cao-session', 'window-b', 'codex', '  ', 'reviewer')
+            """)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            database_migrations._migrate_add_terminal_agent_id()
+
+        message = str(exc_info.value)
+        assert "agent_id NOT NULL" in message
+        assert "anonymous terminal rows exist" in message
+        assert "terminal-null" in message
+        assert "terminal-blank" in message
 
     def test_terminal_workspace_context_backfill_binds_renamed_agent_terminal(
         self, tmp_path, monkeypatch
@@ -1058,9 +1101,7 @@ class TestInitDb:
             "discovery_partner",
         )
 
-    def test_workspace_context_migration_renames_agent_identity_column(
-        self, tmp_path, monkeypatch
-    ):
+    def test_workspace_context_migration_renames_agent_identity_column(self, tmp_path, monkeypatch):
         """Existing context workspaces are rebuilt to use durable agent ids."""
         old_agent_column = "agent_" + "identity_id"
         db_path = tmp_path / "legacy-context-workspaces.db"
@@ -1147,16 +1188,12 @@ class TestInitDb:
         with test_engine.connect() as connection:
             columns = {
                 row[1]
-                for row in connection.exec_driver_sql(
-                    "PRAGMA table_info(context_workspaces)"
-                )
+                for row in connection.exec_driver_sql("PRAGMA table_info(context_workspaces)")
             }
-            row = connection.exec_driver_sql(
-                """
+            row = connection.exec_driver_sql("""
                 SELECT id, agent_id, workspace_context_id, root_path, active_terminal_id
                 FROM context_workspaces
-                """
-            ).fetchone()
+                """).fetchone()
 
         assert old_agent_column not in columns
         assert "agent_id" in columns
@@ -1220,9 +1257,9 @@ class TestInitDb:
         db_module._migrate_ensure_agent_runtime_tables()
 
         with test_engine.connect() as connection:
-            assert _notification_fk_targets(connection, "provider_conversation_inbox_notifications") == [
-                "inbox_notifications"
-            ]
+            assert _notification_fk_targets(
+                connection, "provider_conversation_inbox_notifications"
+            ) == ["inbox_notifications"]
             assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
                 "inbox_notifications"
             ]
@@ -1377,9 +1414,9 @@ class TestInitDb:
             }
             assert "message_id" not in notification_columns
             assert "legacy_inbox_id" not in notification_columns
-            assert _notification_fk_targets(connection, "provider_conversation_inbox_notifications") == [
-                "inbox_notifications"
-            ]
+            assert _notification_fk_targets(
+                connection, "provider_conversation_inbox_notifications"
+            ) == ["inbox_notifications"]
             assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
                 "inbox_notifications"
             ]
