@@ -26,8 +26,10 @@ from fastapi import (
     status,
 )
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
@@ -35,6 +37,7 @@ from cli_agent_orchestrator.agent import (
     Agent,
     AGENTS_ROOT,
     AgentConfigError,
+    AgentPathError,
     LinearConfig,
     LinearToolAccessConfig,
     AgentWorkspaceContextConfig,
@@ -549,12 +552,40 @@ class AgentWriteRequest(BaseModel):
 
     def to_agent(self, agent_id: str, existing: Optional[Agent] = None) -> Agent:
         base = existing
-        workspace_context = (
-            self.workspace_context.to_config(base.workspace_context if base else None)
-            if self.workspace_context is not None
-            else (base.workspace_context if base else AgentWorkspaceContextConfig())
-        )
-        if "linear" in self.model_fields_set and self.linear is None:
+        fields_set = self.model_fields_set
+
+        def field_value(field_name: str, default: Any) -> Any:
+            return getattr(self, field_name) if field_name in fields_set else default
+
+        def mapping_value(field_name: str, default: Dict[str, Any]) -> Dict[str, Any]:
+            value = field_value(field_name, default)
+            if value is None:
+                raise AgentConfigError(f"agents.{agent_id}.{field_name} must be a mapping")
+            return dict(value)
+
+        def tuple_value(field_name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+            value = field_value(field_name, default)
+            if value is None:
+                raise AgentConfigError(f"agents.{agent_id}.{field_name} must be a list")
+            return tuple(value)
+
+        def nullable_tuple_value(
+            field_name: str,
+            default: tuple[str, ...] | None,
+        ) -> tuple[str, ...] | None:
+            value = field_value(field_name, default)
+            return None if value is None else tuple(value)
+
+        if "workspace_context" in fields_set:
+            if self.workspace_context is None:
+                raise AgentConfigError(f"agents.{agent_id}.workspace_context must be a table")
+            workspace_context = self.workspace_context.to_config(
+                base.workspace_context if base else None
+            )
+        else:
+            workspace_context = base.workspace_context if base else AgentWorkspaceContextConfig()
+
+        if "linear" in fields_set and self.linear is None:
             linear = None
         elif self.linear is not None:
             linear = self.linear.to_config(base.linear if base else None)
@@ -562,64 +593,42 @@ class AgentWriteRequest(BaseModel):
             linear = base.linear if base else None
         return Agent(
             id=agent_id,
-            display_name=self.display_name or (base.display_name if base else agent_id),
-            cli_provider=self.cli_provider or (base.cli_provider if base else "codex"),
-            workdir=self.workdir or (base.workdir if base else str(Path.home())),
-            session_name=self.session_name or (base.session_name if base else agent_id),
-            prompt=self.prompt if self.prompt is not None else (base.prompt if base else ""),
-            description=(
-                self.description
-                if self.description is not None
-                else (base.description if base else None)
+            display_name=field_value(
+                "display_name",
+                base.display_name if base else agent_id,
             ),
-            model=self.model if self.model is not None else (base.model if base else None),
+            cli_provider=field_value("cli_provider", base.cli_provider if base else "codex"),
+            workdir=field_value("workdir", base.workdir if base else str(Path.home())),
+            session_name=field_value("session_name", base.session_name if base else agent_id),
+            prompt=field_value("prompt", base.prompt if base else ""),
+            description=field_value("description", base.description if base else None),
+            model=field_value("model", base.model if base else None),
             reasoning_effort=(
-                self.reasoning_effort
-                if self.reasoning_effort is not None
-                else (base.reasoning_effort if base else None)
+                field_value("reasoning_effort", base.reasoning_effort if base else None)
             ),
-            mcp_servers=(
-                dict(self.mcp_servers)
-                if self.mcp_servers is not None
-                else (dict(base.mcp_servers) if base else {})
+            mcp_servers=mapping_value("mcp_servers", dict(base.mcp_servers) if base else {}),
+            tools=tuple_value("tools", base.tools if base else ()),
+            tool_aliases=mapping_value(
+                "tool_aliases",
+                dict(base.tool_aliases) if base else {},
             ),
-            tools=tuple(self.tools if self.tools is not None else (base.tools if base else ())),
-            tool_aliases=(
-                dict(self.tool_aliases)
-                if self.tool_aliases is not None
-                else (dict(base.tool_aliases) if base else {})
+            tools_settings=mapping_value(
+                "tools_settings",
+                dict(base.tools_settings) if base else {},
             ),
-            tools_settings=(
-                dict(self.tools_settings)
-                if self.tools_settings is not None
-                else (dict(base.tools_settings) if base else {})
-            ),
-            cao_tools=(
-                tuple(self.cao_tools)
-                if self.cao_tools is not None
-                else (base.cao_tools if base else None)
-            ),
-            skills=tuple(self.skills if self.skills is not None else (base.skills if base else ())),
-            tags=tuple(self.tags if self.tags is not None else (base.tags if base else ())),
-            resources=tuple(
-                self.resources if self.resources is not None else (base.resources if base else ())
-            ),
-            hooks=dict(self.hooks) if self.hooks is not None else (dict(base.hooks) if base else {}),
+            cao_tools=nullable_tuple_value("cao_tools", base.cao_tools if base else None),
+            skills=tuple_value("skills", base.skills if base else ()),
+            tags=tuple_value("tags", base.tags if base else ()),
+            resources=tuple_value("resources", base.resources if base else ()),
+            hooks=mapping_value("hooks", dict(base.hooks) if base else {}),
             use_legacy_mcp_json=(
-                self.use_legacy_mcp_json
-                if self.use_legacy_mcp_json is not None
-                else (base.use_legacy_mcp_json if base else None)
+                field_value("use_legacy_mcp_json", base.use_legacy_mcp_json if base else None)
             ),
-            runtime_capabilities=(
-                tuple(self.runtime_capabilities)
-                if self.runtime_capabilities is not None
-                else (base.runtime_capabilities if base else None)
+            runtime_capabilities=nullable_tuple_value(
+                "runtime_capabilities",
+                base.runtime_capabilities if base else None,
             ),
-            codex_config=(
-                dict(self.codex_config)
-                if self.codex_config is not None
-                else (dict(base.codex_config) if base else {})
-            ),
+            codex_config=mapping_value("codex_config", dict(base.codex_config) if base else {}),
             workspace_context=workspace_context,
             linear=linear,
         )
@@ -894,6 +903,27 @@ app.add_middleware(
 app.include_router(linear_router)
 
 
+def _is_agent_write_validation(request: Request) -> bool:
+    if request.method == "POST" and request.url.path == "/agents":
+        return True
+    if request.method == "PUT":
+        parts = [part for part in request.url.path.split("/") if part]
+        return len(parts) == 2 and parts[0] == "agents"
+    return False
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    status_code = status.HTTP_400_BAD_REQUEST if _is_agent_write_validation(request) else 422
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": jsonable_encoder(exc.errors())},
+    )
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "cli-agent-orchestrator"}
@@ -909,7 +939,7 @@ async def list_agents_endpoint(
             AgentStatusResponse.from_status(agent_status)
             for agent_status in default_agent_manager().list_statuses(active=active)
         ]
-    except AgentConfigError as e:
+    except (AgentConfigError, AgentPathError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
@@ -941,7 +971,7 @@ async def create_agent_endpoint(body: AgentWriteRequest) -> AgentStatusResponse:
         agent = body.to_agent(agent_id)
         write_agent(agent)
         return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent.id))
-    except AgentConfigError as e:
+    except (AgentConfigError, AgentPathError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
@@ -952,7 +982,7 @@ async def update_agent_endpoint(agent_id: str, body: AgentWriteRequest) -> Agent
         updated = body.to_agent(agent_id, existing)
         patch_agent_config(updated, changed_fields=set(body.model_fields_set))
         return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent_id))
-    except AgentConfigError as e:
+    except (AgentConfigError, AgentPathError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 

@@ -478,6 +478,70 @@ def test_create_agent_validation_returns_400_with_field_detail(client, monkeypat
     assert "agents.bad_agent.cli_provider" in response.json()["detail"]
 
 
+def test_create_agent_body_validation_returns_400_with_field_detail(client):
+    response = client.post(
+        "/agents",
+        json={"id": "bad_agent", "mcp_servers": "not-a-table"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"][0]["loc"] == ["body", "mcp_servers"]
+
+
+def test_update_agent_rejects_empty_required_field_and_clears_nullable_model(
+    client,
+    monkeypatch,
+):
+    existing_agent = _agent()
+    patched_agent = None
+    patched_fields = None
+
+    def _patch_agent_config(agent, *, changed_fields):
+        nonlocal patched_agent, patched_fields
+        patched_agent = agent
+        patched_fields = changed_fields
+
+    class _WriteThroughAgentManager:
+        def status_for_agent(self, agent_id: str):
+            assert patched_agent is not None
+            return AgentStatus(
+                agent_id=agent_id,
+                display_name=patched_agent.display_name,
+                cli_provider=patched_agent.cli_provider,
+                workdir=patched_agent.workdir,
+                session_name=patched_agent.session_name,
+                agent=patched_agent,
+                active=False,
+            )
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.load_agent",
+        lambda agent_id: existing_agent,
+    )
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.patch_agent_config", _patch_agent_config)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _WriteThroughAgentManager(),
+    )
+
+    empty_name = client.put(
+        "/agents/implementation_partner",
+        json={"display_name": ""},
+    )
+    assert empty_name.status_code == 400
+    assert "agents.implementation_partner.display_name" in empty_name.json()["detail"]
+
+    clear_model = client.put(
+        "/agents/implementation_partner",
+        json={"model": None},
+    )
+    assert clear_model.status_code == 200
+    assert clear_model.json()["config"]["model"] is None
+    assert patched_agent is not None
+    assert patched_agent.model is None
+    assert patched_fields == {"model"}
+
+
 def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch):
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_agent_manager",
