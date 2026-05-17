@@ -326,7 +326,12 @@ def test_update_agent_rejects_unsupported_cli_provider(client, monkeypatch):
 def test_update_agent_rejects_reasoning_effort_for_non_supporting_provider(client, monkeypatch):
     """Setting ``reasoning_effort`` on a provider that returns None for
     ``supported_reasoning_efforts`` returns 400 naming both the value and
-    the provider."""
+    the provider.
+
+    ``q_cli`` is used here because its launch path does not consume
+    ``reasoning_effort`` (per the provider capability audit), so it
+    correctly declares no supported set.
+    """
     existing_agent = _agent()
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.load_agent",
@@ -339,13 +344,13 @@ def test_update_agent_rejects_reasoning_effort_for_non_supporting_provider(clien
 
     response = client.put(
         "/agents/implementation_partner",
-        json={"cli_provider": "codex", "model": "gpt-5.2", "reasoning_effort": "low"},
+        json={"cli_provider": "q_cli", "model": None, "reasoning_effort": "low"},
     )
 
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert "reasoning_effort" in detail
-    assert "codex" in detail
+    assert "q_cli" in detail
 
 
 def test_update_agent_rejects_reasoning_effort_outside_supported_set(client, monkeypatch):

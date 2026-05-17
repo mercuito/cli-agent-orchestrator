@@ -63,6 +63,8 @@ def test_list_providers_capability_fields_match_provider_declarations(client, mo
     assert claude_entry["binary"] == ClaudeCodeProvider.binary
 
     codex_entry = by_name[ProviderType.CODEX.value]
-    assert codex_entry["supported_reasoning_efforts"] is None
+    assert codex_entry["supported_reasoning_efforts"] == list(
+        CodexProvider.supported_reasoning_efforts()
+    )
     assert codex_entry["suggested_models"] is None
     assert codex_entry["binary"] == CodexProvider.binary

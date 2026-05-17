@@ -397,3 +397,18 @@ class TestCopilotCliProviderMisc:
         provider._initialized = True
         provider.cleanup()
         assert provider._initialized is False
+
+
+def test_supported_reasoning_efforts_is_none():
+    """Copilot CLI's launch path does not consume ``reasoning_effort``.
+
+    ``CopilotCliProvider`` constructs its command without reading
+    ``agent.reasoning_effort``; the Copilot CLI exposes no reasoning_effort
+    flag. Inherits ``None`` from ``BaseProvider``.
+    """
+    assert CopilotCliProvider.supported_reasoning_efforts() is None
+
+
+def test_suggested_models_is_none():
+    """Copilot CLI does not curate model suggestions — model is not consumed."""
+    assert CopilotCliProvider.suggested_models() is None

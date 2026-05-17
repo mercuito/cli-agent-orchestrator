@@ -287,5 +287,7 @@ def test_list_provider_schemas_carries_provider_capability_declarations(monkeypa
     assert claude_schema.binary == ClaudeCodeProvider.binary
 
     codex_schema = schemas[ProviderType.CODEX.value]
-    assert codex_schema.supported_reasoning_efforts is None
+    assert (
+        codex_schema.supported_reasoning_efforts == CodexProvider.supported_reasoning_efforts()
+    )
     assert codex_schema.suggested_models is None

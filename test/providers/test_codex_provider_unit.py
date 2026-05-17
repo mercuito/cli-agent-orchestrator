@@ -1075,9 +1075,23 @@ class TestCodexProviderMisc:
         message = provider.extract_last_message_from_script(output)
         assert message == "Hello\nSecond line"
 
-    def test_supported_reasoning_efforts_is_none(self):
-        """Codex does not pass reasoning_effort to its CLI."""
-        assert CodexProvider.supported_reasoning_efforts() is None
+    def test_supported_reasoning_efforts_matches_codex_model_reasoning_effort_enum(self):
+        """Codex's declared efforts mirror the CLI's ``model_reasoning_effort`` enum.
+
+        The codex CLI rejects invalid values with
+        ``unknown variant ... expected one of `none`, `minimal`, `low`,
+        `medium`, `high`, `xhigh```. The declaration here must stay aligned
+        with that enum so the dashboard offers exactly the set codex will
+        accept at launch.
+        """
+        assert CodexProvider.supported_reasoning_efforts() == (
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        )
 
     def test_suggested_models_is_none(self):
         """Codex does not curate model suggestions in v1."""

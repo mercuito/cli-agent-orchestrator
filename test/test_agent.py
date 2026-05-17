@@ -86,12 +86,17 @@ def test_agent_model_rejects_unsupported_cli_provider():
 
 def test_agent_model_rejects_reasoning_effort_on_non_supporting_provider():
     """A provider that returns None for ``supported_reasoning_efforts``
-    cannot have ``reasoning_effort`` set on the agent."""
+    cannot have ``reasoning_effort`` set on the agent.
+
+    ``q_cli`` is used as the example because its launch path does not
+    consume ``reasoning_effort`` (per the provider capability audit),
+    so it correctly declares no supported set.
+    """
     with pytest.raises(
         AgentConfigError,
         match="does not support reasoning_effort",
     ):
-        _agent(cli_provider="codex", model="gpt-5.2", reasoning_effort="low")
+        _agent(cli_provider="q_cli", model=None, reasoning_effort="low")
 
 
 def test_agent_model_rejects_reasoning_effort_outside_supported_set():

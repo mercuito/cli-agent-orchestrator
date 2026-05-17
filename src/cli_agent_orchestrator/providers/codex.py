@@ -328,6 +328,21 @@ class CodexProvider(BaseProvider):
         """Expose Codex's optional runtime/session restoration capability."""
         return CodexRuntimeStateCapability()
 
+    @classmethod
+    def supported_reasoning_efforts(cls) -> tuple[str, ...]:
+        """Return the ``model_reasoning_effort`` values Codex accepts.
+
+        Codex's launch path consumes ``agent.reasoning_effort`` via
+        ``utils/codex_home.py``, which writes it to ``model_reasoning_effort``
+        in the per-terminal ``config.toml``. The codex CLI parses this field
+        with a fixed enum — invalid values raise
+        ``unknown variant ... expected one of `none`, `minimal`, `low`,
+        `medium`, `high`, `xhigh``` at startup. This list mirrors that enum
+        as observed from codex 0.130.0; keep it in sync if codex extends the
+        enum.
+        """
+        return ("none", "minimal", "low", "medium", "high", "xhigh")
+
     @staticmethod
     def prepare_terminal_runtime(
         *,
