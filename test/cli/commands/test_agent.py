@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from click.testing import CliRunner
@@ -59,16 +60,39 @@ def _patch_agents_root(monkeypatch, agents_root):
 
 
 def test_agent_list_prints_current_instance_status(tmp_path, monkeypatch):
-    agent = _agent()
+    developer = _agent("developer")
+    discovery = _agent("discovery_partner")
+    reviewer = _agent("reviewer")
     monkeypatch.setattr(
         "cli_agent_orchestrator.cli.commands.agent.default_agent_manager",
-        lambda: _Manager((_status(agent, active=True),)),
+        lambda: _Manager(
+            (
+                _status(developer, active=True),
+                _status(discovery),
+                _status(reviewer),
+            )
+        ),
     )
 
     result = CliRunner().invoke(agent_command, ["list"])
 
     assert result.exit_code == 0
     assert "developer\tcodex\trunning term-live" in result.output
+    assert "discovery_partner\tcodex\tstopped" in result.output
+    assert "reviewer\tcodex\tstopped" in result.output
+
+
+def test_agent_help_covers_each_subcommand():
+    runner = CliRunner()
+
+    group_help = runner.invoke(agent_command, ["--help"])
+    assert group_help.exit_code == 0
+    for subcommand in ("list", "show", "create", "edit", "delete", "start", "stop"):
+        assert subcommand in group_help.output
+
+        command_help = runner.invoke(agent_command, [subcommand, "--help"])
+        assert command_help.exit_code == 0
+        assert f"Usage: agent {subcommand}" in command_help.output
 
 
 def test_agent_show_prints_agent_toml_and_status(tmp_path, monkeypatch):
@@ -98,13 +122,45 @@ def test_agent_create_writes_valid_stub_agent(tmp_path, monkeypatch):
 
     result = CliRunner().invoke(
         agent_command,
-        ["create", "new_agent", "--provider", "codex", "--workdir", "/repo"],
+        ["create", "foo", "--provider", "codex", "--workdir", "/repo"],
     )
 
     assert result.exit_code == 0
-    agent = load_agent("new_agent", agents_root=tmp_path)
+    agent = load_agent("foo", agents_root=tmp_path)
     assert agent.prompt == "# Agent\n"
-    assert validate_agent_dir(tmp_path / "new_agent") == []
+    assert validate_agent_dir(tmp_path / "foo") == []
+
+
+def test_agent_edit_opens_editor_and_validates_saved_config(tmp_path, monkeypatch):
+    _patch_agents_root(monkeypatch, tmp_path)
+    agent = _agent()
+    write_agent(agent, agents_root=tmp_path)
+    editor = tmp_path / "editor.sh"
+    editor.write_text("#!/bin/sh\nprintf '\\n# edited by test\\n' >> \"$1\"\n")
+    os.chmod(editor, 0o755)
+    monkeypatch.setenv("EDITOR", str(editor))
+
+    result = CliRunner().invoke(agent_command, ["edit", "developer"])
+
+    assert result.exit_code == 0
+    assert "validated developer" in result.output
+    assert "# edited by test" in (tmp_path / "developer" / "agent.toml").read_text()
+
+
+def test_agent_edit_rejects_invalid_saved_config(tmp_path, monkeypatch):
+    _patch_agents_root(monkeypatch, tmp_path)
+    agent = _agent()
+    write_agent(agent, agents_root=tmp_path)
+    editor = tmp_path / "editor.sh"
+    editor.write_text("#!/bin/sh\nprintf 'not valid toml = [' > \"$1\"\n")
+    os.chmod(editor, 0o755)
+    monkeypatch.setenv("EDITOR", str(editor))
+
+    result = CliRunner().invoke(agent_command, ["edit", "developer"])
+
+    assert result.exit_code != 0
+    assert "Error:" in result.output
+    assert "agent.toml" in result.output
 
 
 def test_agent_delete_refuses_running_agent(tmp_path, monkeypatch):
@@ -153,7 +209,7 @@ def test_agent_start_rejects_second_live_instance(monkeypatch):
 
 def test_agent_start_opens_runtime_terminal(tmp_path, monkeypatch):
     _patch_agents_root(monkeypatch, tmp_path)
-    agent = _agent()
+    agent = _agent("discovery_partner")
     write_agent(agent, agents_root=tmp_path)
     monkeypatch.setattr(
         "cli_agent_orchestrator.cli.commands.agent.default_agent_manager",
@@ -162,17 +218,28 @@ def test_agent_start_opens_runtime_terminal(tmp_path, monkeypatch):
 
     class _Handle:
         def __init__(self, loaded_agent: Agent) -> None:
-            assert loaded_agent.id == "developer"
+            assert loaded_agent.id == "discovery_partner"
 
         def ensure_started(self):
-            return type("Terminal", (), {"id": "term-new", "session_name": "developer"})()
+            return type(
+                "Terminal",
+                (),
+                {"id": "term-new", "session_name": "discovery_partner"},
+            )()
 
     monkeypatch.setattr("cli_agent_orchestrator.cli.commands.agent.AgentRuntimeHandle", _Handle)
+    attach_calls = []
+    monkeypatch.setattr("cli_agent_orchestrator.cli.commands.agent.os.isatty", lambda fd: True)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.cli.commands.agent.subprocess.run",
+        lambda args, check: attach_calls.append((args, check)),
+    )
 
-    result = CliRunner().invoke(agent_command, ["start", "developer"])
+    result = CliRunner().invoke(agent_command, ["start", "discovery_partner"])
 
     assert result.exit_code == 0
-    assert "started developer in terminal term-new" in result.output
+    assert "started discovery_partner in terminal term-new" in result.output
+    assert attach_calls == [(["tmux", "attach-session", "-t", "discovery_partner"], False)]
 
 
 def test_agent_stop_deletes_live_terminal(monkeypatch):
