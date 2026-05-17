@@ -347,6 +347,137 @@ def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):
     assert patched_fields == {"mcp_servers", "tools", "skills"}
 
 
+def test_agent_crud_lifecycle_allows_running_update_and_confirmed_delete(
+    client,
+    monkeypatch,
+    tmp_path,
+    runtime_inbox_db_session,
+):
+    agents_root = tmp_path / "agents"
+    monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.AGENTS_ROOT", agents_root)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.create_terminal_dashboard_token",
+        lambda terminal_id: f"token-{terminal_id}",
+    )
+
+    class _Handle:
+        def __init__(self, agent, *, agent_manager):
+            self.agent = agent
+
+        def ensure_started(self):
+            db_module.create_terminal(
+                "terminal-crud",
+                self.agent.session_name,
+                "crud-agent-0001",
+                self.agent.cli_provider,
+                agent_id=self.agent.id,
+                workspace_context_id=f"ctx_{self.agent.id}_default",
+            )
+            return SimpleNamespace(id="terminal-crud")
+
+    def _get_terminal(terminal_id: str):
+        metadata = db_module.get_terminal_metadata(terminal_id)
+        assert metadata is not None
+        return {
+            "id": metadata["id"],
+            "name": metadata["tmux_window"],
+            "provider": metadata["provider"],
+            "session_name": metadata["tmux_session"],
+            "agent_id": metadata["agent_id"],
+            "workspace_context_id": metadata["workspace_context_id"],
+            "allowed_tools": metadata.get("allowed_tools"),
+            "status": "idle",
+            "last_active": metadata["last_active"],
+        }
+
+    delete_calls = []
+
+    def _delete_terminal(terminal_id: str, *, require_window_killed: bool = False):
+        delete_calls.append((terminal_id, require_window_killed))
+        return db_module.delete_terminal(terminal_id)
+
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.AgentRuntimeHandle", _Handle)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.terminal_service.get_terminal",
+        _get_terminal,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.terminal_service.delete_terminal",
+        _delete_terminal,
+    )
+
+    created = client.post(
+        "/agents",
+        json={
+            "id": "crud_agent",
+            "display_name": "CRUD Agent",
+            "cli_provider": "codex",
+            "workdir": "/repo",
+            "prompt": "# Initial\n",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["agent_id"] == "crud_agent"
+    assert (agents_root / "crud_agent" / "agent.toml").is_file()
+    assert (agents_root / "crud_agent" / "prompt.md").read_text() == "# Initial\n"
+
+    started = client.post("/agents/crud_agent/start")
+    assert started.status_code == 200
+    assert started.json()["terminal"]["id"] == "terminal-crud"
+    assert started.json()["terminal_token"] == "token-terminal-crud"
+
+    updated = client.put(
+        "/agents/crud_agent",
+        json={"display_name": "CRUD Agent Renamed", "prompt": "# Updated\n", "tools": []},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["active"] is True
+    assert updated.json()["active_terminal_id"] == "terminal-crud"
+    assert updated.json()["display_name"] == "CRUD Agent Renamed"
+    assert updated.json()["config"]["prompt"] == "# Updated\n"
+    assert (agents_root / "crud_agent" / "prompt.md").read_text() == "# Updated\n"
+
+    live_delete = client.delete("/agents/crud_agent?confirm=true")
+    assert live_delete.status_code == 409
+    assert live_delete.json()["detail"] == {
+        "message": "Agent 'crud_agent' is running",
+        "terminal_id": "terminal-crud",
+    }
+
+    stopped = client.post("/agents/crud_agent/stop")
+    assert stopped.status_code == 200
+    assert stopped.json() == {"success": True}
+    assert delete_calls == [("terminal-crud", True)]
+
+    unconfirmed_delete = client.delete("/agents/crud_agent")
+    assert unconfirmed_delete.status_code == 400
+    assert unconfirmed_delete.json()["detail"] == "confirm=true is required"
+
+    deleted = client.delete("/agents/crud_agent?confirm=true")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"success": True}
+    assert not (agents_root / "crud_agent").exists()
+
+
+def test_create_agent_validation_returns_400_with_field_detail(client, monkeypatch, tmp_path):
+    agents_root = tmp_path / "agents"
+    monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.AGENTS_ROOT", agents_root)
+
+    response = client.post(
+        "/agents",
+        json={
+            "id": "bad_agent",
+            "cli_provider": "not_a_provider",
+            "workdir": "/repo",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "agents.bad_agent.cli_provider" in response.json()["detail"]
+
+
 def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch):
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_agent_manager",
