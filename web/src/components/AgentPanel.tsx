@@ -64,10 +64,13 @@ function formatAgentToml(config: AgentConfig): string {
   appendValue(lines, 'description', config.description)
   appendValue(lines, 'reasoning_effort', config.reasoning_effort)
   appendValue(lines, 'tools', config.tools)
+  appendValue(lines, 'tool_aliases', config.tool_aliases)
+  appendValue(lines, 'tools_settings', config.tools_settings)
   appendValue(lines, 'cao_tools', config.cao_tools)
   appendValue(lines, 'skills', config.skills)
   appendValue(lines, 'tags', config.tags)
   appendValue(lines, 'resources', config.resources)
+  appendValue(lines, 'hooks', config.hooks)
   appendValue(lines, 'runtime_capabilities', config.runtime_capabilities)
   appendValue(lines, 'use_legacy_mcp_json', config.use_legacy_mcp_json)
 

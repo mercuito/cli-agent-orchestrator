@@ -29,13 +29,13 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     reasoning_effort: 'medium',
     mcp_servers: { cao: { command: 'cao-mcp-server' } },
     tools: ['bash'],
-    tool_aliases: {},
-    tools_settings: {},
+    tool_aliases: { shell: 'bash' },
+    tools_settings: { bash: { timeout_ms: 1000 } },
     cao_tools: ['send_message'],
     skills: ['coding-discipline'],
     tags: [],
     resources: [],
-    hooks: {},
+    hooks: { post_start: ['echo ready'] },
     use_legacy_mcp_json: null,
     runtime_capabilities: null,
     codex_config: {},
@@ -227,6 +227,9 @@ describe('AgentPanel', () => {
       expect(screen.getByText(/model = "gpt-5.2"/)).toBeInTheDocument()
       expect(screen.getByText(/\[mcp_servers.cao\]/)).toBeInTheDocument()
       expect(screen.getByText(/tools = \["bash"\]/)).toBeInTheDocument()
+      expect(screen.getByText(/tool_aliases = \{ shell = "bash" \}/)).toBeInTheDocument()
+      expect(screen.getByText(/tools_settings = \{ bash = \{ timeout_ms = 1000 \} \}/)).toBeInTheDocument()
+      expect(screen.getByText(/hooks = \{ post_start = \["echo ready"\] \}/)).toBeInTheDocument()
       expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
       expect(screen.getByText(/\[linear.tool_access.workflow\]/)).toBeInTheDocument()
       expect(screen.getByText('# Agent')).toBeInTheDocument()

@@ -217,6 +217,14 @@ describe('API wrapper', () => {
     })
   })
 
+  it('updateAgent preserves server validation detail on failed responses', async () => {
+    mockResponse({ detail: 'agents.aria.display_name must be a non-empty string' }, 400)
+
+    await expect(api.updateAgent('aria', { display_name: '' })).rejects.toThrow(
+      '400 Error: agents.aria.display_name must be a non-empty string',
+    )
+  })
+
   it('getAgentTimeline URL-encodes the selected agent id', async () => {
     const timeline = {
       agent: {

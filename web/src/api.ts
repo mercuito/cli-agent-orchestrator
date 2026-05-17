@@ -5,7 +5,16 @@ async function fetchJSON<T>(url: string, opts?: RequestInit & { timeoutMs?: numb
   const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 10000)
   try {
     const res = await fetch(`${BASE}${url}`, { ...opts, signal: controller.signal })
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const body = await res.json()
+        detail = typeof body?.detail === 'string' ? body.detail : ''
+      } catch {
+        detail = ''
+      }
+      throw new Error(`${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`)
+    }
     return res.json()
   } finally {
     clearTimeout(timeout)
