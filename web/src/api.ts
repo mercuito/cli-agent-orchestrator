@@ -232,6 +232,20 @@ export interface MonitoringSession {
   status: 'active' | 'ended'
 }
 
+/**
+ * Capability schema for one CAO-registered provider, as returned by
+ * ``GET /providers``. Mirrors the backend's ``ProviderSchemaResponse``
+ * model exactly — the dashboard must not re-derive these fields from
+ * literal strings (per ``authoritative-sources-are-referenced-not-copied``).
+ */
+export interface ProviderSchema {
+  name: string
+  binary: string
+  installed: boolean
+  supported_reasoning_efforts: string[] | null
+  suggested_models: string[] | null
+}
+
 export interface Baton {
   id: string
   title: string
@@ -256,6 +270,9 @@ export interface BatonEvent {
 }
 
 export const api = {
+  // Providers (capability schema for dashboard forms)
+  listProviders: () => fetchJSON<ProviderSchema[]>('/providers'),
+
   // Sessions
   listSessions: () => fetchJSON<Session[]>('/sessions'),
   getSession: (name: string) => fetchJSON<SessionDetail>(`/sessions/${name}`),

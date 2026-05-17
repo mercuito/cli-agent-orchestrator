@@ -459,4 +459,29 @@ describe('API wrapper', () => {
     await api.deleteTerminal('t1')
     expect(mockFetch).toHaveBeenCalledWith('/terminals/t1', expect.objectContaining({ method: 'DELETE' }))
   })
+
+  it('listProviders fetches the provider capability schema', async () => {
+    const schemas = [
+      {
+        name: 'claude_code',
+        binary: 'claude',
+        installed: true,
+        supported_reasoning_efforts: ['low', 'medium', 'high'],
+        suggested_models: ['claude-opus-4-7'],
+      },
+      {
+        name: 'codex',
+        binary: 'codex',
+        installed: false,
+        supported_reasoning_efforts: null,
+        suggested_models: null,
+      },
+    ]
+    mockResponse(schemas)
+
+    const result = await api.listProviders()
+
+    expect(result).toEqual(schemas)
+    expect(mockFetch).toHaveBeenCalledWith('/providers', expect.any(Object))
+  })
 })
