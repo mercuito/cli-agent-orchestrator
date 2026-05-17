@@ -200,7 +200,7 @@ def default_agent_manager() -> AgentManager:
 
 
 def _terminal_agent_id(metadata: Mapping[str, object]) -> Optional[str]:
-    return _optional_str(metadata.get("agent_identity_id"))
+    return _optional_str(metadata.get("agent_id"))
 
 
 def _required_token(value: str, label: str) -> str:
