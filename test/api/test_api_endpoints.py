@@ -1,6 +1,6 @@
 """Tests for uncovered API endpoints in main.py.
 
-Covers: health, agents/profiles, agents/providers, sessions CRUD,
+Covers: health, agents/agents, agents/providers, sessions CRUD,
 terminals CRUD (create in session, list, get, input, output, delete),
 flow_daemon, lifespan, and the main() entry point.
 """
@@ -30,126 +30,17 @@ class TestHealthCheck:
         assert data["service"] == "cli-agent-orchestrator"
 
 
-# ── Agent profiles endpoint ──────────────────────────────────────────
+# ── Removed agent/provider endpoints ─────────────────────────
 
 
-class TestAgentProfiles:
-    """Tests for GET /agents/profiles endpoint."""
+class TestRemovedAgentTemplateEndpoints:
+    """The profile/provider discovery endpoints are gone after the cutover."""
 
-    def test_list_profiles_success(self, client):
-        """GET /agents/profiles returns list of profiles."""
-        mock_profiles = [
-            {"name": "developer", "path": "/agents/developer"},
-            {"name": "reviewer", "path": "/agents/reviewer"},
-        ]
-        with patch(
-            "cli_agent_orchestrator.api.main.list_agent_profiles",
-            create=True,
-        ) as mock_fn:
-            # The endpoint does a lazy import, so we need to patch at the import target
-            with patch(
-                "cli_agent_orchestrator.utils.agent_profiles.list_agent_profiles",
-                return_value=mock_profiles,
-            ):
-                response = client.get("/agents/profiles")
+    @pytest.mark.parametrize("path", ["/agents/agents", "/agents/providers"])
+    def test_removed_endpoint_returns_404(self, client, path):
+        response = client.get(path)
 
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) == 2
-        assert data[0]["name"] == "developer"
-
-    def test_list_profiles_empty(self, client):
-        """GET /agents/profiles returns empty list when none exist."""
-        with patch(
-            "cli_agent_orchestrator.utils.agent_profiles.list_agent_profiles",
-            return_value=[],
-        ):
-            response = client.get("/agents/profiles")
-
-        assert response.status_code == 200
-        assert response.json() == []
-
-    def test_list_profiles_server_error(self, client):
-        """GET /agents/profiles returns 500 on internal error."""
-        with patch(
-            "cli_agent_orchestrator.utils.agent_profiles.list_agent_profiles",
-            side_effect=Exception("Failed to read profiles"),
-        ):
-            response = client.get("/agents/profiles")
-
-        assert response.status_code == 500
-        assert "Failed to list agent profiles" in response.json()["detail"]
-
-
-# ── Agent providers endpoint ─────────────────────────────────────────
-
-
-class TestAgentProviders:
-    """Tests for GET /agents/providers endpoint."""
-
-    def test_list_providers_all_installed(self, client):
-        """GET /agents/providers returns all providers as installed."""
-        with patch("shutil.which", return_value="/usr/bin/dummy"):
-            response = client.get("/agents/providers")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) == 7
-        names = [p["name"] for p in data]
-        assert "kiro_cli" in names
-        assert "claude_code" in names
-        assert "q_cli" in names
-        assert "codex" in names
-        assert "gemini_cli" in names
-        assert "kimi_cli" in names
-        assert "copilot_cli" in names
-        for p in data:
-            assert p["installed"] is True
-
-    def test_list_providers_none_installed(self, client):
-        """GET /agents/providers returns all providers as not installed."""
-        with patch("shutil.which", return_value=None):
-            response = client.get("/agents/providers")
-
-        assert response.status_code == 200
-        data = response.json()
-        for p in data:
-            assert p["installed"] is False
-
-    def test_list_providers_mixed_installed(self, client):
-        """GET /agents/providers returns mixed installation status."""
-
-        def mock_which(binary):
-            return "/usr/bin/kiro-cli" if binary == "kiro-cli" else None
-
-        with patch("shutil.which", side_effect=mock_which):
-            response = client.get("/agents/providers")
-
-        assert response.status_code == 200
-        data = response.json()
-        providers_dict = {p["name"]: p for p in data}
-        assert providers_dict["kiro_cli"]["installed"] is True
-        assert providers_dict["claude_code"]["installed"] is False
-        assert providers_dict["q_cli"]["installed"] is False
-        assert providers_dict["codex"]["installed"] is False
-        assert providers_dict["gemini_cli"]["installed"] is False
-        assert providers_dict["kimi_cli"]["installed"] is False
-        assert providers_dict["copilot_cli"]["installed"] is False
-
-    def test_list_providers_has_binary_field(self, client):
-        """Each provider entry has correct binary name."""
-        with patch("shutil.which", return_value=None):
-            response = client.get("/agents/providers")
-
-        data = response.json()
-        providers_dict = {p["name"]: p for p in data}
-        assert providers_dict["kiro_cli"]["binary"] == "kiro-cli"
-        assert providers_dict["claude_code"]["binary"] == "claude"
-        assert providers_dict["q_cli"]["binary"] == "q"
-        assert providers_dict["codex"]["binary"] == "codex"
-        assert providers_dict["gemini_cli"]["binary"] == "gemini"
-        assert providers_dict["kimi_cli"]["binary"] == "kimi"
-        assert providers_dict["copilot_cli"]["binary"] == "copilot"
+        assert response.status_code == 404
 
 
 # ── Skills endpoint ──────────────────────────────────────────────────
@@ -225,91 +116,12 @@ class TestGetSkillContent:
 
 
 class TestCreateSession:
-    """Tests for POST /sessions endpoint — success and error cases."""
+    """The anonymous session creation endpoint is removed."""
 
-    def test_create_session_success(self, client):
-        """POST /sessions creates a session and returns 201."""
-        mock_terminal = Terminal(
-            id="abcd1234",
-            name="test-window",
-            session_name="test-session",
-            provider="kiro_cli",
-            agent_profile="developer",
-        )
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.return_value = mock_terminal
+    def test_create_session_endpoint_is_removed(self, client):
+        response = client.post("/sessions", params={"provider": "kiro_cli"})
 
-            response = client.post(
-                "/sessions",
-                params={
-                    "provider": "kiro_cli",
-                    "agent_profile": "developer",
-                },
-            )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert data["id"] == "abcd1234"
-        assert data["provider"] == "kiro_cli"
-        assert data["agent_profile"] == "developer"
-
-    def test_create_session_with_session_name(self, client):
-        """POST /sessions with explicit session_name."""
-        mock_terminal = Terminal(
-            id="abcd1234",
-            name="test-window",
-            session_name="my-custom-session",
-            provider="q_cli",
-            agent_profile="developer",
-        )
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.return_value = mock_terminal
-
-            response = client.post(
-                "/sessions",
-                params={
-                    "provider": "q_cli",
-                    "agent_profile": "developer",
-                    "session_name": "my-custom-session",
-                },
-            )
-
-        assert response.status_code == 201
-        call_kwargs = mock_svc.create_terminal.call_args.kwargs
-        assert call_kwargs["session_name"] == "my-custom-session"
-        assert call_kwargs["new_session"] is True
-
-    def test_create_session_value_error(self, client):
-        """POST /sessions returns 400 on ValueError."""
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.side_effect = ValueError("Invalid provider")
-
-            response = client.post(
-                "/sessions",
-                params={
-                    "provider": "bad_provider",
-                    "agent_profile": "developer",
-                },
-            )
-
-        assert response.status_code == 400
-        assert "Invalid provider" in response.json()["detail"]
-
-    def test_create_session_server_error(self, client):
-        """POST /sessions returns 500 on unexpected error."""
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.side_effect = Exception("TMux crashed")
-
-            response = client.post(
-                "/sessions",
-                params={
-                    "provider": "kiro_cli",
-                    "agent_profile": "developer",
-                },
-            )
-
-        assert response.status_code == 500
-        assert "Failed to create session" in response.json()["detail"]
+        assert response.status_code == 405
 
 
 class TestListSessions:
@@ -442,67 +254,12 @@ class TestDeleteSession:
 
 
 class TestCreateTerminalInSession:
-    """Tests for POST /sessions/{session_name}/terminals endpoint."""
+    """The anonymous terminal-in-session creation endpoint is removed."""
 
-    def test_create_terminal_success(self, client):
-        """POST /sessions/{name}/terminals creates terminal and returns 201."""
-        mock_terminal = Terminal(
-            id="abcd5678",
-            name="test-window-2",
-            session_name="test-session",
-            provider="claude_code",
-            agent_profile="reviewer",
-        )
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.return_value = mock_terminal
+    def test_create_terminal_endpoint_is_removed(self, client):
+        response = client.post("/sessions/test-session/terminals", params={"provider": "codex"})
 
-            response = client.post(
-                "/sessions/test-session/terminals",
-                params={
-                    "provider": "claude_code",
-                    "agent_profile": "reviewer",
-                },
-            )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert data["id"] == "abcd5678"
-        assert data["session_name"] == "test-session"
-        call_kwargs = mock_svc.create_terminal.call_args.kwargs
-        assert call_kwargs["session_name"] == "test-session"
-        assert call_kwargs["new_session"] is False
-
-    def test_create_terminal_session_not_found(self, client):
-        """POST /sessions/{name}/terminals returns 404 for nonexistent session."""
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.side_effect = ValueError("Session 'nonexistent' not found")
-
-            response = client.post(
-                "/sessions/nonexistent/terminals",
-                params={
-                    "provider": "kiro_cli",
-                    "agent_profile": "developer",
-                },
-            )
-
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"]
-
-    def test_create_terminal_server_error(self, client):
-        """POST /sessions/{name}/terminals returns 500 on error."""
-        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.side_effect = Exception("TMux error")
-
-            response = client.post(
-                "/sessions/test-session/terminals",
-                params={
-                    "provider": "kiro_cli",
-                    "agent_profile": "developer",
-                },
-            )
-
-        assert response.status_code == 500
-        assert "Failed to create terminal" in response.json()["detail"]
+        assert response.status_code == 405
 
 
 class TestListTerminalsInSession:
@@ -515,13 +272,13 @@ class TestListTerminalsInSession:
                 "id": "abcd1234",
                 "tmux_session": "s1",
                 "provider": "kiro_cli",
-                "agent_identity_id": "implementation_partner",
+                "agent_id": "implementation_partner",
             },
             {
                 "id": "abcd5678",
                 "tmux_session": "s1",
                 "provider": "claude_code",
-                "agent_identity_id": None,
+                "agent_id": None,
             },
         ]
         with (
@@ -539,9 +296,9 @@ class TestListTerminalsInSession:
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 2
-        assert data[0]["agent_identity_id"] == "implementation_partner"
+        assert data[0]["agent_id"] == "implementation_partner"
         assert data[0]["terminal_token"] == "token-abcd1234"
-        assert data[1]["agent_identity_id"] is None
+        assert data[1]["agent_id"] is None
         assert data[1]["terminal_token"] == "token-abcd5678"
 
     def test_list_terminals_empty(self, client):
@@ -580,8 +337,8 @@ class TestGetTerminal:
             "name": "test-window",
             "session_name": "test-session",
             "provider": "kiro_cli",
-            "agent_profile": "developer",
-            "agent_identity_id": "implementation_partner",
+            "agent_id": "implementation_partner",
+            "workspace_context_id": "default",
         }
         with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             mock_svc.get_terminal.return_value = mock_terminal_dict
@@ -592,7 +349,8 @@ class TestGetTerminal:
         data = response.json()
         assert data["id"] == "abcd1234"
         assert data["provider"] == "kiro_cli"
-        assert data["agent_identity_id"] == "implementation_partner"
+        assert data["agent_id"] == "implementation_partner"
+        assert data["workspace_context_id"] == "default"
         mock_svc.get_terminal.assert_called_once_with("abcd1234")
 
     def test_get_terminal_not_found(self, client):

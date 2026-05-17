@@ -64,7 +64,7 @@ class TestDNSRebindingProtection:
         response = client.post(
             "/sessions",
             headers={"Host": "attack.poc"},
-            params={"provider": "kiro_cli", "agent_profile": "developer"},
+            params={"provider": "kiro_cli", "agent_id": "developer"},
         )
         # Should be blocked before reaching the endpoint
         assert response.status_code == 400
@@ -99,7 +99,7 @@ class TestCriticalEndpointProtection:
         response = client.post(
             "/sessions",
             headers={"Host": "malicious.com"},
-            params={"provider": "kiro_cli", "agent_profile": "developer"},
+            params={"provider": "kiro_cli", "agent_id": "developer"},
         )
         assert response.status_code == 400
 

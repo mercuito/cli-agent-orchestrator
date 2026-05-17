@@ -23,8 +23,8 @@ export interface Terminal {
   name: string
   provider: string
   session_name: string
-  agent_profile: string | null
-  agent_identity_id: string | null
+  agent_id: string
+  workspace_context_id: string
   status: string | null
   last_active: string | null
 }
@@ -39,8 +39,8 @@ export interface TerminalMeta {
   tmux_session: string
   tmux_window: string
   provider: string
-  agent_profile: string | null
-  agent_identity_id: string | null
+  agent_id: string
+  workspace_context_id: string
   terminal_token?: string | null
   last_active: string | null
 }
@@ -112,6 +112,23 @@ export interface AgentStatus {
   last_active_at: string | null
 }
 
+export interface AgentWriteRequest {
+  id?: string
+  display_name?: string
+  cli_provider?: string
+  workdir?: string
+  session_name?: string
+  prompt?: string
+  description?: string | null
+  model?: string | null
+  reasoning_effort?: string | null
+  mcp_servers?: Record<string, unknown>
+  tools?: string[]
+  cao_tools?: string[] | null
+  skills?: string[]
+  runtime_capabilities?: string[] | null
+}
+
 export interface AgentTimelineEvent {
   event_id: string
   event_name: string
@@ -141,17 +158,6 @@ export interface AgentRelatedEvents {
   causation_events: AgentCausationRelatedEvents
 }
 
-export interface AgentProfileInfo {
-  name: string
-  description: string
-  source: 'built-in' | 'local' | 'kiro' | 'q_cli'
-}
-
-export interface AgentDirsSettings {
-  agent_dirs: Record<string, string>
-  extra_dirs: string[]
-}
-
 export interface InboxMessage {
   id: string
   sender_id: string
@@ -167,19 +173,13 @@ export interface Flow {
   name: string
   file_path: string
   schedule: string
-  agent_profile: string
+  agent_id: string
   provider: string
   script: string | null
   last_run: string | null
   next_run: string | null
   enabled: boolean
   prompt_template: string | null
-}
-
-export interface ProviderInfo {
-  name: string
-  binary: string
-  installed: boolean
 }
 
 export interface MonitoringSession {
@@ -215,28 +215,23 @@ export interface BatonEvent {
 }
 
 export const api = {
-  // Agent Profiles & Providers
-  listProfiles: () => fetchJSON<AgentProfileInfo[]>('/agents/profiles'),
-  listProviders: () => fetchJSON<ProviderInfo[]>('/agents/providers'),
-
-  // Settings
-  getAgentDirs: () => fetchJSON<AgentDirsSettings>('/settings/agent-dirs'),
-  setAgentDirs: (data: { agent_dirs?: Record<string, string>; extra_dirs?: string[] }) =>
-    fetchJSON<AgentDirsSettings>('/settings/agent-dirs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    }),
-
   // Sessions
   listSessions: () => fetchJSON<Session[]>('/sessions'),
   getSession: (name: string) => fetchJSON<SessionDetail>(`/sessions/${name}`),
-  createSession: (provider: string, agentProfile: string, sessionName?: string, workingDirectory?: string) =>
-    fetchJSON<Terminal>(`/sessions?provider=${provider}&agent_profile=${agentProfile}${sessionName ? `&session_name=${sessionName}` : ''}${workingDirectory ? `&working_directory=${encodeURIComponent(workingDirectory)}` : ''}`, { method: 'POST', timeoutMs: 90000 }),
   deleteSession: (name: string) => fetchJSON<{ success: boolean; deleted: string[]; errors: any[] }>(`/sessions/${name}`, { method: 'DELETE' }),
 
   // Terminals
   getTerminal: (id: string) => fetchJSON<Terminal>(`/terminals/${id}`),
+  startAgent: (agentId: string) =>
+    fetchJSON<AgentRuntimeTerminalLink>(`/agents/${encodeURIComponent(agentId)}/start`, {
+      method: 'POST',
+      timeoutMs: 90000,
+    }),
+  stopAgent: (agentId: string) =>
+    fetchJSON<{ success: boolean }>(`/agents/${encodeURIComponent(agentId)}/stop`, {
+      method: 'POST',
+      timeoutMs: 30000,
+    }),
   getAgentRuntimeTerminal: (agentId: string, agentToken?: string | null) => {
     const query = agentToken ? `?agent_token=${encodeURIComponent(agentToken)}` : ''
     return fetchJSON<AgentRuntimeTerminalLink>(
@@ -244,6 +239,18 @@ export const api = {
     )
   },
   listAgents: () => fetchJSON<AgentStatus[]>('/agents'),
+  createAgent: (agent: AgentWriteRequest) =>
+    fetchJSON<AgentStatus>('/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(agent),
+    }),
+  updateAgent: (agentId: string, agent: AgentWriteRequest) =>
+    fetchJSON<AgentStatus>(`/agents/${encodeURIComponent(agentId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(agent),
+    }),
   getAgentTimeline: (agentId: string) =>
     fetchJSON<AgentTimeline>(
       `/agents/${encodeURIComponent(agentId)}/timeline`,
@@ -263,8 +270,6 @@ export const api = {
   deleteTerminal: (id: string) => fetchJSON<{ success: boolean }>(`/terminals/${id}`, { method: 'DELETE' }),
   getWorkingDirectory: (id: string) =>
     fetchJSON<{ working_directory: string | null }>(`/terminals/${id}/working-directory`),
-  addTerminalToSession: (sessionName: string, provider: string, agentProfile: string, workingDirectory?: string) =>
-    fetchJSON<Terminal>(`/sessions/${sessionName}/terminals?provider=${provider}&agent_profile=${agentProfile}${workingDirectory ? `&working_directory=${encodeURIComponent(workingDirectory)}` : ''}`, { method: 'POST', timeoutMs: 90000 }),
 
   // Inbox
   getInboxMessages: (terminalId: string, limit?: number, status?: string) =>
@@ -303,7 +308,7 @@ export const api = {
 
   // Flows
   listFlows: () => fetchJSON<Flow[]>('/flows'),
-  createFlow: (data: { name: string; schedule: string; agent_profile: string; provider?: string; prompt_template: string }) =>
+  createFlow: (data: { name: string; schedule: string; agent_id: string; provider?: string; prompt_template: string }) =>
     fetchJSON<Flow>('/flows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

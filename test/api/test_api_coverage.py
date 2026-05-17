@@ -23,7 +23,7 @@ class TestFlowNameValidation:
             CreateFlowRequest(
                 name=bad_name,
                 schedule="0 * * * *",
-                agent_profile="dev",
+                agent_id="dev",
                 prompt_template="x",
             )
 
@@ -35,26 +35,16 @@ class TestFlowNameValidation:
         req = CreateFlowRequest(
             name=good_name,
             schedule="0 * * * *",
-            agent_profile="dev",
+            agent_id="dev",
             prompt_template="x",
         )
         assert req.name == good_name
 
 
-class TestAgentProfilesEndpoint:
-    """Test GET /agents/profiles."""
+class TestRemovedAgentProfileEndpoint:
+    """The old profile listing endpoint is removed by the agent cutover."""
 
-    def test_list_profiles_success(self, client):
-        with patch("cli_agent_orchestrator.utils.agent_profiles.list_agent_profiles") as mock_list:
-            mock_list.return_value = [
-                {"name": "dev", "description": "Developer", "source": "built-in"}
-            ]
-            resp = client.get("/agents/profiles")
-            assert resp.status_code == 200
-            assert len(resp.json()) == 1
+    def test_profiles_endpoint_is_removed(self, client):
+        resp = client.get("/agents/profiles")
 
-    def test_list_profiles_error(self, client):
-        with patch("cli_agent_orchestrator.utils.agent_profiles.list_agent_profiles") as mock_list:
-            mock_list.side_effect = Exception("scan error")
-            resp = client.get("/agents/profiles")
-            assert resp.status_code == 500
+        assert resp.status_code == 404

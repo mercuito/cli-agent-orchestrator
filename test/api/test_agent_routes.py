@@ -182,6 +182,52 @@ def test_get_agent_unknown_returns_404(client, monkeypatch):
     assert "Unknown CAO agent" in response.json()["detail"]
 
 
+def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):
+    existing_agent = _agent()
+    written_agent = None
+
+    def _write_agent(agent):
+        nonlocal written_agent
+        written_agent = agent
+
+    class _WriteThroughAgentManager:
+        def status_for_agent(self, agent_id: str):
+            assert written_agent is not None
+            return AgentStatus(
+                agent_id=agent_id,
+                display_name=written_agent.display_name,
+                cli_provider=written_agent.cli_provider,
+                workdir=written_agent.workdir,
+                session_name=written_agent.session_name,
+                agent=written_agent,
+                active=False,
+            )
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.load_agent",
+        lambda agent_id: existing_agent,
+    )
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.write_agent", _write_agent)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _WriteThroughAgentManager(),
+    )
+
+    response = client.put(
+        "/agents/implementation_partner",
+        json={
+            "mcp_servers": {},
+            "tools": [],
+            "skills": [],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["config"]["mcp_servers"] == {}
+    assert response.json()["config"]["tools"] == []
+    assert response.json()["config"]["skills"] == []
+
+
 def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch):
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_agent_manager",
@@ -194,8 +240,7 @@ def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch
             "name": "developer-0000",
             "provider": "codex",
             "session_name": "cao-implementation-partner",
-            "agent_profile": "developer",
-            "agent_identity_id": "implementation_partner",
+            "agent_id": "implementation_partner",
             "workspace_context_id": "wctx_abc",
             "status": "idle",
             "last_active": datetime(2026, 5, 13, 12, 0, 0),
@@ -266,7 +311,7 @@ def _linear_mentioned_event(
             if participants is not None
             else (
                 AgentParticipant(
-                    agent_identity_id="implementation_partner",
+                    agent_id="implementation_partner",
                     role="mentioned",
                 ),
             )
@@ -294,7 +339,7 @@ def _patch_default_agent_manager(monkeypatch, manager):
     return status_calls
 
 
-def _publish_identity_timeline_scenario(
+def _publish_agent_timeline_scenario(
     *,
     mention_correlation_id: str,
     broadcast_correlation_id: str,
@@ -313,7 +358,7 @@ def _publish_identity_timeline_scenario(
         correlation_id=mention_correlation_id,
     )
     delivery = notification_delivery_event(
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id="wctx-1",
         inbox_notification_id=42,
         inbox_receiver_id="implementation_partner",
@@ -338,10 +383,10 @@ def _publish_identity_timeline_scenario(
         correlation_id=broadcast_correlation_id,
         participants=(
             AgentParticipant(
-                agent_identity_id="implementation_partner",
+                agent_id="implementation_partner",
                 role=broadcast_partner_role,
             ),
-            AgentParticipant(agent_identity_id="reviewer", role=broadcast_reviewer_role),
+            AgentParticipant(agent_id="reviewer", role=broadcast_reviewer_role),
         ),
     )
     workspace = workspace_runtime_event(
@@ -418,7 +463,7 @@ def test_agent_timeline_route_returns_participant_index_rows(
 ):
     manager = _manager_with_timeline_agents()
     status_calls = _patch_default_agent_manager(monkeypatch, manager)
-    mention, delivery, broadcast, workspace = _publish_identity_timeline_scenario(
+    mention, delivery, broadcast, workspace = _publish_agent_timeline_scenario(
         mention_correlation_id="thread-1",
         broadcast_correlation_id="thread-broadcast",
         broadcast_partner_role="mentioned",
@@ -461,7 +506,7 @@ def test_agent_timeline_route_preserves_broadcast_viewpoint(
 ):
     manager = _manager_with_timeline_agents()
     _patch_default_agent_manager(monkeypatch, manager)
-    _, _, broadcast, _ = _publish_identity_timeline_scenario(
+    _, _, broadcast, _ = _publish_agent_timeline_scenario(
         mention_correlation_id="thread-1",
         broadcast_correlation_id="thread-broadcast",
         broadcast_partner_role="mentioned",
@@ -498,8 +543,8 @@ def test_agent_timeline_route_preserves_broadcast_viewpoint(
     }
     assert reviewer_event["event_data"]["message_id"] == "msg-broadcast"
     assert reviewer_event["event_data"]["agent_participants"] == [
-        {"agent_identity_id": "implementation_partner", "role": "mentioned"},
-        {"agent_identity_id": "reviewer", "role": "observer"},
+        {"agent_id": "implementation_partner", "role": "mentioned"},
+        {"agent_id": "reviewer", "role": "observer"},
     ]
 
 
@@ -523,7 +568,7 @@ def test_agent_related_events_route_uses_envelope_threads(
 ):
     manager = _manager_with_timeline_agents()
     _patch_default_agent_manager(monkeypatch, manager)
-    mention, delivery, _, _ = _publish_identity_timeline_scenario(
+    mention, delivery, _, _ = _publish_agent_timeline_scenario(
         mention_correlation_id="thread-1",
         broadcast_correlation_id="thread-broadcast",
         broadcast_partner_role="mentioned",
@@ -587,7 +632,7 @@ def test_agent_related_events_route_keeps_untaught_events_related_and_roleful(
         audit_kind="workspace_scan",
         confidence=0.92,
         agent_participants=(
-            AgentParticipant(agent_identity_id="implementation_partner", role="participant"),
+            AgentParticipant(agent_id="implementation_partner", role="participant"),
         ),
     )
     effect = replace(
@@ -602,7 +647,7 @@ def test_agent_related_events_route_keeps_untaught_events_related_and_roleful(
         audit_kind="related_probe",
         confidence=0.73,
         agent_participants=(
-            AgentParticipant(agent_identity_id="implementation_partner", role="effect_target"),
+            AgentParticipant(agent_id="implementation_partner", role="effect_target"),
         ),
     )
     dispatcher = CaoEventDispatcher((_ExperimentalAuditEvent,), persist_events=True)

@@ -124,20 +124,6 @@ describe('API wrapper', () => {
     expect(mockFetch).toHaveBeenCalledWith('/sessions', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
-  it('listProfiles fetches /agents/profiles', async () => {
-    const profiles = [{ name: 'dev', description: 'Developer', source: 'built-in' }]
-    mockResponse(profiles)
-    const result = await api.listProfiles()
-    expect(result).toEqual(profiles)
-  })
-
-  it('listProviders fetches /agents/providers', async () => {
-    const providers = [{ name: 'kiro_cli', binary: 'kiro-cli', installed: true }]
-    mockResponse(providers)
-    const result = await api.listProviders()
-    expect(result).toEqual(providers)
-  })
-
   it('listAgents fetches the committed agent roster endpoint', async () => {
     const agents = [
       {
@@ -165,6 +151,70 @@ describe('API wrapper', () => {
 
     expect(result).toEqual(agents)
     expect(mockFetch).toHaveBeenCalledWith('/agents', expect.any(Object))
+  })
+
+  it('createAgent POSTs durable agent config to /agents', async () => {
+    const agent = {
+      agent_id: 'new-agent',
+      display_name: 'New Agent',
+      cli_provider: 'codex',
+      workdir: '/repo',
+      session_name: 'new-agent',
+      config: {},
+      active: false,
+      active_terminal_id: null,
+      active_workspace_context_id: null,
+      last_active_at: null,
+    }
+    mockResponse(agent, 201)
+
+    const result = await api.createAgent({
+      id: 'new-agent',
+      display_name: 'New Agent',
+      cli_provider: 'codex',
+      workdir: '/repo',
+    })
+
+    expect(result).toEqual(agent)
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('/agents')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({
+      id: 'new-agent',
+      display_name: 'New Agent',
+      cli_provider: 'codex',
+      workdir: '/repo',
+    })
+  })
+
+  it('updateAgent PUTs durable agent config to an encoded agent endpoint', async () => {
+    const agent = {
+      agent_id: 'linear/ops',
+      display_name: 'Linear Ops',
+      cli_provider: 'codex',
+      workdir: '/repo',
+      session_name: 'linear-ops',
+      config: {},
+      active: false,
+      active_terminal_id: null,
+      active_workspace_context_id: null,
+      last_active_at: null,
+    }
+    mockResponse(agent)
+
+    const result = await api.updateAgent('linear/ops', {
+      display_name: 'Linear Ops',
+      model: 'gpt-5.4',
+    })
+
+    expect(result).toEqual(agent)
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('/agents/linear%2Fops')
+    expect(opts.method).toBe('PUT')
+    expect(JSON.parse(opts.body)).toEqual({
+      display_name: 'Linear Ops',
+      model: 'gpt-5.4',
+    })
   })
 
   it('getAgentTimeline URL-encodes the selected agent id', async () => {
@@ -285,32 +335,13 @@ describe('API wrapper', () => {
     })
   })
 
-  it('createSession sends POST with params', async () => {
-    const terminal = { id: 't1', name: 'dev', provider: 'kiro_cli', session_name: 's1' }
-    mockResponse(terminal)
-    await api.createSession('kiro_cli', 'developer')
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/sessions?provider=kiro_cli&agent_profile=developer'),
-      expect.objectContaining({ method: 'POST' })
-    )
-  })
-
-  it('createSession includes working directory when provided', async () => {
-    mockResponse({ id: 't1' })
-    await api.createSession('kiro_cli', 'developer', undefined, '/home/user/project')
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('working_directory='),
-      expect.any(Object)
-    )
-  })
-
   it('getTerminal fetches terminal metadata', async () => {
     const terminal = {
       id: 't1',
       name: 't1',
       provider: 'codex',
       session_name: 'cao-linear-discovery-partner',
-      agent_profile: 'discovery_partner',
+      agent_id: 'discovery_partner',
     }
     mockResponse(terminal)
     const result = await api.getTerminal('t1')
@@ -362,7 +393,7 @@ describe('API wrapper', () => {
   })
 
   it('createFlow sends POST with JSON body', async () => {
-    const flow = { name: 'new-flow', schedule: '0 9 * * *', agent_profile: 'dev', prompt_template: 'Do stuff' }
+    const flow = { name: 'new-flow', schedule: '0 9 * * *', agent_id: 'dev', prompt_template: 'Do stuff' }
     mockResponse(flow)
     await api.createFlow(flow)
     expect(mockFetch).toHaveBeenCalledWith(

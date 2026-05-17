@@ -16,7 +16,7 @@ def sample_flow():
         name="test-flow",
         file_path="/path/to/test-flow.flow.md",
         schedule="0 * * * *",
-        agent_profile="developer",
+        agent_id="developer",
         provider="kiro_cli",
         script="",
         last_run=None,
@@ -34,7 +34,7 @@ def sample_flows(sample_flow):
             name="second-flow",
             file_path="/path/to/second-flow.flow.md",
             schedule="0 9 * * 1-5",
-            agent_profile="reviewer",
+            agent_id="reviewer",
             provider="claude_code",
             script="",
             last_run=datetime(2026, 3, 9, 9, 0, 0),
@@ -95,7 +95,7 @@ class TestGetFlow:
             data = response.json()
             assert data["name"] == "test-flow"
             assert data["schedule"] == "0 * * * *"
-            assert data["agent_profile"] == "developer"
+            assert data["agent_id"] == "developer"
             mock_svc.get_flow.assert_called_once_with("test-flow")
 
     def test_get_flow_not_found(self, client):
@@ -150,7 +150,7 @@ class TestCreateFlow:
                 json={
                     "name": "test-flow",
                     "schedule": "0 * * * *",
-                    "agent_profile": "developer",
+                    "agent_id": "developer",
                     "provider": "kiro_cli",
                     "prompt_template": "Do some work.",
                 },
@@ -187,7 +187,7 @@ class TestCreateFlow:
                     json={
                         "name": "fail-flow",
                         "schedule": "0 * * * *",
-                        "agent_profile": "developer",
+                        "agent_id": "developer",
                         "provider": "kiro_cli",
                         "prompt_template": "Do work.",
                     },
@@ -203,7 +203,7 @@ class TestCreateFlow:
                 json={
                     "name": bad_name,
                     "schedule": "0 * * * *",
-                    "agent_profile": "developer",
+                    "agent_id": "developer",
                     "provider": "kiro_cli",
                     "prompt_template": "Do work.",
                 },
@@ -236,7 +236,7 @@ class TestCreateFlow:
                 json={
                     "name": "bad-flow",
                     "schedule": "0 * * * *",
-                    "agent_profile": "developer",
+                    "agent_id": "developer",
                     "provider": "kiro_cli",
                     "prompt_template": "Do work.",
                 },

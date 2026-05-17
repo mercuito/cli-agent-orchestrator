@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator import constants
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent import Agent
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.events import CaoEventDispatcher
@@ -200,7 +200,7 @@ def _linear_context_only_payload(
                 "issue": {
                     "id": f"issue-{session_id}",
                     "identifier": "CAO-29",
-                    "title": "Route Linear notifications to mapped CAO agent identities",
+                    "title": "Route Linear notifications to mapped CAO agents",
                 },
             },
         },
@@ -259,13 +259,13 @@ def _resolved_presence() -> LinearResolvedPresence:
             app_key="implementation_partner",
             app_user_name="Implementation Partner",
         ),
-        identity=AgentIdentity(
+        agent=Agent(
             id="implementation_partner",
             display_name="Implementation Partner",
-            agent_profile="developer",
             cli_provider="codex",
             workdir="/repo",
             session_name="implementation-partner",
+            prompt="Implement the requested CAO task.",
         ),
     )
 
@@ -279,13 +279,13 @@ def _resolved_discovery_presence() -> LinearResolvedPresence:
             app_user_name="Discovery Partner",
             access_token="linear-token",
         ),
-        identity=AgentIdentity(
+        agent=Agent(
             id="discovery_partner",
             display_name="Discovery Partner",
-            agent_profile="yards-discovery-partner",
             cli_provider="codex",
             workdir="/repo",
             session_name="discovery-partner",
+            prompt="Discover the requested CAO context.",
         ),
     )
 
@@ -306,11 +306,23 @@ def _use_mapped_linear_runtime(
         "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
         lambda resolved: handle,
     )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.should_enable_linear_agent_policies",
+        lambda: False,
+    )
     handle.update_external_url = Mock()
     handle.create_activity = Mock(return_value={"id": "activity-lifecycle"})
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime.app_client.update_agent_session_external_url",
         handle.update_external_url,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.app_client.public_cao_runtime_url",
+        lambda terminal_id, *, agent_id=None: (
+            f"https://cao.test/agents/{agent_id}"
+            if agent_id
+            else f"https://cao.test/terminals/{terminal_id}"
+        ),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime.app_client.create_agent_activity",
@@ -351,8 +363,16 @@ def _legacy_linear_route_compatibility(tmp_path, monkeypatch):
         config_path,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.has_legacy_linear_provider_config",
+        "cli_agent_orchestrator.linear.workspace_provider.should_enable_linear_routes",
         lambda: True,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.app_client.public_cao_runtime_url",
+        lambda terminal_id, *, agent_id=None: (
+            f"https://cao.test/agents/{agent_id}"
+            if agent_id
+            else f"https://cao.test/terminals/{terminal_id}"
+        ),
     )
 
 
@@ -363,7 +383,7 @@ def test_linear_oauth_callback_requires_code(client):
     assert response.json()["detail"] == "Missing Linear OAuth code"
 
 
-def test_linear_oauth_callback_returns_install_identity(client, monkeypatch):
+def test_linear_oauth_callback_returns_install_agent(client, monkeypatch):
     install = Mock(
         return_value={
             "viewer": {"id": "app-user-1", "name": "Discovery Partner"},
@@ -398,12 +418,10 @@ def test_linear_oauth_callback_surfaces_linear_error(client):
     assert response.json()["detail"] == "Nope"
 
 
-def test_linear_routes_honor_disabled_workspace_provider(client, tmp_path, monkeypatch):
-    enabled_config = tmp_path / "workspace-providers.toml"
-    enabled_config.write_text('enabled = ["github"]\n')
+def test_linear_routes_require_agent_owned_linear_config(client, monkeypatch):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.workspace_providers.registry.WORKSPACE_PROVIDERS_CONFIG_PATH",
-        enabled_config,
+        "cli_agent_orchestrator.linear.workspace_provider.should_enable_linear_routes",
+        lambda: False,
     )
 
     response = client.post(
@@ -416,14 +434,14 @@ def test_linear_routes_honor_disabled_workspace_provider(client, tmp_path, monke
     assert response.json()["detail"] == "Linear workspace provider is not enabled"
 
 
-def test_linear_routes_require_explicit_or_legacy_provider_config(client, tmp_path, monkeypatch):
+def test_linear_routes_require_agent_owned_provider_config(client, tmp_path, monkeypatch):
     config_path = tmp_path / "missing-workspace-providers.toml"
     monkeypatch.setattr(
         "cli_agent_orchestrator.workspace_providers.registry.WORKSPACE_PROVIDERS_CONFIG_PATH",
         config_path,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.has_legacy_linear_provider_config",
+        "cli_agent_orchestrator.linear.workspace_provider.should_enable_linear_routes",
         lambda: False,
     )
 
@@ -758,7 +776,7 @@ def test_linear_agent_webhook_routes_session_comment_body_without_prompt_context
                     "issue": {
                         "id": "issue-43",
                         "identifier": "CAO-43",
-                        "title": "Durable identity",
+                        "title": "Durable agent",
                     },
                 },
             },
