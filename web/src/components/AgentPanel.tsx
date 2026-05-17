@@ -394,8 +394,13 @@ export function AgentPanel({
       })
       setAgents(previous => [...previous.filter(agent => agent.agent_id !== created.agent_id), created])
       setSelectedAgentId(created.agent_id)
+      setEditingAgentId(created.agent_id)
+      setAgentTomlDraft(formatAgentToml(created.config))
+      setAgentPromptDraft(created.config.prompt)
+      setAgentSaveError(null)
       setCreateMode(false)
       setCreateDraft(emptyCreateDraft)
+      setShowSpawnModal(false)
       showSnackbar({ type: 'success', message: `Agent ${created.agent_id} created` })
     } catch (error) {
       showSnackbar({ type: 'error', message: error instanceof Error ? error.message : `Failed to create ${agentId}` })

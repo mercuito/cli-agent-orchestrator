@@ -122,6 +122,7 @@ const updateAgent = vi.hoisted(() =>
 const createAgent = vi.hoisted(() =>
   vi.fn((body: any) => Promise.resolve(agentStatus(body.id, body.display_name || body.id))),
 )
+const startAgent = vi.hoisted(() => vi.fn())
 const getAgentTimeline = vi.hoisted(() =>
   vi.fn(() =>
     Promise.resolve({
@@ -154,6 +155,7 @@ vi.mock('../api', () => ({
     listAgents,
     updateAgent,
     createAgent,
+    startAgent,
     getAgentTimeline,
     getAgentRelatedEvents: vi.fn(() => Promise.resolve({
       event: null,
@@ -195,6 +197,7 @@ describe('AgentPanel', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    listAgents.mockImplementation(() => Promise.resolve([agentStatus('aria', 'Aria')]))
     storeState.sessions = []
     storeState.activeSession = null
     storeState.activeSessionDetail = null
@@ -339,6 +342,25 @@ describe('AgentPanel', () => {
           workdir: '/tmp/new-agent',
         }))
       })
+      expect(await screen.findByLabelText('new-agent agent.toml')).toBeInTheDocument()
+    })
+
+    it('disables already-running agents in the spawn modal with the running terminal in the tooltip', async () => {
+      listAgents.mockResolvedValue([
+        {
+          ...agentStatus('aria', 'Aria'),
+          active: true,
+          active_terminal_id: 'term-live',
+        },
+      ] as any)
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /spawn agent/i }))
+      const runningAgent = await screen.findByTitle('Already running: term-live')
+      fireEvent.click(runningAgent)
+
+      expect(runningAgent).toBeDisabled()
+      expect(startAgent).not.toHaveBeenCalled()
     })
   })
 
