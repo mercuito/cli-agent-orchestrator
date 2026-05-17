@@ -84,10 +84,10 @@ test/
 ├── cli/                      # CLI command tests
 │   ├── test_main.py
 │   └── commands/
+│       ├── test_agent.py
 │       ├── test_flow.py
 │       ├── test_init.py
 │       ├── test_install.py
-│       ├── test_launch.py
 │       └── test_shutdown.py
 ├── clients/                  # Client tests
 │   ├── test_database.py
@@ -132,7 +132,7 @@ The project aims for >90% test coverage for core modules.
 ### Current Coverage Status (511 tests passing)
 
 **Modules at 100% Coverage:**
-- `cli/commands/` - All CLI commands (flow, init, install, launch, shutdown)
+- `cli/commands/` - Core CLI commands (agent, flow, init, install, shutdown)
 - `constants.py` - Configuration constants
 - `mcp_server/models.py`, `mcp_server/utils.py` - MCP models and utilities
 - `models/` - All Pydantic models

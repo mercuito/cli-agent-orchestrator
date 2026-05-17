@@ -611,43 +611,13 @@ Unit tests for the `TmuxClient.send_keys` method are in `test/clients/test_tmux_
 uv run pytest test/clients/test_tmux_send_keys.py -v
 ```
 
-## Launch Command Tests
-
-Unit tests for the `launch` CLI command are in `test/cli/commands/test_launch.py`.
-
-**10 tests covering:**
-
-1. **Core functionality (4 tests)**
-   - Working directory included in API params
-   - Custom session name
-   - Headless mode (no tmux attach)
-   - Invalid provider error
-
-2. **Error handling (2 tests)**
-   - RequestException (server unreachable)
-   - Generic exception
-
-3. **Workspace access confirmation (4 tests)**
-   - Confirmation shown and accepted for `claude_code` provider
-   - Confirmation declined cancels launch
-   - `--yolo` flag skips confirmation
-   - Default provider (`kiro_cli`) also shows confirmation
-
-**Coverage:** 100% of launch.py
-
-### Running Launch Tests
-
-```bash
-uv run pytest test/cli/commands/test_launch.py -v
-```
-
 ## Test Quality Metrics
 
 - **Provider Unit Test Count:** ~200 (across all providers)
-- **CLI Command Test Count:** ~10
+- **CLI Command Test Count:** ~170
 - **Client Unit Test Count:** ~20
 - **Integration Test Count:** 9
 - **Total Test Count:** 511
-- **Coverage:** 84% overall; 96-100% of all provider modules and launch.py
+- **Coverage:** 84% overall; 96-100% of all provider modules
 - **Execution Time:** <5s (unit), <90s (integration)
-- **Test Categories:** 12 (initialization, status label-format, status bullet-format, extraction label-format, extraction bullet-format, command building, patterns, prompts, handoff, edge cases, tmux send_keys, workspace confirmation)
+- **Test Categories:** 12 (initialization, status label-format, status bullet-format, extraction label-format, extraction bullet-format, command building, patterns, prompts, handoff, edge cases, tmux send_keys, agent command behavior)
