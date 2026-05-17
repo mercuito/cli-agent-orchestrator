@@ -39,6 +39,7 @@ work/
 
 # AI tool configs
 .claude/
+!.claude/
 .codex/
 !.codex/
 !.codex/agents/
