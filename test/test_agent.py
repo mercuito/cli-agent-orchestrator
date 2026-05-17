@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import FrozenInstanceError
+from unittest.mock import patch
 
 import pytest
 
@@ -128,6 +129,24 @@ def test_write_then_load_agent_round_trips_and_sets_permissions(tmp_path):
     assert (tmp_path / "implementation_partner" / "prompt.md").stat().st_mode & 0o777 == (
         AGENT_PROMPT_MODE
     )
+
+
+def test_write_agent_failed_replace_preserves_existing_file_and_removes_temp(tmp_path):
+    given_agent = _agent()
+    write_agent(given_agent, agents_root=tmp_path)
+    config_path = tmp_path / given_agent.id / "agent.toml"
+    original_text = config_path.read_text()
+    original_mode = config_path.stat().st_mode & 0o777
+
+    with (
+        patch("cli_agent_orchestrator.agent.os.replace", side_effect=OSError("boom")),
+        pytest.raises(OSError, match="boom"),
+    ):
+        write_agent(_agent(model="gpt-5.4"), agents_root=tmp_path)
+
+    assert config_path.read_text() == original_text
+    assert config_path.stat().st_mode & 0o777 == original_mode
+    assert not list((tmp_path / given_agent.id).glob(".agent.toml.*"))
 
 
 def test_load_agent_errors_name_agent_id_and_path(tmp_path):
