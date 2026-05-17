@@ -35,8 +35,11 @@ from cli_agent_orchestrator.agent import (
     Agent,
     AGENTS_ROOT,
     AgentConfigError,
+    LinearConfig,
+    LinearToolAccessConfig,
     AgentWorkspaceContextConfig,
     load_agent,
+    patch_agent_config,
     write_agent,
 )
 from cli_agent_orchestrator.clients.database import (
@@ -371,6 +374,154 @@ class AgentStatusResponse(BaseModel):
         )
 
 
+class AgentWorkspaceContextWriteRequest(BaseModel):
+    enabled: Optional[bool] = None
+    resolver_id: Optional[str] = None
+
+    def to_config(
+        self,
+        existing: AgentWorkspaceContextConfig | None = None,
+    ) -> AgentWorkspaceContextConfig:
+        base = existing or AgentWorkspaceContextConfig()
+        return AgentWorkspaceContextConfig(
+            enabled=self.enabled if self.enabled is not None else base.enabled,
+            resolver_id=(
+                self.resolver_id
+                if self.resolver_id is not None
+                else base.resolver_id
+            ),
+        )
+
+
+class LinearToolAccessWriteRequest(BaseModel):
+    access_id: str
+    tools: Optional[List[str]] = None
+    issues: Optional[List[str]] = None
+    create_team_ids: Optional[List[str]] = None
+    create_project_ids: Optional[List[str]] = None
+    create_parent_issues: Optional[List[str]] = None
+    allow_top_level_create: Optional[bool] = None
+    update_fields: Optional[List[str]] = None
+    reason: Optional[str] = None
+
+    def to_config(
+        self,
+        existing: LinearToolAccessConfig | None = None,
+    ) -> LinearToolAccessConfig:
+        return LinearToolAccessConfig(
+            access_id=self.access_id,
+            tools=tuple(self.tools if self.tools is not None else (existing.tools if existing else ())),
+            issues=tuple(
+                self.issues if self.issues is not None else (existing.issues if existing else ())
+            ),
+            create_team_ids=tuple(
+                self.create_team_ids
+                if self.create_team_ids is not None
+                else (existing.create_team_ids if existing else ())
+            ),
+            create_project_ids=tuple(
+                self.create_project_ids
+                if self.create_project_ids is not None
+                else (existing.create_project_ids if existing else ())
+            ),
+            create_parent_issues=tuple(
+                self.create_parent_issues
+                if self.create_parent_issues is not None
+                else (existing.create_parent_issues if existing else ())
+            ),
+            allow_top_level_create=(
+                self.allow_top_level_create
+                if self.allow_top_level_create is not None
+                else (existing.allow_top_level_create if existing else False)
+            ),
+            update_fields=tuple(
+                self.update_fields
+                if self.update_fields is not None
+                else (existing.update_fields if existing else ())
+            ),
+            reason=self.reason if self.reason is not None else (existing.reason if existing else None),
+        )
+
+
+class LinearWriteRequest(BaseModel):
+    app_key: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    webhook_secret: Optional[str] = None
+    oauth_redirect_uri: Optional[str] = None
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_expires_at: Optional[str] = None
+    app_user_id: Optional[str] = None
+    app_user_name: Optional[str] = None
+    oauth_state: Optional[str] = None
+    tool_access: Optional[List[LinearToolAccessWriteRequest]] = None
+
+    def to_config(self, existing: LinearConfig | None = None) -> LinearConfig:
+        existing_access = {
+            access.access_id: access for access in existing.tool_access
+        } if existing else {}
+        if self.tool_access is None:
+            tool_access = tuple(existing.tool_access) if existing else ()
+        else:
+            tool_access = tuple(
+                access.to_config(existing_access.get(access.access_id))
+                for access in self.tool_access
+            )
+        return LinearConfig(
+            app_key=self.app_key if self.app_key is not None else (existing.app_key if existing else None),
+            client_id=(
+                self.client_id if self.client_id is not None else (existing.client_id if existing else None)
+            ),
+            client_secret=(
+                self.client_secret
+                if self.client_secret is not None
+                else (existing.client_secret if existing else None)
+            ),
+            webhook_secret=(
+                self.webhook_secret
+                if self.webhook_secret is not None
+                else (existing.webhook_secret if existing else None)
+            ),
+            oauth_redirect_uri=(
+                self.oauth_redirect_uri
+                if self.oauth_redirect_uri is not None
+                else (existing.oauth_redirect_uri if existing else None)
+            ),
+            access_token=(
+                self.access_token
+                if self.access_token is not None
+                else (existing.access_token if existing else None)
+            ),
+            refresh_token=(
+                self.refresh_token
+                if self.refresh_token is not None
+                else (existing.refresh_token if existing else None)
+            ),
+            token_expires_at=(
+                self.token_expires_at
+                if self.token_expires_at is not None
+                else (existing.token_expires_at if existing else None)
+            ),
+            app_user_id=(
+                self.app_user_id
+                if self.app_user_id is not None
+                else (existing.app_user_id if existing else None)
+            ),
+            app_user_name=(
+                self.app_user_name
+                if self.app_user_name is not None
+                else (existing.app_user_name if existing else None)
+            ),
+            oauth_state=(
+                self.oauth_state
+                if self.oauth_state is not None
+                else (existing.oauth_state if existing else None)
+            ),
+            tool_access=tool_access,
+        )
+
+
 class AgentWriteRequest(BaseModel):
     id: Optional[str] = None
     display_name: Optional[str] = None
@@ -383,12 +534,32 @@ class AgentWriteRequest(BaseModel):
     reasoning_effort: Optional[str] = None
     mcp_servers: Optional[Dict[str, Any]] = None
     tools: Optional[List[str]] = None
+    tool_aliases: Optional[Dict[str, str]] = None
+    tools_settings: Optional[Dict[str, Any]] = None
     cao_tools: Optional[List[str]] = None
     skills: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    resources: Optional[List[str]] = None
+    hooks: Optional[Dict[str, Any]] = None
+    use_legacy_mcp_json: Optional[bool] = None
     runtime_capabilities: Optional[List[str]] = None
+    codex_config: Optional[Dict[str, Any]] = None
+    workspace_context: Optional[AgentWorkspaceContextWriteRequest] = None
+    linear: Optional[LinearWriteRequest] = None
 
     def to_agent(self, agent_id: str, existing: Optional[Agent] = None) -> Agent:
         base = existing
+        workspace_context = (
+            self.workspace_context.to_config(base.workspace_context if base else None)
+            if self.workspace_context is not None
+            else (base.workspace_context if base else AgentWorkspaceContextConfig())
+        )
+        if "linear" in self.model_fields_set and self.linear is None:
+            linear = None
+        elif self.linear is not None:
+            linear = self.linear.to_config(base.linear if base else None)
+        else:
+            linear = base.linear if base else None
         return Agent(
             id=agent_id,
             display_name=self.display_name or (base.display_name if base else agent_id),
@@ -413,19 +584,44 @@ class AgentWriteRequest(BaseModel):
                 else (dict(base.mcp_servers) if base else {})
             ),
             tools=tuple(self.tools if self.tools is not None else (base.tools if base else ())),
+            tool_aliases=(
+                dict(self.tool_aliases)
+                if self.tool_aliases is not None
+                else (dict(base.tool_aliases) if base else {})
+            ),
+            tools_settings=(
+                dict(self.tools_settings)
+                if self.tools_settings is not None
+                else (dict(base.tools_settings) if base else {})
+            ),
             cao_tools=(
                 tuple(self.cao_tools)
                 if self.cao_tools is not None
                 else (base.cao_tools if base else None)
             ),
             skills=tuple(self.skills if self.skills is not None else (base.skills if base else ())),
+            tags=tuple(self.tags if self.tags is not None else (base.tags if base else ())),
+            resources=tuple(
+                self.resources if self.resources is not None else (base.resources if base else ())
+            ),
+            hooks=dict(self.hooks) if self.hooks is not None else (dict(base.hooks) if base else {}),
+            use_legacy_mcp_json=(
+                self.use_legacy_mcp_json
+                if self.use_legacy_mcp_json is not None
+                else (base.use_legacy_mcp_json if base else None)
+            ),
             runtime_capabilities=(
                 tuple(self.runtime_capabilities)
                 if self.runtime_capabilities is not None
                 else (base.runtime_capabilities if base else None)
             ),
-            workspace_context=(base.workspace_context if base else AgentWorkspaceContextConfig()),
-            linear=base.linear if base else None,
+            codex_config=(
+                dict(self.codex_config)
+                if self.codex_config is not None
+                else (dict(base.codex_config) if base else {})
+            ),
+            workspace_context=workspace_context,
+            linear=linear,
         )
 
 
@@ -754,7 +950,7 @@ async def update_agent_endpoint(agent_id: str, body: AgentWriteRequest) -> Agent
     try:
         existing = load_agent(agent_id)
         updated = body.to_agent(agent_id, existing)
-        write_agent(updated)
+        patch_agent_config(updated, changed_fields=set(body.model_fields_set))
         return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent_id))
     except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

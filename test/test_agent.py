@@ -17,6 +17,7 @@ from cli_agent_orchestrator.agent import (
     LinearToolAccessConfig,
     load_agent,
     load_all_agents,
+    patch_agent_config,
     patch_agent_section,
     validate_agents_root,
     write_agent,
@@ -197,6 +198,59 @@ def test_patch_agent_section_preserves_unrelated_linear_tool_access(tmp_path):
     assert loaded.linear.tool_access == given_agent.linear.tool_access
     assert "[linear.tool_access.implementation_partner_workflow]" in config_path.read_text()
     assert "[mcp_servers.cao-mcp-server]" in original
+
+
+def test_patch_agent_config_preserves_unrelated_formatting_and_updates_prompt(tmp_path):
+    given_agent = _agent()
+    write_agent(given_agent, agents_root=tmp_path)
+    config_path = tmp_path / given_agent.id / "agent.toml"
+    config_path.write_text(
+        """
+# keep this operator note
+id = "implementation_partner"
+display_name = "Implementation Partner"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "implementation-partner"
+model = "gpt-5.2"
+tools = ["bash"]
+
+[mcp_servers.cao-mcp-server]
+command = "cao-mcp-server"
+
+[linear]
+app_key = "implementation_partner"
+client_id = "client-1"
+client_secret = "secret-1"
+oauth_redirect_uri = "https://example.test/linear/oauth/callback"
+
+[linear.tool_access.implementation_partner_workflow]
+tools = ["cao_linear.get_issue"]
+issues = ["CAO-1"]
+update_fields = ["title"]
+""".lstrip()
+    )
+    updated = _agent(
+        model="gpt-5.4",
+        tools=(),
+        mcp_servers={"cao-mcp-server": {"command": "cao-mcp-server", "args": ["--stdio"]}},
+        prompt="# Updated Agent\n",
+    )
+
+    patch_agent_config(
+        updated,
+        changed_fields={"model", "tools", "mcp_servers", "prompt"},
+        agents_root=tmp_path,
+    )
+
+    patched_text = config_path.read_text()
+    loaded = load_agent(given_agent.id, agents_root=tmp_path)
+    assert "# keep this operator note" in patched_text
+    assert "[linear.tool_access.implementation_partner_workflow]" in patched_text
+    assert loaded.model == "gpt-5.4"
+    assert loaded.tools == ()
+    assert loaded.mcp_servers["cao-mcp-server"]["args"] == ["--stdio"]
+    assert loaded.prompt == "# Updated Agent\n"
 
 
 def test_validate_agents_root_flags_unknown_linear_tool_and_bad_permissions(tmp_path):

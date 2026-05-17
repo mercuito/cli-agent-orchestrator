@@ -381,6 +381,92 @@ def patch_agent_section(
     _atomic_write_text(config_path, patched, mode=AGENT_CONFIG_MODE)
 
 
+def patch_agent_config(
+    agent: Agent,
+    *,
+    changed_fields: set[str],
+    agents_root: Optional[Path] = None,
+) -> None:
+    """Patch one durable agent while preserving unrelated config text."""
+    root = AGENTS_ROOT if agents_root is None else agents_root
+    safe_id = _safe_path_segment(agent.id, label="agent id")
+    agent_dir = root / safe_id
+    config_path = agent_dir / AGENT_CONFIG_FILENAME
+    prompt_path = agent_dir / AGENT_PROMPT_FILENAME
+    if not config_path.is_file():
+        raise AgentConfigError(f"Agent {safe_id!r} missing config file: {config_path}")
+
+    text = config_path.read_text()
+    root_fields = {
+        "display_name": agent.display_name,
+        "cli_provider": agent.cli_provider,
+        "workdir": agent.workdir,
+        "session_name": agent.session_name,
+        "description": agent.description,
+        "model": agent.model,
+        "reasoning_effort": agent.reasoning_effort,
+        "tools": list(agent.tools),
+        "cao_tools": list(agent.cao_tools) if agent.cao_tools is not None else None,
+        "skills": list(agent.skills),
+        "tags": list(agent.tags),
+        "resources": list(agent.resources),
+        "use_legacy_mcp_json": agent.use_legacy_mcp_json,
+        "runtime_capabilities": (
+            list(agent.runtime_capabilities)
+            if agent.runtime_capabilities is not None
+            else None
+        ),
+    }
+    root_patch = {
+        key: value
+        for key, value in root_fields.items()
+        if key in changed_fields
+    }
+    if root_patch:
+        text = _patch_toml_root_values(text, root_patch)
+
+    table_replacements: list[tuple[str, Mapping[str, Any] | None]] = []
+    if "mcp_servers" in changed_fields:
+        table_replacements.append(("mcp_servers", dict(agent.mcp_servers)))
+    if "tool_aliases" in changed_fields:
+        table_replacements.append(("tool_aliases", dict(agent.tool_aliases)))
+    if "tools_settings" in changed_fields:
+        table_replacements.append(("tools_settings", dict(agent.tools_settings)))
+    if "hooks" in changed_fields:
+        table_replacements.append(("hooks", dict(agent.hooks)))
+    if "codex_config" in changed_fields:
+        table_replacements.append(("codex_config", dict(agent.codex_config)))
+    if "workspace_context" in changed_fields:
+        workspace = {
+            "enabled": agent.workspace_context.enabled,
+            **(
+                {"resolver_id": agent.workspace_context.resolver_id}
+                if agent.workspace_context.resolver_id is not None
+                else {}
+            ),
+        }
+        table_replacements.append(
+            (
+                "workspace_context",
+                workspace if agent.workspace_context != AgentWorkspaceContextConfig() else None,
+            )
+        )
+    if "linear" in changed_fields:
+        table_replacements.append(
+            (
+                "linear",
+                _linear_to_toml_mapping(agent.linear) if agent.linear is not None else None,
+            )
+        )
+
+    for table_name, values in table_replacements:
+        text = _replace_toml_table_tree(text, table_name, values)
+
+    _atomic_write_text(config_path, text, mode=AGENT_CONFIG_MODE)
+    if "prompt" in changed_fields:
+        _atomic_write_text(prompt_path, agent.prompt, mode=AGENT_PROMPT_MODE)
+
+
 def create_stub_agent(
     agent_id: str,
     *,
@@ -756,6 +842,106 @@ def _patch_toml_section_values(text: str, section: str, values: Mapping[str, obj
         additions = [f"{key} = {rendered_values[key]}" for key in missing]
         patched_lines[insert_at:insert_at] = additions
     return "\n".join(patched_lines).rstrip() + "\n"
+
+
+def _patch_toml_root_values(text: str, values: Mapping[str, object | None]) -> str:
+    lines = text.splitlines()
+    first_section = next(
+        (index for index, line in enumerate(lines) if line.strip().startswith("[")),
+        len(lines),
+    )
+    rendered_values = {
+        key: _format_toml_value(value)
+        for key, value in values.items()
+        if value is not None
+    }
+    remove_keys = {key for key, value in values.items() if value is None}
+    existing_keys: set[str] = set()
+    patched_lines = list(lines)
+    deleted_indexes: set[int] = set()
+    for index in range(first_section):
+        stripped = patched_lines[index].strip()
+        for key in values:
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                if key in remove_keys:
+                    deleted_indexes.add(index)
+                    existing_keys.add(key)
+                    continue
+                prefix = patched_lines[index][: len(patched_lines[index]) - len(patched_lines[index].lstrip())]
+                patched_lines[index] = f"{prefix}{key} = {rendered_values[key]}".rstrip()
+                existing_keys.add(key)
+    patched_lines = [
+        line for index, line in enumerate(patched_lines) if index not in deleted_indexes
+    ]
+    first_section = next(
+        (index for index, line in enumerate(patched_lines) if line.strip().startswith("[")),
+        len(patched_lines),
+    )
+    additions = [
+        f"{key} = {rendered_values[key]}"
+        for key in rendered_values
+        if key not in existing_keys
+    ]
+    if additions:
+        patched_lines[first_section:first_section] = additions
+    return "\n".join(patched_lines).rstrip() + "\n"
+
+
+def _replace_toml_table_tree(
+    text: str,
+    table_name: str,
+    values: Mapping[str, Any] | None,
+) -> str:
+    lines = text.splitlines()
+    kept: list[str] = []
+    skipping = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            header = stripped.strip("[]")
+            skipping = header == table_name or header.startswith(f"{table_name}.")
+        if not skipping:
+            kept.append(line)
+    rendered = _dump_toml({table_name: values}).strip() if values else ""
+    result = "\n".join(kept).rstrip()
+    if rendered:
+        result = f"{result}\n\n{rendered}" if result else rendered
+    return result.rstrip() + "\n"
+
+
+def _linear_to_toml_mapping(linear: LinearConfig) -> Mapping[str, Any]:
+    data: dict[str, Any] = {
+        key: value
+        for key, value in {
+            "app_key": linear.app_key,
+            "client_id": linear.client_id,
+            "client_secret": linear.client_secret,
+            "webhook_secret": linear.webhook_secret,
+            "oauth_redirect_uri": linear.oauth_redirect_uri,
+            "access_token": linear.access_token,
+            "refresh_token": linear.refresh_token,
+            "token_expires_at": linear.token_expires_at,
+            "app_user_id": linear.app_user_id,
+            "app_user_name": linear.app_user_name,
+            "oauth_state": linear.oauth_state,
+        }.items()
+        if value is not None
+    }
+    if linear.tool_access:
+        data["tool_access"] = {
+            access.access_id: {
+                "tools": list(access.tools),
+                "issues": list(access.issues),
+                "create_team_ids": list(access.create_team_ids),
+                "create_project_ids": list(access.create_project_ids),
+                "create_parent_issues": list(access.create_parent_issues),
+                "allow_top_level_create": access.allow_top_level_create,
+                "update_fields": list(access.update_fields),
+                **({"reason": access.reason} if access.reason is not None else {}),
+            }
+            for access in linear.tool_access
+        }
+    return data
 
 
 def _dump_toml(data: Mapping[str, Any]) -> str:

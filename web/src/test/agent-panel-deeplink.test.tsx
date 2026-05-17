@@ -226,22 +226,54 @@ describe('AgentPanel', () => {
       expect(screen.getByText(/tools = \["bash"\]/)).toBeInTheDocument()
       expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
       expect(screen.getByText(/\[linear.tool_access.workflow\]/)).toBeInTheDocument()
+      expect(screen.getByText('# Agent')).toBeInTheDocument()
+      expect(screen.getAllByText('••••••••').length).toBeGreaterThan(0)
+      expect(screen.getByText(/Access token: Managed by OAuth callback/)).toBeInTheDocument()
     })
 
-    it('saves edits through the durable agent update API and re-renders the config', async () => {
+    it('reveals configured Linear secret status without exposing token values', async () => {
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /reveal client secret/i }))
+
+      expect(screen.getByText('Configured on server')).toBeInTheDocument()
+      expect(screen.getByText(/Refresh token: Managed by OAuth callback/)).toBeInTheDocument()
+    })
+
+    it('saves prompt, MCP, and tools edits through the durable agent update API', async () => {
       render(<AgentPanel />)
 
       fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
       const editor = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
       fireEvent.change(editor, {
-        target: { value: editor.value.replace('model = "gpt-5.2"', 'model = "gpt-5.4"') },
+        target: {
+          value: editor.value
+            .replace('model = "gpt-5.2"', 'model = "gpt-5.4"')
+            .replace('tools = ["bash"]', 'tools = ["bash", "apply_patch"]')
+            .replace('command = "cao-mcp-server"', 'command = "cao-mcp-server"\nargs = ["--stdio"]'),
+        },
+      })
+      fireEvent.change(screen.getByLabelText('aria prompt.md'), {
+        target: { value: '# Updated Agent\nUse the MCP server.\n' },
       })
       fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
 
       await waitFor(() => {
-        expect(updateAgent).toHaveBeenCalledWith('aria', expect.objectContaining({ model: 'gpt-5.4' }))
+        expect(updateAgent).toHaveBeenCalledWith('aria', expect.objectContaining({
+          model: 'gpt-5.4',
+          prompt: '# Updated Agent\nUse the MCP server.\n',
+          tools: ['bash', 'apply_patch'],
+          mcp_servers: {
+            cao: {
+              command: 'cao-mcp-server',
+              args: ['--stdio'],
+            },
+          },
+        }))
       })
       expect(await screen.findByText(/model = "gpt-5.4"/)).toBeInTheDocument()
+      expect(screen.getByText(/tools = \["bash", "apply_patch"\]/)).toBeInTheDocument()
+      expect(screen.getByText(/# Updated Agent/)).toBeInTheDocument()
     })
 
     it('offers a separate create-agent entry in the spawn modal', async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, ChevronRight, Edit3, FileText, Mail, Monitor, Play, Plus, RotateCcw, Save, Send, Terminal as TermIcon, Trash2, X } from 'lucide-react'
+import { Bot, ChevronRight, Edit3, Eye, EyeOff, FileText, Mail, Monitor, Play, Plus, RotateCcw, Save, Send, Terminal as TermIcon, Trash2, X } from 'lucide-react'
 import { api, AgentConfig, AgentStatus, AgentWriteRequest, TerminalMeta } from '../api'
 import { useStore } from '../store'
 import { AgentTimelinePanel } from './AgentTimelinePanel'
@@ -28,7 +28,7 @@ const emptyCreateDraft = {
 }
 
 function quoteTomlString(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')}"`
 }
 
 function formatTomlKey(key: string): string {
@@ -126,21 +126,76 @@ function parseTomlValue(value: string): unknown {
   if (trimmed === 'false') return false
   if (trimmed === 'null') return null
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+    return trimmed.slice(1, -1).replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
   }
   if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
     const inner = trimmed.slice(1, -1).trim()
     if (!inner) return []
-    return inner.split(',').map(part => parseTomlValue(part.trim())).filter((entry): entry is string => typeof entry === 'string')
+    return splitTomlItems(inner).map(part => parseTomlValue(part.trim()))
   }
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    const inner = trimmed.slice(1, -1).trim()
+    if (!inner) return {}
+    return Object.fromEntries(splitTomlItems(inner).map(part => {
+      const [key, rawValue] = splitTomlAssignment(part)
+      return [unquoteTomlKey(key.trim()), parseTomlValue(rawValue.trim())]
+    }))
+  }
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed)
+  return trimmed
+}
+
+function splitTomlItems(value: string): string[] {
+  const items: string[] = []
+  let current = ''
+  let quote = false
+  let bracketDepth = 0
+  let braceDepth = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    const previous = value[index - 1]
+    if (char === '"' && previous !== '\\') quote = !quote
+    if (!quote) {
+      if (char === '[') bracketDepth += 1
+      if (char === ']') bracketDepth -= 1
+      if (char === '{') braceDepth += 1
+      if (char === '}') braceDepth -= 1
+      if (char === ',' && bracketDepth === 0 && braceDepth === 0) {
+        items.push(current.trim())
+        current = ''
+        continue
+      }
+    }
+    current += char
+  }
+  if (current.trim()) items.push(current.trim())
+  return items
+}
+
+function splitTomlAssignment(value: string): [string, string] {
+  let quote = false
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    const previous = value[index - 1]
+    if (char === '"' && previous !== '\\') quote = !quote
+    if (char === '=' && !quote) return [value.slice(0, index), value.slice(index + 1)]
+  }
+  return [value, '']
+}
+
+function unquoteTomlKey(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return String(parseTomlValue(trimmed))
   return trimmed
 }
 
 function parseAgentTomlDraft(text: string): AgentWriteRequest {
   const body: AgentWriteRequest = {}
-  const stringFields = new Set(['id', 'display_name', 'cli_provider', 'workdir', 'session_name', 'prompt'])
+  const stringFields = new Set(['id', 'display_name', 'cli_provider', 'workdir', 'session_name'])
   const nullableStringFields = new Set(['description', 'model', 'reasoning_effort'])
-  const listFields = new Set(['tools', 'skills', 'runtime_capabilities', 'cao_tools'])
+  const listFields = new Set(['tools', 'skills', 'tags', 'resources', 'runtime_capabilities', 'cao_tools'])
+  const tableFields = new Set(['tool_aliases', 'tools_settings', 'hooks', 'codex_config'])
+  const ignoredLinearPresenceFields = new Set(['client_secret_configured', 'webhook_secret_configured', 'access_token_configured', 'refresh_token_configured', 'oauth_state_configured'])
   let section = ''
 
   text.split(/\r?\n/).forEach(rawLine => {
@@ -150,21 +205,63 @@ function parseAgentTomlDraft(text: string): AgentWriteRequest {
       section = line.slice(1, -1)
       return
     }
-    if (section) return
     const match = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(.*)$/)
     if (!match) return
     const [, key, rawValue] = match
     const value = parseTomlValue(rawValue)
+    if (section === 'workspace_context') {
+      body.workspace_context = { ...(body.workspace_context || {}), [key]: value } as AgentWriteRequest['workspace_context']
+      return
+    }
+    if (section === 'codex_config') {
+      body.codex_config = { ...(body.codex_config || {}), [key]: value }
+      return
+    }
+    if (section.startsWith('mcp_servers.')) {
+      const serverName = unquoteTomlKey(section.slice('mcp_servers.'.length))
+      body.mcp_servers = { ...(body.mcp_servers || {}) }
+      body.mcp_servers[serverName] = {
+        ...((body.mcp_servers[serverName] as Record<string, unknown>) || {}),
+        [key]: value,
+      }
+      return
+    }
+    if (section === 'linear') {
+      if (ignoredLinearPresenceFields.has(key)) return
+      body.linear = { ...(body.linear || {}), [key]: value } as AgentWriteRequest['linear']
+      return
+    }
+    if (section.startsWith('linear.tool_access.')) {
+      const accessId = unquoteTomlKey(section.slice('linear.tool_access.'.length))
+      const current = body.linear?.tool_access || []
+      const existing = current.find(access => access.access_id === accessId)
+      const nextAccess = { ...(existing || { access_id: accessId }), [key]: value }
+      body.linear = {
+        ...(body.linear || {}),
+        tool_access: [...current.filter(access => access.access_id !== accessId), nextAccess],
+      }
+      return
+    }
+    if (section) return
     if (stringFields.has(key) && typeof value === 'string') {
       ;(body as Record<string, unknown>)[key] = value
     } else if (nullableStringFields.has(key) && (typeof value === 'string' || value === null)) {
       ;(body as Record<string, unknown>)[key] = value
     } else if (listFields.has(key) && Array.isArray(value)) {
       ;(body as Record<string, unknown>)[key] = value
+    } else if (tableFields.has(key) && value && typeof value === 'object') {
+      ;(body as Record<string, unknown>)[key] = value
+    } else if (key === 'use_legacy_mcp_json' && typeof value === 'boolean') {
+      body.use_legacy_mcp_json = value
     }
   })
 
   return body
+}
+
+function linearFieldStatus(configured: boolean, revealed: boolean): string {
+  if (!configured) return 'Not configured'
+  return revealed ? 'Configured on server' : '••••••••'
 }
 
 export function AgentPanel({
@@ -181,6 +278,9 @@ export function AgentPanel({
   const [startingAgentId, setStartingAgentId] = useState<string | null>(null)
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null)
   const [agentTomlDraft, setAgentTomlDraft] = useState('')
+  const [agentPromptDraft, setAgentPromptDraft] = useState('')
+  const [agentSaveError, setAgentSaveError] = useState<string | null>(null)
+  const [revealedLinearFields, setRevealedLinearFields] = useState<Record<string, boolean>>({})
   const [savingAgentId, setSavingAgentId] = useState<string | null>(null)
   const [createMode, setCreateMode] = useState(false)
   const [createDraft, setCreateDraft] = useState(emptyCreateDraft)
@@ -256,18 +356,26 @@ export function AgentPanel({
   const handleEditAgent = (agent: AgentStatus) => {
     setEditingAgentId(agent.agent_id)
     setAgentTomlDraft(formatAgentToml(agent.config))
+    setAgentPromptDraft(agent.config.prompt)
+    setAgentSaveError(null)
   }
 
   const handleSaveAgent = async (agent: AgentStatus) => {
     setSavingAgentId(agent.agent_id)
+    setAgentSaveError(null)
     try {
-      const updated = await api.updateAgent(agent.agent_id, parseAgentTomlDraft(agentTomlDraft))
+      const updated = await api.updateAgent(agent.agent_id, {
+        ...parseAgentTomlDraft(agentTomlDraft),
+        prompt: agentPromptDraft,
+      })
       setAgents(previous => previous.map(entry => entry.agent_id === updated.agent_id ? updated : entry))
       setEditingAgentId(null)
       setSelectedAgentId(updated.agent_id)
       showSnackbar({ type: 'success', message: `Agent ${updated.agent_id} updated` })
     } catch (error) {
-      showSnackbar({ type: 'error', message: error instanceof Error ? error.message : `Failed to update ${agent.agent_id}` })
+      const message = error instanceof Error ? error.message : `Failed to update ${agent.agent_id}`
+      setAgentSaveError(message)
+      showSnackbar({ type: 'error', message })
     } finally {
       setSavingAgentId(null)
     }
@@ -400,7 +508,7 @@ export function AgentPanel({
                     <button onClick={() => handleSaveAgent(selectedAgent)} disabled={savingAgentId === selectedAgent.agent_id} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Save ${selectedAgent.agent_id}`}>
                       <Save size={13} /> Save
                     </button>
-                    <button onClick={() => setEditingAgentId(null)} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Cancel ${selectedAgent.agent_id}`}>
+                    <button onClick={() => { setEditingAgentId(null); setAgentSaveError(null) }} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Cancel ${selectedAgent.agent_id}`}>
                       <RotateCcw size={13} /> Cancel
                     </button>
                   </div>
@@ -411,14 +519,70 @@ export function AgentPanel({
                 )}
               </div>
               {editingAgentId === selectedAgent.agent_id ? (
-                <textarea
-                  aria-label={`${selectedAgent.agent_id} agent.toml`}
-                  value={agentTomlDraft}
-                  onChange={event => setAgentTomlDraft(event.target.value)}
-                  className="w-full min-h-[360px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
-                />
+                <div className="space-y-3">
+                  <textarea
+                    aria-label={`${selectedAgent.agent_id} agent.toml`}
+                    value={agentTomlDraft}
+                    onChange={event => setAgentTomlDraft(event.target.value)}
+                    className="w-full min-h-[320px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
+                  />
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">prompt.md</h4>
+                    <textarea
+                      aria-label={`${selectedAgent.agent_id} prompt.md`}
+                      value={agentPromptDraft}
+                      onChange={event => setAgentPromptDraft(event.target.value)}
+                      className="w-full min-h-[180px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                  {agentSaveError && (
+                    <p role="alert" className="rounded-lg border border-red-900/60 bg-red-950/50 px-3 py-2 text-xs text-red-200">
+                      {agentSaveError}
+                    </p>
+                  )}
+                </div>
               ) : (
-                <pre className="max-h-[460px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">{formatAgentToml(selectedAgent.config)}</pre>
+                <div className="space-y-3">
+                  <pre className="max-h-[460px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">{formatAgentToml(selectedAgent.config)}</pre>
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">prompt.md</h4>
+                    <pre className="max-h-[260px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">{selectedAgent.config.prompt}</pre>
+                  </div>
+                </div>
+              )}
+              {selectedAgent.config.linear && (
+                <div className="rounded-lg border border-gray-700/50 bg-gray-950 p-3">
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Linear secrets</h4>
+                  {[
+                    { field: 'client_secret', label: 'Client secret', configured: selectedAgent.config.linear.client_secret_configured },
+                    { field: 'webhook_secret', label: 'Webhook secret', configured: selectedAgent.config.linear.webhook_secret_configured },
+                  ].map(({ field, label, configured }) => {
+                    const key = `${selectedAgent.agent_id}:${field}`
+                    const revealed = !!revealedLinearFields[key]
+                    return (
+                      <div key={field} className="flex items-center justify-between gap-3 py-1 text-xs text-gray-300">
+                        <span>{label}</span>
+                        <span className="ml-auto font-mono text-gray-400">{linearFieldStatus(configured, revealed)}</span>
+                        {configured && (
+                          <button
+                            type="button"
+                            onClick={() => setRevealedLinearFields(previous => ({ ...previous, [key]: !previous[key] }))}
+                            className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-gray-300 hover:bg-gray-800"
+                            aria-label={`${revealed ? 'Hide' : 'Reveal'} ${label}`}
+                          >
+                            {revealed ? <EyeOff size={12} /> : <Eye size={12} />}
+                            {revealed ? 'Hide' : 'Reveal'}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                  <div className="mt-2 space-y-1 border-t border-gray-800 pt-2 text-xs text-gray-400">
+                    <div>Access token: {selectedAgent.config.linear.access_token_configured ? 'Managed by OAuth callback' : 'Not configured'}</div>
+                    <div>Refresh token: {selectedAgent.config.linear.refresh_token_configured ? 'Managed by OAuth callback' : 'Not configured'}</div>
+                    <div>Token expiry: {selectedAgent.config.linear.token_expires_at || 'Not configured'}</div>
+                  </div>
+                </div>
               )}
             </div>
           ) : (

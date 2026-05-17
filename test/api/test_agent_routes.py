@@ -184,22 +184,24 @@ def test_get_agent_unknown_returns_404(client, monkeypatch):
 
 def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):
     existing_agent = _agent()
-    written_agent = None
+    patched_agent = None
+    patched_fields = None
 
-    def _write_agent(agent):
-        nonlocal written_agent
-        written_agent = agent
+    def _patch_agent_config(agent, *, changed_fields):
+        nonlocal patched_agent, patched_fields
+        patched_agent = agent
+        patched_fields = changed_fields
 
     class _WriteThroughAgentManager:
         def status_for_agent(self, agent_id: str):
-            assert written_agent is not None
+            assert patched_agent is not None
             return AgentStatus(
                 agent_id=agent_id,
-                display_name=written_agent.display_name,
-                cli_provider=written_agent.cli_provider,
-                workdir=written_agent.workdir,
-                session_name=written_agent.session_name,
-                agent=written_agent,
+                display_name=patched_agent.display_name,
+                cli_provider=patched_agent.cli_provider,
+                workdir=patched_agent.workdir,
+                session_name=patched_agent.session_name,
+                agent=patched_agent,
                 active=False,
             )
 
@@ -207,7 +209,7 @@ def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):
         "cli_agent_orchestrator.api.main.load_agent",
         lambda agent_id: existing_agent,
     )
-    monkeypatch.setattr("cli_agent_orchestrator.api.main.write_agent", _write_agent)
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.patch_agent_config", _patch_agent_config)
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_agent_manager",
         lambda: _WriteThroughAgentManager(),
@@ -226,6 +228,7 @@ def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):
     assert response.json()["config"]["mcp_servers"] == {}
     assert response.json()["config"]["tools"] == []
     assert response.json()["config"]["skills"] == []
+    assert patched_fields == {"mcp_servers", "tools", "skills"}
 
 
 def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch):

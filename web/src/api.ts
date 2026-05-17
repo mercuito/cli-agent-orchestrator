@@ -124,9 +124,41 @@ export interface AgentWriteRequest {
   reasoning_effort?: string | null
   mcp_servers?: Record<string, unknown>
   tools?: string[]
+  tool_aliases?: Record<string, string>
+  tools_settings?: Record<string, unknown>
   cao_tools?: string[] | null
   skills?: string[]
+  tags?: string[]
+  resources?: string[]
+  hooks?: Record<string, unknown>
+  use_legacy_mcp_json?: boolean | null
   runtime_capabilities?: string[] | null
+  codex_config?: Record<string, unknown>
+  workspace_context?: { enabled?: boolean; resolver_id?: string | null }
+  linear?: {
+    app_key?: string | null
+    client_id?: string | null
+    client_secret?: string | null
+    webhook_secret?: string | null
+    oauth_redirect_uri?: string | null
+    access_token?: string | null
+    refresh_token?: string | null
+    token_expires_at?: string | null
+    app_user_id?: string | null
+    app_user_name?: string | null
+    oauth_state?: string | null
+    tool_access?: Array<{
+      access_id: string
+      tools?: string[]
+      issues?: string[]
+      create_team_ids?: string[]
+      create_project_ids?: string[]
+      create_parent_issues?: string[]
+      allow_top_level_create?: boolean
+      update_fields?: string[]
+      reason?: string | null
+    }>
+  } | null
 }
 
 export interface AgentTimelineEvent {
