@@ -98,6 +98,61 @@ This plan inherits the hard-cutover discipline from the previous
 Old structure is deleted in the same landing that introduces the new
 one. Legacy call sites are migrated to the new shape, not bridged.
 
+## Criteria catalog (likely applicable)
+
+The `docs/criteria/implementation/` and `docs/criteria/tests/` catalogs
+hold the project's implementation and test discipline. Run
+`uv run python scripts/catalog_criteria.py` to browse. This plan does
+NOT claim the final applicable set — that judgment belongs to the
+implementer against the landed diff. Criteria identified as likely to
+shape this work:
+
+- **`migration-discipline`** — this is a refactor. Existing UI surfaces
+  (`AgentPanel.tsx`, `AgentTimelinePanel.tsx`) migrate to the new
+  composite shape. Legacy components are deleted in the same landing,
+  not preserved as aliases or feature-flagged. Already enforced by the
+  Forbidden compatibility patterns section above.
+- **`system-definitions-are-localized`** — the Agents-tab UI is a
+  reshaped subsystem. The new components (`AgentDetailPanel`,
+  `AgentConfigTab`, `AgentTimelineTab`) should be localized in one
+  architectural home — either a co-located subdirectory
+  (`web/src/components/agents-tab/`, following the precedent set by
+  `web/src/components/timelineEventViews/`) or at minimum a shared
+  naming convention that makes the subsystem discoverable. Avoid
+  scattering them across the top-level `web/src/components/`.
+- **`no-unnecessary-duplication`** — this is a move, not a rewrite. The
+  existing config-render logic, edit-flow handlers, validation error
+  surfacing, Linear secret mask/reveal logic, timeline event view
+  registry usage, and status-fetch hooks migrate verbatim. Rewriting
+  equivalents from scratch is a violation of the criterion and
+  unnecessary risk.
+- **`prefer-public-surfaces`** — the new components consume the
+  existing `api.ts` client and the `eventTimelineViewRegistry` from
+  `web/src/components/timelineEventViews/`. Do not reach into the
+  internals of those surfaces.
+- **`seams-must-be-tested`** — new seams: Page↔`AgentDetailPanel`,
+  `AgentDetailPanel`↔`AgentConfigTab`, `AgentDetailPanel`↔
+  `AgentTimelineTab`, and each component's interaction with `api.ts`.
+  Each seam needs at least one test exercising the boundary, not just
+  internal rendering.
+- **`test-through-owner-surfaces`** — UI tests that depend on agent
+  status, timeline events, or update results must use the same
+  response shapes the real backend produces. Use the existing fixture
+  patterns from `agent-panel-deeplink.test.tsx` and
+  `agent-timeline-panel.test.tsx` rather than fabricating arbitrary
+  shapes.
+
+The implementer is obligated to run the catalog against the actual
+diff and apply any additional criteria whose `when` clauses are
+triggered by the change, not only the ones listed above.
+
+## Criteria acceptance
+
+After implementation, evaluate the pending changes against the criteria
+catalog. No criteria applicable to the completed diff may be violated.
+This is enforced at every task by the per-task criteria-catalog
+acceptance bullet in `docs/plans/agents-tab-unification/tasks.md`.
+
 ## Phasing
 
 Three phases. Phase 1 builds the new structure in parallel (no behavior

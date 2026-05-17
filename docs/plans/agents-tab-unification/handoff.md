@@ -52,7 +52,11 @@ structured editing work in this plan.
 - **Tab state persists across selections.** Switching agents keeps you
   on the same tab. Default tab on first load: `Config`.
 - **Criteria catalog per task, not at the end.** Walk the catalog for
-  each task's diff before marking it complete.
+  each task's diff before marking it complete. The plan's "Criteria
+  catalog (likely applicable)" section lists criteria identified at
+  planning time — start there, but the implementer must run
+  `uv run python scripts/catalog_criteria.py` against the actual diff
+  to confirm the final applicable set.
 - **Reviewer gate per task.** No task is complete without reviewer
   approval.
 

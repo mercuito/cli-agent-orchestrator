@@ -28,17 +28,23 @@ new shape or deleted, never bridged.
 - dispatch_mode: handoff
 - depends_on: []
 - deliverables:
-  - new component `web/src/components/AgentDetailPanel.tsx` accepting a
+  - new component `AgentDetailPanel.tsx` localized under the
+    Agents-tab subsystem home (recommended:
+    `web/src/components/agents-tab/AgentDetailPanel.tsx`, matching the
+    precedent of `web/src/components/timelineEventViews/`) accepting a
     selected agent (or its id + status) as props
   - status header sub-section: display name, agent id, running/stopped
-    badge, active terminal id when running, Start/Stop button
+    badge, active terminal id when running, Start/Stop button. Reuse
+    the existing start/stop handlers from the current `AgentPanel.tsx`
+    — do not reimplement.
   - tab control with two tabs: `Config` and `Timeline`; active tab state
     held in the component; default `Config`
   - tab content slots empty (placeholders) at this task — content lands
     in T02/T03
   - unit/component tests covering: header renders all expected fields,
     tab control switches active tab, tab state persists across selected
-    agent changes
+    agent changes. Tests exercise the prop seam (selected agent in,
+    rendered output out), not internals.
 - acceptance:
   - rendering `AgentDetailPanel` with a running agent shows display
     name, id, status badge "running", terminal id, and a Stop button
@@ -62,17 +68,25 @@ new shape or deleted, never bridged.
 - dispatch_mode: handoff
 - depends_on: [T01]
 - deliverables:
-  - new component `web/src/components/AgentConfigTab.tsx` that renders
-    the read-only `agent.toml` view, the prompt.md view, the Linear
-    secrets summary, and the Edit / Save / Cancel flow currently
-    living inside `AgentPanel.tsx`
-  - internals of the config rendering and editing are NOT changed in
-    this task — only the location moves. The structured editor is
-    a separate plan.
+  - new component `AgentConfigTab.tsx` (co-located with
+    `AgentDetailPanel` from T01) that renders the read-only
+    `agent.toml` view, the prompt.md view, the Linear secrets summary,
+    and the Edit / Save / Cancel flow currently living inside
+    `AgentPanel.tsx`
+  - this is a **move, not a rewrite**: the existing config-render
+    logic, edit-flow handlers, validation error surfacing, Linear
+    secret mask/reveal state, and any helper functions (e.g.
+    `formatAgentToml`, `linearFieldStatus`) carry over verbatim. Reuse
+    rather than reimplement.
+  - the new component consumes `api.ts` (existing public surface) for
+    the `PUT /agents/{id}` call; do not reach into internals of the
+    api module
   - the new component is wired into `AgentDetailPanel`'s Config tab
     slot
   - existing tests for the config view/edit behavior moved or
-    duplicated to cover the new component path
+    duplicated to cover the new component path. Test fixtures match
+    the response shapes the real backend produces (use the same
+    fixture patterns as `agent-panel-deeplink.test.tsx`).
 - acceptance:
   - selecting an agent and viewing the Config tab shows the same
     content as today's lower panel: agent.toml rendered, prompt.md
@@ -99,16 +113,25 @@ new shape or deleted, never bridged.
 - dispatch_mode: handoff
 - depends_on: [T01]
 - deliverables:
-  - new component `web/src/components/AgentTimelineTab.tsx` that
-    renders the timeline contents currently in
-    `AgentTimelinePanel.tsx`, but WITHOUT the embedded roster (the
-    roster is moving to the page level)
+  - new component `AgentTimelineTab.tsx` (co-located with
+    `AgentDetailPanel` from T01) that renders the timeline contents
+    currently in `AgentTimelinePanel.tsx`, but WITHOUT the embedded
+    roster (the roster is moving to the page level)
+  - this is a **move, not a rewrite**: the existing timeline rendering
+    logic, event-row layout, related-events expansion behavior (Direct
+    Cause / Direct Effects / Shared Correlation Thread), auto-refresh
+    interval, and `eventTimelineViewRegistry` usage carry over
+    verbatim. Reuse rather than reimplement.
+  - the new component consumes the `eventTimelineViewRegistry` from
+    `web/src/components/timelineEventViews/` as a public surface; do
+    not reach into the registry's internals
   - the new component takes the selected agent id as a prop and
-    fetches/refreshes the timeline using the existing endpoints
-    (`/agents/{id}/timeline`, related-events expansion)
+    fetches/refreshes the timeline via the existing `api.ts` functions
   - wired into `AgentDetailPanel`'s Timeline tab slot
   - existing timeline tests moved or duplicated to cover the new
-    component path
+    component path. Test fixtures match the response shapes the real
+    backend produces (use the same fixture patterns as
+    `agent-timeline-panel.test.tsx`).
 - acceptance:
   - selecting an agent and viewing the Timeline tab shows the same
     timeline content as today's upper panel
@@ -178,6 +201,9 @@ new shape or deleted, never bridged.
     production code paths
   - `grep -rn "AgentTimelinePanel" web/src/test/` returns no hits or
     only references explicitly testing the removal
+  - the three new components from T01–T03 are localized in one
+    architectural home (subdirectory or shared naming) per the
+    `system-definitions-are-localized` criterion
 - acceptance:
   - the full web test suite passes (`npm test` or `vitest`, whichever
     is configured for this project)
