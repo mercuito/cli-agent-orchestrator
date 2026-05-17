@@ -18,7 +18,7 @@ import {
   RUNTIME_WORKSPACE_EVENT,
 } from '../generated/caoEventPayloadTypes'
 
-function identity(
+function agent(
   agent_id: string,
   display_name: string,
   overrides: Partial<AgentStatus> = {},
@@ -85,14 +85,14 @@ function event(
   }
 }
 
-const aria = identity('aria', 'Aria', {
+const aria = agent('aria', 'Aria', {
   active: true,
   active_terminal_id: 'term-aria',
   active_workspace_context_id: 'wctx-aria',
   last_active_at: '2026-05-13T12:03:00',
 })
-const cael = identity('cael', 'Cael')
-const unused = identity('unused', 'Unused Agent')
+const cael = agent('cael', 'Cael')
+const unused = agent('unused', 'Unused Agent')
 
 const mention = event(
   'linear:agent_mentioned:mention',
@@ -395,7 +395,7 @@ const knownLinearIssueCreated = event(
     source_id: 'OPS-505',
     event_data: {
       terminal_id: 'term-create-issue',
-      agent_identity_id: 'aria',
+      agent_id: 'aria',
       tool_name: 'create_issue',
       issue: {
         identifier: 'OPS-505',
@@ -453,7 +453,7 @@ describe('AgentTimelinePanel', () => {
     vi.spyOn(api, 'listAgents').mockResolvedValue([aria, cael, unused])
     vi.spyOn(api, 'getAgentTimeline').mockImplementation(async (agentId) => {
       const timeline = timelines[agentId]
-      if (!timeline) throw new Error(`unknown identity ${agentId}`)
+      if (!timeline) throw new Error(`unknown agent ${agentId}`)
       return timeline
     })
     vi.spyOn(api, 'getAgentRelatedEvents').mockResolvedValue(relatedForDelivery)
@@ -478,7 +478,7 @@ describe('AgentTimelinePanel', () => {
     })
   })
 
-  it('lists configured identities and opens the selected identity timeline', async () => {
+  it('lists configured agents and opens the selected agent timeline', async () => {
     render(<AgentTimelinePanel />)
 
     expect(await screen.findByRole('button', { name: /aria/i })).toBeInTheDocument()
@@ -486,7 +486,7 @@ describe('AgentTimelinePanel', () => {
     expect(screen.getByRole('button', { name: /unused agent/i })).toBeInTheDocument()
     expect(screen.getByText('term-aria')).toBeInTheDocument()
 
-    const timeline = await screen.findByTestId('identity-timeline')
+    const timeline = await screen.findByTestId('agent-timeline')
     expect(within(timeline).getAllByText('Agent Mentioned')).toHaveLength(2)
     expect(within(timeline).getByText('Agent Runtime Notification Delivery')).toBeInTheDocument()
     expect(within(timeline).getByText('2026-05-13 12:01:00')).toBeInTheDocument()
@@ -499,12 +499,12 @@ describe('AgentTimelinePanel', () => {
     expect(screen.queryByText(workspaceRefreshId)).not.toBeInTheDocument()
   })
 
-  it('refreshes the watched identity timeline without surfacing non-participant workspace events', async () => {
+  it('refreshes the watched agent timeline without surfacing non-participant workspace events', async () => {
     vi.useFakeTimers()
     let ariaTimelineFetches = 0
     vi.mocked(api.getAgentTimeline).mockImplementation(async (agentId) => {
       const timeline = timelines[agentId]
-      if (!timeline) throw new Error(`unknown identity ${agentId}`)
+      if (!timeline) throw new Error(`unknown agent ${agentId}`)
       if (agentId !== 'aria') return timeline
 
       ariaTimelineFetches += 1
@@ -520,7 +520,7 @@ describe('AgentTimelinePanel', () => {
 
     await act(async () => {})
     await act(async () => {})
-    const timeline = screen.getByTestId('identity-timeline')
+    const timeline = screen.getByTestId('agent-timeline')
     expect(within(timeline).queryByText('linear:agent_mentioned:live')).not.toBeInTheDocument()
 
     await act(async () => {
@@ -537,7 +537,7 @@ describe('AgentTimelinePanel', () => {
     expect(screen.queryByText(workspaceRefreshId)).not.toBeInTheDocument()
   })
 
-  it('replaces details and timeline when another identity is selected', async () => {
+  it('replaces details and timeline when another agent is selected', async () => {
     render(<AgentTimelinePanel />)
 
     await screen.findByText('term-aria')
@@ -641,7 +641,7 @@ describe('AgentTimelinePanel', () => {
     render(<AgentTimelinePanel />)
 
     // Then
-    const timeline = await screen.findByTestId('identity-timeline')
+    const timeline = await screen.findByTestId('agent-timeline')
     expect(within(timeline).getByText('OPS-417')).toBeInTheDocument()
     expect(within(timeline).getByText('Restore dashboard event detail')).toBeInTheDocument()
     expect(within(timeline).getAllByText('Nia').length).toBeGreaterThan(0)
@@ -749,7 +749,7 @@ describe('AgentTimelinePanel', () => {
 
     render(<AgentTimelinePanel />)
 
-    const timeline = await screen.findByTestId('identity-timeline')
+    const timeline = await screen.findByTestId('agent-timeline')
     expect(within(timeline).getByText('OPS-418')).toBeInTheDocument()
     expect(within(timeline).getByText('Trace terminal focus')).toBeInTheDocument()
     expect(within(timeline).queryByRole('button', { name: /open linear issue ops-418/i })).not.toBeInTheDocument()
@@ -769,7 +769,7 @@ describe('AgentTimelinePanel', () => {
     expect(focusTerminal).toHaveBeenCalledWith('term-aria-main')
   })
 
-  it('does not reuse related-event results fetched under a different selected identity', async () => {
+  it('does not reuse related-event results fetched under a different selected agent', async () => {
     let resolveAriaRelated: (related: AgentRelatedEvents) => void = () => {}
     vi.mocked(api.getAgentRelatedEvents).mockImplementation((agentId, eventId) => {
       if (agentId === 'aria' && eventId === 'linear:agent_mentioned:broadcast') {
@@ -789,7 +789,7 @@ describe('AgentTimelinePanel', () => {
 
     render(<AgentTimelinePanel />)
 
-    await screen.findByTestId('identity-timeline')
+    await screen.findByTestId('agent-timeline')
     fireEvent.click(screen.getByRole('button', { name: /inspect related events for linear:agent_mentioned:broadcast/i }))
     expect(api.getAgentRelatedEvents).toHaveBeenCalledWith(
       'aria',
@@ -829,8 +829,8 @@ describe('AgentTimelinePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /unused agent/i }))
 
     expect(await screen.findByText(/no recent activity to display/i)).toBeInTheDocument()
-    expect(screen.queryByText(/loading identity timeline/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/unable to load identity timeline/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/loading agent timeline/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/unable to load agent timeline/i)).not.toBeInTheDocument()
   })
 
   it('shows unreachable timeline state when the selected timeline cannot load', async () => {
@@ -843,11 +843,11 @@ describe('AgentTimelinePanel', () => {
 
     render(<AgentTimelinePanel />)
 
-    expect(await screen.findByText(/loading identity timeline/i)).toBeInTheDocument()
+    expect(await screen.findByText(/loading agent timeline/i)).toBeInTheDocument()
     await act(async () => {
       rejectTimeline(new Error('network down'))
     })
-    expect(await screen.findByText(/unable to load identity timeline/i)).toBeInTheDocument()
+    expect(await screen.findByText(/unable to load agent timeline/i)).toBeInTheDocument()
     expect(screen.queryByText(/no recent activity to display/i)).not.toBeInTheDocument()
   })
 })

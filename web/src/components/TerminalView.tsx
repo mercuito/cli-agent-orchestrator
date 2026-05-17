@@ -7,12 +7,12 @@ import { X, Terminal as TermIcon } from 'lucide-react'
 interface TerminalViewProps {
   terminalId: string
   provider?: string
-  agentProfile?: string | null
+  agentId?: string | null
   terminalToken?: string | null
   onClose: () => void
 }
 
-export function TerminalView({ terminalId, provider, agentProfile, terminalToken, onClose }: TerminalViewProps) {
+export function TerminalView({ terminalId, provider, agentId, terminalToken, onClose }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -132,7 +132,7 @@ export function TerminalView({ terminalId, provider, agentProfile, terminalToken
           <TermIcon size={16} className="text-emerald-400" />
           <span className="text-sm font-mono text-gray-300">{terminalId}</span>
           {provider && <span className="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded">{provider}</span>}
-          {agentProfile && <span className="text-xs text-emerald-400 bg-emerald-900/30 px-2 py-0.5 rounded">{agentProfile}</span>}
+          {agentId && <span className="text-xs text-emerald-400 bg-emerald-900/30 px-2 py-0.5 rounded">{agentId}</span>}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-gray-600">Click X to close</span>

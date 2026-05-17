@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { api, Flow, AgentProfileInfo, ProviderInfo } from '../api'
+import { api, Flow, AgentStatus } from '../api'
 import { useStore } from '../store'
 import { ConfirmModal } from './ConfirmModal'
 import { Clock, Play, Trash2, Plus, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react'
@@ -41,14 +41,12 @@ export function FlowsPanel() {
   const [name, setName] = useState('')
   const [schedule, setSchedule] = useState('')
   const [scheduleMode, setScheduleMode] = useState<'preset' | 'custom'>('preset')
-  const [agentProfile, setAgentProfile] = useState('')
+  const [agentId, setAgentId] = useState('')
   const [provider, setProvider] = useState('')
   const [promptTemplate, setPromptTemplate] = useState('')
   const [creating, setCreating] = useState(false)
 
-  // Profiles & providers for dropdowns
-  const [profiles, setProfiles] = useState<AgentProfileInfo[]>([])
-  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [agents, setAgents] = useState<AgentStatus[]>([])
 
   const fetchFlows = async () => {
     try {
@@ -63,14 +61,10 @@ export function FlowsPanel() {
 
   useEffect(() => {
     fetchFlows()
-    api.listProfiles()
-      .then(p => setProfiles(p))
-      .catch(() => {})
-    api.listProviders()
-      .then(p => {
-        setProviders(p)
-        const firstInstalled = p.find(prov => prov.installed)
-        if (firstInstalled) setProvider(firstInstalled.name)
+    api.listAgents()
+      .then(items => {
+        setAgents(items)
+        if (items[0]) setProvider(items[0].cli_provider)
       })
       .catch(() => {})
   }, [])
@@ -79,18 +73,18 @@ export function FlowsPanel() {
     setName('')
     setSchedule('')
     setScheduleMode('preset')
-    setAgentProfile('')
+    setAgentId('')
     setPromptTemplate('')
   }
 
   const handleCreate = async () => {
-    if (!name.trim() || !schedule.trim() || !agentProfile.trim() || !promptTemplate.trim()) return
+    if (!name.trim() || !schedule.trim() || !agentId.trim() || !promptTemplate.trim()) return
     setCreating(true)
     try {
       await api.createFlow({
         name: name.trim(),
         schedule: schedule.trim(),
-        agent_profile: agentProfile.trim(),
+        agent_id: agentId.trim(),
         provider: provider || undefined,
         prompt_template: promptTemplate,
       })
@@ -204,7 +198,7 @@ export function FlowsPanel() {
                     <span className="text-xs text-gray-500 shrink-0" title={f.schedule}>
                       {cronToLabel(f.schedule)}
                     </span>
-                    <span className="text-xs text-gray-500 shrink-0">{f.agent_profile}</span>
+                    <span className="text-xs text-gray-500 shrink-0">{f.agent_id}</span>
                     {f.provider && (
                       <span className="text-xs text-gray-600 shrink-0">{f.provider}</span>
                     )}
@@ -271,7 +265,7 @@ export function FlowsPanel() {
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1">
                       <div>Schedule: <span className="text-gray-300 font-mono">{f.schedule}</span></div>
                       <div>Provider: <span className="text-gray-300">{f.provider || 'default'}</span></div>
-                      <div>Profile: <span className="text-gray-300">{f.agent_profile}</span></div>
+                      <div>Profile: <span className="text-gray-300">{f.agent_id}</span></div>
                       <div>Last Run: <span className="text-gray-300">{f.last_run ? new Date(f.last_run).toLocaleString() : 'never'}</span></div>
                       <div>Next Run: <span className="text-gray-300">{f.next_run ? new Date(f.next_run).toLocaleString() : 'n/a'}</span></div>
                       {f.file_path && (
@@ -364,27 +358,21 @@ export function FlowsPanel() {
 
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <label className="block text-xs text-gray-500 mb-1">Agent Profile</label>
-                  {profiles.length > 0 ? (
-                    <CustomSelect
-                      value={agentProfile}
-                      onChange={setAgentProfile}
-                      placeholder="Select a profile..."
-                      options={profiles.map(p => ({
-                        value: p.name,
-                        label: p.name,
-                        sublabel: p.description || undefined,
-                      }))}
-                    />
-                  ) : (
-                    <input
-                      type="text"
-                      value={agentProfile}
-                      onChange={e => setAgentProfile(e.target.value)}
-                      placeholder="e.g. developer"
-                      className="w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2.5 focus:border-emerald-500 focus:outline-none"
-                    />
-                  )}
+                  <label className="block text-xs text-gray-500 mb-1">Agent</label>
+                  <CustomSelect
+                    value={agentId}
+                    onChange={value => {
+                      setAgentId(value)
+                      const selected = agents.find(agent => agent.agent_id === value)
+                      if (selected) setProvider(selected.cli_provider)
+                    }}
+                    placeholder="Select an agent..."
+                    options={agents.map(agent => ({
+                      value: agent.agent_id,
+                      label: agent.display_name,
+                      sublabel: agent.agent_id,
+                    }))}
+                  />
                 </div>
                 <div className="flex-1">
                   <label className="block text-xs text-gray-500 mb-1">Provider</label>
@@ -392,11 +380,9 @@ export function FlowsPanel() {
                     value={provider}
                     onChange={setProvider}
                     placeholder="Default"
-                    options={providers.map(p => ({
-                      value: p.name,
-                      label: p.name.replace(/_/g, ' '),
-                      sublabel: !p.installed ? 'Not installed' : undefined,
-                      disabled: !p.installed,
+                    options={[...new Set(agents.map(agent => agent.cli_provider))].map(name => ({
+                      value: name,
+                      label: name.replace(/_/g, ' '),
                     }))}
                   />
                 </div>
@@ -424,7 +410,7 @@ export function FlowsPanel() {
               </button>
               <button
                 onClick={handleCreate}
-                disabled={!name.trim() || !schedule.trim() || !agentProfile.trim() || !promptTemplate.trim() || creating}
+                disabled={!name.trim() || !schedule.trim() || !agentId.trim() || !promptTemplate.trim() || creating}
                 className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors"
               >
                 {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -443,7 +429,7 @@ export function FlowsPanel() {
         details={pendingDelete ? [
           { label: 'Name', value: pendingDelete.name },
           { label: 'Schedule', value: pendingDelete.schedule },
-          { label: 'Profile', value: pendingDelete.agent_profile },
+          { label: 'Profile', value: pendingDelete.agent_id },
           { label: 'Provider', value: pendingDelete.provider || 'default' },
         ] : []}
         confirmLabel="Delete Flow"

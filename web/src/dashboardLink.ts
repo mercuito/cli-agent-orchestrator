@@ -1,4 +1,4 @@
-export type TabKey = 'home' | 'agents' | 'flows' | 'settings'
+export type TabKey = 'home' | 'agents' | 'flows'
 
 export interface InitialDashboardView {
   tab: TabKey
@@ -9,7 +9,7 @@ export interface InitialDashboardView {
 }
 
 function isTabKey(value: string | null): value is TabKey {
-  return value === 'home' || value === 'agents' || value === 'flows' || value === 'settings'
+  return value === 'home' || value === 'agents' || value === 'flows'
 }
 
 export function parseInitialDashboardView(search: string): InitialDashboardView {

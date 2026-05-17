@@ -31,7 +31,7 @@ const RuntimeAcceptedTimelineEventView: KnownTimelineEventView<
 }: KnownTimelineEventViewProps<typeof AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT>) => {
   const data = event.event_data
   const notificationId = primitiveFact(data.inbox_notification_id) ?? 'Unknown notification'
-  const receiver = firstFact(data.inbox_receiver_id, data.agent_identity_id) ?? 'Unknown receiver'
+  const receiver = firstFact(data.inbox_receiver_id, data.agent_id) ?? 'Unknown receiver'
   const sender = firstFact(data.sender_id) ?? 'Unknown sender'
   const sourceKind = labelize(stringFact(data.source_kind), 'Unknown source')
   const sourceId = firstFact(data.source_id) ?? 'No source id'

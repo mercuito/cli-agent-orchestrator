@@ -267,7 +267,7 @@ export function AgentTimelinePanel({
         setSelectedId(current => current ?? result[0]?.agent_id ?? null)
       })
       .catch(() => {
-        if (!cancelled) setRosterError('Unable to load agent identities.')
+        if (!cancelled) setRosterError('Unable to load agents.')
       })
       .finally(() => {
         if (!cancelled) setRosterLoading(false)
@@ -294,7 +294,7 @@ export function AgentTimelinePanel({
         setTimeline(result)
         setTimelineError(null)
       } catch {
-        if (!cancelled && initialLoad) setTimelineError('Unable to load identity timeline.')
+        if (!cancelled && initialLoad) setTimelineError('Unable to load agent timeline.')
       } finally {
         if (!cancelled && initialLoad) setTimelineLoading(false)
       }
@@ -359,10 +359,10 @@ export function AgentTimelinePanel({
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-300">
-              Agent Identities ({agents.length})
+              Agents ({agents.length})
             </h3>
             <p className="mt-1 text-xs text-gray-500">
-              Configured identities independent of current terminals.
+              Configured agents independent of current terminals.
             </p>
           </div>
           <Radio size={16} className="mt-1 text-emerald-400" />
@@ -373,13 +373,13 @@ export function AgentTimelinePanel({
             type="text"
             value={search}
             onChange={event => setSearch(event.target.value)}
-            placeholder="Search identities..."
+            placeholder="Search agents..."
             className="w-full rounded-lg border border-gray-700 bg-gray-900 py-2 pl-8 pr-3 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none"
           />
         </div>
         {rosterLoading ? (
           <div className="rounded-lg border border-gray-700/40 bg-gray-900/50 p-3 text-sm text-gray-500">
-            Loading agent identities...
+            Loading agents...
           </div>
         ) : rosterError ? (
           <div className="rounded-lg border border-red-900/50 bg-red-950/30 p-3 text-sm text-red-300">
@@ -387,7 +387,7 @@ export function AgentTimelinePanel({
           </div>
         ) : filteredAgents.length === 0 ? (
           <div className="rounded-lg border border-gray-700/40 bg-gray-900/50 p-3 text-sm text-gray-500">
-            No configured identities match this search.
+            No configured agents match this search.
           </div>
         ) : (
           <div className="space-y-2">
@@ -432,7 +432,7 @@ export function AgentTimelinePanel({
               </div>
             </>
           ) : (
-            <div className="text-sm text-gray-500">Select an identity to inspect its timeline.</div>
+            <div className="text-sm text-gray-500">Select an agent to inspect its timeline.</div>
           )}
         </div>
 
@@ -440,10 +440,10 @@ export function AgentTimelinePanel({
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
             <div>
               <h4 className="text-sm font-semibold uppercase tracking-wide text-gray-300">
-                Identity Timeline
+                Agent Timeline
               </h4>
               <p className="mt-1 text-xs text-gray-500">
-                Recent CAO events returned for the selected participant identity.
+                Recent CAO events returned for the selected participant agent.
               </p>
             </div>
             {timeline && (
@@ -455,7 +455,7 @@ export function AgentTimelinePanel({
 
           {timelineLoading ? (
             <div className="rounded-lg border border-gray-700/40 bg-gray-900/50 p-4 text-sm text-gray-500">
-              Loading identity timeline...
+              Loading agent timeline...
             </div>
           ) : timelineError ? (
             <div className="rounded-lg border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-300">
@@ -463,10 +463,10 @@ export function AgentTimelinePanel({
             </div>
           ) : timeline && timeline.events.length === 0 ? (
             <div className="rounded-lg border border-gray-700/40 bg-gray-900/50 p-4 text-sm text-gray-500">
-              No recent activity to display for this identity.
+              No recent activity to display for this agent.
             </div>
           ) : timeline ? (
-            <div data-testid="identity-timeline" className="space-y-2">
+            <div data-testid="agent-timeline" className="space-y-2">
               {timelineEvents.map(event => {
                 const cacheKey = selectedId ? relatedEventCacheKey(selectedId, event.event_id) : event.event_id
                 return (
@@ -486,7 +486,7 @@ export function AgentTimelinePanel({
             </div>
           ) : (
             <div className="rounded-lg border border-gray-700/40 bg-gray-900/50 p-4 text-sm text-gray-500">
-              Select an identity to load its timeline.
+              Select an agent to load its timeline.
             </div>
           )}
         </div>

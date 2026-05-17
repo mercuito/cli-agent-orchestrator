@@ -7,8 +7,8 @@ export interface components {
     schemas: {
         /** AgentParticipant */
         AgentParticipant: {
-            /** Agent Identity Id */
-            agent_identity_id: string;
+            /** Agent Id */
+            agent_id: string;
             /**
              * Role
              * @default null
@@ -22,8 +22,8 @@ export interface components {
         AgentRuntimeLifecycleEvent: {
             /** Action */
             action: string;
-            /** Agent Identity Id */
-            agent_identity_id: string;
+            /** Agent Id */
+            agent_id: string;
             /** Agent Participants */
             agent_participants: components["schemas"]["AgentParticipant"][];
             /**
@@ -64,11 +64,11 @@ export interface components {
         };
         /**
          * AgentRuntimeNotificationAcceptedEvent
-         * @description Runtime accepted a newly durable notification for an agent identity.
+         * @description Runtime accepted a newly durable notification for an agent.
          */
         AgentRuntimeNotificationAcceptedEvent: {
-            /** Agent Identity Id */
-            agent_identity_id: string;
+            /** Agent Id */
+            agent_id: string;
             /** Agent Participants */
             agent_participants: components["schemas"]["AgentParticipant"][];
             /**
@@ -112,8 +112,8 @@ export interface components {
          * @description Runtime delivery for an accepted notification was delivered, deferred, or failed.
          */
         AgentRuntimeNotificationDeliveryEvent: {
-            /** Agent Identity Id */
-            agent_identity_id: string;
+            /** Agent Id */
+            agent_id: string;
             /** Agent Participants */
             agent_participants: components["schemas"]["AgentParticipant"][];
             /** Attempted */
@@ -173,8 +173,8 @@ export interface components {
          * @description Runtime switched workspace context, deferred the switch, or failed it.
          */
         AgentRuntimeWorkspaceContextSwitchEvent: {
-            /** Agent Identity Id */
-            agent_identity_id: string;
+            /** Agent Id */
+            agent_id: string;
             /** Agent Participants */
             agent_participants: components["schemas"]["AgentParticipant"][];
             /**
@@ -906,8 +906,8 @@ export interface components {
          * @description Linear create_issue tool result published by the Linear workspace provider.
          */
         LinearIssueCreatedEvent: {
-            /** Agent Identity Id */
-            agent_identity_id: string;
+            /** Agent Id */
+            agent_id: string;
             /**
              * Agent Participants
              * @default []
@@ -1129,7 +1129,7 @@ export interface components {
         };
         /**
          * RuntimeWorkspaceEvent
-         * @description Workspace-wide runtime activity that is not scoped to one agent identity.
+         * @description Workspace-wide runtime activity that is not scoped to one agent.
          */
         RuntimeWorkspaceEvent: {
             /** Action */

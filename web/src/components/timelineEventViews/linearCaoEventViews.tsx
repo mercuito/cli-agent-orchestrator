@@ -252,7 +252,7 @@ const LinearIssueCreatedTimelineEventView: KnownTimelineEventView<typeof LINEAR_
   const issueState = objectStringFact(issue, 'state', 'status') ?? 'Unknown state'
   const issueUrl = objectStringFact(issue, 'url')
   const terminalId = firstFact(data.terminal_id) ?? 'Unknown terminal'
-  const agent = firstFact(data.agent_identity_id) ?? 'Unknown agent'
+  const agent = firstFact(data.agent_id) ?? 'Unknown agent'
   const toolName = firstFact(data.tool_name) ?? 'Unknown tool'
 
   return (

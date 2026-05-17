@@ -18,9 +18,9 @@ interface Store {
   connected: boolean
   snackbar: Snackbar | null
   terminalStatuses: Record<string, string>
-  /** Map of terminal_id → its active monitoring session (if any). Under
+  /** Map of terminal_id -> its active monitoring session (if any). Under
    *  the single-session model at most one session per terminal can be
-   *  active at a time (see ``create_session`` idempotency on the backend),
+   *  active at a time,
    *  so a single-value map is all we need. Replaced wholesale each poll
    *  via setActiveMonitoringSessions. */
   activeMonitoringByTerminal: Record<string, MonitoringSession>
@@ -32,7 +32,6 @@ interface Store {
 
   fetchSessions: () => Promise<void>
   selectSession: (name: string | null) => Promise<void>
-  createSession: (provider: string, agentProfile: string, workingDirectory?: string) => Promise<void>
   deleteSession: (name: string) => Promise<void>
   showSnackbar: (snackbar: Snackbar) => void
   hideSnackbar: () => void
@@ -78,16 +77,6 @@ export const useStore = create<Store>((set, get) => ({
       }
     } catch {
       set({ activeSessionDetail: null })
-    }
-  },
-
-  createSession: async (provider, agentProfile, workingDirectory) => {
-    try {
-      await api.createSession(provider, agentProfile, undefined, workingDirectory)
-      get().showSnackbar({ type: 'success', message: 'Session created' })
-      await get().fetchSessions()
-    } catch (e: any) {
-      get().showSnackbar({ type: 'error', message: e.message || 'Failed to create session' })
     }
   },
 

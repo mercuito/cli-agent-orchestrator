@@ -85,7 +85,7 @@ describe('TerminalView', () => {
       <TerminalView
         terminalId="term-1"
         provider="codex"
-        agentProfile="developer"
+        agentId="developer"
         terminalToken="signed token/with spaces"
         onClose={close}
       />,

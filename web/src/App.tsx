@@ -4,15 +4,13 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { DashboardHome } from './components/DashboardHome'
 import { AgentPanel } from './components/AgentPanel'
 import { FlowsPanel } from './components/FlowsPanel'
-import { SettingsPanel } from './components/SettingsPanel'
 import { parseInitialDashboardView, type TabKey } from './dashboardLink'
-import { Bot, Home, Clock, Settings, CheckCircle, XCircle, Info, Wifi, WifiOff } from 'lucide-react'
+import { Bot, Home, Clock, CheckCircle, XCircle, Info, Wifi, WifiOff } from 'lucide-react'
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'home', label: 'Home', icon: <Home size={16} /> },
   { key: 'agents', label: 'Agents', icon: <Bot size={16} /> },
   { key: 'flows', label: 'Flows', icon: <Clock size={16} /> },
-  { key: 'settings', label: 'Settings', icon: <Settings size={16} /> },
 ]
 
 function Snackbar() {
@@ -159,7 +157,6 @@ export default function App() {
               />
             )}
             {tab === 'flows' && <FlowsPanel />}
-            {tab === 'settings' && <SettingsPanel />}
           </Suspense>
         </ErrorBoundary>
       </main>

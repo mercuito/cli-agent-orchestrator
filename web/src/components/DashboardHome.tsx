@@ -19,10 +19,10 @@ interface SessionWithTerminals {
 
 export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => void }) {
   const { sessions, terminalStatuses, setTerminalStatus, clearTerminalStatuses, setActiveMonitoringSessions, setActiveBatons, showSnackbar } = useStore()
-  const [profileCount, setProfileCount] = useState(0)
+  const [agentCount, setAgentCount] = useState(0)
   const [sessionData, setSessionData] = useState<SessionWithTerminals[]>([])
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set())
-  const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentProfile?: string | null; terminalToken?: string | null } | null>(null)
+  const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentId?: string | null; terminalToken?: string | null } | null>(null)
   const [pendingClose, setPendingClose] = useState<TerminalMeta | null>(null)
   const [closingTerminal, setClosingTerminal] = useState<string | null>(null)
   const [inboxTerminalId, setInboxTerminalId] = useState<string | null>(null)
@@ -85,7 +85,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
   }, [sessionData.flatMap(s => s.terminals.map(t => t.id)).join(',')])
 
   useEffect(() => {
-    api.listProfiles().then(p => setProfileCount(p.length)).catch(() => {})
+    api.listAgents().then(agents => setAgentCount(agents.length)).catch(() => {})
   }, [])
 
   const handleDeleteTerminal = async () => {
@@ -170,8 +170,8 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
               <Package size={20} className="text-blue-400" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-white">{profileCount}</div>
-              <div className="text-xs text-gray-400 uppercase tracking-wide">Profiles</div>
+              <div className="text-2xl font-bold text-white">{agentCount}</div>
+              <div className="text-xs text-gray-400 uppercase tracking-wide">Agents</div>
             </div>
           </div>
         </div>
@@ -241,7 +241,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3 min-w-0">
                           <TermIcon size={14} className="text-gray-400 shrink-0" />
-                          <span className="text-sm font-medium text-gray-200 truncate">{t.agent_profile || 'default'}</span>
+                          <span className="text-sm font-medium text-gray-200 truncate">{t.agent_id || 'default'}</span>
                           <span className="text-xs font-mono text-gray-500">{t.id}</span>
                           <StatusBadge status={terminalStatuses[t.id] || null} />
                           <MonitoringIndicator terminalId={t.id} />
@@ -265,7 +265,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
                             <FileText size={14} />
                           </button>
                           <button
-                            onClick={() => setLiveTerminal({ id: t.id, provider: t.provider, agentProfile: t.agent_profile, terminalToken: t.terminal_token })}
+                            onClick={() => setLiveTerminal({ id: t.id, provider: t.provider, agentId: t.agent_id, terminalToken: t.terminal_token })}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-colors"
                           >
                             <Monitor size={12} />
@@ -329,7 +329,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
       {/* Modals */}
       {inboxTerminalId && <InboxPanel terminalId={inboxTerminalId} onClose={() => setInboxTerminalId(null)} />}
       {liveTerminal && (
-        <TerminalView terminalId={liveTerminal.id} provider={liveTerminal.provider} agentProfile={liveTerminal.agentProfile} terminalToken={liveTerminal.terminalToken} onClose={() => setLiveTerminal(null)} />
+        <TerminalView terminalId={liveTerminal.id} provider={liveTerminal.provider} agentId={liveTerminal.agentId} terminalToken={liveTerminal.terminalToken} onClose={() => setLiveTerminal(null)} />
       )}
       {outputTerminalId && <OutputViewer terminalId={outputTerminalId} onClose={() => setOutputTerminalId(null)} />}
       <ConfirmModal
@@ -337,7 +337,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
         title="Close Terminal"
         message="This will kill the tmux window and terminate the agent process."
         details={pendingClose ? [
-          { label: 'Terminal', value: `${pendingClose.agent_profile || 'default'} (${pendingClose.id})` },
+          { label: 'Terminal', value: `${pendingClose.agent_id || 'default'} (${pendingClose.id})` },
           { label: 'Session', value: pendingClose.tmux_session },
         ] : []}
         confirmLabel="Close Terminal"
@@ -351,7 +351,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
         title="Graceful Exit"
         message="This will send the provider-specific exit command (e.g., /exit)."
         details={pendingExit ? [
-          { label: 'Terminal', value: `${pendingExit.agent_profile || 'default'} (${pendingExit.id})` },
+          { label: 'Terminal', value: `${pendingExit.agent_id || 'default'} (${pendingExit.id})` },
           { label: 'Provider', value: pendingExit.provider },
         ] : []}
         confirmLabel="Send Exit"
