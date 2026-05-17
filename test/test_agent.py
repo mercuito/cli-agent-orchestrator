@@ -142,6 +142,57 @@ def test_load_agent_errors_name_agent_id_and_path(tmp_path):
     assert str(agent_dir / "agent.toml") in str(exc_info.value)
 
 
+def test_load_agent_errors_on_missing_directory_name_agent_id_and_path(tmp_path):
+    with pytest.raises(AgentConfigError) as exc_info:
+        load_agent("implementation_partner", agents_root=tmp_path)
+
+    assert "implementation_partner" in str(exc_info.value)
+    assert str(tmp_path / "implementation_partner") in str(exc_info.value)
+
+
+def test_load_agent_errors_on_missing_prompt_name_agent_id_and_path(tmp_path):
+    agent_dir = tmp_path / "implementation_partner"
+    agent_dir.mkdir()
+    (agent_dir / "agent.toml").write_text("""
+id = "implementation_partner"
+display_name = "Implementation Partner"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "implementation-partner"
+""".lstrip())
+
+    with pytest.raises(AgentConfigError) as exc_info:
+        load_agent("implementation_partner", agents_root=tmp_path)
+
+    assert "implementation_partner" in str(exc_info.value)
+    assert str(agent_dir / "prompt.md") in str(exc_info.value)
+
+
+def test_load_agent_semantic_errors_name_agent_id_and_config_path(tmp_path):
+    agent_dir = tmp_path / "implementation_partner"
+    agent_dir.mkdir()
+    config_path = agent_dir / "agent.toml"
+    config_path.write_text("""
+id = "implementation_partner"
+display_name = "Implementation Partner"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "implementation-partner"
+
+[workspace_context]
+enabled = true
+""".lstrip())
+    (agent_dir / "prompt.md").write_text("# Agent\n")
+
+    with pytest.raises(AgentConfigError) as exc_info:
+        load_agent("implementation_partner", agents_root=tmp_path)
+
+    message = str(exc_info.value)
+    assert "implementation_partner" in message
+    assert str(config_path) in message
+    assert "workspace_context.resolver_id" in message
+
+
 def test_load_agent_errors_on_malformed_toml(tmp_path):
     agent_dir = tmp_path / "implementation_partner"
     agent_dir.mkdir()

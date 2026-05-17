@@ -387,7 +387,15 @@ def load_agent(agent_id: str, *, agents_root: Optional[Path] = None) -> Agent:
         raise AgentConfigError(f"Agent {safe_id!r} invalid TOML at {config_path}: {exc}") from exc
     if not isinstance(raw_config, Mapping):
         raise AgentConfigError(f"Agent {safe_id!r} config must be a TOML table: {config_path}")
-    return _agent_from_config(safe_id, raw_config, prompt_path.read_text(), config_path)
+    try:
+        return _agent_from_config(safe_id, raw_config, prompt_path.read_text(), config_path)
+    except (AgentConfigError, AgentPathError) as exc:
+        message = str(exc)
+        if safe_id in message and str(config_path) in message:
+            raise
+        raise AgentConfigError(
+            f"Agent {safe_id!r} invalid config at {config_path}: {message}"
+        ) from exc
 
 
 def load_all_agents(*, agents_root: Optional[Path] = None) -> AgentRegistry:
