@@ -16,13 +16,21 @@ class TestCliMain:
         assert result.exit_code == 0
         assert "CLI Agent Orchestrator" in result.output
 
-    def test_cli_has_launch_command(self):
-        """Test CLI has launch command."""
+    def test_cli_rejects_launch_command(self):
+        """The removed launch command is rejected by the agent hard cutover."""
         runner = CliRunner()
         result = runner.invoke(cli, ["launch", "--help"])
 
+        assert result.exit_code == 2
+        assert "No such command" in result.output
+
+    def test_cli_has_agent_command(self):
+        """Test CLI has agent command group."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["agent", "--help"])
+
         assert result.exit_code == 0
-        assert "Launch" in result.output or "launch" in result.output.lower()
+        assert "Agent" in result.output or "agent" in result.output.lower()
 
     def test_cli_has_init_command(self):
         """Test CLI has init command."""
