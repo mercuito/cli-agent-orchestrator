@@ -66,6 +66,7 @@ def init_db() -> None:
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
     _migrate_add_terminal_agent_id()
+    _migrate_enforce_single_terminal_per_agent()
     _migrate_add_terminal_workspace_context_id()
     _migrate_backfill_terminal_workspace_context_id()
     _migrate_drop_monitoring_session_peers()
@@ -986,6 +987,36 @@ def _migrate_add_terminal_agent_id() -> None:
             logger.info("Migration: converted terminals to agent_id-owned schema")
     except Exception as e:
         logger.warning(f"Migration check for terminal agent_id failed: {e}")
+        raise
+
+
+def _migrate_enforce_single_terminal_per_agent() -> None:
+    """Add the durable DB claim that limits each agent to one live terminal."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            if not sqlite_migrations.table_exists(conn, "terminals"):
+                return
+            columns = sqlite_migrations.table_columns(conn, "terminals")
+            if "agent_id" not in columns:
+                return
+            duplicate_rows = conn.execute("""
+                SELECT agent_id, GROUP_CONCAT(id, ', ')
+                FROM terminals
+                GROUP BY agent_id
+                HAVING COUNT(*) > 1
+            """).fetchall()
+            if duplicate_rows:
+                details = "; ".join(f"{row[0]}: {row[1]}" for row in duplicate_rows)
+                raise RuntimeError(
+                    "Cannot enforce one live terminal per agent while duplicate "
+                    f"terminal rows exist: {details}"
+                )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " "uq_terminals_agent_id ON terminals(agent_id)"
+            )
+    except Exception as e:
+        logger.warning(f"Migration check for terminal agent uniqueness failed: {e}")
         raise
 
 

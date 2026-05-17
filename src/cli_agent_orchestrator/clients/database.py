@@ -90,6 +90,7 @@ from cli_agent_orchestrator.clients.provider_conversation_store import (  # noqa
 
 # Import domain owner surfaces after Base exists so models register metadata.
 from cli_agent_orchestrator.clients.terminal_store import (  # noqa: E402
+    TerminalAgentAlreadyRunningError,
     TerminalModel,
     create_terminal,
     delete_terminal,
@@ -139,6 +140,7 @@ __all__ = [
     "ProcessedProviderEventModel",
     "SessionLocal",
     "TerminalModel",
+    "TerminalAgentAlreadyRunningError",
     "ContextWorkspaceModel",
     "WorkspaceContextModel",
     "WorkspaceContextObjectMappingModel",

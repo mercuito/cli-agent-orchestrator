@@ -7,7 +7,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, cast
 
-from sqlalchemy import Column, DateTime, String
+from sqlalchemy import Column, DateTime, Index, String
+from sqlalchemy.exc import IntegrityError
 
 from cli_agent_orchestrator.clients.database_core import Base
 
@@ -18,6 +19,7 @@ class TerminalModel(Base):
     """SQLAlchemy model for terminal metadata only."""
 
     __tablename__ = "terminals"
+    __table_args__ = (Index("uq_terminals_agent_id", "agent_id", unique=True),)
 
     id = Column(String, primary_key=True)  # "abc123ef"
     tmux_session = Column(String, nullable=False)  # "cao-session-name"
@@ -27,6 +29,15 @@ class TerminalModel(Base):
     workspace_context_id = Column(String, nullable=False)  # CAO workspace context
     allowed_tools = Column(String, nullable=True)  # JSON-encoded runtime capability list
     last_active = Column(DateTime, default=datetime.now)
+
+
+class TerminalAgentAlreadyRunningError(RuntimeError):
+    """Raised when a durable agent already has a terminal manifestation."""
+
+    def __init__(self, agent_id: str, terminal_id: str) -> None:
+        self.agent_id = agent_id
+        self.terminal_id = terminal_id
+        super().__init__(f"Agent {agent_id!r} already has a live terminal: {terminal_id}")
 
 
 def _session_local():
@@ -56,7 +67,14 @@ def create_terminal(
             allowed_tools=json.dumps(allowed_tools) if allowed_tools else None,
         )
         db.add(terminal)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = db.query(TerminalModel).filter(TerminalModel.agent_id == agent_id).first()
+            if existing is not None:
+                raise TerminalAgentAlreadyRunningError(agent_id, str(existing.id))
+            raise
         return {
             "id": terminal.id,
             "tmux_session": terminal.tmux_session,
@@ -112,11 +130,7 @@ def list_terminals_by_session(tmux_session: str) -> List[Dict[str, Any]]:
 def list_terminals_by_agent(agent_id: str) -> List[Dict[str, Any]]:
     """List terminal manifestations mapped to a durable CAO agent."""
     with _session_local()() as db:
-        terminals = (
-            db.query(TerminalModel)
-            .filter(TerminalModel.agent_id == agent_id)
-            .all()
-        )
+        terminals = db.query(TerminalModel).filter(TerminalModel.agent_id == agent_id).all()
         return [_terminal_model_to_metadata(t) for t in terminals]
 
 

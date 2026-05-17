@@ -43,6 +43,7 @@ from cli_agent_orchestrator.agent import (
     write_agent,
 )
 from cli_agent_orchestrator.clients.database import (
+    TerminalAgentAlreadyRunningError,
     create_inbox_delivery,
     get_baton_record,
     get_terminal_metadata,
@@ -1008,6 +1009,14 @@ async def start_agent_endpoint(agent_id: str) -> AgentRuntimeTerminalResponse:
         )
     except HTTPException:
         raise
+    except TerminalAgentAlreadyRunningError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": f"Agent '{e.agent_id}' is already running",
+                "terminal_id": e.terminal_id,
+            },
+        )
     except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:

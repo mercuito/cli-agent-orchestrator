@@ -21,6 +21,7 @@ from cli_agent_orchestrator.clients.database import (
     InboxNotificationTargetModel,
     ProviderConversationMessageModel,
     ProviderConversationThreadModel,
+    TerminalAgentAlreadyRunningError,
     TerminalModel,
     create_flow,
     create_inbox_delivery,
@@ -238,6 +239,30 @@ class TestTerminalOperations:
         assert result["agent_id"] == "implementation_partner"
         assert result["workspace_context_id"] == "ctx_implementation_partner_default"
         assert list_terminals_by_agent("implementation_partner")[0]["id"] == "test123"
+
+    def test_terminal_metadata_enforces_one_live_terminal_per_agent(self, live_inbox_db):
+        """The database claim prevents concurrent duplicate agent terminals."""
+        create_terminal(
+            "terminal-a",
+            "cao-session",
+            "window-a",
+            "codex",
+            "implementation_partner",
+            "ctx_implementation_partner_default",
+        )
+
+        with pytest.raises(TerminalAgentAlreadyRunningError) as exc_info:
+            create_terminal(
+                "terminal-b",
+                "cao-session",
+                "window-b",
+                "codex",
+                "implementation_partner",
+                "ctx_implementation_partner_default",
+            )
+
+        assert exc_info.value.agent_id == "implementation_partner"
+        assert exc_info.value.terminal_id == "terminal-a"
 
     def test_terminal_metadata_requires_workspace_context(self, live_inbox_db):
         """Terminal metadata must be fully specified."""
@@ -982,9 +1007,11 @@ class TestInitDb:
             """)
 
         database_migrations._migrate_add_terminal_agent_id()
+        database_migrations._migrate_enforce_single_terminal_per_agent()
 
         with test_engine.connect() as connection:
             table_info = connection.exec_driver_sql("PRAGMA table_info(terminals)").fetchall()
+            index_info = connection.exec_driver_sql("PRAGMA index_list(terminals)").fetchall()
             columns = {row[1] for row in table_info}
             not_null_by_column = {row[1]: bool(row[3]) for row in table_info}
             row = connection.exec_driver_sql(
@@ -993,6 +1020,7 @@ class TestInitDb:
 
         assert "agent_id" in columns
         assert not_null_by_column["agent_id"] is True
+        assert any(row[1] == "uq_terminals_agent_id" and row[2] for row in index_info)
         assert "agent_profile" not in columns
         assert row == ("developer",)
 
@@ -1032,6 +1060,45 @@ class TestInitDb:
         assert "anonymous terminal rows exist" in message
         assert "terminal-null" in message
         assert "terminal-blank" in message
+
+    def test_terminal_agent_uniqueness_migration_refuses_duplicate_agents(
+        self, tmp_path, monkeypatch
+    ):
+        """Existing duplicate live agent rows must be cleaned before enforcing T09."""
+        db_path = tmp_path / "duplicate-agent-terminals.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE terminals (
+                    id TEXT PRIMARY KEY,
+                    tmux_session TEXT NOT NULL,
+                    tmux_window TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    workspace_context_id TEXT NOT NULL,
+                    allowed_tools TEXT,
+                    last_active DATETIME
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO terminals (
+                    id, tmux_session, tmux_window, provider, agent_id, workspace_context_id
+                )
+                VALUES
+                    ('terminal-a', 'cao-session', 'window-a', 'codex', 'developer', 'ctx-a'),
+                    ('terminal-b', 'cao-session', 'window-b', 'codex', 'developer', 'ctx-b')
+            """)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            database_migrations._migrate_enforce_single_terminal_per_agent()
+
+        message = str(exc_info.value)
+        assert "one live terminal per agent" in message
+        assert "developer" in message
+        assert "terminal-a" in message
+        assert "terminal-b" in message
 
     def test_terminal_workspace_context_backfill_binds_renamed_agent_terminal(
         self, tmp_path, monkeypatch

@@ -13,6 +13,7 @@ from cli_agent_orchestrator.agent import (
     LinearConfig,
     LinearToolAccessConfig,
 )
+from cli_agent_orchestrator.clients.database import TerminalAgentAlreadyRunningError
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.events import (
     AgentParticipant,
@@ -245,6 +246,33 @@ def test_start_agent_rejects_existing_live_instance(client, monkeypatch):
     assert response.json()["detail"] == {
         "message": "Agent 'implementation_partner' is already running",
         "terminal_id": "abcd1234",
+    }
+
+
+def test_start_agent_reports_database_race_as_existing_live_instance(client, monkeypatch):
+    manager = _FakeAgentManager((_status(),))
+
+    def _resolve_agent(agent_id: str):
+        return _agent(agent_id)
+
+    manager.resolve_agent = _resolve_agent  # type: ignore[attr-defined]
+
+    class _Handle:
+        def __init__(self, agent, *, agent_manager):
+            pass
+
+        def ensure_started(self):
+            raise TerminalAgentAlreadyRunningError("implementation_partner", "terminal-race")
+
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.default_agent_manager", lambda: manager)
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.AgentRuntimeHandle", _Handle)
+
+    response = client.post("/agents/implementation_partner/start")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "message": "Agent 'implementation_partner' is already running",
+        "terminal_id": "terminal-race",
     }
 
 

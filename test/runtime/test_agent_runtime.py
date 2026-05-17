@@ -20,7 +20,6 @@ from cli_agent_orchestrator.runtime import events as runtime_events
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeFreshnessAction,
     AgentRuntimeHandle,
-    AgentRuntimeInvariantError,
     AgentRuntimeNotification,
     AgentRuntimeStatus,
 )
@@ -370,7 +369,7 @@ def test_ensure_started_publishes_lifecycle_event_for_direct_reuse(
     assert lifecycle.agent_participants[0].agent_id == "implementation_partner"
 
 
-def test_current_terminal_rejects_multiple_manifestations_for_agent(test_session, handle):
+def test_terminal_store_rejects_multiple_manifestations_for_agent(test_session):
     db_module.create_terminal(
         "terminal-1",
         "cao-implementation-partner",
@@ -379,17 +378,18 @@ def test_current_terminal_rejects_multiple_manifestations_for_agent(test_session
         agent_id="implementation_partner",
         workspace_context_id=_default_workspace_context_id(),
     )
-    db_module.create_terminal(
-        "terminal-2",
-        "cao-implementation-partner",
-        "developer-2",
-        "codex",
-        agent_id="implementation_partner",
-        workspace_context_id=_default_workspace_context_id(),
-    )
+    with pytest.raises(db_module.TerminalAgentAlreadyRunningError) as exc_info:
+        db_module.create_terminal(
+            "terminal-2",
+            "cao-implementation-partner",
+            "developer-2",
+            "codex",
+            agent_id="implementation_partner",
+            workspace_context_id=_default_workspace_context_id(),
+        )
 
-    with pytest.raises(AgentRuntimeInvariantError, match="Multiple terminal manifestations"):
-        handle.current_terminal()
+    assert exc_info.value.agent_id == "implementation_partner"
+    assert exc_info.value.terminal_id == "terminal-1"
 
 
 def test_context_runtime_uses_agent_and_workspace_context_route(
