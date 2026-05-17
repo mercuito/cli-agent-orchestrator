@@ -9,14 +9,13 @@ wiring that makes Phase 2's resolver actually do something.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from cli_agent_orchestrator.mcp_server import server
-from test.support.agent_factory import parse_agent_id_text
+from test.support.agent_factory import Agent
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 
 
@@ -52,7 +51,7 @@ class TestRegisterTools:
         return mock
 
     def test_none_allowlist_registers_every_pending_tool(self):
-        """Permissive default for agents that have no caoTools configured."""
+        """Permissive default for agents that have no cao_tools configured."""
         pending = [("a", lambda: None, {}), ("b", lambda: None, {}), ("c", lambda: None, {})]
         mcp_instance = self._mock_mcp()
 
@@ -93,9 +92,11 @@ class TestRegisterTools:
         assert registered == ["a"]
 
     def test_builtin_developer_allowlist_registers_provider_inbox_tools(self):
-        store = Path(__file__).resolve().parents[2] / "examples" / "agents"
-        profile_text = (store / "developer.md").read_text()
-        profile = parse_agent_id_text(profile_text, "developer")
+        profile = Agent(
+            name="developer",
+            description="Developer",
+            cao_tools=["read_inbox_message", "reply_to_inbox_message"],
+        )
         allowlist = resolve_cao_tool_allowlist(profile)
         mcp_instance = self._mock_mcp()
 
@@ -166,7 +167,7 @@ class TestResolveAllowlistForTerminal:
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
     def test_api_unreachable_returns_none_permissive(self, mock_get):
         """If cao-server can't be reached, we fail open in Phase 3 so
-        existing agents (without caoTools configured) keep working. An
+        existing agents (without cao_tools configured) keep working. An
         error is logged; flipping to fail-closed is a later, opt-in
         choice (Phase 5)."""
         mock_get.side_effect = requests.ConnectionError("refused")

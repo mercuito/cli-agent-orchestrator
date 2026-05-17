@@ -1,19 +1,3 @@
----
-name: data_analyst_claude_code
-description: Data analyst agent that runs on Claude Code (cross-provider override)
-provider: claude_code
-runtimeCapabilities: ["@builtin", "fs_*", "execute_bash"]
-caoTools: [send_message]
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
----
-
 # DATA ANALYST AGENT
 
 ## Role and Identity

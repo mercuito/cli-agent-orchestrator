@@ -50,16 +50,24 @@ if you want to use other providers:
 cao-server
 ```
 
-2. Install the agents:
+2. Create the durable agents and copy the example prompts:
 ```bash
 # Supervisor
-cao install examples/cross-provider/cross_provider_supervisor.md
+cao agent create cross_provider_supervisor --provider kiro_cli --workdir "$PWD"
+cp examples/cross-provider/cross_provider_supervisor.md ~/.aws/cli-agent-orchestrator/agents/cross_provider_supervisor/prompt.md
 
 # Default worker agents (used by the supervisor)
-cao install examples/cross-provider/data_analyst_claude_code.md
-cao install examples/cross-provider/data_analyst_gemini_cli.md
-cao install examples/cross-provider/data_analyst_kiro_cli.md
-cao install examples/cross-provider/report_generator_codex.md
+cao agent create data_analyst_claude_code --provider claude_code --workdir "$PWD"
+cp examples/cross-provider/data_analyst_claude_code.md ~/.aws/cli-agent-orchestrator/agents/data_analyst_claude_code/prompt.md
+
+cao agent create data_analyst_gemini_cli --provider gemini_cli --workdir "$PWD"
+cp examples/cross-provider/data_analyst_gemini_cli.md ~/.aws/cli-agent-orchestrator/agents/data_analyst_gemini_cli/prompt.md
+
+cao agent create data_analyst_kiro_cli --provider kiro_cli --workdir "$PWD"
+cp examples/cross-provider/data_analyst_kiro_cli.md ~/.aws/cli-agent-orchestrator/agents/data_analyst_kiro_cli/prompt.md
+
+cao agent create report_generator_codex --provider codex --workdir "$PWD"
+cp examples/cross-provider/report_generator_codex.md ~/.aws/cli-agent-orchestrator/agents/report_generator_codex/prompt.md
 ```
 
 3. Launch the supervisor:
@@ -90,11 +98,14 @@ The default supervisor uses `data_analyst_claude_code`, `data_analyst_gemini_cli
 and `data_analyst_kiro_cli` for data analysis, and `report_generator_codex` for
 report generation. To use different providers:
 
-1. Install the additional worker agents you need:
+1. Create the additional worker agents you need:
 
 ```bash
-cao install examples/cross-provider/data_analyst_codex.md
-cao install examples/cross-provider/data_analyst_copilot_cli.md
+cao agent create data_analyst_codex --provider codex --workdir "$PWD"
+cp examples/cross-provider/data_analyst_codex.md ~/.aws/cli-agent-orchestrator/agents/data_analyst_codex/prompt.md
+
+cao agent create data_analyst_copilot_cli --provider copilot_cli --workdir "$PWD"
+cp examples/cross-provider/data_analyst_copilot_cli.md ~/.aws/cli-agent-orchestrator/agents/data_analyst_copilot_cli/prompt.md
 ```
 
 2. Copy and edit the supervisor agent to reference the agents you want:
@@ -113,10 +124,11 @@ cp examples/cross-provider/cross_provider_supervisor.md my_supervisor.md
 | `data_analyst_copilot_cli` | Copilot CLI |
 ```
 
-4. Install and launch your custom supervisor:
+4. Create and launch your custom supervisor:
 
 ```bash
-cao install my_supervisor.md
+cao agent create my_supervisor --provider kiro_cli --workdir "$PWD"
+cp my_supervisor.md ~/.aws/cli-agent-orchestrator/agents/my_supervisor/prompt.md
 cao agent start my_supervisor
 ```
 
@@ -125,20 +137,14 @@ cao agent start my_supervisor
 To create a cross-provider version of any agent, set `cli_provider` in
 `agent.toml`:
 
-```yaml
----
-name: my_agent_codex
-description: My agent that runs on Codex
-provider: codex
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
----
+```toml
+id = "my_agent_codex"
+display_name = "My Codex Agent"
+cli_provider = "codex"
+
+[mcp_servers.cao-mcp-server]
+type = "stdio"
+command = "cao-mcp-server"
 ```
 
 Valid provider values: `kiro_cli`, `claude_code`, `codex`, `q_cli`, `gemini_cli`,

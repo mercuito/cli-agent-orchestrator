@@ -17,7 +17,7 @@ This module offers a data-first, format-neutral primitive:
 It operates on plain dicts, so callers are responsible for parsing (TOML,
 JSON, YAML, ...) and for serialising the result. Today only the Codex
 provider uses this; other providers either pass config via CLI flags or
-manage per-agent config at install time rather than per-terminal.
+materialize per-agent config at terminal creation.
 """
 
 from __future__ import annotations

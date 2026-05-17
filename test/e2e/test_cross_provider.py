@@ -14,10 +14,8 @@ Flow:
 
 Requires:
 - Running CAO server
-- Agents installed:
-    cao install examples/cross-provider/data_analyst_claude_code.md
-    cao install examples/cross-provider/data_analyst_gemini_cli.md
-    cao install examples/cross-provider/data_analyst_kiro_cli.md
+- Durable agents created from examples/cross-provider prompts:
+    data_analyst_claude_code, data_analyst_gemini_cli, data_analyst_kiro_cli
 - Authenticated CLI tools for each provider used in the test
 - tmux
 

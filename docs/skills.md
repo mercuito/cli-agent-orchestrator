@@ -119,7 +119,7 @@ Skills are delivered to agents differently depending on the provider. The table 
 | Gemini CLI | Runtime prompt | Every terminal creation | `load_skill` MCP tool |
 | Kimi CLI | Runtime prompt | Every terminal creation | `load_skill` MCP tool |
 | Kiro CLI | Native `skill://` resources | Every terminal creation | Kiro progressive loading |
-| Copilot CLI | Baked into `.agent.md` at install | On `cao skills add/remove` | `load_skill` MCP tool |
+| Copilot CLI | Runtime prompt injection from durable agent prompt | Next terminal creation | `load_skill` MCP tool |
 
 ### Runtime Prompt Providers (Claude Code, Codex, Gemini CLI, Kimi CLI)
 
@@ -143,11 +143,10 @@ Because Kiro reads directly from the skill store, changes from `cao skills add` 
 
 ### Copilot CLI
 
-The skill catalog is baked into the agent's `.agent.md` file (`~/.copilot/agents/{name}.agent.md`) at install time. The Markdown body of the file contains the agent's prompt with the skill catalog appended. The YAML frontmatter (`name`, `description`) is preserved during refreshes.
+The skill catalog is injected from the durable agent prompt at terminal creation.
 
-When you run `cao skills add` or `cao skills remove`, all CAO-managed Copilot agent files are automatically refreshed — their body content is rewritten with the updated skill catalog while preserving frontmatter.
-
-CAO identifies Copilot agents it manages by checking whether a matching agent context file exists in `~/.aws/cli-agent-orchestrator/agent-context/`.
+When you run `cao skills add` or `cao skills remove`, the next terminal created
+for each agent reflects the updated skill catalog.
 
 ## Creating a Custom Skill
 
@@ -196,7 +195,11 @@ Or overwrite it with an updated version from a local folder:
 cao skills add ./my-coding-standards --force
 ```
 
-Running `cao skills add --force` refreshes Copilot CLI agent files immediately. All other providers pick up the change on the next terminal creation. If you edited the skill file directly in the store instead of using `cao skills add --force`, Copilot files won't be refreshed — run `cao skills remove <name>` followed by `cao skills add <folder>` to trigger the refresh, or reinstall the affected agents with `cao install`.
+Running `cao skills add --force` updates the skill store. Providers pick up the
+change on the next terminal creation. If you edited the skill file directly in
+the store instead of using `cao skills add --force`, run
+`cao skills remove <name>` followed by `cao skills add <folder>` to refresh the
+managed copy.
 
 ## Known Limitations
 

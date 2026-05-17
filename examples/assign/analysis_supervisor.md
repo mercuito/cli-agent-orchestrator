@@ -1,18 +1,3 @@
----
-name: analysis_supervisor
-description: Supervisor agent that orchestrates parallel data analysis using assign and sequential report generation using handoff
-runtimeCapabilities: ["@builtin", "fs_read", "fs_list"]
-caoTools: [assign, handoff, send_message]
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
----
-
 # ANALYSIS SUPERVISOR AGENT
 
 You orchestrate data analysis by using MCP tools to coordinate other agents.

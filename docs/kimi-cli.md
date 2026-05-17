@@ -169,7 +169,7 @@ uv run pytest -m e2e test/e2e/test_supervisor_orchestration.py -v -k KimiCli -o 
 Prerequisites for E2E tests:
 - CAO server running (`cao-server`)
 - `kimi` CLI authenticated (`kimi login`)
-- Agents installed (`cao install developer`)
+- Durable agents created with `cao agent create`
 
 ## Troubleshooting
 

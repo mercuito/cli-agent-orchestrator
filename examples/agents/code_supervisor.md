@@ -1,29 +1,3 @@
----
-name: code_supervisor
-description: Coding Supervisor Agent in a multi-agent system
-runtimeCapabilities:
-  - fs_read
-  - fs_list
-caoTools:
-  - assign
-  - handoff
-  - send_message
-  - create_baton
-  - pass_baton
-  - return_baton
-  - complete_baton
-  - block_baton
-  - get_my_batons
-  - get_baton
-  - read_inbox_message
-  - reply_to_inbox_message
-  - terminate
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: cao-mcp-server
----
-
 # CODING SUPERVISOR AGENT
 
 ## Role and Identity

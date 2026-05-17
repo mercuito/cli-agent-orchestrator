@@ -132,7 +132,7 @@ ALLOWED_HOSTS = [
 # =============================================================================
 # Runtime capabilities are coarse provider-native capability categories. They
 # are distinct from named MCP tools, which are governed by provider/tool access
-# allowlists such as ``caoTools`` and Linear provider access configuration.
+# allowlists such as ``cao_tools`` and Linear provider access configuration.
 DEFAULT_RUNTIME_CAPABILITIES = ["@builtin", "fs_*", "execute_bash"]
 
 # Security constraints prepended to system prompts for providers without

@@ -571,7 +571,7 @@ Skills are delivered to each provider automatically:
 |----------|----------------|
 | Kiro CLI | Native `skill://` resources (progressive loading) |
 | Claude Code, Codex, Gemini CLI, Kimi CLI | Runtime prompt injection (every terminal creation) |
-| Copilot CLI | Baked into `.agent.md` at install time |
+| Copilot CLI | Runtime prompt injection from the durable agent prompt |
 
 When you add or remove a skill, all providers pick up the change automatically. Copilot agent files are refreshed immediately; other providers pick up changes on the next terminal creation.
 

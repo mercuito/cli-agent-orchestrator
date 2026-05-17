@@ -155,9 +155,9 @@ def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
     """Ask cao-server which tools this terminal's agent permits.
 
     Fail-open on any error: a None return means "don't filter, register all
-    tools." This keeps existing agents with no caoTools working
-    unchanged while users opt in to filtering by configuring their agents.
-    Fail-closed behavior is a later, opt-in choice (Phase 5).
+    tools." This keeps agents with no ``cao_tools`` allowlist working while
+    users opt in to filtering by configuring their agents. Fail-closed
+    behavior is a later, opt-in choice.
 
     Any hang past the short budget also fails open — a slow API call at
     startup would otherwise exceed the provider MCP client's handshake

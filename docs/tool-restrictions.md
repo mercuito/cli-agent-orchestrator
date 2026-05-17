@@ -5,26 +5,24 @@ separate when writing agents or provider integrations.
 
 ## Surfaces
 
-| Surface | Profile/config field | Meaning |
+| Surface | Agent config field | Meaning |
 |---------|----------------------|---------|
-| Runtime capabilities | `runtimeCapabilities` | Coarse provider-native actions such as reading files, writing files, listing files, and executing shell commands. |
-| CAO MCP tools | `caoTools` | Named tools exposed by `cao-mcp-server`, such as `assign`, `send_message`, `read_inbox_message`, and `reply_to_inbox_message`. |
+| Runtime capabilities | `runtime_capabilities` | Coarse provider-native actions such as reading files, writing files, listing files, and executing shell commands. |
+| CAO MCP tools | `cao_tools` | Named tools exposed by `cao-mcp-server`, such as `assign`, `send_message`, `read_inbox_message`, and `reply_to_inbox_message`. |
 | Provider-mediated MCP tools | Provider config, such as Linear tool access config | Named tools supplied by a workspace provider and mediated through CAO. |
-| External provider schema fields | Provider-specific config, such as Q/Kiro `allowedTools` | Fields CAO writes for an external CLI provider. These names are not CAO profile vocabulary. |
+| External provider schema fields | Provider-specific config | Fields CAO writes for an external CLI provider. These names are not CAO agent vocabulary. |
 
-`role` is not a profile access-control field. Agents should express their
+`role` is not an agent access-control field. Agents should express their
 identity in their name, prompt, skills, tags, and explicit access fields.
 
 ## Runtime Capabilities
 
-Use `runtimeCapabilities` to describe broad provider-native access:
+Use `runtime_capabilities` to describe broad provider-native access:
 
-```yaml
----
-name: reviewer
-description: Read-only reviewer
-runtimeCapabilities: ["@builtin", "fs_read", "fs_list"]
----
+```toml
+id = "reviewer"
+display_name = "Reviewer"
+runtime_capabilities = ["@builtin", "fs_read", "fs_list"]
 ```
 
 Current runtime capability vocabulary:
@@ -39,32 +37,29 @@ Current runtime capability vocabulary:
 | `@builtin` | Provider built-in non-MCP capabilities | Provider specific | Provider specific |
 | `*` | Unrestricted runtime access | All provider-native tools | All provider-native tools |
 
-If `runtimeCapabilities` is omitted, CAO defaults to developer-like native
+If `runtime_capabilities` is omitted, CAO defaults to developer-like native
 access: `@builtin`, `fs_*`, and `execute_bash`.
 
-Agents do not support `allowedTools`. Use `runtimeCapabilities` for
-provider-native access and `caoTools` for named CAO MCP tools.
+Agents do not support a CAO-level allowed-tools field. Use
+`runtime_capabilities` for provider-native access and `cao_tools` for named CAO
+MCP tools.
 
 ## CAO MCP Tools
 
-Use `caoTools` to allow named tools from `cao-mcp-server`:
+Use `cao_tools` to allow named tools from `cao-mcp-server`:
 
-```yaml
----
-name: discovery_partner
-description: Opens discovery conversations and shapes work intake
-runtimeCapabilities: ["@builtin", "fs_read", "fs_list"]
-caoTools:
-  - read_inbox_message
-  - reply_to_inbox_message
----
+```toml
+id = "discovery_partner"
+display_name = "Discovery Partner"
+runtime_capabilities = ["@builtin", "fs_read", "fs_list"]
+cao_tools = ["read_inbox_message", "reply_to_inbox_message"]
 ```
 
-`caoTools: []` explicitly denies all CAO MCP tools. `caoTools` omitted means no
-agent-specific CAO MCP allowlist is configured. Prefer explicit `caoTools` on
+`cao_tools = []` explicitly denies all CAO MCP tools. `cao_tools` omitted means no
+agent-specific CAO MCP allowlist is configured. Prefer explicit `cao_tools` on
 new agents.
 
-Provider-mediated MCP tools, such as Linear tools, are not listed in `caoTools`.
+Provider-mediated MCP tools, such as Linear tools, are not listed in `cao_tools`.
 They are configured through the owning provider's access policy because the
 provider owns that tool vocabulary.
 
@@ -93,7 +88,7 @@ Agent 'reviewer' launching on claude_code:
 Proceed? [Y/n]
 ```
 
-If the profile omits `runtimeCapabilities`, the prompt calls out the default
+If the agent omits `runtime_capabilities`, the prompt calls out the default
 developer-like native access and points back to this document.
 
 ## Provider Enforcement
@@ -106,8 +101,8 @@ mechanism where possible:
 | Claude Code | Hard | `--disallowedTools` flags block specific native tools. |
 | Copilot CLI | Hard | `--deny-tool` flags override `--allow-all`. |
 | Gemini CLI | Hard | Policy Engine TOML deny rules. |
-| Kiro CLI | Hard | Provider agent JSON uses its own `allowedTools` schema field. |
-| Q CLI | Hard | Provider agent JSON uses its own `allowedTools` schema field. |
+| Kiro CLI | Hard | Provider agent JSON receives the resolved runtime capability policy. |
+| Q CLI | Hard | Provider agent JSON receives the resolved runtime capability policy. |
 | Kimi CLI | Soft | Security instructions in the prompt. |
 | Codex | Soft | Security instructions in the prompt. |
 
@@ -126,10 +121,10 @@ appropriate agent.
 
 | I want to... | Do this |
 |--------------|---------|
-| Limit native filesystem/shell access | Set `runtimeCapabilities`. |
-| Allow or deny CAO orchestration/inbox tools | Set `caoTools`. |
+| Limit native filesystem/shell access | Set `runtime_capabilities`. |
+| Allow or deny CAO orchestration/inbox tools | Set `cao_tools`. |
 | Configure Linear or another workspace provider's MCP tools | Use that provider's access config. |
-| Change runtime access | Edit `runtimeCapabilities` in `agent.toml`. |
+| Change runtime access | Edit `runtime_capabilities` in `agent.toml`. |
 | Skip provider-specific confirmations | Configure the provider-specific approval setting. |
 | Remove native runtime restrictions | Set unrestricted runtime capabilities in `agent.toml`. |
 
@@ -139,6 +134,5 @@ appropriate agent.
    `Glob`, and `Grep`. Native tools outside that mapping are not denied by
    runtime capability translation yet.
 2. Codex and Kimi CLI runtime capability enforcement is soft.
-3. Q CLI and Kiro CLI still receive an `allowedTools` field in their generated
-   provider agent JSON because that is the external provider schema, not CAO
-   profile vocabulary.
+3. Q CLI and Kiro CLI receive provider-native policy config generated from the
+   durable agent's runtime capability settings.

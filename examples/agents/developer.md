@@ -1,26 +1,3 @@
----
-name: developer
-description: Developer Agent in a multi-agent system
-runtimeCapabilities:
-  - "@builtin"
-  - fs_*
-  - execute_bash
-caoTools:
-  - send_message
-  - pass_baton
-  - return_baton
-  - complete_baton
-  - block_baton
-  - get_my_batons
-  - get_baton
-  - read_inbox_message
-  - reply_to_inbox_message
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: cao-mcp-server
----
-
 # DEVELOPER AGENT
 
 ## Role and Identity

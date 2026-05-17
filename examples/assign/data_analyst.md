@@ -1,18 +1,3 @@
----
-name: data_analyst
-description: Data analyst agent that performs statistical analysis and sends results back
-runtimeCapabilities: ["@builtin", "fs_*", "execute_bash"]
-caoTools: [send_message]
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
----
-
 # DATA ANALYST AGENT
 
 ## Role and Identity

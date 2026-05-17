@@ -194,7 +194,7 @@ uv run pytest test/e2e/test_supervisor_orchestration.py -v -k Gemini -o "addopts
 Prerequisites for E2E tests:
 - CAO server running (`cao-server`)
 - `gemini` CLI authenticated
-- Agents installed (`cao install developer`, `cao install examples/assign/analysis_supervisor.md`)
+- Durable agents created with `cao agent create` and prompts copied into `prompt.md`
 
 ## Troubleshooting
 

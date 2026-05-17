@@ -25,8 +25,8 @@ Requires:
 - Running CAO server
 - Authenticated CLI tools (codex, claude, kiro-cli, gemini, copilot)
 - tmux
-- Agents installed: data_analyst, report_generator
-  (install with: cao install examples/assign/data_analyst.md)
+- Durable agents created: data_analyst, report_generator
+  (create with `cao agent create` and copy prompts from examples/assign/)
 
 Run:
     uv run pytest -m e2e test/e2e/test_assign.py -v

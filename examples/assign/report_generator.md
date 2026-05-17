@@ -1,18 +1,3 @@
----
-name: report_generator
-description: Agent that creates report templates and structures
-runtimeCapabilities: ["@builtin", "fs_*", "execute_bash"]
-caoTools: [send_message]
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
----
-
 # REPORT GENERATOR AGENT
 
 ## Role and Identity

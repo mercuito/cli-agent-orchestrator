@@ -39,12 +39,13 @@ class TestCliMain:
 
         assert result.exit_code == 0
 
-    def test_cli_has_install_command(self):
-        """Test CLI has install command."""
+    def test_cli_rejects_install_command(self):
+        """The removed install command is rejected by the agent hard cutover."""
         runner = CliRunner()
         result = runner.invoke(cli, ["install", "--help"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 2
+        assert "No such command" in result.output
 
     def test_cli_has_shutdown_command(self):
         """Test CLI has shutdown command."""

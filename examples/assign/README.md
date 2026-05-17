@@ -51,27 +51,21 @@ graph TD
 
 ## Agents
 
-Agents that need CAO orchestration must declare both the **cao-mcp-server**
-MCP server and the specific `caoTools` they may call:
+Agents that need CAO orchestration declare the MCP server and allowed CAO tools
+in `agent.toml`:
 
-```yaml
----
-name: your_agent_name
-description: Your agent description
-runtimeCapabilities: ["@builtin", "fs_read", "fs_list"]
-caoTools: [assign, handoff, send_message]
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
----
+```toml
+id = "your_agent_name"
+display_name = "Your Agent"
+runtime_capabilities = ["@builtin", "fs_read", "fs_list"]
+cao_tools = ["assign", "handoff", "send_message"]
+
+[mcp_servers.cao-mcp-server]
+type = "stdio"
+command = "cao-mcp-server"
 ```
 
-The MCP server exposes CAO orchestration tools; `caoTools` chooses which of
+The MCP server exposes CAO orchestration tools; `cao_tools` chooses which of
 those named MCP tools this agent may use:
 
 ### 1. `handoff` - Sequential/Blocking Pattern
@@ -168,11 +162,16 @@ Message will be delivered to terminal abc12345's inbox.
 cao-server
 ```
 
-2. Install the agents:
+2. Create the durable agents and copy the example prompts:
 ```bash
-cao install examples/assign/analysis_supervisor.md
-cao install examples/assign/data_analyst.md
-cao install examples/assign/report_generator.md
+cao agent create analysis_supervisor --provider codex --workdir "$PWD"
+cp examples/assign/analysis_supervisor.md ~/.aws/cli-agent-orchestrator/agents/analysis_supervisor/prompt.md
+
+cao agent create data_analyst --provider codex --workdir "$PWD"
+cp examples/assign/data_analyst.md ~/.aws/cli-agent-orchestrator/agents/data_analyst/prompt.md
+
+cao agent create report_generator --provider codex --workdir "$PWD"
+cp examples/assign/report_generator.md ~/.aws/cli-agent-orchestrator/agents/report_generator/prompt.md
 ```
 
 3. Launch the supervisor:
@@ -327,9 +326,12 @@ T=33s:  Present final report
 The `data_analyst` and `report_generator` agents from this directory are used in the E2E test suite to validate assign and handoff flows across all providers (codex, claude_code, kiro_cli, kimi_cli, gemini_cli).
 
 ```bash
-# Install agents for E2E testing
-cao install examples/assign/data_analyst.md
-cao install examples/assign/report_generator.md
+# Create agents for E2E testing
+cao agent create data_analyst --provider codex --workdir "$PWD"
+cp examples/assign/data_analyst.md ~/.aws/cli-agent-orchestrator/agents/data_analyst/prompt.md
+
+cao agent create report_generator --provider codex --workdir "$PWD"
+cp examples/assign/report_generator.md ~/.aws/cli-agent-orchestrator/agents/report_generator/prompt.md
 
 # Run assign E2E tests
 uv run pytest -m e2e test/e2e/test_assign.py -v

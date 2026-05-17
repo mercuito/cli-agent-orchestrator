@@ -32,8 +32,9 @@ copilot --help
 # Start CAO server
 cao-server
 
-# Install CAO agent into Copilot's agents directory
-cao install examples/assign/data_analyst.md --provider copilot_cli
+# Create the durable CAO agent and copy the example prompt
+cao agent create data_analyst --provider copilot_cli --workdir "$PWD"
+cp examples/assign/data_analyst.md ~/.aws/cli-agent-orchestrator/agents/data_analyst/prompt.md
 
 # Launch Copilot-backed terminal
 cao agent start data_analyst
@@ -71,11 +72,11 @@ Trust handling is done in `initialize()`. `get_status()` is read-only.
 
 Copilot provider now follows the same split as other providers:
 
-- `cao install --provider copilot_cli` writes `<name>.agent.md` into `~/.copilot/agents`
-- provider launch passes `--agent <name>` directly
-- provider does not generate runtime agent markdown files
+- `cao agent create <id> --provider copilot_cli` owns the durable agent config
+- provider launch uses the durable agent id and current `prompt.md`
+- provider materialization is derived from the durable agent at runtime
 
-This keeps provider logic thin and moves agent materialization to install-time.
+This keeps provider logic thin and avoids a separate precreated agent shape.
 
 ### MCP Integration
 

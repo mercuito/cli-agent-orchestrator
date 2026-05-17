@@ -238,7 +238,7 @@ class TestSkillsAddCommand:
         assert "Refreshed" not in result.output
 
     def test_add_does_not_roll_back_when_refresh_fails(self, runner, tmp_path, monkeypatch):
-        """Skill install should succeed even if installed-agent refresh fails."""
+        """Skill install should succeed even if provider-agent refresh fails."""
         skill_store = tmp_path / "skill-store"
         monkeypatch.setattr("cli_agent_orchestrator.cli.commands.skills.SKILLS_DIR", skill_store)
         monkeypatch.setattr(

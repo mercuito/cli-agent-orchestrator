@@ -87,17 +87,11 @@ src/cli_agent_orchestrator/
 │   ├── terminal.py        # Terminal, TerminalStatus
 │   ├── session.py         # Session model
 │   ├── inbox.py           # InboxMessage, MessageStatus
-│   ├── flow.py            # Flow model
-│   └── agent_profile.py   # AgentProfile model
+│   └── flow.py            # Flow model
 ├── utils/                 # Utilities
 │   ├── terminal.py        # Generate IDs, wait for shell/status
 │   ├── logging.py         # File-based logging
-│   ├── agent_profiles.py  # Load agent profiles
 │   └── template.py        # Template rendering
-├── agent_store/           # Agent profile definitions (.md files)
-│   ├── developer.md
-│   ├── reviewer.md
-│   └── code_supervisor.md
 └── constants.py           # Application constants
 ```
 

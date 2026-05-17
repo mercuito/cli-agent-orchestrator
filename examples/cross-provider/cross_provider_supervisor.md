@@ -1,18 +1,3 @@
----
-name: cross_provider_supervisor
-description: Supervisor agent that delegates data analysis to workers across multiple providers
-runtimeCapabilities: ["@builtin", "fs_read", "fs_list"]
-caoTools: [assign, handoff, send_message]
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: uvx
-    args:
-      - "--from"
-      - "git+https://github.com/awslabs/cli-agent-orchestrator.git@main"
-      - "cao-mcp-server"
----
-
 # CROSS-PROVIDER SUPERVISOR AGENT
 
 You orchestrate data analysis by delegating to worker agents running on different providers using MCP tools.

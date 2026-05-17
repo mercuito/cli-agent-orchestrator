@@ -17,8 +17,8 @@ test the MCP tool delegation flow.
 Requires:
 - Running CAO server
 - Authenticated CLI tools
-- Agents installed: analysis_supervisor, data_analyst, report_generator
-  (install with: cao install examples/assign/analysis_supervisor.md)
+- Durable agents created: analysis_supervisor, data_analyst, report_generator
+  (create with `cao agent create` and copy prompts from examples/assign/)
 
 Run:
     uv run pytest -m e2e test/e2e/test_supervisor_orchestration.py -v -o "addopts="

@@ -28,18 +28,18 @@ def _profile(**kwargs) -> Agent:
 
 class TestProfileExplicitAllowlistWins:
     def test_profile_cao_tools_is_returned_as_is(self):
-        profile = _profile(caoTools=["send_message", "read_inbox_message"])
+        profile = _profile(cao_tools=["send_message", "read_inbox_message"])
         result = resolve_cao_tool_allowlist(profile)
         assert result == ["send_message", "read_inbox_message"]
 
     def test_empty_list_on_profile_is_respected_not_treated_as_none(self):
-        """``caoTools: []`` explicitly means 'no tools allowed'."""
-        profile = _profile(caoTools=[])
+        """``cao_tools = []`` explicitly means 'no tools allowed'."""
+        profile = _profile(cao_tools=[])
         result = resolve_cao_tool_allowlist(profile)
         assert result == []
 
     def test_profile_allowlist_is_named_cao_tool_source(self):
-        profile = _profile(caoTools=["send_message"])
+        profile = _profile(cao_tools=["send_message"])
         result = resolve_cao_tool_allowlist(profile)
         assert result == ["send_message"]
 
@@ -54,7 +54,7 @@ class TestAgentFieldSchema:
     """cao_tools must be an optional tuple-of-strings field on Agent."""
 
     def test_profile_accepts_cao_tools_list(self):
-        profile = Agent(name="x", description="y", caoTools=["send_message"])
+        profile = Agent(name="x", description="y", cao_tools=["send_message"])
         assert profile.cao_tools == ("send_message",)
 
     def test_profile_cao_tools_defaults_to_none(self):
@@ -62,5 +62,5 @@ class TestAgentFieldSchema:
         assert profile.cao_tools is None
 
     def test_profile_accepts_empty_list(self):
-        profile = Agent(name="x", description="y", caoTools=[])
+        profile = Agent(name="x", description="y", cao_tools=[])
         assert profile.cao_tools == ()

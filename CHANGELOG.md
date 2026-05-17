@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Agent model hard cutover** — Replace profile/identity-era launch surfaces with durable
   `~/.aws/cli-agent-orchestrator/agents/<id>/agent.toml` + `prompt.md` agents, remove
-  the retired CLI startup verb, remove legacy `agents.toml`, `workspace-providers/linear.toml`, and
-  `agent-store/` live config files, and remove Linear `legacy_env` environment fallback configuration.
+  the retired `cao launch` and legacy markdown `cao install` commands, remove legacy
+  `agents.toml`, `workspace-providers/linear.toml`, and `agent-store/` live config files,
+  and remove Linear `legacy_env` environment fallback configuration.
   This cutover intentionally has no automated migration script; the small live roster is
   manually migrated once and validated by the agent directory validator before runtime code
   reads the new shape.

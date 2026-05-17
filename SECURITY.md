@@ -79,13 +79,16 @@ trivy fs --severity HIGH,CRITICAL .
 trivy fs --scanners vuln --severity HIGH,CRITICAL .
 ```
 
-## Tool Restrictions (allowedTools)
+## Tool Restrictions
 
-CAO enforces tool restrictions through `allowedTools` — a unified vocabulary that gets translated to each provider's native restriction mechanism. This ensures agents only have access to the tools their role requires, regardless of which CLI provider runs them.
+CAO enforces tool restrictions from each durable agent's `agent.toml`. Use
+`runtime_capabilities` for broad provider-native access, `cao_tools` for named
+CAO MCP tools, provider-native `tools` for external CLI settings, and provider
+sections such as `[linear.tool_access.*]` for mediated provider tools.
 
 ### CAO Tool Vocabulary
 
-| CAO Tool | Description |
+| Capability | Description |
 |----------|-------------|
 | `execute_bash` | Shell/terminal command execution |
 | `fs_read` | Read files |
@@ -93,28 +96,15 @@ CAO enforces tool restrictions through `allowedTools` — a unified vocabulary t
 | `fs_list` | List/search files (glob, grep) |
 | `fs_*` | All filesystem operations (read + write + list) |
 | `@builtin` | Provider's built-in non-tool capabilities |
-| `@cao-mcp-server` | CAO MCP server tools (assign, handoff, send_message) |
-
-### Role-Based Defaults
-
-When a profile doesn't explicitly set `allowedTools`, defaults are based on `role`:
-
-| Role | Default Tools | Use Case |
-|------|--------------|----------|
-| `supervisor` | `@cao-mcp-server` | Orchestration only — no code execution |
-| `developer` | `@builtin, fs_*, execute_bash, @cao-mcp-server` | Full access for coding/testing |
-| `reviewer` | `@builtin, fs_read, fs_list, @cao-mcp-server` | Read-only code review |
-
-If no role is set, `developer` is used (backward compatible).
 
 ### Provider Enforcement
 
-CAO translates `allowedTools` into each provider's native restriction mechanism:
+CAO translates runtime capabilities into each provider's native restriction mechanism:
 
 | Provider | Enforcement | Mechanism |
 |----------|------------|-----------|
-| Q CLI | Hard | `allowedTools` in agent JSON (at install time) |
-| Kiro CLI | Hard | `allowedTools` in agent JSON (at install time) |
+| Q CLI | Hard | Provider agent JSON receives resolved runtime capabilities |
+| Kiro CLI | Hard | Provider agent JSON receives resolved runtime capabilities |
 | Claude Code | Hard | `--disallowedTools` flags block specific tools |
 | Copilot CLI | Hard | `--deny-tool` flags override `--allow-all` |
 | Gemini CLI | Hard | Policy Engine TOML deny rules in `~/.gemini/policies/` |
@@ -125,8 +115,8 @@ CAO translates `allowedTools` into each provider's native restriction mechanism:
 
 Tool permissions are resolved in this priority order:
 
-1. Agent `runtimeCapabilities`: Declared in durable `agent.toml`
-2. Agent `caoTools`: Named CAO MCP tools allowed for that agent
+1. Agent `runtime_capabilities`: declared in durable `agent.toml`
+2. Agent `cao_tools`: named CAO MCP tools allowed for that agent
 3. Developer defaults: Fallback runtime capabilities when no explicit list is set
 
 ### Setting Up Tool Restrictions
@@ -164,13 +154,14 @@ When using CLI Agent Orchestrator:
 
 2. **Secure API Access**: The CAO server runs on localhost by default. If exposing externally, use proper authentication and TLS.
 
-3. **Agent Profiles**: Review agent profiles before installation, especially those from external sources.
+3. **Durable Agents**: Review `agent.toml` and `prompt.md` before starting agents, especially prompts copied from external sources.
 
 4. **Environment Variables**: Never commit sensitive environment variables. Use `.env` files (excluded from git) or secure secret management.
 
 5. **Tmux Sessions**: CAO manages tmux sessions that may contain sensitive information. Ensure proper access controls on the host system.
 
-6. **Use the most restrictive role possible.** Supervisors should use `role: supervisor` — they only need MCP tools to orchestrate.
+6. **Use the most restrictive capabilities possible.** Supervisors should keep
+   `runtime_capabilities` narrow and grant only the `cao_tools` they need to orchestrate.
 
 7. **Don't use `--yolo` in production.** It grants unrestricted access and skips all safety prompts.
 

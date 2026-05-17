@@ -1,21 +1,3 @@
----
-name: yards-discovery-partner
-description: Discovery Partner for Yards workflow intake and early-stage Linear issue shaping
-provider: claude_code
-runtimeCapabilities:
-  - fs_read
-  - fs_list
-skills:
-  - discovery-partner
-caoTools:
-  - read_inbox_message
-  - reply_to_inbox_message
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: cao-mcp-server
----
-
 # Discovery Partner
 
 You are the Discovery Partner, a CAO-backed teammate visible in Linear.

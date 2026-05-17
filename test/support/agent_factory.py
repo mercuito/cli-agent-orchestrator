@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-import frontmatter
-
 from cli_agent_orchestrator.agent import Agent as CaoAgent
 
 
@@ -15,12 +13,12 @@ def make_agent(
     description: Optional[str] = None,
     prompt: Optional[str] = None,
     system_prompt: Optional[str] = None,
-    mcpServers: Optional[dict[str, Any]] = None,
-    runtimeCapabilities: Optional[list[str]] = None,
-    caoTools: Optional[list[str]] = None,
+    mcp_servers: Optional[dict[str, Any]] = None,
+    runtime_capabilities: Optional[list[str]] = None,
+    cao_tools: Optional[list[str]] = None,
     tools: Optional[list[str]] = None,
-    toolAliases: Optional[dict[str, str]] = None,
-    toolsSettings: Optional[dict[str, Any]] = None,
+    tool_aliases: Optional[dict[str, str]] = None,
+    tools_settings: Optional[dict[str, Any]] = None,
     hooks: Optional[dict[str, Any]] = None,
     model: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
@@ -37,34 +35,16 @@ def make_agent(
         prompt=body or "",
         model=model,
         reasoning_effort=reasoning_effort,
-        mcp_servers=mcpServers or {},
+        mcp_servers=mcp_servers or {},
         tools=tuple(tools or ()),
-        tool_aliases=toolAliases or {},
-        tools_settings=toolsSettings or {},
-        cao_tools=None if caoTools is None else tuple(caoTools),
+        tool_aliases=tool_aliases or {},
+        tools_settings=tools_settings or {},
+        cao_tools=None if cao_tools is None else tuple(cao_tools),
         runtime_capabilities=(
-            None if runtimeCapabilities is None else tuple(runtimeCapabilities)
+            None if runtime_capabilities is None else tuple(runtime_capabilities)
         ),
         hooks=hooks or {},
     )
 
 
 Agent = make_agent
-
-
-def parse_agent_id_text(resolved_text: str, profile_name: str) -> CaoAgent:
-    post = frontmatter.loads(resolved_text)
-    metadata = post.metadata
-    return make_agent(
-        name=str(metadata.get("name") or profile_name),
-        description=metadata.get("description"),
-        prompt=post.content or metadata.get("prompt"),
-        mcpServers=metadata.get("mcpServers"),
-        runtimeCapabilities=metadata.get("runtimeCapabilities"),
-        caoTools=metadata.get("caoTools"),
-        tools=metadata.get("tools"),
-        toolAliases=metadata.get("toolAliases"),
-        toolsSettings=metadata.get("toolsSettings"),
-        hooks=metadata.get("hooks"),
-        model=metadata.get("model"),
-    )

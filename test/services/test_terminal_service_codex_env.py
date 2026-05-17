@@ -246,7 +246,7 @@ def test_create_terminal_agent_launch_context_uses_resolved_launch_values(
             return_value=Agent(
                 name="developer",
                 description="Developer",
-                runtimeCapabilities=["fs_read"],
+                runtime_capabilities=["fs_read"],
             ),
         ),
         patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal"),

@@ -14,8 +14,8 @@ Test strategy:
 6. Verify the agent CAN execute bash — output should contain the command result
 
 Provider coverage:
-- Kiro CLI: Hard enforcement via agent JSON allowedTools (set at install time).
-  Tests use the built-in code_supervisor profile (no execute_bash).
+- Kiro CLI: Hard enforcement via provider-native runtime capability config.
+  Tests use the durable code_supervisor agent (no execute_bash).
 - Claude Code: Hard enforcement via --disallowedTools flags.
   Tests pass allowed_tools=@cao-mcp-server to trigger Bash blocking.
 - Gemini CLI: Hard enforcement via Policy Engine TOML deny rules.
@@ -29,7 +29,7 @@ Requires:
 - Running CAO server
 - Authenticated CLI tools (claude, kiro-cli, gemini, kimi)
 - tmux
-- Agents installed: code_supervisor, developer
+- Durable agents created: code_supervisor, developer
 
 Run:
     uv run pytest -m e2e test/e2e/test_allowed_tools.py -v -o "addopts="
@@ -321,7 +321,7 @@ def _run_allowed_tools_stored_test(provider: str, agent_id: str, allowed_tools: 
 
 
 # ---------------------------------------------------------------------------
-# Kiro CLI provider — hard enforcement via agent JSON allowedTools
+# Kiro CLI provider — hard enforcement via provider-native restrictions
 # ---------------------------------------------------------------------------
 
 
@@ -329,14 +329,8 @@ def _run_allowed_tools_stored_test(provider: str, agent_id: str, allowed_tools: 
 class TestKiroCliAllowedTools:
     """E2E runtime capability tests for the Kiro CLI provider.
 
-    Kiro CLI enforces tool restrictions at INSTALL time via the agent JSON's
-    allowedTools field. Runtime allowed_tools API params are stored in the DB
-    for auditing/inheritance but don't directly affect Kiro's behavior —
-    enforcement happens when ``cao install`` writes the agent JSON.
-
-    To test Kiro's actual tool blocking, first run:
-        cao install src/cli_agent_orchestrator/agents/code_supervisor.md --provider kiro_cli
-    This writes the provider-native agent JSON that Kiro uses for enforcement.
+    Kiro CLI enforces tool restrictions through provider-native runtime
+    capability config derived from the durable agent.
     """
 
     def test_unrestricted_developer_can_bash(self, require_kiro):
@@ -355,14 +349,7 @@ class TestKiroCliAllowedTools:
         )
 
     def test_restricted_supervisor_cannot_bash(self, require_kiro):
-        """Supervisor with install-time restrictions should not execute bash.
-
-        NOTE: This test only passes if code_supervisor was installed with:
-            cao install code_supervisor --provider kiro_cli
-        which writes the provider-native agent JSON used for restrictions.
-        If the profile was installed before runtime capability restrictions,
-        the agent JSON won't have restrictions and this test will fail.
-        Reinstall the profile to fix.
+        """Supervisor with durable runtime capability restrictions should not execute bash.
         """
         _run_restricted_tool_test(
             provider="kiro_cli",

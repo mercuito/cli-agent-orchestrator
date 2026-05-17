@@ -271,11 +271,14 @@ test/e2e/
 - Running CAO server: `uv run cao-server`
 - Authenticated CLI tools: `codex`, `claude`, `kiro-cli`
 - tmux installed
-- Agents installed: `analysis_supervisor`, `data_analyst`, `report_generator`
+- Durable agents created: `analysis_supervisor`, `data_analyst`, `report_generator`
   ```bash
-  cao install examples/assign/analysis_supervisor.md
-  cao install examples/assign/data_analyst.md
-  cao install examples/assign/report_generator.md
+  cao agent create analysis_supervisor --provider codex --workdir "$PWD"
+  cp examples/assign/analysis_supervisor.md ~/.aws/cli-agent-orchestrator/agents/analysis_supervisor/prompt.md
+  cao agent create data_analyst --provider codex --workdir "$PWD"
+  cp examples/assign/data_analyst.md ~/.aws/cli-agent-orchestrator/agents/data_analyst/prompt.md
+  cao agent create report_generator --provider codex --workdir "$PWD"
+  cp examples/assign/report_generator.md ~/.aws/cli-agent-orchestrator/agents/report_generator/prompt.md
   ```
 
 ### Running E2E Tests

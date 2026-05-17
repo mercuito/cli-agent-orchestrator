@@ -1,26 +1,3 @@
----
-name: reviewer
-description: Code Reviewer Agent in a multi-agent system
-runtimeCapabilities:
-  - "@builtin"
-  - fs_read
-  - fs_list
-caoTools:
-  - send_message
-  - pass_baton
-  - return_baton
-  - complete_baton
-  - block_baton
-  - get_my_batons
-  - get_baton
-  - read_inbox_message
-  - reply_to_inbox_message
-mcpServers:
-  cao-mcp-server:
-    type: stdio
-    command: cao-mcp-server
----
-
 # CODE REVIEWER AGENT
 
 ## Role and Identity

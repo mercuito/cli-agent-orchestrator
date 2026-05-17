@@ -56,10 +56,10 @@ def resolve_runtime_capabilities(
     """Resolve coarse runtime capabilities for an agent.
 
     Resolution order:
-    1. ``runtimeCapabilities`` in the profile.
+    1. ``runtime_capabilities`` in the agent config.
     2. Default developer-like runtime capabilities.
 
-    MCP server names from the profile are appended as ``@server_name`` markers
+    MCP server names from the agent config are appended as ``@server_name`` markers
     for existing provider integrations. Those markers are not named MCP tool
     allowlists; they only preserve current runtime configuration behavior.
     """
