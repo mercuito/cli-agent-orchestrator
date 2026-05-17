@@ -7,16 +7,19 @@ import re
 import shutil
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
 from fastmcp import FastMCP
 from fastmcp.exceptions import NotFoundError
 
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentity,
-    AgentIdentityRegistry,
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentRegistry,
+    LinearConfig,
+    LinearToolAccessConfig,
+    write_agent,
 )
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
@@ -217,7 +220,7 @@ def tmux_runtime_provider_world(monkeypatch: pytest.MonkeyPatch) -> TmuxRuntimeP
         terminal_id,
         tmux_session,
         tmux_window,
-        agent_profile=None,
+        agent_id=None,
         allowed_tools=None,
         runtime_resume_args=None,
         provider_data_dir=None,
@@ -276,31 +279,30 @@ def tmux_runtime_provider_world(monkeypatch: pytest.MonkeyPatch) -> TmuxRuntimeP
 
 
 @pytest.fixture
-def integration_identity(
+def integration_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    agent_identity_manager_factory,
-) -> AgentIdentity:
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
-        tmp_path / "agents",
-    )
+    agent_manager_factory,
+) -> Agent:
+    agents_root = tmp_path / "agents"
+    monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
     workdir = tmp_path / "repo"
     workdir.mkdir()
-    identity = AgentIdentity(
+    agent = Agent(
         id="cao47_integration_agent",
         display_name="CAO-47 Integration Agent",
-        agent_profile="developer",
         cli_provider="codex",
         workdir=str(workdir),
         session_name=f"cao47-runtime-{uuid.uuid4().hex[:8]}",
+        prompt="",
     )
-    identity_manager = agent_identity_manager_factory(identity)
+    write_agent(agent, agents_root=agents_root)
+    agent_manager = agent_manager_factory(agent)
     monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.default_agent_identity_manager",
-        lambda: identity_manager,
+        "cli_agent_orchestrator.runtime.agent.default_agent_manager",
+        lambda: agent_manager,
     )
-    return identity
+    return agent
 
 
 def _linear_agent_session_payload(
@@ -343,23 +345,40 @@ def _linear_agent_session_payload(
 
 def _install_linear_workspace_provider(
     *,
-    identity: AgentIdentity,
+    agent: Agent,
     config_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tool_access: str = "",
 ) -> LinearWorkspaceProvider:
-    config_path.write_text("""
-[presences.discovery_partner]
-agent_id = "{agent_id}"
-app_key = "discovery_partner"
-app_user_name = "Discovery Partner"
-access_token = "integration-access-token"
-
-{tool_access}
-""".format(agent_id=identity.id, tool_access=tool_access))
+    access_entries = ()
+    if tool_access:
+        access_entries = (
+            LinearToolAccessConfig(
+                access_id="cao52_vertical_proof",
+                tools=(
+                    GET_ISSUE_TOOL,
+                    LIST_COMMENTS_TOOL,
+                    CREATE_COMMENT_TOOL,
+                    CREATE_ISSUE_TOOL,
+                    UPDATE_ISSUE_TOOL,
+                ),
+                issues=("CAO-52", "issue-52"),
+                create_team_ids=("CAO",),
+                allow_top_level_create=True,
+                update_fields=("title",),
+            ),
+        )
+    configured_agent = replace(
+        agent,
+        linear=LinearConfig(
+            app_key="discovery_partner",
+            app_user_name="Discovery Partner",
+            access_token="integration-access-token",
+            tool_access=access_entries,
+        ),
+    )
     workspace_provider = LinearWorkspaceProvider(
-        agent_registry=AgentIdentityRegistry({identity.id: identity}),
-        config_path=config_path,
+        agent_registry=AgentRegistry({configured_agent.id: configured_agent}),
         preflight_credentials=False,
     )
     monkeypatch.setattr(
@@ -439,16 +458,16 @@ def _mutated_issue_payload(
     }
 
 
-def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_delivery(
+def test_stale_agent_refresh_restores_provider_runtime_with_real_tmux_delivery(
     runtime_inbox_db_session,
-    integration_identity: AgentIdentity,
+    integration_agent: Agent,
     tmux_runtime_provider_world: TmuxRuntimeProviderWorld,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     if not shutil.which("tmux"):
         pytest.skip("tmux not installed")
 
-    handle = AgentRuntimeHandle(integration_identity)
+    handle = AgentRuntimeHandle(integration_agent)
     session_name = handle.session_name
     try:
         initial_start = handle.ensure_fresh_started()
@@ -510,7 +529,7 @@ def test_stale_identity_refresh_restores_provider_runtime_with_real_tmux_deliver
 
 def test_stale_mcp_runtime_generation_refreshes_and_resumes_before_delivery(
     runtime_inbox_db_session,
-    integration_identity: AgentIdentity,
+    integration_agent: Agent,
     tmux_runtime_provider_world: TmuxRuntimeProviderWorld,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -520,16 +539,16 @@ def test_stale_mcp_runtime_generation_refreshes_and_resumes_before_delivery(
     mcp_runtime_generation = {"value": "mcp-v1"}
     monkeypatch.setattr(
         runtime_agent,
-        "_mcp_surface_fingerprint_for_identity",
-        lambda identity: "mcp-surface-v1",
+        "_mcp_surface_fingerprint_for_agent",
+        lambda agent: "mcp-surface-v1",
     )
     monkeypatch.setattr(
         runtime_agent,
-        "_mcp_runtime_generation_fingerprint_for_identity",
-        lambda identity: mcp_runtime_generation["value"],
+        "_mcp_runtime_generation_fingerprint_for_agent",
+        lambda agent: mcp_runtime_generation["value"],
     )
 
-    handle = AgentRuntimeHandle(integration_identity)
+    handle = AgentRuntimeHandle(integration_agent)
     session_name = handle.session_name
     try:
         initial_start = handle.ensure_fresh_started()
@@ -567,7 +586,7 @@ def test_stale_mcp_runtime_generation_refreshes_and_resumes_before_delivery(
 
 def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
     runtime_inbox_db_session,
-    integration_identity: AgentIdentity,
+    integration_agent: Agent,
     tmux_runtime_provider_world: TmuxRuntimeProviderWorld,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -576,7 +595,7 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
         pytest.skip("tmux not installed")
 
     _install_linear_workspace_provider(
-        identity=integration_identity,
+        agent=integration_agent,
         config_path=tmp_path / "linear.toml",
         monkeypatch=monkeypatch,
     )
@@ -596,7 +615,7 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
         lambda *args, **kwargs: {"id": "activity-accepted"},
     )
 
-    handle = AgentRuntimeHandle(integration_identity)
+    handle = AgentRuntimeHandle(integration_agent)
     session_name = handle.session_name
     try:
         assert handle.ensure_fresh_started().ready is True
@@ -667,7 +686,7 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
 @pytest.mark.asyncio
 async def test_linear_agent_session_terminal_uses_provider_mediated_linear_mcp_tools(
     runtime_inbox_db_session,
-    integration_identity: AgentIdentity,
+    integration_agent: Agent,
     tmux_runtime_provider_world: TmuxRuntimeProviderWorld,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -676,12 +695,12 @@ async def test_linear_agent_session_terminal_uses_provider_mediated_linear_mcp_t
         pytest.skip("tmux not installed")
 
     provider = _install_linear_workspace_provider(
-        identity=integration_identity,
+        agent=integration_agent,
         config_path=tmp_path / "linear.toml",
         monkeypatch=monkeypatch,
         tool_access=f"""
 [tool_access.cao52_vertical_proof]
-agent_id = "{integration_identity.id}"
+agent_id = "{integration_agent.id}"
 tools = [
   "{GET_ISSUE_TOOL}",
   "{LIST_COMMENTS_TOOL}",
@@ -790,7 +809,7 @@ update_fields = ["title"]
 
     monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
 
-    handle = AgentRuntimeHandle(integration_identity)
+    handle = AgentRuntimeHandle(integration_agent)
     session_name = handle.session_name
     try:
         assert handle.ensure_fresh_started().ready is True
@@ -860,7 +879,7 @@ update_fields = ["title"]
             terminal_id=refreshed_terminal.id,
             mcp_instance=mcp,
             policies={"linear": policy},
-            agent_registry=AgentIdentityRegistry({integration_identity.id: integration_identity}),
+            agent_registry=AgentRegistry({integration_agent.id: integration_agent}),
         )
 
         assert registered == [
@@ -924,14 +943,15 @@ update_fields = ["title"]
             "cao52-raw-session",
             "cao52-raw-window",
             "codex",
-            "developer",
+            "unknown_agent",
+            "wctx_raw_cao52",
         )
         raw_mcp = FastMCP("cao52-linear-raw", mask_error_details=False)
         raw_registered = register_provider_mediated_mcp_tools(
             terminal_id=raw_terminal_id,
             mcp_instance=raw_mcp,
             policies={"linear": policy},
-            agent_registry=AgentIdentityRegistry({integration_identity.id: integration_identity}),
+            agent_registry=AgentRegistry({integration_agent.id: integration_agent}),
         )
 
         assert raw_registered == []

@@ -24,7 +24,7 @@ def provider():
 class TestBuildCommandMcpServerModelDump:
     """Test the model_dump branch in _build_claude_command (line 93)."""
 
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     def test_mcp_server_with_model_dump(self, mock_load, provider):
         """When mcpServers contains a Pydantic model (not dict), model_dump is called."""
         mock_mcp = MagicMock()
@@ -34,11 +34,11 @@ class TestBuildCommandMcpServerModelDump:
             "env": {},
         }
         # isinstance(mock_mcp, dict) returns False, so the model_dump branch triggers
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "Test prompt"
-        mock_profile.mcpServers = {"my-mcp": mock_mcp}
-        mock_profile.runtimeCapabilities = None
-        mock_load.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = "Test prompt"
+        mock_agent.mcp_servers = {"my-mcp": mock_mcp}
+        mock_agent.reasoning_effort = None
+        mock_load.return_value = mock_agent
 
         cmd = provider._build_claude_command()
 
@@ -110,7 +110,7 @@ class TestDatabaseListAllTerminals:
         mock_terminal.tmux_session = "ses"
         mock_terminal.tmux_window = "win"
         mock_terminal.provider = "kiro_cli"
-        mock_terminal.agent_profile = "dev"
+        mock_terminal.agent_id = "dev"
         mock_terminal.last_active = None
 
         mock_db = MagicMock()

@@ -10,10 +10,12 @@ import requests  # type: ignore[import-untyped]
 from fastmcp import FastMCP
 from pydantic import Field
 
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentity,
-    AgentIdentityRegistry,
-    load_agent_identity_registry,
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentConfigError,
+    AgentRegistry,
+    load_agent,
+    load_agent_registry,
 )
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
@@ -46,8 +48,6 @@ from cli_agent_orchestrator.provider_conversations.reply_service import (
 )
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
-from cli_agent_orchestrator.utils import agent_profiles as agent_profiles_utils
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 from cli_agent_orchestrator.utils.terminal import generate_session_name, wait_until_terminal_status
 from cli_agent_orchestrator.workspace_providers.registry import (
@@ -77,7 +77,7 @@ mcp = FastMCP(
 
     ## Best Practices
 
-    - Use specific agent profiles (provider is inferred from profile metadata when set)
+    - Use specific agents (provider is inferred from profile metadata when set)
     - Provide clear and concise messages
     - Ensure you're running within a CAO terminal (CAO_TERMINAL_ID must be set)
     """,
@@ -151,11 +151,11 @@ _ALLOWLIST_RESOLVE_TIMEOUT_SEC = 3.0
 
 
 def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
-    """Ask cao-server which tools this terminal's agent profile permits.
+    """Ask cao-server which tools this terminal's agent permits.
 
     Fail-open on any error: a None return means "don't filter, register all
     tools." This keeps existing agents with no caoTools working
-    unchanged while users opt in to filtering by configuring their profiles.
+    unchanged while users opt in to filtering by configuring their agents.
     Fail-closed behavior is a later, opt-in choice (Phase 5).
 
     Any hang past the short budget also fails open — a slow API call at
@@ -170,11 +170,11 @@ def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
         )
         response.raise_for_status()
         metadata = response.json()
-        profile_name = metadata.get("agent_profile")
+        profile_name = metadata.get("agent_id")
         if not profile_name:
             return None
-        profile = load_agent_profile(profile_name)
-        return resolve_cao_tool_allowlist(profile)
+        agent = load_agent(profile_name)
+        return resolve_cao_tool_allowlist(agent)
     except Exception as e:
         logger.warning(
             f"Failed to resolve tool allowlist for terminal {terminal_id!r}: {e}. "
@@ -183,22 +183,21 @@ def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
         return None
 
 
-def build_mcp_surface_descriptor_for_identity(
-    identity: AgentIdentity,
+def build_mcp_surface_descriptor_for_agent(
+    agent: Agent,
     *,
-    agent_registry: Optional[AgentIdentityRegistry] = None,
+    agent_registry: Optional[AgentRegistry] = None,
     provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
 ) -> Dict[str, Any]:
-    """Build the stable MCP surface descriptor for one identity."""
-    profile = load_agent_profile(identity.agent_profile)
-    built_in_allowlist = resolve_cao_tool_allowlist(profile)
+    """Build the stable MCP surface descriptor for one agent."""
+    built_in_allowlist = resolve_cao_tool_allowlist(agent)
     policies = (
         provider_policies
         if provider_policies is not None
         else _load_provider_policies_for_freshness(agent_registry)
     )
     return build_agent_mcp_surface_descriptor(
-        identity=identity,
+        agent=agent,
         built_in_tools=_PENDING_TOOLS,
         built_in_tool_allowlist=built_in_allowlist,
         provider_policies=policies,
@@ -206,22 +205,21 @@ def build_mcp_surface_descriptor_for_identity(
     )
 
 
-def build_mcp_runtime_generation_descriptor_for_identity(
-    identity: AgentIdentity,
+def build_mcp_runtime_generation_descriptor_for_agent(
+    agent: Agent,
     *,
-    agent_registry: Optional[AgentIdentityRegistry] = None,
+    agent_registry: Optional[AgentRegistry] = None,
     provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
 ) -> Dict[str, Any]:
-    """Build runtime-generation material for one identity's visible MCP tools."""
-    profile = load_agent_profile(identity.agent_profile)
-    built_in_allowlist = resolve_cao_tool_allowlist(profile)
+    """Build runtime-generation material for one agent's visible MCP tools."""
+    built_in_allowlist = resolve_cao_tool_allowlist(agent)
     policies = (
         provider_policies
         if provider_policies is not None
         else _load_provider_policies_for_freshness(agent_registry)
     )
     return build_agent_mcp_runtime_generation_descriptor(
-        identity=identity,
+        agent=agent,
         built_in_tools=_PENDING_TOOLS,
         built_in_tool_allowlist=built_in_allowlist,
         provider_policies=policies,
@@ -230,32 +228,32 @@ def build_mcp_runtime_generation_descriptor_for_identity(
     )
 
 
-def build_mcp_surface_fingerprint_for_identity(
-    identity: AgentIdentity,
+def build_mcp_surface_fingerprint_for_agent(
+    agent: Agent,
     *,
-    agent_registry: Optional[AgentIdentityRegistry] = None,
+    agent_registry: Optional[AgentRegistry] = None,
     provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
 ) -> str:
-    """Return the deterministic hash for one identity's visible MCP tool surface."""
+    """Return the deterministic hash for one agent's visible MCP tool surface."""
     return fingerprint_agent_mcp_surface(
-        build_mcp_surface_descriptor_for_identity(
-            identity,
+        build_mcp_surface_descriptor_for_agent(
+            agent,
             agent_registry=agent_registry,
             provider_policies=provider_policies,
         )
     )
 
 
-def build_mcp_runtime_generation_fingerprint_for_identity(
-    identity: AgentIdentity,
+def build_mcp_runtime_generation_fingerprint_for_agent(
+    agent: Agent,
     *,
-    agent_registry: Optional[AgentIdentityRegistry] = None,
+    agent_registry: Optional[AgentRegistry] = None,
     provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
 ) -> str:
     """Return deterministic hash of runtime material behind visible MCP tools."""
     return fingerprint_agent_mcp_surface(
-        build_mcp_runtime_generation_descriptor_for_identity(
-            identity,
+        build_mcp_runtime_generation_descriptor_for_agent(
+            agent,
             agent_registry=agent_registry,
             provider_policies=provider_policies,
         )
@@ -263,9 +261,9 @@ def build_mcp_runtime_generation_fingerprint_for_identity(
 
 
 def _load_provider_policies_for_freshness(
-    agent_registry: Optional[AgentIdentityRegistry],
+    agent_registry: Optional[AgentRegistry],
 ) -> Dict[str, ProviderToolAccessPolicy]:
-    registry = agent_registry or load_agent_identity_registry()
+    registry = agent_registry or load_agent_registry()
     try:
         return dict(load_enabled_provider_tool_access_policies(agent_registry=registry))
     except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
@@ -293,7 +291,7 @@ def _built_in_mcp_runtime_generation_material() -> Dict[str, Any]:
 
 
 def _resolve_child_allowed_tools(
-    parent_allowed_tools: Optional[list], child_profile_name: str
+    parent_allowed_tools: Optional[list], child_agent_id: str
 ) -> Optional[str]:
     """Resolve runtime capabilities for a child terminal via intersection.
 
@@ -304,18 +302,17 @@ def _resolve_child_allowed_tools(
     Returns:
         Comma-separated runtime capabilities, or None for unrestricted.
     """
-    from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
     from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
 
     try:
-        child_profile = load_agent_profile(child_profile_name)
+        child_agent = load_agent(child_agent_id)
         mcp_server_names = (
-            list(child_profile.mcpServers.keys()) if child_profile.mcpServers else None
+            list(child_agent.mcp_servers.keys()) if child_agent.mcp_servers else None
         )
         child_allowed = resolve_runtime_capabilities(
-            child_profile.runtimeCapabilities, mcp_server_names
+            child_agent.runtime_capabilities, mcp_server_names
         )
-    except FileNotFoundError:
+    except AgentConfigError:
         child_allowed = None
 
     # If parent is unrestricted or has no restrictions, use child's runtime capabilities.
@@ -339,12 +336,12 @@ def _resolve_child_allowed_tools(
 
 
 def _create_terminal(
-    agent_profile: str, working_directory: Optional[str] = None
+    agent_id: str, working_directory: Optional[str] = None
 ) -> Tuple[str, str]:
-    """Create a new terminal with the specified agent profile.
+    """Create a new terminal with the specified agent.
 
     Args:
-        agent_profile: Agent profile for the terminal
+        agent_id: Agent for the terminal
         working_directory: Optional working directory for the terminal
 
     Returns:
@@ -388,10 +385,10 @@ def _create_terminal(
                 )
 
         # Resolve child's allowed_tools via inheritance
-        child_allowed_tools = _resolve_child_allowed_tools(parent_allowed_tools, agent_profile)
+        child_allowed_tools = _resolve_child_allowed_tools(parent_allowed_tools, agent_id)
 
         # Create new terminal in existing session - always pass working_directory
-        params = {"provider": provider, "agent_profile": agent_profile}
+        params = {"provider": provider, "agent_id": agent_id}
         if working_directory:
             params["working_directory"] = working_directory
         if child_allowed_tools:
@@ -405,7 +402,7 @@ def _create_terminal(
         session_name = generate_session_name()
         params = {
             "provider": provider,
-            "agent_profile": agent_profile,
+            "agent_id": agent_id,
             "session_name": session_name,
         }
         if working_directory:
@@ -506,14 +503,14 @@ def _extract_error_detail(response: requests.Response, fallback: str) -> str:
 
 # Implementation functions
 async def _handoff_impl(
-    agent_profile: str, message: str, timeout: int = 600, working_directory: Optional[str] = None
+    agent_id: str, message: str, timeout: int = 600, working_directory: Optional[str] = None
 ) -> HandoffResult:
     """Implementation of handoff logic."""
     start_time = time.time()
 
     try:
         # Create terminal
-        terminal_id, provider = _create_terminal(agent_profile, working_directory)
+        terminal_id, provider = _create_terminal(agent_id, working_directory)
 
         # Wait for terminal to be ready (IDLE or COMPLETED) before sending
         # the handoff message. Accept COMPLETED in addition to IDLE because
@@ -573,7 +570,7 @@ async def _handoff_impl(
 
         return HandoffResult(
             success=True,
-            message=f"Successfully handed off to {agent_profile} ({provider}) in {execution_time:.2f}s",
+            message=f"Successfully handed off to {agent_id} ({provider}) in {execution_time:.2f}s",
             output=output,
             terminal_id=terminal_id,
         )
@@ -589,8 +586,8 @@ if ENABLE_WORKING_DIRECTORY:
 
     @_deferred_tool()
     async def handoff(
-        agent_profile: str = Field(
-            description='The agent profile to hand off to (e.g., "developer", "analyst")'
+        agent_id: str = Field(
+            description='The agent to hand off to (e.g., "developer", "analyst")'
         ),
         message: str = Field(description="The message/task to send to the target agent"),
         timeout: int = Field(
@@ -613,7 +610,7 @@ if ENABLE_WORKING_DIRECTORY:
 
         Use this tool to hand off tasks to another agent and wait for the results.
         The tool will:
-        1. Create a new terminal with the specified agent profile (provider inferred from profile/caller/default)
+        1. Create a new terminal with the specified agent (provider inferred from profile/caller/default)
         2. Set the working directory for the terminal (defaults to supervisor's cwd)
         3. Send the message to the terminal
         4. Monitor until completion
@@ -633,7 +630,7 @@ if ENABLE_WORKING_DIRECTORY:
         - If working_directory is provided, it must exist and be accessible
 
         Args:
-            agent_profile: The agent profile for the new terminal
+            agent_id: The agent for the new terminal
             message: The task/message to send
             timeout: Maximum wait time in seconds
             working_directory: Optional directory path where agent should execute
@@ -641,14 +638,14 @@ if ENABLE_WORKING_DIRECTORY:
         Returns:
             HandoffResult with success status, message, and agent output
         """
-        return await _handoff_impl(agent_profile, message, timeout, working_directory)
+        return await _handoff_impl(agent_id, message, timeout, working_directory)
 
 else:
 
     @_deferred_tool()
     async def handoff(
-        agent_profile: str = Field(
-            description='The agent profile to hand off to (e.g., "developer", "analyst")'
+        agent_id: str = Field(
+            description='The agent to hand off to (e.g., "developer", "analyst")'
         ),
         message: str = Field(description="The message/task to send to the target agent"),
         timeout: int = Field(
@@ -667,7 +664,7 @@ else:
 
         Use this tool to hand off tasks to another agent and wait for the results.
         The tool will:
-        1. Create a new terminal with the specified agent profile (provider inferred from profile/caller/default)
+        1. Create a new terminal with the specified agent (provider inferred from profile/caller/default)
         2. Send the message to the terminal (starts in supervisor's current directory)
         3. Monitor until completion
         4. Return the agent's response
@@ -679,24 +676,24 @@ else:
         - Target session must exist and be accessible
 
         Args:
-            agent_profile: The agent profile for the new terminal
+            agent_id: The agent for the new terminal
             message: The task/message to send
             timeout: Maximum wait time in seconds
 
         Returns:
             HandoffResult with success status, message, and agent output
         """
-        return await _handoff_impl(agent_profile, message, timeout, None)
+        return await _handoff_impl(agent_id, message, timeout, None)
 
 
 # Implementation function for assign
 def _assign_impl(
-    agent_profile: str, message: str, working_directory: Optional[str] = None
+    agent_id: str, message: str, working_directory: Optional[str] = None
 ) -> Dict[str, Any]:
     """Implementation of assign logic."""
     try:
         # Create terminal
-        terminal_id, _ = _create_terminal(agent_profile, working_directory)
+        terminal_id, _ = _create_terminal(agent_id, working_directory)
 
         # Deliver via inbox (auto-injects sender terminal ID suffix when enabled)
         _deliver_assign_payload(terminal_id, message)
@@ -704,7 +701,7 @@ def _assign_impl(
         return {
             "success": True,
             "terminal_id": terminal_id,
-            "message": f"Task assigned to {agent_profile} (terminal: {terminal_id})",
+            "message": f"Task assigned to {agent_id} (terminal: {terminal_id})",
         }
 
     except Exception as e:
@@ -740,7 +737,7 @@ Example message: "Analyze the logs. When done, send results back to terminal ee3
     desc += """
 
 Args:
-    agent_profile: Agent profile for the worker terminal
+    agent_id: Agent for the worker terminal
     message: Task message (include callback instructions)"""
 
     if enable_workdir:
@@ -768,26 +765,26 @@ if ENABLE_WORKING_DIRECTORY:
 
     @_deferred_tool(description=_assign_description)
     async def assign(
-        agent_profile: str = Field(
-            description='The agent profile for the worker agent (e.g., "developer", "analyst")'
+        agent_id: str = Field(
+            description='The agent for the worker agent (e.g., "developer", "analyst")'
         ),
         message: str = Field(description=_assign_message_field_desc),
         working_directory: Optional[str] = Field(
             default=None, description="Optional working directory where the agent should execute"
         ),
     ) -> Dict[str, Any]:
-        return _assign_impl(agent_profile, message, working_directory)
+        return _assign_impl(agent_id, message, working_directory)
 
 else:
 
     @_deferred_tool(description=_assign_description)
     async def assign(
-        agent_profile: str = Field(
-            description='The agent profile for the worker agent (e.g., "developer", "analyst")'
+        agent_id: str = Field(
+            description='The agent for the worker agent (e.g., "developer", "analyst")'
         ),
         message: str = Field(description=_assign_message_field_desc),
     ) -> Dict[str, Any]:
-        return _assign_impl(agent_profile, message, None)
+        return _assign_impl(agent_id, message, None)
 
 
 def _terminate_impl(terminal_id: str) -> Dict[str, Any]:
@@ -1228,49 +1225,6 @@ async def get_baton(
 ) -> Dict[str, Any]:
     """Get baton details and audit events for a baton involving this terminal."""
     return _get_baton_impl(baton_id)
-
-
-def _list_agent_profiles_impl() -> Dict[str, Any]:
-    try:
-        profiles = agent_profiles_utils.list_agent_profiles()
-        return {"success": True, "profiles": profiles}
-    except Exception as e:
-        return {"success": False, "error": str(e), "profiles": []}
-
-
-def _get_agent_profile_impl(agent_name: str, include_prompt: bool = False) -> Dict[str, Any]:
-    try:
-        profile = agent_profiles_utils.get_agent_profile(agent_name, include_prompt=include_prompt)
-        return {"success": True, "profile": profile}
-    except Exception as e:
-        return {"success": False, "error": str(e), "profile": None}
-
-
-@_deferred_tool()
-async def list_agent_profiles() -> Dict[str, Any]:
-    """List available CAO agent profiles (built-in + locally installed).
-
-    Returns:
-        Dict with `success` and `profiles` (name-sorted).
-    """
-    return _list_agent_profiles_impl()
-
-
-@_deferred_tool()
-async def get_agent_profile(
-    agent_name: str = Field(description='Agent profile name (e.g., "developer")'),
-    include_prompt: bool = Field(
-        default=False,
-        description="If true, include the profile's system prompt content in the response.",
-    ),
-) -> Dict[str, Any]:
-    """Get a single CAO agent profile by name.
-
-    Args:
-        agent_name: Agent profile name
-        include_prompt: Include system prompt content
-    """
-    return _get_agent_profile_impl(agent_name, include_prompt=include_prompt)
 
 
 def main():

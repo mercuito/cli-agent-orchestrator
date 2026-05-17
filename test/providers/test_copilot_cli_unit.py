@@ -79,7 +79,7 @@ class TestCopilotCliProviderCommand:
         mock_tmux.get_pane_working_directory.return_value = "/tmp/project"
 
         provider = CopilotCliProvider(
-            "test1234", "test-session", "window-0", agent_profile="repo-agent"
+            "test1234", "test-session", "window-0", agent_id="repo-agent"
         )
         parts = shlex.split(provider._command())
         assert parts[parts.index("--agent") + 1] == "repo-agent"

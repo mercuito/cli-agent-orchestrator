@@ -176,7 +176,7 @@ class TestCodexBuildCommand:
         ``--disable apps`` CLI flags are the only reliable suppression.
         """
         provider = CodexProvider("test1234", "test-session", "window-0", "nonexistent-profile")
-        with patch("cli_agent_orchestrator.providers.codex.load_agent_profile") as m:
+        with patch("cli_agent_orchestrator.providers.codex.load_agent") as m:
             m.side_effect = FileNotFoundError
             try:
                 command = provider._build_codex_command()
@@ -188,12 +188,12 @@ class TestCodexBuildCommand:
         assert "--disable plugins" in command
         assert "--disable apps" in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
-    def test_build_command_with_agent_profile(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "You are a code supervisor agent."
-        mock_profile.mcpServers = None
-        mock_load_profile.return_value = mock_profile
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
+    def test_build_command_with_agent_id(self, mock_load_profile):
+        mock_agent = MagicMock()
+        mock_agent.prompt = "You are a code supervisor agent."
+        mock_agent.mcp_servers = None
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "code_supervisor")
         command = provider._build_codex_command()
@@ -207,24 +207,24 @@ class TestCodexBuildCommand:
         assert "developer_instructions=" in command
         assert "You are a code supervisor agent." in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_escapes_quotes(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = 'Use "double quotes" carefully.'
-        mock_profile.mcpServers = None
-        mock_load_profile.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = 'Use "double quotes" carefully.'
+        mock_agent.mcp_servers = None
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "test_agent")
         command = provider._build_codex_command()
 
         assert '\\"double quotes\\"' in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_escapes_newlines(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "Line one.\nLine two.\n\n## Section\n- Item"
-        mock_profile.mcpServers = None
-        mock_load_profile.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = "Line one.\nLine two.\n\n## Section\n- Item"
+        mock_agent.mcp_servers = None
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "test_agent")
         command = provider._build_codex_command()
@@ -234,18 +234,18 @@ class TestCodexBuildCommand:
         assert "\\n" in command
         assert "Line one.\\nLine two.\\n\\n## Section\\n- Item" in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_with_mcp_servers(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "You are a supervisor."
-        mock_profile.mcpServers = {
+        mock_agent = MagicMock()
+        mock_agent.prompt = "You are a supervisor."
+        mock_agent.mcp_servers = {
             "cao-mcp-server": {
                 "type": "stdio",
                 "command": "uvx",
                 "args": ["--from", "git+https://example.com/repo.git@main", "cao-mcp-server"],
             }
         }
-        mock_load_profile.return_value = mock_profile
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "code_supervisor")
         command = provider._build_codex_command()
@@ -260,18 +260,18 @@ class TestCodexBuildCommand:
         # Tool timeout must be a TOML float (600.0) for Codex's f64 deserializer
         assert "mcp_servers.cao-mcp-server.tool_timeout_sec=600.0" in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_with_mcp_servers_env(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = ""
-        mock_profile.mcpServers = {
+        mock_agent = MagicMock()
+        mock_agent.prompt = ""
+        mock_agent.mcp_servers = {
             "test-server": {
                 "command": "npx",
                 "args": ["-y", "test-server"],
                 "env": {"API_KEY": "secret123"},
             }
         }
-        mock_load_profile.return_value = mock_profile
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "test_agent")
         command = provider._build_codex_command()
@@ -283,18 +283,18 @@ class TestCodexBuildCommand:
         assert "mcp_servers.test-server.env_vars=" in command
         assert "CAO_TERMINAL_ID" in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_mcp_preserves_existing_env_vars(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = ""
-        mock_profile.mcpServers = {
+        mock_agent = MagicMock()
+        mock_agent.prompt = ""
+        mock_agent.mcp_servers = {
             "my-server": {
                 "command": "node",
                 "args": ["server.js"],
                 "env_vars": ["HOME", "PATH"],
             }
         }
-        mock_load_profile.return_value = mock_profile
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "test_agent")
         command = provider._build_codex_command()
@@ -304,12 +304,12 @@ class TestCodexBuildCommand:
         assert "PATH" in command
         assert "CAO_TERMINAL_ID" in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_empty_system_prompt(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = ""
-        mock_profile.mcpServers = None
-        mock_load_profile.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = ""
+        mock_agent.mcp_servers = None
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "empty_agent")
         command = provider._build_codex_command()
@@ -320,12 +320,12 @@ class TestCodexBuildCommand:
         )
         assert "developer_instructions" not in command
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_none_system_prompt(self, mock_load_profile):
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = None
-        mock_load_profile.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = None
+        mock_agent.mcp_servers = None
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "none_agent")
         command = provider._build_codex_command()
@@ -335,21 +335,21 @@ class TestCodexBuildCommand:
             == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
         )
 
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_profile_load_failure(self, mock_load_profile):
-        mock_load_profile.side_effect = RuntimeError("Profile not found")
+        mock_load_profile.side_effect = RuntimeError("Agent not found")
 
         provider = CodexProvider("test1234", "test-session", "window-0", "bad_agent")
 
-        with pytest.raises(ProviderError, match="Failed to load agent profile"):
+        with pytest.raises(ProviderError, match="Failed to load agent"):
             provider._build_codex_command()
 
     @patch("cli_agent_orchestrator.providers.codex.CodexProvider.run_update_preflight")
     @patch("cli_agent_orchestrator.providers.codex.wait_until_status")
     @patch("cli_agent_orchestrator.providers.codex.wait_for_shell")
-    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.codex.load_agent")
     @patch("cli_agent_orchestrator.providers.codex.tmux_client")
-    def test_initialize_with_agent_profile(
+    def test_initialize_with_agent_id(
         self,
         mock_tmux,
         mock_load_profile,
@@ -360,10 +360,10 @@ class TestCodexBuildCommand:
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = True
         mock_tmux.get_history.return_value = "OpenAI Codex (v0.98.0)"
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "You are a supervisor."
-        mock_profile.mcpServers = None
-        mock_load_profile.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = "You are a supervisor."
+        mock_agent.mcp_servers = None
+        mock_load_profile.return_value = mock_agent
 
         provider = CodexProvider("test1234", "test-session", "window-0", "code_supervisor")
         result = provider.initialize()

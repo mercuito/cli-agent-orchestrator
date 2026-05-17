@@ -100,12 +100,12 @@ class TestBuildAssignDescription:
                 assert desc.startswith("Assigns a task to another agent without blocking.")
 
     def test_always_contains_args_section(self):
-        """All combinations include an Args section with agent_profile and message."""
+        """All combinations include an Args section with agent_id and message."""
         for sender_id in (True, False):
             for workdir in (True, False):
                 desc = _build_assign_description(sender_id, workdir)
                 assert "Args:" in desc
-                assert "agent_profile:" in desc
+                assert "agent_id:" in desc
                 assert "message:" in desc
 
     def test_always_contains_returns_section(self):

@@ -35,19 +35,19 @@ class QCliProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: str,
+        agent_id: str,
         allowed_tools: Optional[list] = None,
     ):
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         # TODO: remove the ._initialized if it's not referenced anywhere
         self._initialized = False
-        self._agent_profile = agent_profile
-        # Create dynamic prompt pattern based on agent profile (ANSI-free)
+        self._agent_id = agent_id
+        # Create dynamic prompt pattern based on agent (ANSI-free)
         # Matches: [agent] !> or [agent] > or [agent] X% > or [agent] λ > or [agent] X% λ >
         # after ANSI codes are stripped
         # Also matches with trailing text like "How can I help?"
         self._idle_prompt_pattern = (
-            rf"\[{re.escape(self._agent_profile)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*"
+            rf"\[{re.escape(self._agent_id)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*"
         )
         self._permission_prompt_pattern = r"Allow this action\?.*?\[.*?y.*?/.*?n.*?/.*?t.*?\]:"
 
@@ -57,7 +57,7 @@ class QCliProvider(BaseProvider):
         if not wait_for_shell(tmux_client, self.session_name, self.window_name, timeout=10.0):
             raise TimeoutError("Shell initialization timed out after 10 seconds")
 
-        command = shlex.join(["q", "chat", "--agent", self._agent_profile])
+        command = shlex.join(["q", "chat", "--agent", self._agent_id])
         tmux_client.send_keys(self.session_name, self.window_name, command)
 
         if not wait_until_status(

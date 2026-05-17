@@ -22,7 +22,7 @@ from cli_agent_orchestrator.providers.base import (
     ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.claude_runtime import (
     CLAUDE_RUNTIME_MATERIALIZATION_SCHEMA_VERSION,
     CLAUDE_RUNTIME_STATE_SCHEMA_VERSION,
@@ -30,7 +30,7 @@ from cli_agent_orchestrator.utils.claude_runtime import (
     claude_login_ok,
     claude_runtime_paths,
     ensure_claude_session_id,
-    prepare_identity_claude_runtime,
+    prepare_agent_claude_runtime,
 )
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
@@ -104,9 +104,9 @@ class ClaudeRuntimeStateCapability(ProviderRuntimeStateCapability):
         terminal_id: str,
         provider_data_dir: Path,
     ) -> ProviderRuntimeState | None:
-        """Return the provider-owned Claude session id for this identity.
+        """Return the provider-owned Claude session id for this agent.
 
-        CAO launches identity-managed Claude sessions with a provider-owned
+        CAO launches agent-managed Claude sessions with a provider-owned
         UUID via ``--session-id``. Claude then persists the conversation under
         its normal authenticated user state, and relaunch can use
         ``--resume <session-id>``. This intentionally avoids scraping Claude's
@@ -221,25 +221,25 @@ class ClaudeCodeProvider(BaseProvider):
     def prepare_terminal_runtime(
         *,
         terminal_id: str,
-        agent_profile: str,
+        agent_id: str,
         working_directory: str,
         launch_context: Optional[AgentRuntimeLaunchContext] = None,
     ) -> ProviderRuntimePreparation:
-        """Prepare Claude-owned identity runtime material."""
+        """Prepare Claude-owned agent runtime material."""
         if launch_context is None:
             return ProviderRuntimePreparation()
 
-        provider_data_dir = prepare_identity_claude_runtime(
+        provider_data_dir = prepare_agent_claude_runtime(
             launch_context.provider_data_dir,
             terminal_id,
-            agent_profile,
+            agent_id,
             working_directory,
         )
         return ProviderRuntimePreparation(
             environment={
                 "CAO_CLAUDE_PROVIDER_DATA_DIR": str(provider_data_dir),
             },
-            identity_scoped=True,
+            agent_scoped=True,
         )
 
     @classmethod
@@ -249,12 +249,12 @@ class ClaudeCodeProvider(BaseProvider):
         launch_context: AgentRuntimeLaunchContext,
     ) -> ProviderRuntimeDescriptor:
         """Describe Claude-owned runtime inputs that require terminal replacement."""
-        materialization = build_claude_runtime_materialization(launch_context.agent_profile)
+        materialization = build_claude_runtime_materialization(launch_context.agent_id)
         startup_command = cls(
             terminal_id="<fingerprint>",
             session_name=launch_context.session_name,
             window_name=launch_context.window_name,
-            agent_profile=launch_context.agent_profile,
+            agent_id=launch_context.agent_id,
             allowed_tools=launch_context.allowed_tools,
             provider_data_dir=launch_context.provider_data_dir,
             include_runtime_session=False,
@@ -273,7 +273,7 @@ class ClaudeCodeProvider(BaseProvider):
 
     @staticmethod
     def run_update_preflight(*, timeout: float = CLAUDE_UPDATE_TIMEOUT_SECONDS) -> None:
-        """Run Claude's updater before launching an identity-managed runtime."""
+        """Run Claude's updater before launching an agent-managed runtime."""
         claude_bin = shutil.which("claude")
         if not claude_bin:
             raise ProviderError("Claude update preflight failed: claude binary not found in PATH")
@@ -315,7 +315,7 @@ class ClaudeCodeProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: Optional[str] = None,
+        agent_id: Optional[str] = None,
         allowed_tools: Optional[list] = None,
         *,
         provider_data_dir: Optional[Path | str] = None,
@@ -325,20 +325,20 @@ class ClaudeCodeProvider(BaseProvider):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
-        self._agent_profile = agent_profile
+        self._agent_id = agent_id
         self._provider_data_dir = None if provider_data_dir is None else Path(provider_data_dir)
         self._runtime_resume_args = list(runtime_resume_args or [])
         self._include_runtime_session = include_runtime_session
 
     def _build_claude_command(self) -> str:
-        """Build Claude Code command with agent profile if provided.
+        """Build Claude Code command with agent if provided.
 
         Returns properly escaped shell command string that can be safely sent via tmux.
         Uses shlex.join() to handle multiline strings and special characters correctly.
         """
         # --dangerously-skip-permissions: bypass the workspace trust dialog and
         # tool permission prompts. CAO already confirms workspace access during
-        # `cao launch` (or `--yolo`), so re-prompting each spawned agent
+        # `cao agent start`, so re-prompting each spawned agent
         # (supervisor and worker) is redundant and blocks handoff/assign flows.
         command_parts = ["claude", "--dangerously-skip-permissions"]
 
@@ -348,15 +348,15 @@ class ClaudeCodeProvider(BaseProvider):
             command_parts.extend(["--plugin-dir", str(paths["plugin_dir"])])
             command_parts.append("--strict-mcp-config")
 
-        if self._agent_profile is not None:
+        if self._agent_id is not None:
             try:
-                profile = load_agent_profile(self._agent_profile)
+                agent = load_agent(self._agent_id)
 
-                if profile.reasoning_effort is not None:
-                    command_parts.extend(["--effort", str(profile.reasoning_effort)])
+                if agent.reasoning_effort is not None:
+                    command_parts.extend(["--effort", str(agent.reasoning_effort)])
 
                 # Add system prompt - escape newlines to prevent tmux chunking issues
-                system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
+                system_prompt = agent.prompt or ""
                 if system_prompt:
                     # Replace actual newlines with \n escape sequences
                     # This prevents tmux send_keys chunking from breaking the command
@@ -368,9 +368,9 @@ class ClaudeCodeProvider(BaseProvider):
                 # can identify the current terminal for handoff/assign operations.
                 # Claude Code does not automatically forward parent shell env vars
                 # to MCP subprocesses, so we inject it explicitly via the env field.
-                if profile.mcpServers:
+                if agent.mcp_servers:
                     mcp_config = {}
-                    for server_name, server_config in profile.mcpServers.items():
+                    for server_name, server_config in agent.mcp_servers.items():
                         if isinstance(server_config, dict):
                             mcp_config[server_name] = dict(server_config)
                         else:
@@ -385,7 +385,7 @@ class ClaudeCodeProvider(BaseProvider):
                     command_parts.extend(["--mcp-config", mcp_json])
 
             except Exception as e:
-                raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
+                raise ProviderError(f"Failed to load agent '{self._agent_id}': {e}")
 
         # Apply tool restrictions via --disallowedTools flags.
         # --dangerously-skip-permissions bypasses prompts but --disallowedTools

@@ -1,21 +1,38 @@
 """Full tests for terminal service."""
 
+from dataclasses import replace
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from test.support.agent_factory import Agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
 from cli_agent_orchestrator.services.terminal_service import (
     OutputMode,
     create_terminal,
+    create_terminal_for_agent,
     delete_terminal,
     get_output,
     get_terminal,
     get_working_directory,
     send_input,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_agent_runtime_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", tmp_path / "agents")
+
+
+def _bound_agent(*, provider: str = "kiro_cli", session_name: str = "developer"):
+    return replace(
+        Agent(name="developer", description="Developer", system_prompt="Base prompt"),
+        cli_provider=provider,
+        workdir="/repo",
+        session_name=session_name,
+    ).for_workspace_context("wctx_dev")
 
 
 class TestCreateTerminal:
@@ -28,7 +45,7 @@ class TestCreateTerminal:
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_create_terminal_new_session(
         self,
         mock_load_profile,
@@ -45,13 +62,15 @@ class TestCreateTerminal:
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
         mock_tmux.session_exists.return_value = False
-        mock_load_profile.return_value = AgentProfile(name="developer", description="Developer")
+        mock_load_profile.return_value = _bound_agent()
         mock_provider = MagicMock()
+        mock_provider_manager.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_provider_manager.runtime_state_capability.return_value = None
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_log_path = MagicMock()
         mock_log_dir.__truediv__.return_value = mock_log_path
 
-        result = create_terminal("kiro_cli", "developer", new_session=True)
+        result = create_terminal_for_agent(_bound_agent())
 
         assert result.id == "test1234"
         mock_tmux.create_session.assert_called_once()
@@ -64,7 +83,7 @@ class TestCreateTerminal:
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_create_terminal_existing_session(
         self,
         mock_load_profile,
@@ -82,13 +101,15 @@ class TestCreateTerminal:
         mock_gen_window.return_value = "developer-abcd"
         mock_tmux.session_exists.return_value = True
         mock_tmux.create_window.return_value = "developer-abcd"
-        mock_load_profile.return_value = AgentProfile(name="developer", description="Developer")
+        mock_load_profile.return_value = _bound_agent(session_name="existing")
         mock_provider = MagicMock()
+        mock_provider_manager.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_provider_manager.runtime_state_capability.return_value = None
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_log_path = MagicMock()
         mock_log_dir.__truediv__.return_value = mock_log_path
 
-        result = create_terminal("kiro_cli", "developer", session_name="cao-existing")
+        result = create_terminal_for_agent(_bound_agent(session_name="existing"))
 
         assert result.id == "test1234"
         mock_tmux.create_window.assert_called_once()
@@ -97,7 +118,7 @@ class TestCreateTerminal:
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_create_terminal_session_not_found(
         self, mock_load_profile, mock_gen_id, mock_gen_session, mock_gen_window, mock_tmux
     ):
@@ -105,17 +126,17 @@ class TestCreateTerminal:
         mock_gen_id.return_value = "test1234"
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
-        mock_tmux.session_exists.return_value = False
-        mock_load_profile.return_value = AgentProfile(name="developer", description="Developer")
+        mock_tmux.session_exists.side_effect = [True, False]
+        mock_load_profile.return_value = _bound_agent(session_name="nonexistent")
 
         with pytest.raises(ValueError, match="not found"):
-            create_terminal("kiro_cli", "developer", session_name="cao-nonexistent")
+            create_terminal_for_agent(_bound_agent(session_name="nonexistent"))
 
     @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_create_terminal_session_already_exists(
         self, mock_load_profile, mock_gen_id, mock_gen_session, mock_gen_window, mock_tmux
     ):
@@ -123,11 +144,11 @@ class TestCreateTerminal:
         mock_gen_id.return_value = "test1234"
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
-        mock_tmux.session_exists.return_value = True
-        mock_load_profile.return_value = AgentProfile(name="developer", description="Developer")
+        mock_tmux.session_exists.side_effect = [False, True]
+        mock_load_profile.return_value = _bound_agent(session_name="existing")
 
         with pytest.raises(ValueError, match="already exists"):
-            create_terminal("kiro_cli", "developer", session_name="cao-existing", new_session=True)
+            create_terminal_for_agent(_bound_agent(session_name="existing"))
 
     @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
@@ -136,7 +157,7 @@ class TestCreateTerminal:
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_create_terminal_does_not_append_cao_skill_catalog(
         self,
         mock_load_profile,
@@ -153,17 +174,15 @@ class TestCreateTerminal:
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
         mock_tmux.session_exists.return_value = False
-        mock_load_profile.return_value = AgentProfile(
-            name="developer",
-            description="Developer",
-            system_prompt="Base prompt",
-        )
+        mock_load_profile.return_value = _bound_agent(provider="codex")
         mock_provider = MagicMock()
+        mock_provider_manager.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_provider_manager.runtime_state_capability.return_value = None
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_log_path = MagicMock()
         mock_log_dir.__truediv__.return_value = mock_log_path
 
-        create_terminal("codex", "developer", new_session=True)
+        create_terminal_for_agent(_bound_agent(provider="codex"))
 
         assert "skill_prompt" not in mock_provider_manager.create_provider.call_args.kwargs
 
@@ -175,7 +194,7 @@ class TestCreateTerminal:
     @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
     @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_create_terminal_does_not_pass_skill_prompt_to_provider(
         self,
         mock_load_profile,
@@ -193,17 +212,15 @@ class TestCreateTerminal:
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
         mock_tmux.session_exists.return_value = False
-        mock_load_profile.return_value = AgentProfile(
-            name="developer",
-            description="Developer",
-            system_prompt="Base prompt",
-        )
+        mock_load_profile.return_value = _bound_agent(provider=provider_name)
         mock_provider = MagicMock()
+        mock_provider_manager.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_provider_manager.runtime_state_capability.return_value = None
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_log_path = MagicMock()
         mock_log_dir.__truediv__.return_value = mock_log_path
 
-        create_terminal(provider_name, "developer", new_session=True)
+        create_terminal_for_agent(_bound_agent(provider=provider_name))
 
         assert "skill_prompt" not in mock_provider_manager.create_provider.call_args.kwargs
 
@@ -220,7 +237,7 @@ class TestGetTerminal:
             "tmux_window": "developer-abcd",
             "provider": "kiro_cli",
             "tmux_session": "cao-session",
-            "agent_profile": "developer",
+            "agent_id": "developer",
             "last_active": datetime.now(),
         }
         mock_provider = MagicMock()
@@ -249,7 +266,7 @@ class TestGetTerminal:
             "tmux_window": "developer-abcd",
             "provider": "kiro_cli",
             "tmux_session": "cao-session",
-            "agent_profile": "developer",
+            "agent_id": "developer",
             "last_active": datetime.now(),
         }
         mock_provider_manager.get_provider.return_value = None

@@ -202,7 +202,10 @@ async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_work
         "session",
         "window",
         "codex",
-        agent_profile="implementation_partner",
+        agent_id="implementation_partner",
+        workspace_context_id=db_module.ensure_default_workspace_context(
+            "implementation_partner"
+        ).id,
     )
     delivery = create_inbox_delivery(
         "terminal-sender",

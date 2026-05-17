@@ -1,4 +1,4 @@
-"""Provider-facing runtime handle for CAO agent identities."""
+"""Provider-facing runtime handle for CAO agents."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from typing import Any, Optional
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 import cli_agent_orchestrator.runtime.events as runtime_events
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentity,
+from cli_agent_orchestrator.agent import (
+    Agent,
     AgentWorkspaceContextRuntimePaths,
     ensure_agent_workspace_context_runtime_paths,
 )
@@ -28,16 +28,16 @@ from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
-from cli_agent_orchestrator.services.agent_identity_manager import (
-    AgentIdentityManager,
-    default_agent_identity_manager,
+from cli_agent_orchestrator.services.agent_manager import (
+    AgentManager,
+    default_agent_manager,
 )
 from cli_agent_orchestrator.services import inbox_service, terminal_service
 
 logger = logging.getLogger(__name__)
 
-RUNTIME_FINGERPRINT_SCHEMA_VERSION = "cao-identity-runtime-fingerprint.v1"
-RUNTIME_STATE_SCHEMA_VERSION = "cao-identity-runtime-state.v1"
+RUNTIME_FINGERPRINT_SCHEMA_VERSION = "cao-agent-runtime-fingerprint.v1"
+RUNTIME_STATE_SCHEMA_VERSION = "cao-agent-runtime-state.v1"
 RUNTIME_STATE_FILENAME = "runtime-state.json"
 
 class AgentRuntimeStatus(str, Enum):
@@ -64,15 +64,14 @@ class AgentRuntimeFreshnessAction(str, Enum):
 
 @dataclass(frozen=True)
 class AgentRuntimeTerminal:
-    """Terminal manifestation of a CAO agent identity."""
+    """Terminal manifestation of a CAO agent."""
 
     id: str
-    agent_identity_id: str
+    agent_id: str
     workspace_context_id: str
     session_name: str
     window_name: str
     provider: str
-    agent_profile: Optional[str]
     resume_supported: bool
     context_preservation: str
 
@@ -80,20 +79,19 @@ class AgentRuntimeTerminal:
         """Return the legacy terminal metadata shape used by compatibility callers."""
         return {
             "id": self.id,
-            "agent_identity_id": self.agent_identity_id,
+            "agent_id": self.agent_id,
             "workspace_context_id": self.workspace_context_id,
             "tmux_session": self.session_name,
             "tmux_window": self.window_name,
             "provider": self.provider,
-            "agent_profile": self.agent_profile,
             "resume_supported": self.resume_supported,
             "context_preservation": self.context_preservation,
         }
 
 
 @dataclass(frozen=True)
-class AgentIdentityRuntimeState:
-    """CAO-owned runtime envelope for a durable agent identity."""
+class AgentRuntimeState:
+    """CAO-owned runtime envelope for a durable agent."""
 
     schema_version: str
     agent_id: str
@@ -136,7 +134,7 @@ class AgentRuntimeDeliveryResult:
 
 @dataclass(frozen=True)
 class AgentRuntimeFreshnessResult:
-    """Result of making an identity runtime fresh enough for delivery."""
+    """Result of making an agent runtime fresh enough for delivery."""
 
     action: AgentRuntimeFreshnessAction
     status: AgentRuntimeStatus
@@ -160,38 +158,38 @@ class AgentRuntimeNotifyResult:
 
 
 class AgentRuntimeInvariantError(RuntimeError):
-    """Raised when a durable identity has conflicting terminal manifestations."""
+    """Raised when a durable agent has conflicting terminal manifestations."""
 
 
 class AgentRuntimeHandle:
-    """Provider-facing operational contract for one durable CAO agent identity."""
+    """Provider-facing operational contract for one durable CAO agent."""
 
     def __init__(
         self,
-        identity: AgentIdentity,
+        agent: Agent,
         workspace_context_id: str | None = None,
         *,
-        identity_manager: AgentIdentityManager | None = None,
+        agent_manager: AgentManager | None = None,
     ) -> None:
-        self._identity_manager = identity_manager or default_agent_identity_manager()
-        registered_identity = self._identity_manager.require_registered_identity(identity)
+        self._agent_manager = agent_manager or default_agent_manager()
+        registered_agent = self._agent_manager.require_registered_agent(agent)
         if workspace_context_id is None:
             workspace_context_id = db_module.ensure_default_workspace_context(
-                registered_identity.id
+                registered_agent.id
             ).id
         self.workspace_context_id = workspace_context_id
-        self.identity = registered_identity.for_workspace_context(workspace_context_id)
+        self.agent = registered_agent.for_workspace_context(workspace_context_id)
         self._last_freshness_result: Optional[AgentRuntimeFreshnessResult] = None
 
     @property
     def inbox_receiver_id(self) -> str:
         """Stable inbox receiver id used before and after terminal startup."""
-        return f"agent:{self.identity.id}:context:{self.workspace_context_id}"
+        return f"agent:{self.agent.id}:context:{self.workspace_context_id}"
 
     @property
     def session_name(self) -> str:
-        """Canonical managed tmux session name for this identity."""
-        return canonical_agent_session_name(self.identity.session_name)
+        """Canonical managed tmux session name for this agent."""
+        return canonical_agent_session_name(self.agent.session_name)
 
     def status(self) -> AgentRuntimeStatus:
         """Return a provider-friendly runtime status without exposing terminal details."""
@@ -209,13 +207,13 @@ class AgentRuntimeHandle:
         try:
             terminal_status = provider.get_status()
         except Exception as exc:
-            logger.warning("Unable to query runtime status for agent %s: %s", self.identity.id, exc)
+            logger.warning("Unable to query runtime status for agent %s: %s", self.agent.id, exc)
             return AgentRuntimeStatus.UNREACHABLE
 
         return _map_terminal_status(terminal_status)
 
     def ensure_started(self) -> AgentRuntimeTerminal:
-        """Create or reuse the mapped terminal for this identity."""
+        """Create or reuse the mapped terminal for this agent."""
         existing = self._terminal()
         if existing is not None:
             self._publish_runtime_lifecycle_result(
@@ -255,7 +253,7 @@ class AgentRuntimeHandle:
         causing_event: CaoEvent | None = None,
         publish_lifecycle_event: bool = True,
     ) -> AgentRuntimeFreshnessResult:
-        """Ensure the identity runtime is started, fresh, and ready for delivery."""
+        """Ensure the agent runtime is started, fresh, and ready for delivery."""
         desired_fingerprint = self._desired_runtime_fingerprint()
         terminal = self._terminal()
         if terminal is None:
@@ -275,7 +273,7 @@ class AgentRuntimeHandle:
                     desired_fingerprint,
                 )
             except Exception as exc:
-                logger.warning("Unable to start runtime for agent %s: %s", self.identity.id, exc)
+                logger.warning("Unable to start runtime for agent %s: %s", self.agent.id, exc)
                 return self._publish_runtime_lifecycle_result(
                     AgentRuntimeFreshnessResult(
                         action=AgentRuntimeFreshnessAction.FAILED,
@@ -339,7 +337,7 @@ class AgentRuntimeHandle:
                 except Exception as exc:
                     logger.warning(
                         "Unable to update provider runtime cache for agent %s terminal %s: %s",
-                        self.identity.id,
+                        self.agent.id,
                         terminal.id,
                         exc,
                     )
@@ -404,7 +402,7 @@ class AgentRuntimeHandle:
         except Exception as exc:
             logger.warning(
                 "Unable to discover provider runtime state for agent %s terminal %s: %s",
-                self.identity.id,
+                self.agent.id,
                 terminal.id,
                 exc,
             )
@@ -442,7 +440,7 @@ class AgentRuntimeHandle:
                 desired_fingerprint,
             )
         except Exception as exc:
-            logger.warning("Unable to refresh runtime for agent %s: %s", self.identity.id, exc)
+            logger.warning("Unable to refresh runtime for agent %s: %s", self.agent.id, exc)
             return self._publish_runtime_lifecycle_result(
                 AgentRuntimeFreshnessResult(
                     action=AgentRuntimeFreshnessAction.FAILED,
@@ -648,7 +646,7 @@ class AgentRuntimeHandle:
         except Exception as exc:
             logger.error(
                 "Failed to deliver runtime notifications to agent %s terminal %s: %s",
-                self.identity.id,
+                self.agent.id,
                 terminal_id,
                 exc,
             )
@@ -668,11 +666,11 @@ class AgentRuntimeHandle:
         )
 
     def _terminal(self) -> Optional[AgentRuntimeTerminal]:
-        terminals = db_module.list_terminals_by_agent_identity(self.identity.id)
+        terminals = db_module.list_terminals_by_agent(self.agent.id)
         if len(terminals) > 1:
             raise AgentRuntimeInvariantError(
-                "Multiple terminal manifestations exist for CAO agent identity "
-                f"{self.identity.id!r}"
+                "Multiple terminal manifestations exist for CAO agent "
+                f"{self.agent.id!r}"
             )
         terminals = [
             terminal
@@ -683,17 +681,17 @@ class AgentRuntimeHandle:
             return None
         if len(terminals) > 1:
             raise AgentRuntimeInvariantError(
-                "Multiple terminal manifestations exist for CAO agent identity "
-                f"{self.identity.id!r}"
+                "Multiple terminal manifestations exist for CAO agent "
+                f"{self.agent.id!r}"
             )
         return _terminal_from_metadata(terminals[0])
 
     def _other_context_terminal(self) -> AgentRuntimeTerminal | None:
-        terminals = db_module.list_terminals_by_agent_identity(self.identity.id)
+        terminals = db_module.list_terminals_by_agent(self.agent.id)
         if len(terminals) > 1:
             raise AgentRuntimeInvariantError(
-                "Multiple terminal manifestations exist for CAO agent identity "
-                f"{self.identity.id!r}"
+                "Multiple terminal manifestations exist for CAO agent "
+                f"{self.agent.id!r}"
             )
         if not terminals:
             return None
@@ -746,9 +744,9 @@ class AgentRuntimeHandle:
             )
 
         other_handle = AgentRuntimeHandle(
-            self.identity,
+            self.agent,
             workspace_context_id=terminal.workspace_context_id,
-            identity_manager=self._identity_manager,
+            agent_manager=self._agent_manager,
         )
         try:
             other_handle._save_live_provider_runtime_state(terminal.id)
@@ -759,14 +757,14 @@ class AgentRuntimeHandle:
             other_handle._move_pending_terminal_notifications_to_agent(terminal.id)
             terminal_service.delete_terminal(terminal.id, require_window_killed=True)
             db_module.set_context_workspace_active_terminal(
-                agent_identity_id=self.identity.id,
+                agent_id=self.agent.id,
                 workspace_context_id=terminal.workspace_context_id,
                 terminal_id=None,
             )
         except Exception as exc:
             logger.warning(
                 "Unable to switch agent %s from workspace context %s to %s: %s",
-                self.identity.id,
+                self.agent.id,
                 terminal.workspace_context_id,
                 self.workspace_context_id,
                 exc,
@@ -800,7 +798,7 @@ class AgentRuntimeHandle:
         self,
         desired_fingerprint: str,
     ) -> AgentRuntimeTerminal:
-        created = terminal_service.create_terminal_for_agent_identity(self.identity)
+        created = terminal_service.create_terminal_for_agent(self.agent)
         self._ensure_context_workspace(active_terminal_id=created.id)
         self._write_applied_runtime_state(
             created.id,
@@ -810,12 +808,11 @@ class AgentRuntimeHandle:
         provider_name = str(provider_value)
         return AgentRuntimeTerminal(
             id=created.id,
-            agent_identity_id=self.identity.id,
+            agent_id=self.agent.id,
             workspace_context_id=self.workspace_context_id,
             session_name=created.session_name,
             window_name=created.name,
             provider=provider_name,
-            agent_profile=created.agent_profile,
             resume_supported=provider_manager.provider_supports_resume(provider_name),
             context_preservation=_context_preservation_message(provider_name),
         )
@@ -868,7 +865,7 @@ class AgentRuntimeHandle:
         except Exception as exc:
             logger.warning(
                 "Unable to query lifecycle status for agent %s terminal %s: %s",
-                self.identity.id,
+                self.agent.id,
                 terminal.id,
                 exc,
             )
@@ -891,7 +888,7 @@ class AgentRuntimeHandle:
         except Exception as exc:
             logger.warning(
                 "Unable to evaluate runtime freshness for agent %s terminal %s: %s",
-                self.identity.id,
+                self.agent.id,
                 terminal_id,
                 exc,
             )
@@ -932,36 +929,36 @@ class AgentRuntimeHandle:
 
     def _desired_runtime_fingerprint(self) -> str:
         runtime_inputs = terminal_service.resolve_terminal_runtime_inputs(
-            self.identity.agent_profile,
+            self.agent.id,
         )
         runtime_paths = self._runtime_paths()
         context = AgentRuntimeLaunchContext(
-            identity=self.identity,
-            identity_data_dir=runtime_paths.identity_data_dir,
+            agent=self.agent,
+            agent_data_dir=runtime_paths.agent_data_dir,
             provider_data_dir=runtime_paths.provider_data_dir,
             terminal_id="<desired>",
             session_name=self.session_name,
-            window_name=self.identity.agent_profile,
-            working_directory=self.identity.workdir,
-            agent_profile=self.identity.agent_profile,
+            window_name=self.agent.id,
+            working_directory=self.agent.workdir,
+            agent_id=self.agent.id,
             allowed_tools=runtime_inputs.allowed_tools,
         )
         provider_descriptor = provider_manager.runtime_fingerprint_contribution(
-            self.identity.cli_provider,
+            self.agent.cli_provider,
             launch_context=context,
         )
-        mcp_surface_fingerprint = _mcp_surface_fingerprint_for_identity(self.identity)
-        mcp_runtime_generation_fingerprint = _mcp_runtime_generation_fingerprint_for_identity(
-            self.identity
+        mcp_surface_fingerprint = _mcp_surface_fingerprint_for_agent(self.agent)
+        mcp_runtime_generation_fingerprint = _mcp_runtime_generation_fingerprint_for_agent(
+            self.agent
         )
         descriptor = {
             "schema_version": RUNTIME_FINGERPRINT_SCHEMA_VERSION,
-            "identity": {
-                "id": self.identity.id,
+            "agent": {
+                "id": self.agent.id,
                 "workspace_context_id": self.workspace_context_id,
-                "provider": self.identity.cli_provider,
-                "agent_profile": self.identity.agent_profile,
-                "workdir": os.path.realpath(self.identity.workdir or os.getcwd()),
+                "provider": self.agent.cli_provider,
+                "agent_id": self.agent.id,
+                "workdir": os.path.realpath(self.agent.workdir or os.getcwd()),
                 "session_name": self.session_name,
                 "allowed_tools": runtime_inputs.allowed_tools,
                 "profile_material": runtime_inputs.profile_material,
@@ -987,9 +984,9 @@ class AgentRuntimeHandle:
 
     def _runtime_paths(self) -> AgentWorkspaceContextRuntimePaths:
         return ensure_agent_workspace_context_runtime_paths(
-            self.identity,
+            self.agent,
             self.workspace_context_id,
-            self.identity.cli_provider,
+            self.agent.cli_provider,
         )
 
     def _applied_runtime_fingerprint(self, terminal_id: str) -> Optional[str]:
@@ -1007,7 +1004,7 @@ class AgentRuntimeHandle:
         self,
         terminal_id: str,
     ) -> None:
-        capability = provider_manager.runtime_state_capability(self.identity.cli_provider)
+        capability = provider_manager.runtime_state_capability(self.agent.cli_provider)
         if capability is None:
             return
         runtime_paths = self._runtime_paths()
@@ -1025,7 +1022,7 @@ class AgentRuntimeHandle:
         terminal_id: str,
         fingerprint: str,
     ) -> None:
-        capability = provider_manager.runtime_state_capability(self.identity.cli_provider)
+        capability = provider_manager.runtime_state_capability(self.agent.cli_provider)
         if capability is None:
             return
         runtime_paths = self._runtime_paths()
@@ -1062,9 +1059,9 @@ class AgentRuntimeHandle:
             json.dumps(
                 {
                     "schema_version": RUNTIME_STATE_SCHEMA_VERSION,
-                    "agent_id": self.identity.id,
+                    "agent_id": self.agent.id,
                     "workspace_context_id": self.workspace_context_id,
-                    "provider": self.identity.cli_provider,
+                    "provider": self.agent.cli_provider,
                     "terminal_id": terminal_id,
                     "fingerprint": fingerprint,
                     "applied_at": datetime.now().isoformat(),
@@ -1114,7 +1111,7 @@ class AgentRuntimeHandle:
                 inserted = session.execute(
                     sqlite_insert(db_module.AgentRuntimeNotificationModel)
                     .values(
-                        agent_id=self.identity.id,
+                        agent_id=self.agent.id,
                         source_kind=source_kind,
                         source_id=source_id,
                         inbox_notification_id=delivery.notification.id,
@@ -1163,7 +1160,7 @@ class AgentRuntimeHandle:
         marker = (
             session.query(db_module.AgentRuntimeNotificationModel)
             .filter(
-                db_module.AgentRuntimeNotificationModel.agent_id == self.identity.id,
+                db_module.AgentRuntimeNotificationModel.agent_id == self.agent.id,
                 db_module.AgentRuntimeNotificationModel.source_kind == source_kind,
                 db_module.AgentRuntimeNotificationModel.source_id == source_id,
             )
@@ -1190,17 +1187,17 @@ class AgentRuntimeHandle:
 
     def _ensure_context_workspace(self, *, active_terminal_id: str | None = None) -> None:
         runtime_paths = ensure_agent_workspace_context_runtime_paths(
-            self.identity,
+            self.agent,
             self.workspace_context_id,
-            self.identity.cli_provider,
+            self.agent.cli_provider,
         )
         db_module.ensure_context_workspace(
-            agent_identity_id=self.identity.id,
+            agent_id=self.agent.id,
             workspace_context_id=self.workspace_context_id,
             root_path=runtime_paths.context_data_dir,
         )
         db_module.set_context_workspace_active_terminal(
-            agent_identity_id=self.identity.id,
+            agent_id=self.agent.id,
             workspace_context_id=self.workspace_context_id,
             terminal_id=active_terminal_id,
         )
@@ -1231,7 +1228,7 @@ class AgentRuntimeHandle:
         )
         runtime_events.publish_runtime_event(
             runtime_events.notification_accepted_event(
-                agent_identity_id=self.identity.id,
+                agent_id=self.agent.id,
                 workspace_context_id=self.workspace_context_id,
                 inbox_notification_id=delivery.notification.id,
                 inbox_receiver_id=self.inbox_receiver_id,
@@ -1267,7 +1264,7 @@ class AgentRuntimeHandle:
 
         runtime_events.publish_runtime_event(
             runtime_events.notification_delivery_event(
-                agent_identity_id=self.identity.id,
+                agent_id=self.agent.id,
                 workspace_context_id=self.workspace_context_id,
                 inbox_notification_id=notification.delivery.notification.id,
                 inbox_receiver_id=self.inbox_receiver_id,
@@ -1298,7 +1295,7 @@ class AgentRuntimeHandle:
             return result
         runtime_events.publish_runtime_event(
             runtime_events.lifecycle_event(
-                agent_identity_id=self.identity.id,
+                agent_id=self.agent.id,
                 workspace_context_id=self.workspace_context_id,
                 action=result.action.value,
                 runtime_status=result.status.value,
@@ -1322,7 +1319,7 @@ class AgentRuntimeHandle:
     ) -> None:
         runtime_events.publish_runtime_event(
             runtime_events.workspace_context_switch_event(
-                agent_identity_id=self.identity.id,
+                agent_id=self.agent.id,
                 from_workspace_context_id=terminal.workspace_context_id,
                 to_workspace_context_id=self.workspace_context_id,
                 terminal_id=terminal.id,
@@ -1335,7 +1332,7 @@ class AgentRuntimeHandle:
 
 
 def canonical_agent_session_name(session_name: str) -> str:
-    """Return a managed CAO session name for an agent identity."""
+    """Return a managed CAO session name for an agent."""
     if session_name.startswith(SESSION_PREFIX):
         return session_name
     return f"{SESSION_PREFIX}{session_name}"
@@ -1350,20 +1347,20 @@ def _canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _mcp_surface_fingerprint_for_identity(identity: AgentIdentity) -> str:
+def _mcp_surface_fingerprint_for_agent(agent: Agent) -> str:
     from cli_agent_orchestrator.mcp_server.server import (
-        build_mcp_surface_fingerprint_for_identity,
+        build_mcp_surface_fingerprint_for_agent,
     )
 
-    return build_mcp_surface_fingerprint_for_identity(identity)
+    return build_mcp_surface_fingerprint_for_agent(agent)
 
 
-def _mcp_runtime_generation_fingerprint_for_identity(identity: AgentIdentity) -> str:
+def _mcp_runtime_generation_fingerprint_for_agent(agent: Agent) -> str:
     from cli_agent_orchestrator.mcp_server.server import (
-        build_mcp_runtime_generation_fingerprint_for_identity,
+        build_mcp_runtime_generation_fingerprint_for_agent,
     )
 
-    return build_mcp_runtime_generation_fingerprint_for_identity(identity)
+    return build_mcp_runtime_generation_fingerprint_for_agent(agent)
 
 
 def _json_default(value: Any) -> Any:
@@ -1385,12 +1382,11 @@ def _terminal_from_metadata(metadata: dict[str, object]) -> AgentRuntimeTerminal
         )
     return AgentRuntimeTerminal(
         id=str(metadata["id"]),
-        agent_identity_id=str(metadata["agent_identity_id"]),
+        agent_id=str(metadata["agent_id"]),
         workspace_context_id=workspace_context_id,
         session_name=str(metadata["tmux_session"]),
         window_name=str(metadata["tmux_window"]),
         provider=provider,
-        agent_profile=str(metadata["agent_profile"]) if metadata.get("agent_profile") else None,
         resume_supported=provider_manager.provider_supports_resume(provider),
         context_preservation=_context_preservation_message(provider),
     )
@@ -1398,7 +1394,7 @@ def _terminal_from_metadata(metadata: dict[str, object]) -> AgentRuntimeTerminal
 
 def _context_preservation_message(provider: str) -> str:
     if provider_manager.provider_supports_resume(provider):
-        return "provider supports identity-scoped runtime context preservation"
+        return "provider supports agent-scoped runtime context preservation"
     return f"provider {provider!r} does not support resume; restarted context is unavailable"
 
 

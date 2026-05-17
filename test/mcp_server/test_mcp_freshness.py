@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import Agent, AgentRegistry
 from cli_agent_orchestrator.mcp_server.freshness import (
     build_agent_mcp_runtime_generation_fingerprint,
     build_agent_mcp_surface_descriptor,
@@ -52,21 +52,21 @@ def _hook(context: ProviderToolInvocationContext) -> ProviderToolPreCallResult |
     return None
 
 
-def _identity(identity_id: str = "identity_a") -> AgentIdentity:
-    return AgentIdentity(
-        id=identity_id,
-        display_name="Identity A",
-        agent_profile="developer",
+def _agent(agent_id: str = "agent_a") -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name="Agent A",
         cli_provider="codex",
         workdir="/repo",
-        session_name="identity-a",
+        session_name="agent-a",
+        prompt="",
     )
 
 
-def _agents() -> AgentIdentityRegistry:
-    identity_a = _identity("identity_a")
-    identity_b = _identity("identity_b")
-    return AgentIdentityRegistry({identity_a.id: identity_a, identity_b.id: identity_b})
+def _agents() -> AgentRegistry:
+    agent_a = _agent("agent_a")
+    agent_b = _agent("agent_b")
+    return AgentRegistry({agent_a.id: agent_a, agent_b.id: agent_b})
 
 
 def _provider_tool(
@@ -122,14 +122,14 @@ def _policy(
         access_requests=(
             ProviderToolAccessRequest(
                 tool_name=visible_tool.name,
-                agent_identity_id="identity_a",
+                agent_id="agent_a",
                 pre_hooks=pre_hooks,
                 post_hooks=post_hooks,
                 location="tool_access.visible",
             ),
             ProviderToolAccessRequest(
                 tool_name=hidden_tool.name,
-                agent_identity_id="identity_b",
+                agent_id="agent_b",
                 location="tool_access.hidden",
             ),
         ),
@@ -145,7 +145,7 @@ def _surface_fingerprint(
 ) -> str:
     return fingerprint_agent_mcp_surface(
         build_agent_mcp_surface_descriptor(
-            identity=_identity(),
+            agent=_agent(),
             built_in_tools=(("builtin_lookup", _builtin_lookup, {}),),
             built_in_tool_allowlist=builtin_allowlist,
             provider_policies={"fake": policy or _policy()},
@@ -160,7 +160,7 @@ def _runtime_generation_fingerprint(
     builtin_generation: Mapping[str, Any] | None = None,
 ) -> str:
     return build_agent_mcp_runtime_generation_fingerprint(
-        identity=_identity(),
+        agent=_agent(),
         built_in_tools=(
             ("builtin_lookup", _builtin_lookup, {}),
             ("builtin_hidden", _builtin_hidden, {}),
@@ -174,7 +174,7 @@ def _runtime_generation_fingerprint(
 
 def test_surface_descriptor_includes_visible_builtin_and_provider_contracts():
     descriptor = build_agent_mcp_surface_descriptor(
-        identity=_identity(),
+        agent=_agent(),
         built_in_tools=(("builtin_lookup", _builtin_lookup, {}),),
         built_in_tool_allowlist=["builtin_lookup"],
         provider_policies={"fake": _policy()},
@@ -194,7 +194,7 @@ def test_surface_descriptor_includes_visible_builtin_and_provider_contracts():
 
 def test_provider_tool_cannot_occupy_reserved_hidden_builtin_name():
     descriptor = build_agent_mcp_surface_descriptor(
-        identity=_identity(),
+        agent=_agent(),
         built_in_tools=(("builtin_hidden", _builtin_hidden, {}),),
         built_in_tool_allowlist=[],
         provider_policies={"fake": _policy(visible_tool=_provider_tool("builtin_hidden"))},
@@ -237,7 +237,7 @@ def test_surface_fingerprint_ignores_hidden_tool_contract_changes():
         policy=_policy(
             hidden_tool=_provider_tool(
                 "cao_fake.hidden",
-                description="This hidden tool changed but identity_a cannot see it.",
+                description="This hidden tool changed but agent_a cannot see it.",
                 schema={
                     "required": ["body"],
                     "properties": {"body": {"type": "string"}},

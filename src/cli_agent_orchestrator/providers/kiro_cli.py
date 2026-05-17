@@ -96,7 +96,7 @@ class KiroCliProvider(BaseProvider):
         terminal_id: Unique identifier for this terminal instance
         session_name: Name of the tmux session containing this terminal
         window_name: Name of the tmux window for this terminal
-        _agent_profile: Name of the Kiro agent profile to use
+        _agent_id: Name of the Kiro agent to use
         _idle_prompt_pattern: Regex pattern for detecting IDLE state
         _permission_prompt_pattern: Regex pattern for detecting permission prompts
     """
@@ -108,7 +108,7 @@ class KiroCliProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: str,
+        agent_id: str,
         allowed_tools: Optional[list] = None,
     ):
         """Initialize Kiro CLI provider with terminal context.
@@ -117,14 +117,14 @@ class KiroCliProvider(BaseProvider):
             terminal_id: Unique identifier for this terminal
             session_name: Name of the tmux session
             window_name: Name of the tmux window
-            agent_profile: Name of the Kiro agent profile to use (e.g., "developer")
+            agent_id: Name of the Kiro agent to use (e.g., "developer")
             allowed_tools: Optional list of runtime capabilities the agent is allowed to use.
         """
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
-        self._agent_profile = agent_profile
+        self._agent_id = agent_id
 
-        # Build dynamic prompt pattern based on agent profile
+        # Build dynamic prompt pattern based on agent
         # This pattern matches various Kiro prompt formats after ANSI stripping:
         # - [developer] >       (basic prompt)
         # - [developer] !>      (prompt with pending changes)
@@ -132,19 +132,19 @@ class KiroCliProvider(BaseProvider):
         # - [developer] λ >     (prompt with lambda symbol)
         # - [developer] 50% λ > (combined progress and lambda)
         self._idle_prompt_pattern = (
-            rf"\[{re.escape(self._agent_profile)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*"
+            rf"\[{re.escape(self._agent_id)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*"
         )
         self._permission_prompt_pattern = r"Allow this action\?.*?\[.*?y.*?/.*?n.*?/.*?t.*?\]:"
 
         # New TUI header pattern: "agent_name · model · ◔ N%"
-        self._new_tui_header_pattern = rf"{re.escape(self._agent_profile)}\s+·\s+.*·\s+◔\s*\d+%"
+        self._new_tui_header_pattern = rf"{re.escape(self._agent_id)}\s+·\s+.*·\s+◔\s*\d+%"
 
     def initialize(self) -> bool:
         """Initialize Kiro CLI provider by starting kiro-cli chat command.
 
         This method:
         1. Waits for the shell to be ready in the tmux window
-        2. Sends the kiro-cli chat command with the configured agent profile
+        2. Sends the kiro-cli chat command with the configured agent
         3. Waits for the agent to reach IDLE state (ready for input)
 
         Returns:
@@ -161,7 +161,7 @@ class KiroCliProvider(BaseProvider):
         # Step 2: Start the Kiro CLI chat session using kiro-cli's default UI.
         # Detection code handles both legacy and TUI patterns (stateless).
         # If initialization fails, fall back to --legacy-ui.
-        command = shlex.join(["kiro-cli", "chat", "--agent", self._agent_profile])
+        command = shlex.join(["kiro-cli", "chat", "--agent", self._agent_id])
         tmux_client.send_keys(self.session_name, self.window_name, command)
 
         # Step 3: Wait for Kiro CLI to fully initialize and show the agent prompt.
@@ -177,7 +177,7 @@ class KiroCliProvider(BaseProvider):
             if not wait_for_shell(tmux_client, self.session_name, self.window_name, timeout=10.0):
                 raise TimeoutError("Shell recovery timed out after --legacy-ui fallback")
             legacy_command = shlex.join(
-                ["kiro-cli", "chat", "--legacy-ui", "--agent", self._agent_profile]
+                ["kiro-cli", "chat", "--legacy-ui", "--agent", self._agent_id]
             )
             tmux_client.send_keys(self.session_name, self.window_name, legacy_command)
             if not wait_until_status(

@@ -79,17 +79,17 @@ class TestKimiCliProviderInitialization:
     @patch("cli_agent_orchestrator.providers.kimi_cli.wait_until_status", return_value=True)
     @patch("cli_agent_orchestrator.providers.kimi_cli.wait_for_shell", return_value=True)
     @patch("cli_agent_orchestrator.providers.kimi_cli.tmux_client")
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
-    def test_initialize_with_agent_profile(
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
+    def test_initialize_with_agent_id(
         self, mock_load, mock_tmux, mock_wait_shell, mock_wait_status
     ):
-        """Test initialization with agent profile creates temp files."""
+        """Test initialization with agent creates temp files."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = "You are a helpful assistant"
-        mock_profile.mcpServers = None
+        mock_profile.prompt = "You are a helpful assistant"
+        mock_profile.mcp_servers = None
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="developer")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="developer")
         result = provider.initialize()
         assert result is True
 
@@ -102,26 +102,26 @@ class TestKimiCliProviderInitialization:
         # Cleanup temp files
         provider.cleanup()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
-    def test_initialize_with_invalid_profile(self, mock_load):
-        """Test initialization with invalid agent profile raises ProviderError."""
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
+    def test_initialize_with_invalid_agent(self, mock_load):
+        """Test initialization with invalid agent raises ProviderError."""
         mock_load.side_effect = FileNotFoundError("Profile not found")
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="nonexistent")
-        with pytest.raises(ProviderError, match="Failed to load agent profile"):
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="nonexistent")
+        with pytest.raises(ProviderError, match="Failed to load agent"):
             provider._build_kimi_command()
 
     @patch("cli_agent_orchestrator.providers.kimi_cli.wait_until_status", return_value=True)
     @patch("cli_agent_orchestrator.providers.kimi_cli.wait_for_shell", return_value=True)
     @patch("cli_agent_orchestrator.providers.kimi_cli.tmux_client")
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_initialize_with_mcp_servers(
         self, mock_load, mock_tmux, mock_wait_shell, mock_wait_status
     ):
-        """Test initialization with MCP servers in profile adds --mcp-config and modifies config.toml."""
+        """Test initialization with MCP servers in agent config adds --mcp-config and modifies config.toml."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {
             "cao-mcp-server": {
                 "command": "npx",
                 "args": ["-y", "cao-mcp-server"],
@@ -129,7 +129,7 @@ class TestKimiCliProviderInitialization:
         }
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="developer")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="developer")
 
         with patch(
             "cli_agent_orchestrator.providers.kimi_cli.Path.home",
@@ -542,8 +542,8 @@ class TestKimiCliProviderMessageExtraction:
 class TestKimiCliProviderBuildCommand:
     """Tests for KimiCliProvider._build_kimi_command()."""
 
-    def test_build_command_no_profile(self):
-        """Test command without agent profile includes cd, TERM override, and kimi --yolo."""
+    def test_build_command_no_agent(self):
+        """Test command without agent includes cd, TERM override, and kimi --yolo."""
         provider = KimiCliProvider("term-1", "session-1", "window-1")
         command = provider._build_kimi_command()
         assert "cd " in command
@@ -552,15 +552,15 @@ class TestKimiCliProviderBuildCommand:
         assert provider._temp_dir is not None
         provider.cleanup()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_with_system_prompt(self, mock_load):
-        """Test command with agent profile containing system prompt."""
+        """Test command with agent containing system prompt."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = "You are a developer"
-        mock_profile.mcpServers = None
+        mock_profile.prompt = "You are a developer"
+        mock_profile.mcp_servers = None
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
         command = provider._build_kimi_command()
 
         assert "kimi" in command
@@ -572,15 +572,15 @@ class TestKimiCliProviderBuildCommand:
         # Cleanup
         provider.cleanup()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_with_mcp_config(self, mock_load, tmp_path):
         """Test command with MCP server configuration including CAO_TERMINAL_ID injection."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {"test-server": {"command": "npx", "args": ["test"]}}
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {"test-server": {"command": "npx", "args": ["test"]}}
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
 
         with patch("cli_agent_orchestrator.providers.kimi_cli.Path.home", return_value=tmp_path):
             command = provider._build_kimi_command()
@@ -593,15 +593,15 @@ class TestKimiCliProviderBuildCommand:
         # No --config flag (modifies config.toml directly to avoid breaking OAuth)
         assert "--config" not in command
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_creates_agent_yaml(self, mock_load):
         """Test that agent YAML and system prompt files are created correctly."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = "Custom system prompt"
-        mock_profile.mcpServers = None
+        mock_profile.prompt = "Custom system prompt"
+        mock_profile.mcp_servers = None
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
         provider._build_kimi_command()
 
         # Check temp files were created
@@ -622,7 +622,7 @@ class TestKimiCliProviderBuildCommand:
         # Cleanup
         provider.cleanup()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_with_pydantic_mcp_config(self, mock_load):
         """Test command with MCP servers as Pydantic model objects."""
         mock_server = MagicMock()
@@ -631,11 +631,11 @@ class TestKimiCliProviderBuildCommand:
         type(mock_server).__instancecheck__ = lambda cls, inst: False
 
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {"my-server": mock_server}
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {"my-server": mock_server}
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
         command = provider._build_kimi_command()
 
         assert "--mcp-config" in command
@@ -643,12 +643,12 @@ class TestKimiCliProviderBuildCommand:
         # CAO_TERMINAL_ID should be injected into MCP server env
         assert "CAO_TERMINAL_ID" in command
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_mcp_preserves_existing_env(self, mock_load):
         """Test that CAO_TERMINAL_ID injection preserves existing env vars."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {
             "test-server": {
                 "command": "npx",
                 "args": ["test"],
@@ -657,7 +657,7 @@ class TestKimiCliProviderBuildCommand:
         }
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("abc123", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("abc123", "session-1", "window-1", agent_id="dev")
         command = provider._build_kimi_command()
 
         import json
@@ -670,12 +670,12 @@ class TestKimiCliProviderBuildCommand:
         assert config["test-server"]["env"]["MY_VAR"] == "my_value"
         assert config["test-server"]["env"]["CAO_TERMINAL_ID"] == "abc123"
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_mcp_does_not_override_existing_terminal_id(self, mock_load):
         """Test that existing CAO_TERMINAL_ID in env is not overwritten."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {
             "test-server": {
                 "command": "npx",
                 "args": ["test"],
@@ -684,7 +684,7 @@ class TestKimiCliProviderBuildCommand:
         }
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("new-id", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("new-id", "session-1", "window-1", agent_id="dev")
         command = provider._build_kimi_command()
 
         import json
@@ -696,7 +696,7 @@ class TestKimiCliProviderBuildCommand:
         # Should keep the existing value, not override
         assert config["test-server"]["env"]["CAO_TERMINAL_ID"] == "existing-id"
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_mcp_tool_timeout(self, mock_load, tmp_path):
         """Test that MCP tool timeout is set to 600s in config.toml when MCP servers present.
 
@@ -704,8 +704,8 @@ class TestKimiCliProviderBuildCommand:
         avoiding race conditions when multiple workers are created in parallel.
         """
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {
             "cao-mcp-server": {"command": "uv", "args": ["run", "cao-mcp-server"]}
         }
         mock_load.return_value = mock_profile
@@ -719,7 +719,7 @@ class TestKimiCliProviderBuildCommand:
         # Reset class-level flag so test runs the config modification
         KimiCliProvider._mcp_timeout_configured = False
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
 
         with patch("cli_agent_orchestrator.providers.kimi_cli.Path.home", return_value=tmp_path):
             command = provider._build_kimi_command()
@@ -735,12 +735,12 @@ class TestKimiCliProviderBuildCommand:
         provider.cleanup()
         assert "tool_call_timeout_ms = 600000" in config_file.read_text()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_mcp_timeout_only_once(self, mock_load, tmp_path):
         """Test that config.toml is only modified once even with multiple instances."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {
             "cao-mcp-server": {"command": "uv", "args": ["run", "cao-mcp-server"]}
         }
         mock_load.return_value = mock_profile
@@ -753,24 +753,24 @@ class TestKimiCliProviderBuildCommand:
         KimiCliProvider._mcp_timeout_configured = False
 
         with patch("cli_agent_orchestrator.providers.kimi_cli.Path.home", return_value=tmp_path):
-            p1 = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+            p1 = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
             p1._build_kimi_command()
 
             # Manually reset config to 60000 to verify second call doesn't write
             config_file.write_text("[mcp.client]\ntool_call_timeout_ms = 60000\n")
 
-            p2 = KimiCliProvider("term-2", "session-1", "window-2", agent_profile="dev")
+            p2 = KimiCliProvider("term-2", "session-1", "window-2", agent_id="dev")
             p2._build_kimi_command()
 
         # Second instance should NOT have modified config (flag was already set)
         assert "tool_call_timeout_ms = 60000" in config_file.read_text()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_no_timeout_without_mcp(self, mock_load, tmp_path):
         """Test that MCP tool timeout is NOT modified when no MCP servers are configured."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = "You are helpful"
-        mock_profile.mcpServers = None
+        mock_profile.prompt = "You are helpful"
+        mock_profile.mcp_servers = None
         mock_load.return_value = mock_profile
 
         fake_kimi_dir = tmp_path / ".kimi"
@@ -780,7 +780,7 @@ class TestKimiCliProviderBuildCommand:
 
         KimiCliProvider._mcp_timeout_configured = False
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
 
         with patch("cli_agent_orchestrator.providers.kimi_cli.Path.home", return_value=tmp_path):
             command = provider._build_kimi_command()
@@ -789,19 +789,19 @@ class TestKimiCliProviderBuildCommand:
         assert "tool_call_timeout_ms = 60000" in config_file.read_text()
         provider.cleanup()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_mcp_timeout_config_missing(self, mock_load, tmp_path):
         """Test graceful handling when ~/.kimi/config.toml doesn't exist."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {
             "cao-mcp-server": {"command": "uv", "args": ["run", "cao-mcp-server"]}
         }
         mock_load.return_value = mock_profile
 
         KimiCliProvider._mcp_timeout_configured = False
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
 
         with patch("cli_agent_orchestrator.providers.kimi_cli.Path.home", return_value=tmp_path):
             command = provider._build_kimi_command()
@@ -810,12 +810,12 @@ class TestKimiCliProviderBuildCommand:
         assert "kimi --yolo" in command
         assert "--mcp-config" in command
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_mcp_timeout_already_high(self, mock_load, tmp_path):
         """Test that timeout is not downgraded if already >= 600000."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = {
             "cao-mcp-server": {"command": "uv", "args": ["run", "cao-mcp-server"]}
         }
         mock_load.return_value = mock_profile
@@ -827,7 +827,7 @@ class TestKimiCliProviderBuildCommand:
 
         KimiCliProvider._mcp_timeout_configured = False
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
 
         with patch("cli_agent_orchestrator.providers.kimi_cli.Path.home", return_value=tmp_path):
             provider._build_kimi_command()
@@ -835,15 +835,15 @@ class TestKimiCliProviderBuildCommand:
         # Should NOT downgrade an already-high timeout
         assert "tool_call_timeout_ms = 900000" in config_file.read_text()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
-    def test_build_command_profile_no_system_prompt(self, mock_load):
-        """Test command with profile that has no system prompt (no agent file, but temp dir exists)."""
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
+    def test_build_command_agent_no_system_prompt(self, mock_load):
+        """Test command with agent that has no system prompt (no agent file, but temp dir exists)."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = None
+        mock_profile.prompt = None
+        mock_profile.mcp_servers = None
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
         command = provider._build_kimi_command()
 
         assert "kimi --yolo" in command
@@ -851,15 +851,15 @@ class TestKimiCliProviderBuildCommand:
         assert provider._temp_dir is not None
         provider.cleanup()
 
-    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent_profile")
-    def test_build_command_profile_empty_system_prompt(self, mock_load):
-        """Test command with profile that has empty string system prompt."""
+    @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
+    def test_build_command_agent_empty_system_prompt(self, mock_load):
+        """Test command with agent that has empty string system prompt."""
         mock_profile = MagicMock()
-        mock_profile.system_prompt = ""
-        mock_profile.mcpServers = None
+        mock_profile.prompt = ""
+        mock_profile.mcp_servers = None
         mock_load.return_value = mock_profile
 
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
         command = provider._build_kimi_command()
 
         assert "kimi --yolo" in command
@@ -932,17 +932,17 @@ class TestKimiCliProviderMisc:
         """Test provider default initialization state."""
         provider = KimiCliProvider("term-1", "session-1", "window-1")
         assert provider._initialized is False
-        assert provider._agent_profile is None
+        assert provider._agent_id is None
         assert provider._temp_dir is None
         assert provider._has_received_input is False
         assert provider.terminal_id == "term-1"
         assert provider.session_name == "session-1"
         assert provider.window_name == "window-1"
 
-    def test_provider_with_agent_profile(self):
-        """Test provider stores agent profile."""
-        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_profile="dev")
-        assert provider._agent_profile == "dev"
+    def test_provider_with_agent_id(self):
+        """Test provider stores agent."""
+        provider = KimiCliProvider("term-1", "session-1", "window-1", agent_id="dev")
+        assert provider._agent_id == "dev"
 
 
 # =============================================================================

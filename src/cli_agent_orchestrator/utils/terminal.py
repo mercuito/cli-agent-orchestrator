@@ -28,9 +28,9 @@ def generate_terminal_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
-def generate_window_name(agent_profile: str) -> str:
-    """Generate window name from agent profile with unique suffix."""
-    return f"{agent_profile}-{uuid.uuid4().hex[:4]}"
+def generate_window_name(agent_id: str) -> str:
+    """Generate window name from agent with unique suffix."""
+    return f"{agent_id}-{uuid.uuid4().hex[:4]}"
 
 
 def wait_for_shell(

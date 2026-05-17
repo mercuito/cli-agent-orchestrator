@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from cli_agent_orchestrator.agent import AgentConfigError
+from test.support.agent_factory import Agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import ProviderRuntimeState
 from cli_agent_orchestrator.providers.claude_code import (
@@ -71,21 +72,22 @@ class TestClaudeCodeProviderInitialization:
             provider.initialize()
 
     @_PATCH_SETTINGS
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     @patch("cli_agent_orchestrator.providers.claude_code.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.claude_code.wait_until_status")
     @patch("cli_agent_orchestrator.providers.claude_code.tmux_client")
-    def test_initialize_with_agent_profile(
+    def test_initialize_with_agent_id(
         self, mock_tmux, mock_wait_status, mock_wait_shell, mock_load, _
     ):
         """Test initialization with agent profile."""
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = True
         mock_tmux.get_history.return_value = "Welcome to Claude Code v2.0"
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "Test system prompt"
-        mock_profile.mcpServers = None
-        mock_load.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = "Test system prompt"
+        mock_agent.mcp_servers = None
+        mock_agent.reasoning_effort = None
+        mock_load.return_value = mock_agent
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0", "test-agent")
         result = provider.initialize()
@@ -95,34 +97,35 @@ class TestClaudeCodeProviderInitialization:
 
     @_PATCH_SETTINGS
     @patch("cli_agent_orchestrator.providers.claude_code.wait_for_shell")
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     @patch("cli_agent_orchestrator.providers.claude_code.tmux_client")
-    def test_initialize_with_invalid_agent_profile(self, mock_tmux, mock_load, mock_wait_shell, _):
-        """Test initialization with invalid agent profile."""
+    def test_initialize_with_invalid_agent_id(self, mock_tmux, mock_load, mock_wait_shell, _):
+        """Test initialization with invalid agent."""
         mock_wait_shell.return_value = True
-        mock_load.side_effect = FileNotFoundError("Profile not found")
+        mock_load.side_effect = AgentConfigError("Agent not found")
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0", "invalid-agent")
 
-        with pytest.raises(ProviderError, match="Failed to load agent profile"):
+        with pytest.raises(ProviderError, match="Failed to load agent"):
             provider.initialize()
 
     @_PATCH_SETTINGS
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     @patch("cli_agent_orchestrator.providers.claude_code.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.claude_code.wait_until_status")
     @patch("cli_agent_orchestrator.providers.claude_code.tmux_client")
     def test_initialize_with_mcp_servers(
         self, mock_tmux, mock_wait_status, mock_wait_shell, mock_load, _
     ):
-        """Test initialization with MCP servers in profile."""
+        """Test initialization with MCP servers in agent config."""
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = True
         mock_tmux.get_history.return_value = "Welcome to Claude Code v2.0"
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {"server1": {"command": "test", "args": ["--flag"]}}
-        mock_load.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = ""
+        mock_agent.mcp_servers = {"server1": {"command": "test", "args": ["--flag"]}}
+        mock_agent.reasoning_effort = None
+        mock_load.return_value = mock_agent
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0", "test-agent")
         result = provider.initialize()
@@ -509,9 +512,9 @@ class TestClaudeCodeProviderMisc:
 
         assert "claude --dangerously-skip-permissions" in command
 
-    def test_build_claude_command_with_identity_runtime_paths(self, tmp_path: Path):
-        """Identity launches use CAO-owned Claude settings/plugins and a stable session id."""
-        provider_data_dir = tmp_path / "identity" / "claude_code"
+    def test_build_claude_command_with_agent_runtime_paths(self, tmp_path: Path):
+        """Agent launches use CAO-owned Claude settings/plugins and a stable session id."""
+        provider_data_dir = tmp_path / "agent" / "claude_code"
         provider_data_dir.mkdir(parents=True)
         (provider_data_dir / "settings.json").write_text("{}\n")
         (provider_data_dir / "plugins" / "cao-profile-skills").mkdir(parents=True)
@@ -537,7 +540,7 @@ class TestClaudeCodeProviderMisc:
 
     def test_build_claude_command_uses_resume_args_instead_of_session_id(self, tmp_path: Path):
         """Resume launches should not also request a new explicit session id."""
-        provider_data_dir = tmp_path / "identity" / "claude_code"
+        provider_data_dir = tmp_path / "agent" / "claude_code"
         provider_data_dir.mkdir(parents=True)
         (provider_data_dir / "session-id").write_text("11111111-1111-4111-8111-111111111111\n")
 
@@ -553,13 +556,14 @@ class TestClaudeCodeProviderMisc:
         assert "--resume" in argv
         assert "--session-id" not in argv
 
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     def test_build_claude_command_with_system_prompt(self, mock_load):
         """Test building Claude command with system prompt."""
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = "Test prompt\nwith newlines"
-        mock_profile.mcpServers = None
-        mock_load.return_value = mock_profile
+        mock_agent = MagicMock()
+        mock_agent.prompt = "Test prompt\nwith newlines"
+        mock_agent.mcp_servers = None
+        mock_agent.reasoning_effort = None
+        mock_load.return_value = mock_agent
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0", "test-agent")
         command = provider._build_claude_command()
@@ -567,15 +571,16 @@ class TestClaudeCodeProviderMisc:
         assert "claude" in command
         assert "--append-system-prompt" in command
 
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     def test_build_command_mcp_injects_terminal_id(self, mock_load):
         """Test that _build_claude_command injects CAO_TERMINAL_ID into MCP server env."""
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_agent = MagicMock()
+        mock_agent.prompt = ""
+        mock_agent.mcp_servers = {
             "cao-mcp-server": {"command": "cao-mcp-server", "args": ["--port", "8080"]}
         }
-        mock_load.return_value = mock_profile
+        mock_agent.reasoning_effort = None
+        mock_load.return_value = mock_agent
 
         provider = ClaudeCodeProvider("term-42", "test-session", "window-0", "test-agent")
         command = provider._build_claude_command()
@@ -591,18 +596,19 @@ class TestClaudeCodeProviderMisc:
         server_env = mcp_data["mcpServers"]["cao-mcp-server"]["env"]
         assert server_env["CAO_TERMINAL_ID"] == "term-42"
 
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     def test_build_command_mcp_preserves_existing_env(self, mock_load):
         """Test that existing env vars in MCP config are preserved when injecting CAO_TERMINAL_ID."""
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_agent = MagicMock()
+        mock_agent.prompt = ""
+        mock_agent.mcp_servers = {
             "my-server": {
                 "command": "my-server",
                 "env": {"MY_VAR": "my_value", "OTHER": "other_value"},
             }
         }
-        mock_load.return_value = mock_profile
+        mock_agent.reasoning_effort = None
+        mock_load.return_value = mock_agent
 
         provider = ClaudeCodeProvider("term-99", "test-session", "window-0", "test-agent")
         command = provider._build_claude_command()
@@ -619,18 +625,19 @@ class TestClaudeCodeProviderMisc:
         # CAO_TERMINAL_ID added
         assert server_env["CAO_TERMINAL_ID"] == "term-99"
 
-    @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
+    @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     def test_build_command_mcp_does_not_override_existing_terminal_id(self, mock_load):
         """Test that an existing CAO_TERMINAL_ID in MCP env is NOT overwritten."""
-        mock_profile = MagicMock()
-        mock_profile.system_prompt = None
-        mock_profile.mcpServers = {
+        mock_agent = MagicMock()
+        mock_agent.prompt = ""
+        mock_agent.mcp_servers = {
             "my-server": {
                 "command": "my-server",
                 "env": {"CAO_TERMINAL_ID": "user-provided-id"},
             }
         }
-        mock_load.return_value = mock_profile
+        mock_agent.reasoning_effort = None
+        mock_load.return_value = mock_agent
 
         provider = ClaudeCodeProvider("term-99", "test-session", "window-0", "test-agent")
         command = provider._build_claude_command()
@@ -887,11 +894,11 @@ class TestClaudeCodeProviderSettings:
 
 
 def test_build_command_includes_reasoning_effort_when_set():
-    provider = ClaudeCodeProvider("t1", "s1", "w1", agent_profile="worker")
+    provider = ClaudeCodeProvider("t1", "s1", "w1", agent_id="worker")
 
     with patch(
-        "cli_agent_orchestrator.providers.claude_code.load_agent_profile",
-        return_value=AgentProfile(
+        "cli_agent_orchestrator.providers.claude_code.load_agent",
+        return_value=Agent(
             name="worker",
             description="Worker",
             system_prompt="SYSTEM PROMPT",
@@ -907,11 +914,11 @@ def test_build_command_includes_reasoning_effort_when_set():
 
 
 def test_build_command_omits_reasoning_effort_when_unset():
-    provider = ClaudeCodeProvider("t1", "s1", "w1", agent_profile="worker")
+    provider = ClaudeCodeProvider("t1", "s1", "w1", agent_id="worker")
 
     with patch(
-        "cli_agent_orchestrator.providers.claude_code.load_agent_profile",
-        return_value=AgentProfile(
+        "cli_agent_orchestrator.providers.claude_code.load_agent",
+        return_value=Agent(
             name="worker",
             description="Worker",
             system_prompt="SYSTEM PROMPT",
@@ -925,42 +932,42 @@ def test_build_command_omits_reasoning_effort_when_unset():
     assert "--effort" not in argv
 
 
-def test_prepare_terminal_runtime_returns_identity_scoped_environment(tmp_path: Path):
-    from cli_agent_orchestrator.agent_identity import AgentIdentity
+def test_prepare_terminal_runtime_returns_agent_scoped_environment(tmp_path: Path):
+    from cli_agent_orchestrator.agent import Agent
     from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 
-    identity = AgentIdentity(
-        id="claude_identity",
-        display_name="Claude Identity",
+    agent = Agent(
+        id="claude_agent",
+        display_name="Claude Agent",
         cli_provider="claude_code",
-        agent_profile="worker",
         workdir=str(tmp_path / "work"),
-        session_name="claude-identity",
+        session_name="claude-agent",
+        prompt="",
     )
     context = AgentRuntimeLaunchContext(
-        identity=identity,
-        identity_data_dir=tmp_path / "identity",
-        provider_data_dir=tmp_path / "identity" / "claude_code",
+        agent=agent,
+        agent_data_dir=tmp_path / "agent",
+        provider_data_dir=tmp_path / "agent" / "claude_code",
         terminal_id="terminal-1",
-        session_name="cao-claude-identity",
+        session_name="cao-claude-agent",
         window_name="worker",
         working_directory=str(tmp_path / "work"),
-        agent_profile="worker",
+        agent_id="worker",
         allowed_tools=None,
     )
 
     with patch(
-        "cli_agent_orchestrator.providers.claude_code.prepare_identity_claude_runtime",
+        "cli_agent_orchestrator.providers.claude_code.prepare_agent_claude_runtime",
         return_value=context.provider_data_dir,
     ) as prepare:
         runtime = ClaudeCodeProvider.prepare_terminal_runtime(
             terminal_id="terminal-1",
-            agent_profile="worker",
+            agent_id="worker",
             working_directory=str(tmp_path / "work"),
             launch_context=context,
         )
 
-    assert runtime.identity_scoped is True
+    assert runtime.agent_scoped is True
     assert runtime.environment == {"CAO_CLAUDE_PROVIDER_DATA_DIR": str(context.provider_data_dir)}
     prepare.assert_called_once_with(
         context.provider_data_dir,
@@ -971,28 +978,28 @@ def test_prepare_terminal_runtime_returns_identity_scoped_environment(tmp_path: 
 
 
 def test_runtime_fingerprint_excludes_concrete_terminal_id(tmp_path: Path):
-    from cli_agent_orchestrator.agent_identity import AgentIdentity
+    from cli_agent_orchestrator.agent import Agent
     from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 
-    identity = AgentIdentity(
-        id="claude_identity",
-        display_name="Claude Identity",
+    agent = Agent(
+        id="claude_agent",
+        display_name="Claude Agent",
         cli_provider="claude_code",
-        agent_profile="worker",
         workdir=str(tmp_path / "work"),
-        session_name="claude-identity",
+        session_name="claude-agent",
+        prompt="",
     )
 
     def context(terminal_id: str) -> AgentRuntimeLaunchContext:
         return AgentRuntimeLaunchContext(
-            identity=identity,
-            identity_data_dir=tmp_path / "identity",
-            provider_data_dir=tmp_path / "identity" / "claude_code",
+            agent=agent,
+            agent_data_dir=tmp_path / "agent",
+            provider_data_dir=tmp_path / "agent" / "claude_code",
             terminal_id=terminal_id,
-            session_name="cao-claude-identity",
+            session_name="cao-claude-agent",
             window_name="worker",
             working_directory=str(tmp_path / "work"),
-            agent_profile="worker",
+            agent_id="worker",
             allowed_tools=["fs_read"],
         )
 
@@ -1010,8 +1017,8 @@ def test_runtime_fingerprint_excludes_concrete_terminal_id(tmp_path: Path):
             )(),
         ),
         patch(
-            "cli_agent_orchestrator.providers.claude_code.load_agent_profile",
-            return_value=AgentProfile(name="worker", description="Worker"),
+            "cli_agent_orchestrator.providers.claude_code.load_agent",
+            return_value=agent,
         ),
     ):
         first = ClaudeCodeProvider.runtime_fingerprint_contribution(

@@ -17,7 +17,7 @@ def test_create_provider_codex_stores_mapping():
         terminal_id="t1",
         tmux_session="s1",
         tmux_window="w1",
-        agent_profile=None,
+        agent_id=None,
     )
 
     assert isinstance(provider, CodexProvider)
@@ -31,7 +31,7 @@ def test_create_provider_copilot_stores_mapping():
         terminal_id="t1",
         tmux_session="s1",
         tmux_window="w1",
-        agent_profile=None,
+        agent_id=None,
     )
 
     assert isinstance(provider, CopilotCliProvider)
@@ -62,7 +62,7 @@ def test_create_provider_unknown_type_raises():
             terminal_id="t1",
             tmux_session="s1",
             tmux_window="w1",
-            agent_profile=None,
+            agent_id=None,
         )
 
 
@@ -75,7 +75,7 @@ def test_get_provider_creates_on_demand_from_metadata():
             "provider": ProviderType.CODEX.value,
             "tmux_session": "s1",
             "tmux_window": "w1",
-            "agent_profile": None,
+            "agent_id": None,
         },
     ):
         provider = manager.get_provider("t1")
@@ -93,7 +93,7 @@ def test_get_provider_creates_copilot_on_demand_from_metadata():
             "provider": ProviderType.COPILOT_CLI.value,
             "tmux_session": "s1",
             "tmux_window": "w1",
-            "agent_profile": None,
+            "agent_id": None,
         },
     ):
         provider = manager.get_provider("t1")
@@ -113,29 +113,29 @@ def test_cleanup_provider_calls_cleanup_and_removes():
     assert manager._providers.get("t1") is None
 
 
-def test_create_provider_q_cli_without_agent_profile_raises():
-    """Test Q CLI provider requires agent_profile."""
+def test_create_provider_q_cli_without_agent_id_raises():
+    """Test Q CLI provider requires agent_id."""
     manager = ProviderManager()
-    with pytest.raises(ValueError, match="Q CLI provider requires agent_profile parameter"):
+    with pytest.raises(ValueError, match="Q CLI provider requires agent_id parameter"):
         manager.create_provider(
             ProviderType.Q_CLI.value,
             terminal_id="t1",
             tmux_session="s1",
             tmux_window="w1",
-            agent_profile=None,
+            agent_id=None,
         )
 
 
-def test_create_provider_kiro_cli_without_agent_profile_raises():
-    """Test Kiro CLI provider requires agent_profile."""
+def test_create_provider_kiro_cli_without_agent_id_raises():
+    """Test Kiro CLI provider requires agent_id."""
     manager = ProviderManager()
-    with pytest.raises(ValueError, match="Kiro CLI provider requires agent_profile parameter"):
+    with pytest.raises(ValueError, match="Kiro CLI provider requires agent_id parameter"):
         manager.create_provider(
             ProviderType.KIRO_CLI.value,
             terminal_id="t1",
             tmux_session="s1",
             tmux_window="w1",
-            agent_profile=None,
+            agent_id=None,
         )
 
 
@@ -149,7 +149,7 @@ def test_create_provider_claude_code():
         terminal_id="t1",
         tmux_session="s1",
         tmux_window="w1",
-        agent_profile=None,
+        agent_id=None,
     )
 
     assert isinstance(provider, ClaudeCodeProvider)
@@ -166,7 +166,7 @@ def test_create_provider_claude_code_passes_runtime_resume_args(tmp_path):
         terminal_id="t1",
         tmux_session="s1",
         tmux_window="w1",
-        agent_profile=None,
+        agent_id=None,
         provider_data_dir=str(tmp_path / "claude_code"),
         runtime_resume_args=["--resume", "11111111-1111-4111-8111-111111111111"],
     )
@@ -221,14 +221,14 @@ def test_list_providers():
         terminal_id="t1",
         tmux_session="s1",
         tmux_window="w1",
-        agent_profile=None,
+        agent_id=None,
     )
     manager.create_provider(
         ProviderType.CLAUDE_CODE.value,
         terminal_id="t2",
         tmux_session="s2",
         tmux_window="w2",
-        agent_profile=None,
+        agent_id=None,
     )
 
     result = manager.list_providers()

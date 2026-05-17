@@ -1,20 +1,20 @@
 """E2E tests for cross-provider orchestration (PR #101).
 
-Verifies that agent profiles with a ``provider`` key in their frontmatter
+Verifies that agents with a ``provider`` key in their frontmatter
 cause CAO to launch the worker on the declared provider, even when the
 session was started on a different provider.
 
 Flow:
 1. Create a session on provider A (the "supervisor" provider).
 2. Add a terminal via ``POST /sessions/{session}/terminals`` using an
-   agent profile that declares ``provider: B`` in its frontmatter.
+   agent that declares ``provider: B`` in its frontmatter.
 3. ``resolve_provider()`` reads the profile and overrides the fallback.
 4. Verify the new terminal reports ``provider == B``.
 5. Send a data-analysis task and confirm COMPLETED + valid output.
 
 Requires:
 - Running CAO server
-- Agent profiles installed:
+- Agents installed:
     cao install examples/cross-provider/data_analyst_claude_code.md
     cao install examples/cross-provider/data_analyst_gemini_cli.md
     cao install examples/cross-provider/data_analyst_kiro_cli.md
@@ -62,13 +62,13 @@ DATA_ANALYST_KEYWORDS = [
 ]
 
 
-def _create_session(provider: str, agent_profile: str, session_name: str):
+def _create_session(provider: str, agent_id: str, session_name: str):
     """Create a session on the given provider. Returns (terminal_id, session_name)."""
     resp = requests.post(
         f"{API_BASE_URL}/sessions",
         params={
             "provider": provider,
-            "agent_profile": agent_profile,
+            "agent_id": agent_id,
             "session_name": session_name,
         },
     )
@@ -81,11 +81,11 @@ def _create_session(provider: str, agent_profile: str, session_name: str):
 
 
 def _add_terminal_in_session(
-    session_name: str, provider: str, agent_profile: str, retries: int = 1
+    session_name: str, provider: str, agent_id: str, retries: int = 1
 ):
     """Add a terminal to an existing session via the API.
 
-    The ``provider`` param is the *fallback* — if the agent profile declares
+    The ``provider`` param is the *fallback* — if the agent declares
     its own provider, ``resolve_provider()`` overrides it.
 
     Retries on 500 errors (typically init timeouts) up to ``retries`` times.
@@ -100,7 +100,7 @@ def _add_terminal_in_session(
             f"{API_BASE_URL}/sessions/{session_name}/terminals",
             params={
                 "provider": provider,
-                "agent_profile": agent_profile,
+                "agent_id": agent_id,
             },
         )
         last_resp = resp

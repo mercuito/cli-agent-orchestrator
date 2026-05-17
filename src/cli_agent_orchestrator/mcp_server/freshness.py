@@ -14,7 +14,7 @@ from typing import Any, Callable, Mapping, Optional, cast
 
 from fastmcp.tools.base import Tool
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent import Agent
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolRuntimeGenerationDescriptor,
@@ -30,13 +30,13 @@ PendingBuiltInMCPTool = tuple[str, Callable[..., Any], Mapping[str, Any]]
 
 def build_agent_mcp_surface_descriptor(
     *,
-    identity: AgentIdentity,
+    agent: Agent,
     built_in_tools: Iterable[PendingBuiltInMCPTool],
     built_in_tool_allowlist: Optional[Iterable[str]],
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
     baton_enabled: bool,
 ) -> dict[str, Any]:
-    """Build the stable MCP contract visible to one CAO agent identity."""
+    """Build the stable MCP contract visible to one CAO agent."""
     built_ins = _visible_builtin_tool_entries(
         built_in_tools=built_in_tools,
         allowlist=built_in_tool_allowlist,
@@ -44,7 +44,7 @@ def build_agent_mcp_surface_descriptor(
     )
     reserved_builtin_names = {tool_name for tool_name, _, _ in built_in_tools}
     provider_tools = _visible_provider_tool_entries(
-        identity=identity,
+        agent=agent,
         policies=provider_policies,
         reserved_tool_names=reserved_builtin_names,
     )
@@ -69,16 +69,16 @@ def fingerprint_agent_mcp_surface(descriptor: Mapping[str, Any]) -> str:
 
 def build_agent_mcp_surface_fingerprint(
     *,
-    identity: AgentIdentity,
+    agent: Agent,
     built_in_tools: Iterable[PendingBuiltInMCPTool],
     built_in_tool_allowlist: Optional[Iterable[str]],
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
     baton_enabled: bool,
 ) -> str:
-    """Build and fingerprint the stable MCP contract visible to one identity."""
+    """Build and fingerprint the stable MCP contract visible to one agent."""
     return fingerprint_agent_mcp_surface(
         build_agent_mcp_surface_descriptor(
-            identity=identity,
+            agent=agent,
             built_in_tools=built_in_tools,
             built_in_tool_allowlist=built_in_tool_allowlist,
             provider_policies=provider_policies,
@@ -89,7 +89,7 @@ def build_agent_mcp_surface_fingerprint(
 
 def build_agent_mcp_runtime_generation_descriptor(
     *,
-    identity: AgentIdentity,
+    agent: Agent,
     built_in_tools: Iterable[PendingBuiltInMCPTool],
     built_in_tool_allowlist: Optional[Iterable[str]],
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
@@ -104,7 +104,7 @@ def build_agent_mcp_runtime_generation_descriptor(
     )
     reserved_builtin_names = {tool_name for tool_name, _, _ in built_in_tools}
     provider_tools = _visible_provider_runtime_generation_entries(
-        identity=identity,
+        agent=agent,
         policies=provider_policies,
         reserved_tool_names=reserved_builtin_names,
     )
@@ -136,7 +136,7 @@ def build_agent_mcp_runtime_generation_descriptor(
 
 def build_agent_mcp_runtime_generation_fingerprint(
     *,
-    identity: AgentIdentity,
+    agent: Agent,
     built_in_tools: Iterable[PendingBuiltInMCPTool],
     built_in_tool_allowlist: Optional[Iterable[str]],
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
@@ -146,7 +146,7 @@ def build_agent_mcp_runtime_generation_fingerprint(
     """Build and fingerprint implementation/runtime material behind visible tools."""
     return fingerprint_agent_mcp_surface(
         build_agent_mcp_runtime_generation_descriptor(
-            identity=identity,
+            agent=agent,
             built_in_tools=built_in_tools,
             built_in_tool_allowlist=built_in_tool_allowlist,
             provider_policies=provider_policies,
@@ -189,7 +189,7 @@ def callable_runtime_fingerprint(
 
     The traversal intentionally starts at a visible tool callable and follows
     local helper/query callables it references. That keeps hidden sibling tools
-    from staling an identity while still catching ordinary wrapper/helper edits
+    from staling an agent while still catching ordinary wrapper/helper edits
     behind visible MCP tools.
     """
     dependency_modules = dependency_modules or {}
@@ -355,7 +355,7 @@ def _visible_builtin_tool_entries(
 
 def _visible_provider_tool_entries(
     *,
-    identity: AgentIdentity,
+    agent: Agent,
     policies: Mapping[str, ProviderToolAccessPolicy],
     reserved_tool_names: set[str],
 ) -> list[dict[str, Any]]:
@@ -363,7 +363,7 @@ def _visible_provider_tool_entries(
     seen_provider_tool_names: set[str] = set()
     descriptors: list[ProviderMediatedToolSurfaceDescriptor] = []
     for provider_name in sorted(policies):
-        descriptors.extend(policies[provider_name].surface_descriptors_for_identity(identity))
+        descriptors.extend(policies[provider_name].surface_descriptors_for_agent(agent))
 
     for descriptor in sorted(descriptors, key=lambda item: (item.provider_name, item.name)):
         if descriptor.name in reserved_tool_names:
@@ -386,7 +386,7 @@ def _visible_provider_tool_entries(
 
 def _visible_provider_runtime_generation_entries(
     *,
-    identity: AgentIdentity,
+    agent: Agent,
     policies: Mapping[str, ProviderToolAccessPolicy],
     reserved_tool_names: set[str],
 ) -> list[dict[str, Any]]:
@@ -395,7 +395,7 @@ def _visible_provider_runtime_generation_entries(
     descriptors: list[ProviderMediatedToolRuntimeGenerationDescriptor] = []
     for provider_name in sorted(policies):
         descriptors.extend(
-            policies[provider_name].runtime_generation_descriptors_for_identity(identity)
+            policies[provider_name].runtime_generation_descriptors_for_agent(agent)
         )
 
     for descriptor in sorted(descriptors, key=lambda item: (item.provider_name, item.name)):

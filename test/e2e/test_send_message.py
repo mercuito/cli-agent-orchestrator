@@ -38,7 +38,7 @@ import requests
 from cli_agent_orchestrator.constants import API_BASE_URL
 
 
-def _create_terminal_in_session(session_name: str, provider: str, agent_profile: str):
+def _create_terminal_in_session(session_name: str, provider: str, agent_id: str):
     """Create a terminal in an existing session.
 
     Returns (terminal_id, window_name).
@@ -47,7 +47,7 @@ def _create_terminal_in_session(session_name: str, provider: str, agent_profile:
         f"{API_BASE_URL}/sessions/{session_name}/terminals",
         params={
             "provider": provider,
-            "agent_profile": agent_profile,
+            "agent_id": agent_id,
         },
     )
     assert resp.status_code in (
@@ -81,7 +81,7 @@ def _get_inbox_messages(terminal_id: str, status_filter: str = None):
     return resp.json()
 
 
-def _run_send_message_test(provider: str, agent_profile: str):
+def _run_send_message_test(provider: str, agent_id: str):
     """Core send_message test: create two terminals, send message via inbox.
 
     Tests:
@@ -97,7 +97,7 @@ def _run_send_message_test(provider: str, agent_profile: str):
 
     try:
         # Step 1: Create first terminal (acts as sender / supervisor)
-        sender_id, actual_session = create_terminal(provider, agent_profile, session_name)
+        sender_id, actual_session = create_terminal(provider, agent_id, session_name)
         assert sender_id, "Sender terminal ID should not be empty"
 
         # Step 2: Wait for sender to be ready (idle or completed).
@@ -115,7 +115,7 @@ def _run_send_message_test(provider: str, agent_profile: str):
         ), f"Sender terminal did not become ready within 90s (provider={provider})"
 
         # Step 3: Create second terminal in the same session (acts as receiver)
-        receiver_id = _create_terminal_in_session(actual_session, provider, agent_profile)
+        receiver_id = _create_terminal_in_session(actual_session, provider, agent_id)
         assert receiver_id, "Receiver terminal ID should not be empty"
 
         # Step 4: Wait for receiver to be ready (idle or completed).
@@ -212,7 +212,7 @@ class TestCodexSendMessage:
 
     def test_send_message_to_inbox(self, require_codex):
         """Send a message to another Codex terminal's inbox and verify delivery."""
-        _run_send_message_test(provider="codex", agent_profile="developer")
+        _run_send_message_test(provider="codex", agent_id="developer")
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +226,7 @@ class TestClaudeCodeSendMessage:
 
     def test_send_message_to_inbox(self, require_claude):
         """Send a message to another Claude Code terminal's inbox and verify delivery."""
-        _run_send_message_test(provider="claude_code", agent_profile="developer")
+        _run_send_message_test(provider="claude_code", agent_id="developer")
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ class TestKiroCliSendMessage:
 
     def test_send_message_to_inbox(self, require_kiro):
         """Send a message to another Kiro CLI terminal's inbox and verify delivery."""
-        _run_send_message_test(provider="kiro_cli", agent_profile="developer")
+        _run_send_message_test(provider="kiro_cli", agent_id="developer")
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ class TestKimiCliSendMessage:
 
     def test_send_message_to_inbox(self, require_kimi):
         """Send a message to another Kimi CLI terminal's inbox and verify delivery."""
-        _run_send_message_test(provider="kimi_cli", agent_profile="developer")
+        _run_send_message_test(provider="kimi_cli", agent_id="developer")
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +268,7 @@ class TestGeminiCliSendMessage:
 
     def test_send_message_to_inbox(self, require_gemini):
         """Send a message to another Gemini CLI terminal's inbox and verify delivery."""
-        _run_send_message_test(provider="gemini_cli", agent_profile="developer")
+        _run_send_message_test(provider="gemini_cli", agent_id="developer")
 
 
 # ---------------------------------------------------------------------------
@@ -282,4 +282,4 @@ class TestCopilotCliSendMessage:
 
     def test_send_message_to_inbox(self, require_copilot):
         """Send a message to another Copilot CLI terminal's inbox and verify delivery."""
-        _run_send_message_test(provider="copilot_cli", agent_profile="developer")
+        _run_send_message_test(provider="copilot_cli", agent_id="developer")

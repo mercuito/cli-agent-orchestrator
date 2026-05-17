@@ -7,7 +7,7 @@ from typing import Any, Mapping
 import pytest
 from fastmcp import FastMCP
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import Agent, AgentRegistry
 from cli_agent_orchestrator.mcp_server.provider_tools import (
     register_provider_mediated_mcp_tools,
     register_provider_mediated_mcp_tools_for_terminal,
@@ -24,37 +24,37 @@ from cli_agent_orchestrator.workspace_providers import (
 )
 
 
-def _agents() -> AgentIdentityRegistry:
-    return AgentIdentityRegistry(
+def _agents() -> AgentRegistry:
+    return AgentRegistry(
         {
-            "identity_a": AgentIdentity(
-                id="identity_a",
-                display_name="Identity A",
-                agent_profile="developer",
+            "agent_a": Agent(
+                id="agent_a",
+                display_name="Agent A",
                 cli_provider="codex",
                 workdir="/repo",
-                session_name="identity-a",
+                session_name="agent-a",
+                prompt="",
             ),
-            "identity_b": AgentIdentity(
-                id="identity_b",
-                display_name="Identity B",
-                agent_profile="reviewer",
+            "agent_b": Agent(
+                id="agent_b",
+                display_name="Agent B",
                 cli_provider="codex",
                 workdir="/repo",
-                session_name="identity-b",
+                session_name="agent-b",
+                prompt="",
             ),
         }
     )
 
 
-class _FakeIdentityManager:
-    def __init__(self, registry: AgentIdentityRegistry) -> None:
+class _FakeAgentManager:
+    def __init__(self, registry: AgentRegistry) -> None:
         self.registry = registry
 
-    def list_identities(self):
+    def list_agents(self):
         return tuple(self.registry.all().values())
 
-    def resolve_identity(self, agent_id: str):
+    def resolve_agent(self, agent_id: str):
         return self.registry.get(agent_id)
 
 
@@ -65,8 +65,8 @@ class FakeProviderTool:
     def handler(
         self, context: ProviderToolInvocationContext, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
-        self.events.append(f"handler:{context.agent_identity.id}:{arguments['query']}")
-        return {"identity": context.agent_identity.id, "query": arguments["query"]}
+        self.events.append(f"handler:{context.agent.id}:{arguments['query']}")
+        return {"agent": context.agent.id, "query": arguments["query"]}
 
     def hook(self, context: ProviderToolInvocationContext) -> ProviderToolPreCallResult:
         self.events.append(f"{context.phase.value}:{context.hook_name}")
@@ -98,7 +98,7 @@ def _policy(fake_tool: FakeProviderTool):
         access_requests=(
             ProviderToolAccessRequest(
                 tool_name="cao_fake.lookup",
-                agent_identity_id="identity_a",
+                agent_id="agent_a",
                 pre_hooks=("always_allow",),
                 location="partners.discovery",
             ),
@@ -110,14 +110,14 @@ def _policy(fake_tool: FakeProviderTool):
 
 def _terminal_metadata(terminal_id: str) -> Mapping[str, Any] | None:
     return {
-        "terminal-a": {"id": "terminal-a", "agent_identity_id": "identity_a"},
-        "terminal-b": {"id": "terminal-b", "agent_identity_id": "identity_b"},
-        "raw-terminal": {"id": "raw-terminal", "agent_identity_id": None},
+        "terminal-a": {"id": "terminal-a", "agent_id": "agent_a"},
+        "terminal-b": {"id": "terminal-b", "agent_id": "agent_b"},
+        "raw-terminal": {"id": "raw-terminal", "agent_id": None},
     }.get(terminal_id)
 
 
 @pytest.mark.asyncio
-async def test_registers_named_provider_tool_for_identity_managed_terminal():
+async def test_registers_named_provider_tool_for_agent_managed_terminal():
     fake_tool = FakeProviderTool()
     mcp = FastMCP("test-provider-tools", mask_error_details=False)
 
@@ -139,8 +139,8 @@ async def test_registers_named_provider_tool_for_identity_managed_terminal():
 
     result = await mcp.call_tool("cao_fake.lookup", {"query": "alpha"})
 
-    assert result.content[0].text == '{"identity":"identity_a","query":"alpha"}'
-    assert fake_tool.events == ["pre_call:always_allow", "handler:identity_a:alpha"]
+    assert result.content[0].text == '{"agent":"agent_a","query":"alpha"}'
+    assert fake_tool.events == ["pre_call:always_allow", "handler:agent_a:alpha"]
 
 
 @pytest.mark.parametrize("terminal_id", ("terminal-b", "raw-terminal", "missing-terminal"))
@@ -201,8 +201,8 @@ def test_provider_tools_do_not_override_builtin_tool_names():
 def test_provider_policy_loading_failure_hides_provider_tools(monkeypatch):
     mcp = FastMCP("test-provider-tools")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_identity_manager",
-        lambda: _FakeIdentityManager(_agents()),
+        "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_manager",
+        lambda: _FakeAgentManager(_agents()),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.mcp_server.provider_tools.load_enabled_provider_tool_access_policies",
@@ -220,8 +220,8 @@ def test_provider_policy_loading_failure_hides_provider_tools(monkeypatch):
 def test_provider_config_failure_is_surfaced(monkeypatch):
     mcp = FastMCP("test-provider-tools")
     monkeypatch.setattr(
-        "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_identity_manager",
-        lambda: _FakeIdentityManager(_agents()),
+        "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_manager",
+        lambda: _FakeAgentManager(_agents()),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.mcp_server.provider_tools.load_enabled_provider_tool_access_policies",

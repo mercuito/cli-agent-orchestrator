@@ -40,7 +40,7 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ class GeminiCliProvider(BaseProvider):
 
     Manages the lifecycle of a Gemini CLI session in a tmux window,
     including initialization, status detection, response extraction,
-    and cleanup. Gemini CLI does not support inline agent profiles —
+    and cleanup. Gemini CLI does not support inline agents —
     if provided, the system prompt is passed via --prompt-interactive flag.
     """
 
@@ -155,13 +155,13 @@ class GeminiCliProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: Optional[str] = None,
+        agent_id: Optional[str] = None,
         allowed_tools: Optional[list] = None,
     ):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
-        self._agent_profile = agent_profile
+        self._agent_id = agent_id
         # Track whether -i (prompt-interactive) flag is used so initialize()
         # can wait for COMPLETED instead of IDLE. When -i is used, Gemini
         # processes the system prompt as the first user message and produces
@@ -216,9 +216,9 @@ class GeminiCliProvider(BaseProvider):
         """
         command_parts = ["gemini", "--yolo", "--sandbox", "false"]
 
-        if self._agent_profile is not None:
+        if self._agent_id is not None:
             try:
-                profile = load_agent_profile(self._agent_profile)
+                agent = load_agent(self._agent_id)
 
                 # System prompt injection: write to GEMINI.md so Gemini loads it
                 # as persistent project context on startup.
@@ -232,7 +232,7 @@ class GeminiCliProvider(BaseProvider):
                 # GEMINI.md is loaded automatically by Gemini CLI as project instructions.
                 # A short ``-i`` role acknowledgment ensures the model adopts the role
                 # strongly without triggering exploration behavior.
-                system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
+                system_prompt = agent.prompt or ""
                 if system_prompt:
                     # Write full system prompt to GEMINI.md for persistent context.
                     working_dir = tmux_client.get_pane_working_directory(
@@ -250,7 +250,7 @@ class GeminiCliProvider(BaseProvider):
 
                     # Short -i prompt to adopt the role without triggering exploration.
                     # Gemini reads GEMINI.md automatically; -i just confirms adoption.
-                    role_name = profile.name if profile.name else "agent"
+                    role_name = agent.display_name or "agent"
                     command_parts.extend(
                         [
                             "-i",
@@ -265,11 +265,11 @@ class GeminiCliProvider(BaseProvider):
                 # but each invocation spawned a Node.js process (~2-3s each), making
                 # assign/handoff ~15s slower than other providers. Direct JSON write
                 # achieves the same result in <10ms (lesson #14).
-                if profile.mcpServers:
-                    self._register_mcp_servers(profile.mcpServers)
+                if agent.mcp_servers:
+                    self._register_mcp_servers(agent.mcp_servers)
 
             except Exception as e:
-                raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
+                raise ProviderError(f"Failed to load agent '{self._agent_id}': {e}")
 
         # Apply tool restrictions via Policy Engine deny rules.
         # When allowed_tools is restricted (not wildcard), write a TOML policy

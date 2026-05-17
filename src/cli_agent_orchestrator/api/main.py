@@ -31,7 +31,14 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
-from cli_agent_orchestrator.agent import Agent, AgentConfigError
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AGENTS_ROOT,
+    AgentConfigError,
+    AgentWorkspaceContextConfig,
+    load_agent,
+    write_agent,
+)
 from cli_agent_orchestrator.clients.database import (
     create_inbox_delivery,
     get_baton_record,
@@ -57,6 +64,7 @@ from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 from cli_agent_orchestrator.services.agent_manager import (
     AgentStatus,
     default_agent_manager,
@@ -83,7 +91,6 @@ from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 from cli_agent_orchestrator.utils import monitoring_formatter
-from cli_agent_orchestrator.utils.agent_profiles import resolve_provider
 from cli_agent_orchestrator.utils.dashboard_links import (
     create_terminal_dashboard_token,
     validate_agent_dashboard_token,
@@ -364,6 +371,64 @@ class AgentStatusResponse(BaseModel):
         )
 
 
+class AgentWriteRequest(BaseModel):
+    id: Optional[str] = None
+    display_name: Optional[str] = None
+    cli_provider: Optional[str] = None
+    workdir: Optional[str] = None
+    session_name: Optional[str] = None
+    prompt: Optional[str] = None
+    description: Optional[str] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    mcp_servers: Optional[Dict[str, Any]] = None
+    tools: Optional[List[str]] = None
+    cao_tools: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
+    runtime_capabilities: Optional[List[str]] = None
+
+    def to_agent(self, agent_id: str, existing: Optional[Agent] = None) -> Agent:
+        base = existing
+        return Agent(
+            id=agent_id,
+            display_name=self.display_name or (base.display_name if base else agent_id),
+            cli_provider=self.cli_provider or (base.cli_provider if base else "codex"),
+            workdir=self.workdir or (base.workdir if base else str(Path.home())),
+            session_name=self.session_name or (base.session_name if base else agent_id),
+            prompt=self.prompt if self.prompt is not None else (base.prompt if base else ""),
+            description=(
+                self.description
+                if self.description is not None
+                else (base.description if base else None)
+            ),
+            model=self.model if self.model is not None else (base.model if base else None),
+            reasoning_effort=(
+                self.reasoning_effort
+                if self.reasoning_effort is not None
+                else (base.reasoning_effort if base else None)
+            ),
+            mcp_servers=(
+                dict(self.mcp_servers)
+                if self.mcp_servers is not None
+                else (dict(base.mcp_servers) if base else {})
+            ),
+            tools=tuple(self.tools if self.tools is not None else (base.tools if base else ())),
+            cao_tools=(
+                tuple(self.cao_tools)
+                if self.cao_tools is not None
+                else (base.cao_tools if base else None)
+            ),
+            skills=tuple(self.skills if self.skills is not None else (base.skills if base else ())),
+            runtime_capabilities=(
+                tuple(self.runtime_capabilities)
+                if self.runtime_capabilities is not None
+                else (base.runtime_capabilities if base else None)
+            ),
+            workspace_context=(base.workspace_context if base else AgentWorkspaceContextConfig()),
+            linear=base.linear if base else None,
+        )
+
+
 class AgentTimelineEventResponse(BaseModel):
     """Envelope-level CAO event row for one agent timeline."""
 
@@ -543,7 +608,7 @@ class CreateFlowRequest(BaseModel):
 
     name: str
     schedule: str
-    agent_profile: str
+    agent_id: str
     provider: str = "kiro_cli"
     prompt_template: str
 
@@ -638,41 +703,6 @@ async def health_check():
     return {"status": "ok", "service": "cli-agent-orchestrator"}
 
 
-@app.get("/agents/profiles")
-async def list_agent_profiles_endpoint() -> List[Dict]:
-    """List all available agent profiles from all configured directories."""
-    try:
-        from cli_agent_orchestrator.utils.agent_profiles import list_agent_profiles
-
-        return list_agent_profiles()
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list agent profiles: {str(e)}",
-        )
-
-
-@app.get("/agents/providers")
-async def list_providers_endpoint() -> List[Dict]:
-    """List available providers with installation status."""
-    import shutil
-
-    provider_binaries = {
-        "kiro_cli": "kiro-cli",
-        "claude_code": "claude",
-        "q_cli": "q",
-        "codex": "codex",
-        "gemini_cli": "gemini",
-        "kimi_cli": "kimi",
-        "copilot_cli": "copilot",
-    }
-    result = []
-    for provider, binary in provider_binaries.items():
-        installed = shutil.which(binary) is not None
-        result.append({"name": provider, "binary": binary, "installed": installed})
-    return result
-
-
 @app.get("/agents", response_model=List[AgentStatusResponse])
 async def list_agents_endpoint(
     active: Optional[bool] = Query(default=None),
@@ -703,6 +733,111 @@ async def get_agent_endpoint(agent_id: str) -> AgentStatusResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to resolve agent: {str(e)}",
+        )
+
+
+@app.post("/agents", response_model=AgentStatusResponse, status_code=status.HTTP_201_CREATED)
+async def create_agent_endpoint(body: AgentWriteRequest) -> AgentStatusResponse:
+    agent_id = body.id
+    if not agent_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="id is required")
+    try:
+        agent = body.to_agent(agent_id)
+        write_agent(agent)
+        return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent.id))
+    except AgentConfigError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.put("/agents/{agent_id}", response_model=AgentStatusResponse)
+async def update_agent_endpoint(agent_id: str, body: AgentWriteRequest) -> AgentStatusResponse:
+    try:
+        existing = load_agent(agent_id)
+        updated = body.to_agent(agent_id, existing)
+        write_agent(updated)
+        return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent_id))
+    except AgentConfigError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.delete("/agents/{agent_id}")
+async def delete_agent_endpoint(
+    agent_id: str, confirm: bool = Query(default=False)
+) -> Dict[str, bool]:
+    if not confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="confirm=true is required"
+        )
+    try:
+        status_read = default_agent_manager().status_for_agent(agent_id)
+        if status_read.active_terminal_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"Agent '{agent_id}' is running",
+                    "terminal_id": status_read.active_terminal_id,
+                },
+            )
+        target = AGENTS_ROOT / load_agent(agent_id).id
+        if target.is_dir():
+            import shutil
+
+            shutil.rmtree(target)
+        return {"success": True}
+    except HTTPException:
+        raise
+    except AgentConfigError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@app.post("/agents/{agent_id}/start", response_model=AgentRuntimeTerminalResponse)
+async def start_agent_endpoint(agent_id: str) -> AgentRuntimeTerminalResponse:
+    """Start a configured agent, enforcing one live instance per agent."""
+    manager = default_agent_manager()
+    try:
+        status_read = manager.status_for_agent(agent_id)
+        if status_read.active_terminal_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"Agent '{agent_id}' is already running",
+                    "terminal_id": status_read.active_terminal_id,
+                },
+            )
+        agent = manager.resolve_agent(agent_id)
+        terminal_ref = AgentRuntimeHandle(agent, agent_manager=manager).ensure_started()
+        terminal = Terminal(**terminal_service.get_terminal(terminal_ref.id))
+        return AgentRuntimeTerminalResponse(
+            terminal=terminal,
+            terminal_token=create_terminal_dashboard_token(terminal.id),
+        )
+    except HTTPException:
+        raise
+    except AgentConfigError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to start agent {agent_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start agent: {str(e)}",
+        )
+
+
+@app.post("/agents/{agent_id}/stop")
+async def stop_agent_endpoint(agent_id: str) -> Dict[str, bool]:
+    """Stop a configured agent's live terminal."""
+    try:
+        status_read = default_agent_manager().status_for_agent(agent_id)
+        if not status_read.active_terminal_id:
+            return {"success": True}
+        terminal_service.delete_terminal(status_read.active_terminal_id, require_window_killed=True)
+        return {"success": True}
+    except AgentConfigError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stop agent: {str(e)}",
         )
 
 
@@ -749,43 +884,6 @@ async def get_agent_related_events_endpoint(
         )
 
 
-@app.get("/settings/agent-dirs")
-async def get_agent_dirs_endpoint() -> Dict:
-    """Get configured agent directories per provider."""
-    from cli_agent_orchestrator.services.settings_service import (
-        get_agent_dirs,
-        get_extra_agent_dirs,
-    )
-
-    return {"agent_dirs": get_agent_dirs(), "extra_dirs": get_extra_agent_dirs()}
-
-
-class AgentDirsUpdate(BaseModel):
-    agent_dirs: Optional[Dict[str, str]] = None
-    extra_dirs: Optional[List[str]] = None
-
-
-@app.post("/settings/agent-dirs")
-async def set_agent_dirs_endpoint(body: AgentDirsUpdate) -> Dict:
-    """Update agent directories per provider."""
-    from cli_agent_orchestrator.services.settings_service import (
-        get_extra_agent_dirs,
-        set_agent_dirs,
-        set_extra_agent_dirs,
-    )
-
-    result_dirs = {}
-    result_extra = []
-    if body.agent_dirs:
-        result_dirs = set_agent_dirs(body.agent_dirs)
-    if body.extra_dirs is not None:
-        result_extra = set_extra_agent_dirs(body.extra_dirs)
-    return {
-        "agent_dirs": result_dirs or {},
-        "extra_dirs": result_extra or get_extra_agent_dirs(),
-    }
-
-
 @app.get("/skills/{name}", response_model=SkillContentResponse)
 async def get_skill_content(name: str) -> SkillContentResponse:
     """Return the full Markdown body for an installed skill."""
@@ -812,38 +910,6 @@ async def get_skill_content(name: str) -> SkillContentResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load skill: {str(e)}",
-        )
-
-
-@app.post("/sessions", response_model=Terminal, status_code=status.HTTP_201_CREATED)
-async def create_session(
-    provider: str,
-    agent_profile: str,
-    session_name: Optional[str] = None,
-    working_directory: Optional[str] = None,
-    allowed_tools: Optional[str] = None,
-) -> Terminal:
-    """Create a new session with exactly one terminal."""
-    try:
-        # Parse comma-separated allowed_tools string into list
-        allowed_tools_list = allowed_tools.split(",") if allowed_tools else None
-
-        result = terminal_service.create_terminal(
-            provider=provider,
-            agent_profile=agent_profile,
-            session_name=session_name,
-            new_session=True,
-            working_directory=working_directory,
-            allowed_tools=allowed_tools_list,
-        )
-        return result
-
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create session: {str(e)}",
         )
 
 
@@ -882,43 +948,6 @@ async def delete_session(session_name: str) -> Dict:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete session: {str(e)}",
-        )
-
-
-@app.post(
-    "/sessions/{session_name}/terminals",
-    response_model=Terminal,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_terminal_in_session(
-    session_name: str,
-    provider: str,
-    agent_profile: str,
-    working_directory: Optional[str] = None,
-    allowed_tools: Optional[str] = None,
-) -> Terminal:
-    """Create additional terminal in existing session."""
-    try:
-        resolved_provider = resolve_provider(agent_profile, fallback_provider=provider)
-
-        # Parse comma-separated allowed_tools string into list
-        allowed_tools_list = allowed_tools.split(",") if allowed_tools else None
-
-        result = terminal_service.create_terminal(
-            provider=resolved_provider,
-            agent_profile=agent_profile,
-            session_name=session_name,
-            new_session=False,
-            working_directory=working_directory,
-            allowed_tools=allowed_tools_list,
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create terminal: {str(e)}",
         )
 
 
@@ -1539,7 +1568,7 @@ async def create_flow(body: CreateFlowRequest) -> Flow:
             "---",
             f"name: {body.name}",
             f'schedule: "{body.schedule}"',
-            f"agent_profile: {body.agent_profile}",
+            f"agent_id: {body.agent_id}",
             f"provider: {body.provider}",
             "---",
         ]

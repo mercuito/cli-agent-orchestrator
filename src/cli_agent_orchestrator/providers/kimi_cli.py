@@ -11,7 +11,7 @@ Key characteristics:
 - Thinking output: Gray italic ``•`` bullets (ANSI color 38;5;244 + italic)
 - User input: Displayed in a bordered box using box-drawing characters (╭│╰)
 - Auto-approve: ``--yolo`` flag bypasses all tool action confirmations
-- Agent profiles: ``--agent-file FILE`` (YAML format, extends built-in 'default' agent)
+- Agents: ``--agent-file FILE`` (YAML format, extends built-in 'default' agent)
 - MCP config: ``--mcp-config TEXT`` (JSON configuration, repeatable flag)
 - Exit commands: ``/exit``, ``exit``, ``quit``, or Ctrl-D
 - Status bar: ``HH:MM [yolo] agent (model, thinking) ctrl-x: toggle mode context: X.X%``
@@ -39,7 +39,7 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ class KimiCliProvider(BaseProvider):
 
     Manages the lifecycle of a Kimi CLI session in a tmux window,
     including initialization, status detection, response extraction,
-    and cleanup. Kimi CLI agent profiles are optional — if not provided,
+    and cleanup. Kimi CLI agents are optional — if not provided,
     Kimi uses its built-in default agent.
     """
 
@@ -142,14 +142,14 @@ class KimiCliProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: Optional[str] = None,
+        agent_id: Optional[str] = None,
         allowed_tools: Optional[list] = None,
     ):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
-        self._agent_profile = agent_profile
-        # Track temp directory for cleanup (created when agent profile needs temp files)
+        self._agent_id = agent_id
+        # Track temp directory for cleanup (created when agent needs temp files)
         self._temp_dir: Optional[str] = None
         # Latching flag: set True when user input box (╭─) is detected in ANY
         # get_status() call. Persists even after the box scrolls out of the
@@ -161,7 +161,7 @@ class KimiCliProvider(BaseProvider):
         self._has_received_input = False
 
     def _build_kimi_command(self) -> str:
-        """Build Kimi CLI command with agent profile and MCP config if provided.
+        """Build Kimi CLI command with agent and MCP config if provided.
 
         Returns properly escaped shell command string for tmux send_keys.
         Uses shlex.join() for safe escaping of all arguments.
@@ -187,14 +187,14 @@ class KimiCliProvider(BaseProvider):
         if not self._temp_dir:
             self._temp_dir = tempfile.mkdtemp(prefix="cao_kimi_")
 
-        if self._agent_profile is not None:
+        if self._agent_id is not None:
             try:
-                profile = load_agent_profile(self._agent_profile)
+                agent = load_agent(self._agent_id)
 
                 # Build agent file from profile's system prompt.
                 # Kimi uses YAML agent files with a system_prompt_path pointing
                 # to a markdown file. We create both in the temp directory.
-                system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
+                system_prompt = agent.prompt or ""
 
                 # Prepend security constraints for soft enforcement (Kimi CLI has no
                 # native tool restriction mechanism). Only applied when tool
@@ -227,9 +227,9 @@ class KimiCliProvider(BaseProvider):
 
                     command_parts.extend(["--agent-file", agent_file])
 
-                # Add MCP server configuration if present in the agent profile.
+                # Add MCP server configuration if present in the agent.
                 # Kimi accepts --mcp-config as a JSON string (repeatable flag).
-                if profile.mcpServers:
+                if agent.mcp_servers:
                     # Set MCP tool call timeout to 600s by modifying ~/.kimi/config.toml
                     # directly. We cannot use --config flag because it causes Kimi CLI
                     # to bypass its default config file, which breaks OAuth authentication
@@ -238,7 +238,7 @@ class KimiCliProvider(BaseProvider):
                     self._ensure_mcp_timeout()
 
                     mcp_config = {}
-                    for server_name, server_config in profile.mcpServers.items():
+                    for server_name, server_config in agent.mcp_servers.items():
                         if isinstance(server_config, dict):
                             mcp_config[server_name] = dict(server_config)
                         else:
@@ -256,7 +256,7 @@ class KimiCliProvider(BaseProvider):
                     command_parts.extend(["--mcp-config", json.dumps(mcp_config)])
 
             except Exception as e:
-                raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
+                raise ProviderError(f"Failed to load agent '{self._agent_id}': {e}")
 
         # cd to unique temp dir (per-directory lock) + set TERM for tmux compatibility
         kimi_cmd = shlex.join(command_parts)
@@ -628,11 +628,11 @@ class KimiCliProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up Kimi CLI provider resources.
 
-        Removes any temporary files created for agent profiles
+        Removes any temporary files created for agents
         and resets the initialization state. MCP timeout is NOT restored
         because multiple Kimi instances may share the config file concurrently.
         """
-        # Remove temp directory if it was created for agent profile
+        # Remove temp directory if it was created for agent
         if self._temp_dir:
             if os.path.exists(self._temp_dir):
                 shutil.rmtree(self._temp_dir, ignore_errors=True)

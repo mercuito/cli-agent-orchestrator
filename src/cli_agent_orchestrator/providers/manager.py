@@ -49,7 +49,7 @@ class ProviderManager:
         raise ValueError(f"Unknown provider type: {provider_type}")
 
     def provider_supports_resume(self, provider_type: str) -> bool:
-        """Return whether a provider supports identity runtime context preservation."""
+        """Return whether a provider supports agent runtime context preservation."""
         return self.runtime_state_capability(provider_type) is not None
 
     def runtime_state_capability(
@@ -69,7 +69,7 @@ class ProviderManager:
         provider_type: str,
         *,
         terminal_id: str,
-        agent_profile: str,
+        agent_id: str,
         working_directory: str,
         launch_context: Optional[AgentRuntimeLaunchContext] = None,
     ) -> ProviderRuntimePreparation:
@@ -84,7 +84,7 @@ class ProviderManager:
         )
         return typed_prepare(
             terminal_id=terminal_id,
-            agent_profile=agent_profile,
+            agent_id=agent_id,
             working_directory=working_directory,
             launch_context=launch_context,
         )
@@ -113,7 +113,7 @@ class ProviderManager:
         terminal_id: str,
         tmux_session: str,
         tmux_window: str,
-        agent_profile: Optional[str] = None,
+        agent_id: Optional[str] = None,
         allowed_tools: Optional[List[str]] = None,
         runtime_resume_args: Optional[List[str]] = None,
         provider_data_dir: Optional[str] = None,
@@ -122,23 +122,23 @@ class ProviderManager:
         try:
             provider: BaseProvider
             if provider_type == ProviderType.Q_CLI.value:
-                if not agent_profile:
-                    raise ValueError("Q CLI provider requires agent_profile parameter")
+                if not agent_id:
+                    raise ValueError("Q CLI provider requires agent_id parameter")
                 provider = QCliProvider(
                     terminal_id,
                     tmux_session,
                     tmux_window,
-                    agent_profile,
+                    agent_id,
                     allowed_tools,
                 )
             elif provider_type == ProviderType.KIRO_CLI.value:
-                if not agent_profile:
-                    raise ValueError("Kiro CLI provider requires agent_profile parameter")
+                if not agent_id:
+                    raise ValueError("Kiro CLI provider requires agent_id parameter")
                 provider = KiroCliProvider(
                     terminal_id,
                     tmux_session,
                     tmux_window,
-                    agent_profile,
+                    agent_id,
                     allowed_tools,
                 )
             elif provider_type == ProviderType.CLAUDE_CODE.value:
@@ -146,7 +146,7 @@ class ProviderManager:
                     terminal_id,
                     tmux_session,
                     tmux_window,
-                    agent_profile,
+                    agent_id,
                     allowed_tools,
                     provider_data_dir=(
                         None if provider_data_dir is None else Path(provider_data_dir)
@@ -158,7 +158,7 @@ class ProviderManager:
                     terminal_id,
                     tmux_session,
                     tmux_window,
-                    agent_profile,
+                    agent_id,
                     allowed_tools,
                     runtime_resume_args=runtime_resume_args,
                 )
@@ -167,7 +167,7 @@ class ProviderManager:
                     terminal_id,
                     tmux_session,
                     tmux_window,
-                    agent_profile,
+                    agent_id,
                     allowed_tools,
                 )
             elif provider_type == ProviderType.GEMINI_CLI.value:
@@ -175,7 +175,7 @@ class ProviderManager:
                     terminal_id,
                     tmux_session,
                     tmux_window,
-                    agent_profile,
+                    agent_id,
                     allowed_tools,
                 )
             elif provider_type == ProviderType.KIMI_CLI.value:
@@ -183,7 +183,7 @@ class ProviderManager:
                     terminal_id,
                     tmux_session,
                     tmux_window,
-                    agent_profile,
+                    agent_id,
                     allowed_tools,
                 )
             else:
@@ -228,7 +228,7 @@ class ProviderManager:
             terminal_id,
             metadata["tmux_session"],
             metadata["tmux_window"],
-            metadata["agent_profile"],
+            metadata["agent_id"],
         )
         logger.info(f"Created provider on-demand for terminal {terminal_id}")
         return provider

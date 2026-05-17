@@ -52,12 +52,12 @@ class CopilotCliProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: Optional[str] = None,
+        agent_id: Optional[str] = None,
         allowed_tools: Optional[list] = None,
     ):
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
-        self._agent_profile = agent_profile
+        self._agent_id = agent_id
         self._copilot_help_text_cache: Optional[str] = None
 
     @staticmethod
@@ -126,8 +126,8 @@ class CopilotCliProvider(BaseProvider):
 
         command_parts = ["copilot", "--allow-all"]
 
-        if self._agent_profile:
-            command_parts.extend(["--agent", self._agent_profile])
+        if self._agent_id:
+            command_parts.extend(["--agent", self._agent_id])
 
         command_parts.extend(["--config-dir", str(config_dir)])
         try:

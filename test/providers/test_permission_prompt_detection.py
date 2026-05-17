@@ -41,8 +41,8 @@ def load_fixture(filename: str) -> str:
         return f.read()
 
 
-def make_provider(agent_profile="developer"):
-    return KiroCliProvider("test1234", "test-session", "window-0", agent_profile)
+def make_provider(agent_id="developer"):
+    return KiroCliProvider("test1234", "test-session", "window-0", agent_id)
 
 
 class TestPermissionPromptActive:

@@ -1,7 +1,7 @@
 """Tests for startup-time MCP tool filtering.
 
 The cao-mcp-server subprocess reads CAO_TERMINAL_ID, fetches the agent's
-profile, resolves an allowlist, and only exposes the tools named in that
+configuration, resolves an allowlist, and only exposes the tools named in that
 allowlist. ``None`` allowlist (nothing configured) falls back to
 permissive — every deferred tool gets registered. This is the Phase 3
 wiring that makes Phase 2's resolver actually do something.
@@ -9,14 +9,14 @@ wiring that makes Phase 2's resolver actually do something.
 
 from __future__ import annotations
 
-from importlib import resources
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from cli_agent_orchestrator.mcp_server import server
-from cli_agent_orchestrator.utils.agent_profiles import parse_agent_profile_text
+from test.support.agent_factory import parse_agent_id_text
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 
 
@@ -33,8 +33,8 @@ class TestDeferredToolRegistry:
             "handoff",
             "assign",
             "send_message",
-            "list_agent_profiles",
-            "get_agent_profile",
+            "read_inbox_message",
+            "reply_to_inbox_message",
             "terminate",
         }
         assert expected <= names
@@ -93,9 +93,9 @@ class TestRegisterTools:
         assert registered == ["a"]
 
     def test_builtin_developer_allowlist_registers_provider_inbox_tools(self):
-        store = resources.files("cli_agent_orchestrator.agent_store")
+        store = Path(__file__).resolve().parents[2] / "examples" / "agents"
         profile_text = (store / "developer.md").read_text()
-        profile = parse_agent_profile_text(profile_text, "developer")
+        profile = parse_agent_id_text(profile_text, "developer")
         allowlist = resolve_cao_tool_allowlist(profile)
         mcp_instance = self._mock_mcp()
 
@@ -143,11 +143,11 @@ class TestRegisterTools:
 
 
 class TestResolveAllowlistForTerminal:
-    @patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
+    @patch("cli_agent_orchestrator.mcp_server.server.load_agent")
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
     def test_happy_path(self, mock_get, mock_load_profile):
         """Fetch terminal metadata, load profile, delegate to resolver."""
-        mock_get.return_value.json.return_value = {"agent_profile": "some_profile"}
+        mock_get.return_value.json.return_value = {"agent_id": "some_profile"}
         mock_get.return_value.raise_for_status.return_value = None
 
         fake_profile = MagicMock()
@@ -191,13 +191,13 @@ class TestResolveAllowlistForTerminal:
         assert kwargs.get("timeout") is not None
         assert kwargs["timeout"] <= 10
 
-    @patch("cli_agent_orchestrator.mcp_server.server.load_agent_profile")
+    @patch("cli_agent_orchestrator.mcp_server.server.load_agent")
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
     def test_unknown_profile_returns_none_permissive(self, mock_get, mock_load_profile):
         """If the profile can't be loaded (e.g. stale DB row referencing a
         deleted profile), fall back to permissive rather than leaving the
         agent with zero tools."""
-        mock_get.return_value.json.return_value = {"agent_profile": "missing"}
+        mock_get.return_value.json.return_value = {"agent_id": "missing"}
         mock_get.return_value.raise_for_status.return_value = None
         mock_load_profile.side_effect = FileNotFoundError("no such profile")
 
@@ -206,9 +206,9 @@ class TestResolveAllowlistForTerminal:
         assert result is None
 
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_missing_agent_profile_field_returns_none(self, mock_get):
+    def test_missing_agent_id_field_returns_none(self, mock_get):
         """Defensive against a malformed API response."""
-        mock_get.return_value.json.return_value = {}  # no agent_profile key
+        mock_get.return_value.json.return_value = {}  # no agent_id key
         mock_get.return_value.raise_for_status.return_value = None
 
         result = server._resolve_allowlist_for_terminal("abc123")
@@ -285,10 +285,10 @@ class TestRegressionExistingTestsStillPass:
 
         assert callable(_terminate_impl)
 
-    def test_list_agent_profiles_impl_still_importable(self):
-        from cli_agent_orchestrator.mcp_server.server import _list_agent_profiles_impl
+    def test_provider_inbox_impl_still_importable(self):
+        from cli_agent_orchestrator.mcp_server.server import _read_inbox_message_impl
 
-        assert callable(_list_agent_profiles_impl)
+        assert callable(_read_inbox_message_impl)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """End-to-end provider lifecycle tests (assign worker simulation).
 
-Uses the real agent profiles from examples/assign/:
+Uses the real agents from examples/assign/:
 - data_analyst: receives a dataset, performs statistical analysis
 - report_generator: creates report templates
 
@@ -25,7 +25,7 @@ Requires:
 - Running CAO server
 - Authenticated CLI tools (codex, claude, kiro-cli, gemini, copilot)
 - tmux
-- Agent profiles installed: data_analyst, report_generator
+- Agents installed: data_analyst, report_generator
   (install with: cao install examples/assign/data_analyst.md)
 
 Run:
@@ -103,7 +103,7 @@ REPORT_GENERATOR_TASK = (
 REPORT_GENERATOR_KEYWORDS = ["summary", "analysis", "conclusion", "template", "dataset", "report"]
 
 
-def _run_assign_test(provider: str, agent_profile: str, task_message: str, content_keywords: list):
+def _run_assign_test(provider: str, agent_id: str, task_message: str, content_keywords: list):
     """Core assign test: create worker terminal, send task, verify completion.
 
     Unlike handoff, assign is non-blocking. This test validates the worker
@@ -117,7 +117,7 @@ def _run_assign_test(provider: str, agent_profile: str, task_message: str, conte
 
     try:
         # Step 1: Create worker terminal (simulates what _assign_impl does)
-        terminal_id, actual_session = create_terminal(provider, agent_profile, session_name)
+        terminal_id, actual_session = create_terminal(provider, agent_id, session_name)
         assert terminal_id, "Terminal ID should not be empty"
 
         # Step 2: Wait for ready (idle or completed).
@@ -181,11 +181,11 @@ def _run_assign_test(provider: str, agent_profile: str, task_message: str, conte
             cleanup_terminal(terminal_id, actual_session)
 
 
-def _create_terminal_in_session(session_name: str, provider: str, agent_profile: str):
+def _create_terminal_in_session(session_name: str, provider: str, agent_id: str):
     """Create a terminal in an existing session."""
     resp = requests.post(
         f"{API_BASE_URL}/sessions/{session_name}/terminals",
-        params={"provider": provider, "agent_profile": agent_profile},
+        params={"provider": provider, "agent_id": agent_id},
     )
     assert resp.status_code in (
         200,
@@ -334,13 +334,13 @@ def _run_assign_with_callback_test(provider: str):
 
 @pytest.mark.e2e
 class TestCodexAssign:
-    """E2E assign tests for the Codex provider using examples/assign/ profiles."""
+    """E2E assign tests for the Codex provider using examples/assign/ agents."""
 
     def test_assign_data_analyst(self, require_codex):
         """Codex data_analyst receives dataset, performs statistical analysis."""
         _run_assign_test(
             provider="codex",
-            agent_profile="data_analyst",
+            agent_id="data_analyst",
             task_message=DATA_ANALYST_TASK,
             content_keywords=DATA_ANALYST_KEYWORDS,
         )
@@ -349,7 +349,7 @@ class TestCodexAssign:
         """Codex report_generator creates a report template."""
         _run_assign_test(
             provider="codex",
-            agent_profile="report_generator",
+            agent_id="report_generator",
             task_message=REPORT_GENERATOR_TASK,
             content_keywords=REPORT_GENERATOR_KEYWORDS,
         )
@@ -366,13 +366,13 @@ class TestCodexAssign:
 
 @pytest.mark.e2e
 class TestClaudeCodeAssign:
-    """E2E assign tests for the Claude Code provider using examples/assign/ profiles."""
+    """E2E assign tests for the Claude Code provider using examples/assign/ agents."""
 
     def test_assign_data_analyst(self, require_claude):
         """Claude Code data_analyst receives dataset, performs statistical analysis."""
         _run_assign_test(
             provider="claude_code",
-            agent_profile="data_analyst",
+            agent_id="data_analyst",
             task_message=DATA_ANALYST_TASK,
             content_keywords=DATA_ANALYST_KEYWORDS,
         )
@@ -381,7 +381,7 @@ class TestClaudeCodeAssign:
         """Claude Code report_generator creates a report template."""
         _run_assign_test(
             provider="claude_code",
-            agent_profile="report_generator",
+            agent_id="report_generator",
             task_message=REPORT_GENERATOR_TASK,
             content_keywords=REPORT_GENERATOR_KEYWORDS,
         )
@@ -398,13 +398,13 @@ class TestClaudeCodeAssign:
 
 @pytest.mark.e2e
 class TestKiroCliAssign:
-    """E2E assign tests for the Kiro CLI provider using examples/assign/ profiles."""
+    """E2E assign tests for the Kiro CLI provider using examples/assign/ agents."""
 
     def test_assign_data_analyst(self, require_kiro):
         """Kiro CLI data_analyst receives dataset, performs statistical analysis."""
         _run_assign_test(
             provider="kiro_cli",
-            agent_profile="data_analyst",
+            agent_id="data_analyst",
             task_message=DATA_ANALYST_TASK,
             content_keywords=DATA_ANALYST_KEYWORDS,
         )
@@ -413,7 +413,7 @@ class TestKiroCliAssign:
         """Kiro CLI report_generator creates a report template."""
         _run_assign_test(
             provider="kiro_cli",
-            agent_profile="report_generator",
+            agent_id="report_generator",
             task_message=REPORT_GENERATOR_TASK,
             content_keywords=REPORT_GENERATOR_KEYWORDS,
         )
@@ -430,13 +430,13 @@ class TestKiroCliAssign:
 
 @pytest.mark.e2e
 class TestKimiCliAssign:
-    """E2E assign tests for the Kimi CLI provider using examples/assign/ profiles."""
+    """E2E assign tests for the Kimi CLI provider using examples/assign/ agents."""
 
     def test_assign_data_analyst(self, require_kimi):
         """Kimi CLI data_analyst receives dataset, performs statistical analysis."""
         _run_assign_test(
             provider="kimi_cli",
-            agent_profile="data_analyst",
+            agent_id="data_analyst",
             task_message=DATA_ANALYST_TASK,
             content_keywords=DATA_ANALYST_KEYWORDS,
         )
@@ -445,7 +445,7 @@ class TestKimiCliAssign:
         """Kimi CLI report_generator creates a report template."""
         _run_assign_test(
             provider="kimi_cli",
-            agent_profile="report_generator",
+            agent_id="report_generator",
             task_message=REPORT_GENERATOR_TASK,
             content_keywords=REPORT_GENERATOR_KEYWORDS,
         )
@@ -462,7 +462,7 @@ class TestKimiCliAssign:
 
 @pytest.mark.e2e
 class TestGeminiCliAssign:
-    """E2E assign tests for the Gemini CLI provider using examples/assign/ profiles."""
+    """E2E assign tests for the Gemini CLI provider using examples/assign/ agents."""
 
     def test_assign_data_analyst(self, require_gemini):
         """Gemini CLI data_analyst receives dataset, performs statistical analysis.
@@ -474,7 +474,7 @@ class TestGeminiCliAssign:
         """
         _run_assign_test(
             provider="gemini_cli",
-            agent_profile="data_analyst",
+            agent_id="data_analyst",
             task_message=DATA_ANALYST_TASK,
             content_keywords=DATA_ANALYST_KEYWORDS
             + [
@@ -488,7 +488,7 @@ class TestGeminiCliAssign:
         """Gemini CLI report_generator creates a report template."""
         _run_assign_test(
             provider="gemini_cli",
-            agent_profile="report_generator",
+            agent_id="report_generator",
             task_message=REPORT_GENERATOR_TASK,
             content_keywords=REPORT_GENERATOR_KEYWORDS,
         )
@@ -505,13 +505,13 @@ class TestGeminiCliAssign:
 
 @pytest.mark.e2e
 class TestCopilotCliAssign:
-    """E2E assign tests for the Copilot CLI provider using examples/assign/ profiles."""
+    """E2E assign tests for the Copilot CLI provider using examples/assign/ agents."""
 
     def test_assign_data_analyst(self, require_copilot):
         """Copilot CLI data_analyst receives dataset, performs statistical analysis."""
         _run_assign_test(
             provider="copilot_cli",
-            agent_profile="data_analyst",
+            agent_id="data_analyst",
             task_message=DATA_ANALYST_TASK,
             content_keywords=DATA_ANALYST_KEYWORDS,
         )
@@ -520,7 +520,7 @@ class TestCopilotCliAssign:
         """Copilot CLI report_generator creates a report template."""
         _run_assign_test(
             provider="copilot_cli",
-            agent_profile="report_generator",
+            agent_id="report_generator",
             task_message=REPORT_GENERATOR_TASK,
             content_keywords=REPORT_GENERATOR_KEYWORDS,
         )

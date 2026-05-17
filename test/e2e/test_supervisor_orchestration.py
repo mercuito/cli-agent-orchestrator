@@ -17,7 +17,7 @@ test the MCP tool delegation flow.
 Requires:
 - Running CAO server
 - Authenticated CLI tools
-- Agent profiles installed: analysis_supervisor, data_analyst, report_generator
+- Agents installed: analysis_supervisor, data_analyst, report_generator
   (install with: cao install examples/assign/analysis_supervisor.md)
 
 Run:

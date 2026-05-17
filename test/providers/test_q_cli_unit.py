@@ -64,13 +64,13 @@ class TestQCliProviderInitialization:
         with pytest.raises(TimeoutError, match="Q CLI initialization timed out"):
             provider.initialize()
 
-    def test_initialization_with_different_agent_profiles(self):
+    def test_initialization_with_different_agents(self):
         """Test initialization with various agent profile names."""
         test_profiles = ["developer", "code-reviewer", "test_agent", "agent123"]
 
         for profile in test_profiles:
             provider = QCliProvider("test1234", "test-session", "window-0", profile)
-            assert provider._agent_profile == profile
+            assert provider._agent_id == profile
             # Verify dynamic prompt pattern includes the profile
             assert re.escape(profile) in provider._idle_prompt_pattern
 
@@ -617,9 +617,9 @@ class TestQCliProviderEdgeCases:
         assert provider._initialized is False
 
     @patch("cli_agent_orchestrator.providers.q_cli.tmux_client")
-    def test_long_agent_profile_name(self, mock_tmux):
+    def test_long_agent_id_name(self, mock_tmux):
         """Test with very long agent profile name."""
-        long_profile = "very_long_agent_profile_name_that_exceeds_normal_length"
+        long_profile = "very_long_agent_id_name_that_exceeds_normal_length"
         mock_tmux.get_history.return_value = f"\x1b[36m[{long_profile}]\x1b[35m>\x1b[39m "
 
         provider = QCliProvider("test1234", "test-session", "window-0", long_profile)
@@ -682,7 +682,7 @@ class TestQCliProviderEdgeCases:
         assert provider.terminal_id == "test1234"
         assert provider.session_name == "test-session"
         assert provider.window_name == "window-0"
-        assert provider._agent_profile == "developer"
+        assert provider._agent_id == "developer"
 
     @patch("cli_agent_orchestrator.providers.q_cli.tmux_client")
     def test_whitespace_variations_in_prompt(self, mock_tmux):

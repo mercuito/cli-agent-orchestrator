@@ -25,23 +25,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Protocol
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent import Agent
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 
 
 @dataclass(frozen=True)
 class AgentRuntimeLaunchContext:
-    """Provider-facing launch context for an identity-managed runtime."""
+    """Provider-facing launch context for an agent-managed runtime."""
 
-    identity: AgentIdentity
-    identity_data_dir: Path
+    agent: Agent
+    agent_data_dir: Path
     provider_data_dir: Path
     terminal_id: str
     session_name: str
     window_name: str
     working_directory: str
-    agent_profile: str
+    agent_id: str
     allowed_tools: list[str] | None
 
 
@@ -132,7 +132,7 @@ class ProviderRuntimePreparation:
     """Provider-owned terminal runtime preparation returned to CAO."""
 
     environment: Optional[Dict[str, str]] = None
-    identity_scoped: bool = False
+    agent_scoped: bool = False
 
 
 class BaseProvider(ABC):

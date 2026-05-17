@@ -8,7 +8,24 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from cli_agent_orchestrator.agent import Agent
+from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
+
+
+@pytest.fixture(autouse=True)
+def _isolate_agent_runtime_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", tmp_path / "agents")
+
+
+def _bound_agent(*, session_name: str = "test-ses") -> Agent:
+    return Agent(
+        id="dev",
+        display_name="Dev",
+        cli_provider="codex",
+        workdir="/repo",
+        session_name=session_name,
+        prompt="",
+    ).for_workspace_context("wctx_dev")
 
 
 class TestCreateTerminalCleanup:
@@ -25,7 +42,7 @@ class TestCreateTerminalCleanup:
         "cli_agent_orchestrator.services.terminal_service.generate_terminal_id",
         return_value="tid1",
     )
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_cleanup_on_provider_init_failure(
         self,
         mock_load_profile,
@@ -37,24 +54,21 @@ class TestCreateTerminalCleanup:
         mock_log_dir,
     ):
         """When provider.initialize() fails, cleanup should kill session and cleanup provider."""
-        from cli_agent_orchestrator.services.terminal_service import create_terminal
+        from cli_agent_orchestrator.services.terminal_service import create_terminal_for_agent
 
         mock_tmux.session_exists.return_value = False
         mock_tmux.create_session.return_value = "w1"
-        mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")
+        agent = _bound_agent(session_name="test-ses")
+        mock_load_profile.return_value = agent
 
         mock_provider = MagicMock()
         mock_provider.initialize.side_effect = Exception("Provider init failed")
         mock_pm.create_provider.return_value = mock_provider
+        mock_pm.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_pm.runtime_state_capability.return_value = None
 
         with pytest.raises(Exception, match="Provider init failed"):
-            create_terminal(
-                provider="kiro_cli",
-                agent_profile="dev",
-                session_name="test-ses",
-                new_session=True,
-                allowed_tools=["*"],
-            )
+            create_terminal_for_agent(agent)
 
         mock_pm.cleanup_provider.assert_called_once_with("tid1")
         mock_tmux.kill_session.assert_called_once()
@@ -70,7 +84,7 @@ class TestCreateTerminalCleanup:
         "cli_agent_orchestrator.services.terminal_service.generate_terminal_id",
         return_value="tid1",
     )
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_cleanup_on_failure_does_not_kill_session_if_not_new(
         self,
         mock_load_profile,
@@ -82,24 +96,21 @@ class TestCreateTerminalCleanup:
         mock_log_dir,
     ):
         """When new_session=False, cleanup should NOT kill the session."""
-        from cli_agent_orchestrator.services.terminal_service import create_terminal
+        from cli_agent_orchestrator.services.terminal_service import create_terminal_for_agent
 
         mock_tmux.session_exists.return_value = True
         mock_tmux.create_window.return_value = "w1"
-        mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")
+        agent = _bound_agent(session_name="cao-existing")
+        mock_load_profile.return_value = agent
 
         mock_provider = MagicMock()
         mock_provider.initialize.side_effect = Exception("fail")
         mock_pm.create_provider.return_value = mock_provider
+        mock_pm.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_pm.runtime_state_capability.return_value = None
 
         with pytest.raises(Exception):
-            create_terminal(
-                provider="kiro_cli",
-                agent_profile="dev",
-                session_name="cao-existing",
-                new_session=False,
-                allowed_tools=["*"],
-            )
+            create_terminal_for_agent(agent)
 
         mock_pm.cleanup_provider.assert_called_once()
         mock_tmux.kill_session.assert_not_called()
@@ -115,7 +126,7 @@ class TestCreateTerminalCleanup:
         "cli_agent_orchestrator.services.terminal_service.generate_terminal_id",
         return_value="tid1",
     )
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_cleanup_ignores_cleanup_errors(
         self,
         mock_load_profile,
@@ -127,26 +138,23 @@ class TestCreateTerminalCleanup:
         mock_log_dir,
     ):
         """Cleanup errors should be swallowed, original error re-raised."""
-        from cli_agent_orchestrator.services.terminal_service import create_terminal
+        from cli_agent_orchestrator.services.terminal_service import create_terminal_for_agent
 
         mock_tmux.session_exists.return_value = False
         mock_tmux.create_session.return_value = "w1"
-        mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")
+        agent = _bound_agent(session_name="test-ses")
+        mock_load_profile.return_value = agent
 
         mock_provider = MagicMock()
         mock_provider.initialize.side_effect = Exception("original error")
         mock_pm.create_provider.return_value = mock_provider
+        mock_pm.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_pm.runtime_state_capability.return_value = None
         mock_pm.cleanup_provider.side_effect = Exception("cleanup error")
         mock_tmux.kill_session.side_effect = Exception("kill error")
 
         with pytest.raises(Exception, match="original error"):
-            create_terminal(
-                provider="kiro_cli",
-                agent_profile="dev",
-                session_name="test-ses",
-                new_session=True,
-                allowed_tools=["*"],
-            )
+            create_terminal_for_agent(agent)
 
     @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.services.terminal_service.tmux_client")
@@ -159,7 +167,7 @@ class TestCreateTerminalCleanup:
         "cli_agent_orchestrator.services.terminal_service.generate_terminal_id",
         return_value="tid1",
     )
-    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent")
     def test_session_prefix_added_for_new_session(
         self,
         mock_load_profile,
@@ -171,22 +179,19 @@ class TestCreateTerminalCleanup:
         mock_log_dir,
     ):
         """New sessions without the prefix get it added automatically."""
-        from cli_agent_orchestrator.services.terminal_service import create_terminal
+        from cli_agent_orchestrator.services.terminal_service import create_terminal_for_agent
 
         mock_tmux.session_exists.return_value = False
         mock_tmux.create_session.return_value = "w1"
-        mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")
+        agent = _bound_agent(session_name="myses")
+        mock_load_profile.return_value = agent
         mock_provider = MagicMock()
         mock_pm.create_provider.return_value = mock_provider
+        mock_pm.prepare_terminal_runtime.return_value = ProviderRuntimePreparation()
+        mock_pm.runtime_state_capability.return_value = None
         mock_log_dir.__truediv__ = MagicMock(return_value=MagicMock())
 
-        result = create_terminal(
-            provider="kiro_cli",
-            agent_profile="dev",
-            session_name="myses",
-            new_session=True,
-            allowed_tools=["*"],
-        )
+        result = create_terminal_for_agent(agent)
 
         # session_name should have been prefixed with "cao-"
         args = mock_tmux.create_session.call_args

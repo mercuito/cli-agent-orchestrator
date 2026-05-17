@@ -24,10 +24,11 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
 
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentity,
+from cli_agent_orchestrator.agent import (
+    Agent,
     AgentWorkspaceContextRuntimePaths,
     ensure_agent_workspace_context_runtime_paths,
+    load_agent,
 )
 from cli_agent_orchestrator.clients.database import create_terminal as db_create_terminal
 from cli_agent_orchestrator.clients.database import delete_terminal as db_delete_terminal
@@ -41,7 +42,6 @@ from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.terminal import (
     generate_session_name,
     generate_terminal_id,
@@ -72,14 +72,14 @@ class TerminalRuntimeInputs:
 
 @dataclass(frozen=True)
 class _AgentTerminalLaunch:
-    """Agent-owned launch metadata prepared by create_terminal_for_agent_identity."""
+    """Agent-owned launch metadata prepared by create_terminal_for_agent."""
 
-    identity: AgentIdentity
+    agent: Agent
     workspace_context_id: str
 
     @property
-    def agent_identity_id(self) -> str:
-        return self.identity.id
+    def agent_id(self) -> str:
+        return self.agent.id
 
     def build_context(
         self,
@@ -89,58 +89,76 @@ class _AgentTerminalLaunch:
         session_name: str,
         window_name: str,
         working_directory: str,
-        agent_profile: str,
+        agent_id: str,
         allowed_tools: Optional[list],
     ) -> AgentRuntimeLaunchContext:
         runtime_paths: AgentWorkspaceContextRuntimePaths = (
             ensure_agent_workspace_context_runtime_paths(
-                self.identity,
+                self.agent,
                 self.workspace_context_id,
                 provider,
             )
         )
         return AgentRuntimeLaunchContext(
-            identity=self.identity,
-            identity_data_dir=runtime_paths.identity_data_dir,
+            agent=self.agent,
+            agent_data_dir=runtime_paths.agent_data_dir,
             provider_data_dir=runtime_paths.provider_data_dir,
             terminal_id=terminal_id,
             session_name=session_name,
             window_name=window_name,
             working_directory=working_directory,
-            agent_profile=agent_profile,
+            agent_id=agent_id,
             allowed_tools=allowed_tools,
         )
 
 
 def resolve_terminal_runtime_inputs(
-    agent_profile: str,
+    agent_id: str,
     *,
     allowed_tools: Optional[list] = None,
 ) -> TerminalRuntimeInputs:
     """Resolve launch inputs that affect terminal runtime behavior."""
-    profile = load_agent_profile(agent_profile)
+    agent = load_agent(agent_id)
 
     resolved_allowed_tools = allowed_tools
     if resolved_allowed_tools is None:
         try:
             from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
 
-            mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
+            mcp_server_names = list(agent.mcp_servers.keys()) if agent.mcp_servers else None
             resolved_allowed_tools = resolve_runtime_capabilities(
-                profile.runtimeCapabilities, mcp_server_names
+                agent.runtime_capabilities, mcp_server_names
             )
         except FileNotFoundError:
-            pass  # Profile not found; no tool restrictions
+            pass
 
     return TerminalRuntimeInputs(
         allowed_tools=resolved_allowed_tools,
-        profile_material=profile.model_dump(exclude_none=True),
+        profile_material={
+            "id": agent.id,
+            "display_name": agent.display_name,
+            "cli_provider": agent.cli_provider,
+            "workdir": agent.workdir,
+            "session_name": agent.session_name,
+            "model": agent.model,
+            "reasoning_effort": agent.reasoning_effort,
+            "mcp_servers": dict(agent.mcp_servers),
+            "tools": list(agent.tools),
+            "cao_tools": None if agent.cao_tools is None else list(agent.cao_tools),
+            "skills": list(agent.skills),
+            "runtime_capabilities": (
+                None
+                if agent.runtime_capabilities is None
+                else list(agent.runtime_capabilities)
+            ),
+            "codex_config": dict(agent.codex_config),
+        },
     )
 
 
 def create_terminal(
     provider: str,
-    agent_profile: str,
+    agent_id: str,
     session_name: Optional[str] = None,
     new_session: bool = False,
     working_directory: Optional[str] = None,
@@ -157,7 +175,7 @@ def create_terminal(
 
     Args:
         provider: Provider type string (e.g., "kiro_cli", "claude_code")
-        agent_profile: Name of the agent profile to use
+        agent_id: Name of the agent to use
         session_name: Optional custom session name. If not provided, auto-generated.
         new_session: If True, creates a new tmux session. If False, adds to existing.
         working_directory: Optional working directory for the terminal shell
@@ -171,7 +189,7 @@ def create_terminal(
     """
     return _create_terminal_core(
         provider=provider,
-        agent_profile=agent_profile,
+        agent_id=agent_id,
         session_name=session_name,
         new_session=new_session,
         working_directory=working_directory,
@@ -179,23 +197,23 @@ def create_terminal(
     )
 
 
-def create_terminal_for_agent_identity(agent_identity: AgentIdentity) -> Terminal:
-    """Create a terminal owned by an already registered CAO agent identity."""
-    session_name = _canonical_agent_session_name(agent_identity.session_name)
-    workspace_context_id = agent_identity.current_workspace_context_id
+def create_terminal_for_agent(agent: Agent) -> Terminal:
+    """Create a terminal owned by an already registered CAO agent."""
+    session_name = _canonical_agent_session_name(agent.session_name)
+    workspace_context_id = agent.current_workspace_context_id
     if workspace_context_id is None:
         raise ValueError(
-            "create_terminal_for_agent_identity requires an agent identity bound "
+            "create_terminal_for_agent requires an agent bound "
             "to current_workspace_context_id"
         )
     return _create_terminal_core(
-        provider=agent_identity.cli_provider,
-        agent_profile=agent_identity.agent_profile,
+        provider=agent.cli_provider,
+        agent_id=agent.id,
         session_name=session_name,
         new_session=not tmux_client.session_exists(session_name),
-        working_directory=agent_identity.workdir,
+        working_directory=agent.workdir,
         agent_launch=_AgentTerminalLaunch(
-            identity=agent_identity,
+            agent=agent,
             workspace_context_id=workspace_context_id,
         ),
     )
@@ -204,14 +222,16 @@ def create_terminal_for_agent_identity(agent_identity: AgentIdentity) -> Termina
 def _create_terminal_core(
     *,
     provider: str,
-    agent_profile: str,
+    agent_id: str,
     session_name: Optional[str] = None,
     new_session: bool = False,
     working_directory: Optional[str] = None,
     allowed_tools: Optional[list] = None,
     agent_launch: Optional[_AgentTerminalLaunch] = None,
 ) -> Terminal:
-    """Create a terminal after the caller has chosen generic or identity-owned mode."""
+    """Create a terminal for an agent-managed launch."""
+    if agent_launch is None:
+        raise ValueError("Terminal creation requires a configured agent")
     terminal_id = ""
     runtime_prepared = False
     try:
@@ -223,30 +243,28 @@ def _create_terminal_core(
         if new_session and not session_name.startswith(SESSION_PREFIX):
             session_name = f"{SESSION_PREFIX}{session_name}"
 
-        window_name = generate_window_name(agent_profile)
+        window_name = generate_window_name(agent_id)
 
         runtime_inputs = resolve_terminal_runtime_inputs(
-            agent_profile,
+            agent_id,
             allowed_tools=allowed_tools,
         )
         allowed_tools = runtime_inputs.allowed_tools
 
         env: Optional[Dict[str, str]] = None
-        launch_context: Optional[AgentRuntimeLaunchContext] = None
-        if agent_launch is not None:
-            launch_context = agent_launch.build_context(
-                provider=provider,
-                terminal_id=terminal_id,
-                session_name=session_name,
-                window_name=window_name,
-                working_directory=working_directory or "",
-                agent_profile=agent_profile,
-                allowed_tools=allowed_tools,
-            )
+        launch_context = agent_launch.build_context(
+            provider=provider,
+            terminal_id=terminal_id,
+            session_name=session_name,
+            window_name=window_name,
+            working_directory=working_directory or "",
+            agent_id=agent_id,
+            allowed_tools=allowed_tools,
+        )
         runtime = provider_manager.prepare_terminal_runtime(
             provider,
             terminal_id=terminal_id,
-            agent_profile=agent_profile,
+            agent_id=agent_id,
             working_directory=working_directory or "",
             launch_context=launch_context,
         )
@@ -254,18 +272,16 @@ def _create_terminal_core(
         runtime_prepared = True
         runtime_resume_args: Optional[list[str]] = None
         runtime_capability = None
-        if agent_launch is not None:
-            assert launch_context is not None
-            runtime_capability = provider_manager.runtime_state_capability(provider)
-            if runtime_capability is not None:
-                runtime_state = runtime_capability.load_runtime_state(
-                    provider_data_dir=launch_context.provider_data_dir
+        runtime_capability = provider_manager.runtime_state_capability(provider)
+        if runtime_capability is not None:
+            runtime_state = runtime_capability.load_runtime_state(
+                provider_data_dir=launch_context.provider_data_dir
+            )
+            if runtime_state is not None:
+                runtime_resume_args = runtime_capability.launch_resume_args(
+                    runtime_state,
+                    provider_data_dir=launch_context.provider_data_dir,
                 )
-                if runtime_state is not None:
-                    runtime_resume_args = runtime_capability.launch_resume_args(
-                        runtime_state,
-                        provider_data_dir=launch_context.provider_data_dir,
-                    )
 
         # Step 2: Create tmux session or window
         if new_session:
@@ -291,14 +307,13 @@ def _create_terminal_core(
 
         # Step 3: Persist terminal metadata to database
         db_create_terminal(
-            terminal_id,
-            session_name,
-            window_name,
-            provider,
-            agent_profile,
-            allowed_tools,
-            agent_identity_id=None if agent_launch is None else agent_launch.agent_identity_id,
-            workspace_context_id=None if agent_launch is None else agent_launch.workspace_context_id,
+            terminal_id=terminal_id,
+            tmux_session=session_name,
+            tmux_window=window_name,
+            provider=provider,
+            agent_id=agent_launch.agent_id,
+            workspace_context_id=agent_launch.workspace_context_id,
+            allowed_tools=allowed_tools,
         )
 
         # Step 4: Create and initialize the CLI provider
@@ -310,19 +325,16 @@ def _create_terminal_core(
             terminal_id,
             session_name,
             window_name,
-            agent_profile,
+            agent_id,
             allowed_tools,
             runtime_resume_args=runtime_resume_args,
-            provider_data_dir=(
-                None if launch_context is None else str(launch_context.provider_data_dir)
-            ),
+            provider_data_dir=str(launch_context.provider_data_dir),
         )
         try:
             provider_instance.initialize()
         except Exception as exc:
             if (
                 runtime_resume_args
-                and launch_context is not None
                 and runtime_capability is not None
                 and _looks_like_stale_resume_failure(exc)
             ):
@@ -344,7 +356,7 @@ def _create_terminal_core(
                 )
                 return _create_terminal_core(
                     provider=provider,
-                    agent_profile=agent_profile,
+                    agent_id=agent_id,
                     session_name=session_name,
                     new_session=new_session,
                     working_directory=working_directory,
@@ -365,9 +377,8 @@ def _create_terminal_core(
             name=window_name,
             provider=ProviderType(provider),
             session_name=session_name,
-            agent_profile=agent_profile,
-            agent_identity_id=None if agent_launch is None else agent_launch.agent_identity_id,
-            workspace_context_id=None if agent_launch is None else agent_launch.workspace_context_id,
+            agent_id=agent_launch.agent_id,
+            workspace_context_id=agent_launch.workspace_context_id,
             allowed_tools=allowed_tools,
             status=TerminalStatus.IDLE,
             last_active=datetime.now(),
@@ -416,7 +427,7 @@ def _looks_like_stale_resume_failure(exc: Exception) -> bool:
 
 
 def _canonical_agent_session_name(session_name: str) -> str:
-    """Return a managed CAO session name for an agent identity."""
+    """Return a managed CAO session name for an agent."""
     if session_name.startswith(SESSION_PREFIX):
         return session_name
     return f"{SESSION_PREFIX}{session_name}"
@@ -440,8 +451,8 @@ def get_terminal(terminal_id: str) -> Dict:
             "name": metadata["tmux_window"],
             "provider": metadata["provider"],
             "session_name": metadata["tmux_session"],
-            "agent_profile": metadata["agent_profile"],
-            "agent_identity_id": metadata.get("agent_identity_id"),
+            "agent_id": metadata["agent_id"],
+            "agent_id": metadata.get("agent_id"),
             "workspace_context_id": metadata.get("workspace_context_id"),
             "allowed_tools": metadata.get("allowed_tools"),
             "status": status,
@@ -621,7 +632,7 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
 def delete_terminal(terminal_id: str, *, require_window_killed: bool = False) -> bool:
     """Delete terminal and kill its tmux window.
 
-    When replacing an identity runtime, callers can require the tmux window to
+    When replacing an agent runtime, callers can require the tmux window to
     be killed before metadata is removed so stale live panes are not orphaned.
     """
     try:

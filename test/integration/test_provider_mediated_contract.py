@@ -8,7 +8,7 @@ from test.support.fake_provider_tools import (
     FAKE_RESTRICTED_TOOL,
     FakeProvider,
     FakeProviderRecorder,
-    fake_agents_toml,
+    fake_agents,
     fake_provider_bad_config,
     fake_provider_config,
 )
@@ -18,7 +18,7 @@ import pytest
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from cli_agent_orchestrator.agent_identity import load_agent_identity_registry
+from cli_agent_orchestrator.agent import load_agent_registry, write_agent
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.mcp_server import server
 from cli_agent_orchestrator.mcp_server.provider_tools import register_provider_mediated_mcp_tools
@@ -37,9 +37,10 @@ from cli_agent_orchestrator.workspace_providers.invocation import (
 def _write_workspace_provider_files(tmp_path):
     enabled_config = tmp_path / "workspace-providers.toml"
     enabled_config.write_text('enabled = ["fake"]\n')
-    agents_config = tmp_path / "agents.toml"
-    agents_config.write_text(fake_agents_toml())
-    return enabled_config, agents_config
+    agents_root = tmp_path / "agents"
+    for agent in fake_agents().values():
+        write_agent(agent, agents_root=agents_root)
+    return enabled_config, agents_root
 
 
 def _fake_provider_registry(
@@ -60,25 +61,24 @@ def _persist_contract_terminals() -> None:
         "cao-session",
         "window-a",
         "codex",
-        "developer",
-        agent_identity_id="identity_a",
-        workspace_context_id=db_module.ensure_default_workspace_context("identity_a").id,
+        "agent_a",
+        workspace_context_id=db_module.ensure_default_workspace_context("agent_a").id,
     )
     db_module.create_terminal(
         "terminal-b",
         "cao-session",
         "window-b",
         "codex",
-        "reviewer",
-        agent_identity_id="identity_b",
-        workspace_context_id=db_module.ensure_default_workspace_context("identity_b").id,
+        "agent_b",
+        workspace_context_id=db_module.ensure_default_workspace_context("agent_b").id,
     )
     db_module.create_terminal(
         "raw-terminal",
         "cao-session",
         "window-raw",
         "codex",
-        "developer",
+        "unknown_agent",
+        "wctx_raw",
     )
 
 
@@ -93,7 +93,7 @@ async def test_fake_provider_contract_runs_through_mcp_registration_and_invocati
 ):
     enabled_config, agents_config = _write_workspace_provider_files(tmp_path)
     recorder = FakeProviderRecorder(mutate_post_result=True)
-    agent_registry = load_agent_identity_registry(agents_config)
+    agent_registry = load_agent_registry(agents_config)
     policies = load_enabled_provider_tool_access_policies(
         enabled_config_path=enabled_config,
         agents_config_path=agents_config,
@@ -119,7 +119,7 @@ async def test_fake_provider_contract_runs_through_mcp_registration_and_invocati
     assert recorder.handler_result == {"provider": "result"}
     assert recorder.events == [
         f"pre_call:always_allow:{FAKE_LOOKUP_TOOL}",
-        f"handler:identity_a:{FAKE_LOOKUP_TOOL}:alpha",
+        f"handler:agent_a:{FAKE_LOOKUP_TOOL}:alpha",
         f"post_call:record_after:{FAKE_LOOKUP_TOOL}:result",
     ]
 
@@ -128,7 +128,7 @@ async def test_fake_provider_contract_runs_through_mcp_registration_and_invocati
 
     assert recorder.events == [
         f"pre_call:always_allow:{FAKE_LOOKUP_TOOL}",
-        f"handler:identity_a:{FAKE_LOOKUP_TOOL}:alpha",
+        f"handler:agent_a:{FAKE_LOOKUP_TOOL}:alpha",
         f"post_call:record_after:{FAKE_LOOKUP_TOOL}:result",
         f"pre_call:deny_before:{FAKE_RESTRICTED_TOOL}",
     ]
@@ -150,14 +150,14 @@ async def test_fake_provider_contract_runs_through_mcp_registration_and_invocati
         policies=policies,
         agent_registry=agent_registry,
     )
-    with pytest.raises(ProviderMediatedToolAccessDenied) as identity_b_denial:
+    with pytest.raises(ProviderMediatedToolAccessDenied) as agent_b_denial:
         service.invoke(
             terminal_id="terminal-b",
             provider_name=FAKE_PROVIDER_NAME,
             tool_name=FAKE_LOOKUP_TOOL,
             arguments={"query": "gamma"},
         )
-    assert identity_b_denial.value.reason == "missing_tool_access"
+    assert agent_b_denial.value.reason == "missing_tool_access"
 
     with pytest.raises(ProviderMediatedToolAccessDenied) as raw_terminal_denial:
         service.invoke(
@@ -166,7 +166,7 @@ async def test_fake_provider_contract_runs_through_mcp_registration_and_invocati
             tool_name=FAKE_LOOKUP_TOOL,
             arguments={"query": "delta"},
         )
-    assert raw_terminal_denial.value.reason == "unmapped_terminal"
+    assert raw_terminal_denial.value.reason == "unmapped_agent"
 
 
 @pytest.mark.asyncio
@@ -197,7 +197,7 @@ async def test_provider_preflight_failure_stops_mcp_startup_before_serving_tools
     monkeypatch.setattr(
         server,
         "_resolve_allowlist_for_terminal",
-        lambda terminal_id: ["list_agent_profiles"],
+        lambda terminal_id: ["send_message"],
     )
     run = Mock()
     monkeypatch.setattr(mcp, "run", run)
@@ -215,5 +215,5 @@ async def test_provider_preflight_failure_stops_mcp_startup_before_serving_tools
     with pytest.raises(ProviderToolAccessConfigError, match="bad provider config"):
         server.main()
 
-    assert await _registered_tool_names(mcp) == {"list_agent_profiles"}
+    assert await _registered_tool_names(mcp) == {"send_message"}
     run.assert_not_called()

@@ -25,13 +25,13 @@ from cli_agent_orchestrator.providers.base import (
     ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.codex_home import (
     CODEX_HOME_MATERIALIZATION_SCHEMA_VERSION,
     build_codex_home_materialization,
     cleanup_codex_home,
     prepare_codex_home,
-    prepare_identity_codex_home,
+    prepare_agent_codex_home,
 )
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
@@ -331,28 +331,28 @@ class CodexProvider(BaseProvider):
     def prepare_terminal_runtime(
         *,
         terminal_id: str,
-        agent_profile: str,
+        agent_id: str,
         working_directory: str,
         launch_context: Optional[AgentRuntimeLaunchContext] = None,
     ) -> ProviderRuntimePreparation:
         """Prepare Codex-owned runtime storage and return the tmux environment."""
         workdir = os.path.realpath(working_directory or os.getcwd())
         if launch_context is not None:
-            codex_home = prepare_identity_codex_home(
+            codex_home = prepare_agent_codex_home(
                 launch_context.provider_data_dir,
                 terminal_id,
-                agent_profile,
+                agent_id,
                 workdir,
             )
             return ProviderRuntimePreparation(
                 environment={"CODEX_HOME": str(codex_home)},
-                identity_scoped=True,
+                agent_scoped=True,
             )
 
-        codex_home = prepare_codex_home(terminal_id, agent_profile, workdir)
+        codex_home = prepare_codex_home(terminal_id, agent_id, workdir)
         return ProviderRuntimePreparation(
             environment={"CODEX_HOME": str(codex_home)},
-            identity_scoped=False,
+            agent_scoped=False,
         )
 
     @classmethod
@@ -364,14 +364,14 @@ class CodexProvider(BaseProvider):
         """Describe Codex-owned runtime inputs that require terminal replacement."""
         workdir = os.path.realpath(launch_context.working_directory or os.getcwd())
         materialization = build_codex_home_materialization(
-            launch_context.agent_profile,
+            launch_context.agent_id,
             workdir,
         )
         startup_command = cls(
             terminal_id="<fingerprint>",
             session_name=launch_context.session_name,
             window_name=launch_context.window_name,
-            agent_profile=launch_context.agent_profile,
+            agent_id=launch_context.agent_id,
             allowed_tools=launch_context.allowed_tools,
         )._build_codex_command()
         return ProviderRuntimeDescriptor(
@@ -440,18 +440,18 @@ class CodexProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: Optional[str] = None,
+        agent_id: Optional[str] = None,
         allowed_tools: Optional[list] = None,
         runtime_resume_args: Optional[list[str]] = None,
     ):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
-        self._agent_profile = agent_profile
+        self._agent_id = agent_id
         self._runtime_resume_args = list(runtime_resume_args or [])
 
     def _build_codex_command(self) -> str:
-        """Build Codex command with agent profile if provided.
+        """Build Codex command with agent if provided.
 
         Returns properly escaped shell command string that can be safely sent via tmux.
         Uses codex's -c developer_instructions flag to inject agent system prompts.
@@ -469,7 +469,7 @@ class CodexProvider(BaseProvider):
         # only reliable off switch; a local `[plugins.*].enabled = false`
         # in config.toml is overwritten by Codex on interactive startup
         # (plugin state is account-authoritative). CAO agents get their
-        # tools via MCP servers declared in the agent profile instead.
+        # tools via MCP servers declared in the agent instead.
         command_parts = [
             "codex",
             "--yolo",
@@ -482,11 +482,11 @@ class CodexProvider(BaseProvider):
             "apps",
         ]
 
-        if self._agent_profile is not None:
+        if self._agent_id is not None:
             try:
-                profile = load_agent_profile(self._agent_profile)
+                agent = load_agent(self._agent_id)
 
-                system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
+                system_prompt = agent.prompt or ""
 
                 # Prepend security constraints for soft enforcement (Codex has no
                 # native tool restriction mechanism). Only applied when tool
@@ -511,8 +511,8 @@ class CodexProvider(BaseProvider):
 
                 # Add MCP servers via -c config overrides (per-session, no global config changes).
                 # Each server field is set via dotted path: mcp_servers.<name>.<field>=<value>
-                if profile.mcpServers:
-                    for server_name, server_config in profile.mcpServers.items():
+                if agent.mcp_servers:
+                    for server_name, server_config in agent.mcp_servers.items():
                         prefix = f"mcp_servers.{server_name}"
                         if isinstance(server_config, dict):
                             cfg = server_config
@@ -546,7 +546,7 @@ class CodexProvider(BaseProvider):
                             command_parts.extend(["-c", f"{prefix}.tool_timeout_sec=600.0"])
 
             except Exception as e:
-                raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
+                raise ProviderError(f"Failed to load agent '{self._agent_id}': {e}")
 
         command_parts.extend(self._runtime_resume_args)
         return shlex.join(command_parts)
@@ -617,7 +617,7 @@ class CodexProvider(BaseProvider):
 
         self.run_update_preflight()
 
-        # Build command with flags and agent profile (developer_instructions).
+        # Build command with flags and agent (developer_instructions).
         # --no-alt-screen: run in inline mode so output stays in normal scrollback,
         #   making tmux capture-pane reliable.
         # --disable shell_snapshot: avoid TTY input conflicts (SIGTTIN) in tmux

@@ -1,7 +1,7 @@
 """End-to-end provider lifecycle tests (handoff worker simulation).
 
 Tests the worker side of the handoff flow — validates that each provider can:
-1. Create session + terminal with a developer agent profile
+1. Create session + terminal with a developer agent
 2. Reach IDLE state (CLI tool initialized)
 3. Receive a task message via the API
 4. Process the task and reach COMPLETED
@@ -39,12 +39,12 @@ import pytest
 COMPLETION_TIMEOUT = 180
 
 
-def _run_handoff_test(provider: str, agent_profile: str, task_message: str, content_keywords: list):
+def _run_handoff_test(provider: str, agent_id: str, task_message: str, content_keywords: list):
     """Core handoff test logic shared across providers.
 
     Args:
         provider: Provider name ("codex", "claude_code", "kiro_cli", "gemini_cli")
-        agent_profile: Agent profile name ("developer")
+        agent_id: Agent name ("developer")
         task_message: The task to send to the agent
         content_keywords: Words expected in the output (at least one must match)
     """
@@ -55,7 +55,7 @@ def _run_handoff_test(provider: str, agent_profile: str, task_message: str, cont
 
     try:
         # Step 1: Create terminal
-        terminal_id, actual_session = create_terminal(provider, agent_profile, session_name)
+        terminal_id, actual_session = create_terminal(provider, agent_id, session_name)
         assert terminal_id, "Terminal ID should not be empty"
 
         # Step 2: Wait for ready (idle or completed).
@@ -133,7 +133,7 @@ class TestCodexHandoff:
         """Codex developer creates a simple Python function and returns output."""
         _run_handoff_test(
             provider="codex",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'greet' that takes a name parameter "
                 "and returns 'Hello, {name}!'. Output only the function code."
@@ -145,7 +145,7 @@ class TestCodexHandoff:
         """Codex developer handles a second independent task (validates no state leakage)."""
         _run_handoff_test(
             provider="codex",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'add_numbers' that takes two parameters "
                 "a and b and returns their sum. Output only the function code."
@@ -167,7 +167,7 @@ class TestClaudeCodeHandoff:
         """Claude Code developer creates a simple Python function and returns output."""
         _run_handoff_test(
             provider="claude_code",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'greet' that takes a name parameter "
                 "and returns 'Hello, {name}!'. Output only the function code."
@@ -179,7 +179,7 @@ class TestClaudeCodeHandoff:
         """Claude Code developer handles a second independent task."""
         _run_handoff_test(
             provider="claude_code",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'multiply' that takes two parameters "
                 "a and b and returns their product. Output only the function code."
@@ -201,7 +201,7 @@ class TestKiroCliHandoff:
         """Kiro CLI developer creates a simple Python function and returns output."""
         _run_handoff_test(
             provider="kiro_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'greet' that takes a name parameter "
                 "and returns 'Hello, {name}!'. Output only the function code."
@@ -213,7 +213,7 @@ class TestKiroCliHandoff:
         """Kiro CLI developer handles a second independent task."""
         _run_handoff_test(
             provider="kiro_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'subtract' that takes two parameters "
                 "a and b and returns a minus b. Output only the function code."
@@ -235,7 +235,7 @@ class TestKimiCliHandoff:
         """Kimi CLI developer creates a simple Python function and returns output."""
         _run_handoff_test(
             provider="kimi_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'greet' that takes a name parameter "
                 "and returns 'Hello, {name}!'. Output only the function code."
@@ -247,7 +247,7 @@ class TestKimiCliHandoff:
         """Kimi CLI developer handles a second independent task."""
         _run_handoff_test(
             provider="kimi_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'subtract' that takes two parameters "
                 "a and b and returns a minus b. Output only the function code."
@@ -269,7 +269,7 @@ class TestGeminiCliHandoff:
         """Gemini CLI developer creates a simple Python function and returns output."""
         _run_handoff_test(
             provider="gemini_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'greet' that takes a name parameter "
                 "and returns 'Hello, {name}!'. Output only the function code."
@@ -281,7 +281,7 @@ class TestGeminiCliHandoff:
         """Gemini CLI developer handles a second independent task."""
         _run_handoff_test(
             provider="gemini_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'square' that takes a parameter n "
                 "and returns n squared. Output only the function code."
@@ -303,7 +303,7 @@ class TestCopilotCliHandoff:
         """Copilot CLI developer creates a simple Python function and returns output."""
         _run_handoff_test(
             provider="copilot_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'greet' that takes a name parameter "
                 "and returns 'Hello, {name}!'. Output only the function code."
@@ -315,7 +315,7 @@ class TestCopilotCliHandoff:
         """Copilot CLI developer handles a second independent task."""
         _run_handoff_test(
             provider="copilot_cli",
-            agent_profile="developer",
+            agent_id="developer",
             task_message=(
                 "Create a Python function called 'multiply' that takes two parameters "
                 "a and b and returns their product. Output only the function code."

@@ -29,7 +29,7 @@ Requires:
 - Running CAO server
 - Authenticated CLI tools (claude, kiro-cli, gemini, kimi)
 - tmux
-- Agent profiles installed: code_supervisor, developer
+- Agents installed: code_supervisor, developer
 
 Run:
     uv run pytest -m e2e test/e2e/test_allowed_tools.py -v -o "addopts="
@@ -93,7 +93,7 @@ REFUSAL_KEYWORDS = [
 
 def _create_terminal_with_tools(
     provider: str,
-    agent_profile: str,
+    agent_id: str,
     allowed_tools: str,
     session_name: str,
     retries: int = 1,
@@ -116,7 +116,7 @@ def _create_terminal_with_tools(
             f"{API_BASE_URL}/sessions",
             params={
                 "provider": provider,
-                "agent_profile": agent_profile,
+                "agent_id": agent_id,
                 "session_name": attempt_session_name,
                 "allowed_tools": allowed_tools,
             },
@@ -172,7 +172,7 @@ def _send_task_and_get_output(terminal_id: str, message: str) -> str:
     return output
 
 
-def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: str):
+def _run_restricted_tool_test(provider: str, agent_id: str, allowed_tools: str):
     """Test that a terminal with restricted runtime capabilities cannot execute bash.
 
     Creates a terminal with the given allowed_tools restriction, sends a task
@@ -185,7 +185,7 @@ def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: 
 
     try:
         terminal_id, actual_session = _create_terminal_with_tools(
-            provider, agent_profile, allowed_tools, session_name
+            provider, agent_id, allowed_tools, session_name
         )
         assert terminal_id, "Terminal ID should not be empty"
 
@@ -232,7 +232,7 @@ def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: 
             cleanup_terminal(terminal_id, actual_session)
 
 
-def _run_unrestricted_tool_test(provider: str, agent_profile: str):
+def _run_unrestricted_tool_test(provider: str, agent_id: str):
     """Test that a terminal with wildcard runtime capabilities CAN execute bash.
 
     Creates a terminal with allowed_tools=* (unrestricted), sends a bash task,
@@ -245,7 +245,7 @@ def _run_unrestricted_tool_test(provider: str, agent_profile: str):
 
     try:
         terminal_id, actual_session = _create_terminal_with_tools(
-            provider, agent_profile, "*", session_name
+            provider, agent_id, "*", session_name
         )
         assert terminal_id, "Terminal ID should not be empty"
 
@@ -275,7 +275,7 @@ def _run_unrestricted_tool_test(provider: str, agent_profile: str):
             cleanup_terminal(terminal_id, actual_session)
 
 
-def _run_allowed_tools_stored_test(provider: str, agent_profile: str, allowed_tools: str):
+def _run_allowed_tools_stored_test(provider: str, agent_id: str, allowed_tools: str):
     """Test that allowed_tools is stored in the database and returned by GET /terminals.
 
     Verifies the API correctly persists and returns the allowed_tools metadata.
@@ -287,7 +287,7 @@ def _run_allowed_tools_stored_test(provider: str, agent_profile: str, allowed_to
 
     try:
         terminal_id, actual_session = _create_terminal_with_tools(
-            provider, agent_profile, allowed_tools, session_name
+            provider, agent_id, allowed_tools, session_name
         )
         assert terminal_id, "Terminal ID should not be empty"
 
@@ -335,7 +335,7 @@ class TestKiroCliAllowedTools:
     enforcement happens when ``cao install`` writes the agent JSON.
 
     To test Kiro's actual tool blocking, first run:
-        cao install src/cli_agent_orchestrator/agent_store/code_supervisor.md --provider kiro_cli
+        cao install src/cli_agent_orchestrator/agents/code_supervisor.md --provider kiro_cli
     This writes the provider-native agent JSON that Kiro uses for enforcement.
     """
 
@@ -343,14 +343,14 @@ class TestKiroCliAllowedTools:
         """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="kiro_cli",
-            agent_profile="developer",
+            agent_id="developer",
         )
 
     def test_allowed_tools_stored_in_metadata(self, require_kiro):
         """allowed_tools is persisted and returned by GET /terminals."""
         _run_allowed_tools_stored_test(
             provider="kiro_cli",
-            agent_profile="developer",
+            agent_id="developer",
             allowed_tools="@builtin,fs_read,@cao-mcp-server",
         )
 
@@ -366,7 +366,7 @@ class TestKiroCliAllowedTools:
         """
         _run_restricted_tool_test(
             provider="kiro_cli",
-            agent_profile="code_supervisor",
+            agent_id="code_supervisor",
             allowed_tools="@cao-mcp-server",
         )
 
@@ -389,7 +389,7 @@ class TestClaudeCodeAllowedTools:
         """Supervisor with only @cao-mcp-server should have Bash disallowed."""
         _run_restricted_tool_test(
             provider="claude_code",
-            agent_profile="code_supervisor",
+            agent_id="code_supervisor",
             allowed_tools="@cao-mcp-server",
         )
 
@@ -397,7 +397,7 @@ class TestClaudeCodeAllowedTools:
         """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="claude_code",
-            agent_profile="developer",
+            agent_id="developer",
         )
 
     def test_reviewer_cannot_write(self, require_claude):
@@ -441,7 +441,7 @@ class TestClaudeCodeAllowedTools:
         """allowed_tools is persisted and returned by GET /terminals."""
         _run_allowed_tools_stored_test(
             provider="claude_code",
-            agent_profile="developer",
+            agent_id="developer",
             allowed_tools="@builtin,fs_*,execute_bash,@cao-mcp-server",
         )
 
@@ -477,7 +477,7 @@ class TestCodexAllowedTools:
         """
         _run_restricted_tool_test(
             provider="codex",
-            agent_profile="code_supervisor",
+            agent_id="code_supervisor",
             allowed_tools="@cao-mcp-server",
         )
 
@@ -485,14 +485,14 @@ class TestCodexAllowedTools:
         """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="codex",
-            agent_profile="developer",
+            agent_id="developer",
         )
 
     def test_allowed_tools_stored_in_metadata(self, require_codex):
         """allowed_tools is persisted and returned by GET /terminals."""
         _run_allowed_tools_stored_test(
             provider="codex",
-            agent_profile="developer",
+            agent_id="developer",
             allowed_tools="@cao-mcp-server",
         )
 
@@ -528,7 +528,7 @@ class TestKimiCliAllowedTools:
         """
         _run_restricted_tool_test(
             provider="kimi_cli",
-            agent_profile="code_supervisor",
+            agent_id="code_supervisor",
             allowed_tools="@cao-mcp-server",
         )
 
@@ -536,14 +536,14 @@ class TestKimiCliAllowedTools:
         """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="kimi_cli",
-            agent_profile="developer",
+            agent_id="developer",
         )
 
     def test_allowed_tools_stored_in_metadata(self, require_kimi):
         """allowed_tools is persisted and returned by GET /terminals."""
         _run_allowed_tools_stored_test(
             provider="kimi_cli",
-            agent_profile="developer",
+            agent_id="developer",
             allowed_tools="@cao-mcp-server",
         )
 
@@ -573,7 +573,7 @@ class TestGeminiCliAllowedTools:
         """
         _run_restricted_tool_test(
             provider="gemini_cli",
-            agent_profile="code_supervisor",
+            agent_id="code_supervisor",
             allowed_tools="@cao-mcp-server",
         )
 
@@ -581,13 +581,13 @@ class TestGeminiCliAllowedTools:
         """Developer with wildcard runtime capabilities can execute bash."""
         _run_unrestricted_tool_test(
             provider="gemini_cli",
-            agent_profile="developer",
+            agent_id="developer",
         )
 
     def test_allowed_tools_stored_in_metadata(self, require_gemini):
         """allowed_tools is persisted and returned by GET /terminals."""
         _run_allowed_tools_stored_test(
             provider="gemini_cli",
-            agent_profile="developer",
+            agent_id="developer",
             allowed_tools="@builtin,fs_read,@cao-mcp-server",
         )

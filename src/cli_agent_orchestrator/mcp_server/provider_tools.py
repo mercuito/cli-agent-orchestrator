@@ -8,10 +8,10 @@ from typing import Any, Iterable, Mapping
 from fastmcp.tools.base import Tool, ToolResult
 from pydantic import PrivateAttr
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry
-from cli_agent_orchestrator.services.agent_identity_manager import (
-    AgentIdentityManager,
-    default_agent_identity_manager,
+from cli_agent_orchestrator.agent import AgentRegistry
+from cli_agent_orchestrator.services.agent_manager import (
+    AgentManager,
+    default_agent_manager,
 )
 from cli_agent_orchestrator.workspace_providers.invocation import (
     ProviderMediatedToolAccessDenied,
@@ -69,16 +69,16 @@ def register_provider_mediated_mcp_tools_for_terminal(
     mcp_instance: Any,
     reserved_tool_names: Iterable[str] = (),
 ) -> list[str]:
-    """Load provider access and register identity-visible provider tools.
+    """Load provider access and register agent-visible provider tools.
 
     This is the production MCP startup boundary. Invalid provider config is
     surfaced clearly; unavailable provider/access loading hides mediated tools
     while leaving built-in CAO MCP registration untouched.
     """
     try:
-        identity_manager = default_agent_identity_manager()
-        agent_registry = AgentIdentityRegistry(
-            {identity.id: identity for identity in identity_manager.list_identities()}
+        agent_manager = default_agent_manager()
+        agent_registry = AgentRegistry(
+            {agent.id: agent for agent in agent_manager.list_agents()}
         )
         policies = load_enabled_provider_tool_access_policies(agent_registry=agent_registry)
     except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
@@ -96,7 +96,7 @@ def register_provider_mediated_mcp_tools_for_terminal(
         mcp_instance=mcp_instance,
         policies=policies,
         agent_registry=agent_registry,
-        identity_manager=identity_manager,
+        agent_manager=agent_manager,
         reserved_tool_names=reserved_tool_names,
     )
 
@@ -106,8 +106,8 @@ def register_provider_mediated_mcp_tools(
     terminal_id: str,
     mcp_instance: Any,
     policies: Mapping[str, ProviderToolAccessPolicy],
-    agent_registry: AgentIdentityRegistry,
-    identity_manager: AgentIdentityManager | None = None,
+    agent_registry: AgentRegistry,
+    agent_manager: AgentManager | None = None,
     reserved_tool_names: Iterable[str] = (),
     terminal_metadata_resolver: TerminalMetadataResolver | None = None,
 ) -> list[str]:
@@ -115,7 +115,7 @@ def register_provider_mediated_mcp_tools(
     service = ProviderMediatedToolInvocationService(
         policies=policies,
         agent_registry=agent_registry,
-        identity_manager=identity_manager,
+        agent_manager=agent_manager,
         terminal_metadata_resolver=terminal_metadata_resolver,
     )
     try:

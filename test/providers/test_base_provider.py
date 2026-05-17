@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent import Agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext, BaseProvider
 
@@ -70,21 +70,21 @@ class TestBaseProvider:
     def test_runtime_fingerprint_contribution_includes_provider_runtime_config(self, tmp_path):
         """Test default provider freshness includes provider runtime configuration."""
         context = AgentRuntimeLaunchContext(
-            identity=AgentIdentity(
+            agent=Agent(
                 id="agent-1",
                 display_name="Agent 1",
-                agent_profile="developer",
-                cli_provider="test_provider",
+                cli_provider="codex",
                 workdir=str(tmp_path / "repo"),
                 session_name="agent-1",
+                prompt="",
             ),
-            identity_data_dir=tmp_path / "agents" / "agent-1",
-            provider_data_dir=tmp_path / "agents" / "agent-1" / "providers" / "test_provider",
+            agent_data_dir=tmp_path / "agents" / "agent-1",
+            provider_data_dir=tmp_path / "agents" / "agent-1" / "providers" / "codex",
             terminal_id="terminal-1",
             session_name="cao-agent-1",
             window_name="developer-1",
             working_directory=str(tmp_path / "repo"),
-            agent_profile="developer",
+            agent_id="developer",
             allowed_tools=["Read"],
         )
 
