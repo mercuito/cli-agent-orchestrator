@@ -46,6 +46,7 @@ class CopilotCliProvider(BaseProvider):
     """Provider for GitHub Copilot CLI."""
 
     provider_type = ProviderType.COPILOT_CLI.value
+    binary = "copilot"
 
     def __init__(
         self,

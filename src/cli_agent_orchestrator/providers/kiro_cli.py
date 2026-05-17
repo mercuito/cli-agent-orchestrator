@@ -102,6 +102,7 @@ class KiroCliProvider(BaseProvider):
     """
 
     provider_type = ProviderType.KIRO_CLI.value
+    binary = "kiro-cli"
 
     def __init__(
         self,

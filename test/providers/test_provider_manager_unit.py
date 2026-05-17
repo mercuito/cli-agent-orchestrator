@@ -5,9 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cli_agent_orchestrator.models.provider import ProviderType
+from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.copilot_cli import CopilotCliProvider
-from cli_agent_orchestrator.providers.manager import ProviderManager
+from cli_agent_orchestrator.providers.manager import ProviderManager, ProviderSchema
 
 
 def test_create_provider_codex_stores_mapping():
@@ -237,3 +238,54 @@ def test_list_providers():
         "t1": "CodexProvider",
         "t2": "ClaudeCodeProvider",
     }
+
+
+def test_list_provider_schemas_enumerates_every_provider_type(monkeypatch):
+    """Every ``ProviderType`` value gets one schema entry."""
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.providers.manager.shutil.which",
+        lambda _binary: None,
+    )
+    manager = ProviderManager()
+
+    schemas = manager.list_provider_schemas()
+
+    assert {schema.name for schema in schemas} == {item.value for item in ProviderType}
+    assert all(isinstance(schema, ProviderSchema) for schema in schemas)
+
+
+def test_list_provider_schemas_resolves_install_status_per_binary(monkeypatch):
+    """The ``installed`` flag is resolved from each provider's declared binary."""
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.providers.manager.shutil.which",
+        lambda binary: f"/fake/{binary}" if binary == ClaudeCodeProvider.binary else None,
+    )
+    manager = ProviderManager()
+
+    schemas = {schema.name: schema for schema in manager.list_provider_schemas()}
+
+    assert schemas[ProviderType.CLAUDE_CODE.value].installed is True
+    assert schemas[ProviderType.CODEX.value].installed is False
+
+
+def test_list_provider_schemas_carries_provider_capability_declarations(monkeypatch):
+    """Capability fields surface what each provider class declares."""
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.providers.manager.shutil.which",
+        lambda _binary: None,
+    )
+    manager = ProviderManager()
+
+    schemas = {schema.name: schema for schema in manager.list_provider_schemas()}
+
+    claude_schema = schemas[ProviderType.CLAUDE_CODE.value]
+    assert (
+        claude_schema.supported_reasoning_efforts
+        == ClaudeCodeProvider.supported_reasoning_efforts()
+    )
+    assert claude_schema.suggested_models == ClaudeCodeProvider.suggested_models()
+    assert claude_schema.binary == ClaudeCodeProvider.binary
+
+    codex_schema = schemas[ProviderType.CODEX.value]
+    assert codex_schema.supported_reasoning_efforts is None
+    assert codex_schema.suggested_models is None

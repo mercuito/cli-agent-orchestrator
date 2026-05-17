@@ -211,6 +211,7 @@ class ClaudeCodeProvider(BaseProvider):
 
     provider_type = ProviderType.CLAUDE_CODE.value
     interrupt_key = "Escape"
+    binary = "claude"
 
     @classmethod
     def runtime_state_capability(cls) -> ClaudeRuntimeStateCapability:
@@ -296,10 +297,13 @@ class ClaudeCodeProvider(BaseProvider):
             },
         )
 
-    @staticmethod
-    def run_update_preflight(*, timeout: float = CLAUDE_UPDATE_TIMEOUT_SECONDS) -> None:
+    @classmethod
+    def run_update_preflight(cls, *, timeout: float = CLAUDE_UPDATE_TIMEOUT_SECONDS) -> None:
         """Run Claude's updater before launching an agent-managed runtime."""
-        claude_bin = shutil.which("claude")
+        # Resolve from the provider's declared binary so the install check and
+        # ``/providers`` endpoint share the same authoritative source per
+        # ``authoritative-sources-are-referenced-not-copied``.
+        claude_bin = shutil.which(cls.binary)
         if not claude_bin:
             raise ProviderError("Claude update preflight failed: claude binary not found in PATH")
         try:

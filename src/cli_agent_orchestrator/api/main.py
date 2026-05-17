@@ -726,6 +726,23 @@ class SkillContentResponse(BaseModel):
     content: str
 
 
+class ProviderSchemaResponse(BaseModel):
+    """Capability schema for one registered CAO provider.
+
+    Backs the Agents tab structured form's provider-aware dropdowns. The
+    schema is composed from authoritative sources only: the provider type
+    comes from ``ProviderType``, the binary name comes from the provider
+    class, install status is resolved at request time via ``shutil.which``,
+    and the capability sets come from each provider's classmethods.
+    """
+
+    name: str
+    binary: str
+    installed: bool
+    supported_reasoning_efforts: Optional[List[str]] = None
+    suggested_models: Optional[List[str]] = None
+
+
 class WorkingDirectoryResponse(BaseModel):
     """Response model for terminal working directory."""
 
@@ -927,6 +944,33 @@ async def request_validation_exception_handler(
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "cli-agent-orchestrator"}
+
+
+@app.get("/providers", response_model=List[ProviderSchemaResponse])
+async def list_providers_endpoint() -> List[ProviderSchemaResponse]:
+    """Return the capability schema for every CAO-registered provider.
+
+    Backs provider-aware dropdowns in the Agents tab structured form. The
+    dashboard calls this once per session and caches the result.
+    """
+    return [
+        ProviderSchemaResponse(
+            name=schema.name,
+            binary=schema.binary,
+            installed=schema.installed,
+            supported_reasoning_efforts=(
+                list(schema.supported_reasoning_efforts)
+                if schema.supported_reasoning_efforts is not None
+                else None
+            ),
+            suggested_models=(
+                list(schema.suggested_models)
+                if schema.suggested_models is not None
+                else None
+            ),
+        )
+        for schema in provider_manager.list_provider_schemas()
+    ]
 
 
 @app.get("/agents", response_model=List[AgentStatusResponse])

@@ -29,6 +29,7 @@ class QCliProvider(BaseProvider):
     """Provider for Q CLI tool integration."""
 
     provider_type = ProviderType.Q_CLI.value
+    binary = "q"
 
     def __init__(
         self,

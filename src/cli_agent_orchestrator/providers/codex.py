@@ -321,6 +321,7 @@ class CodexProvider(BaseProvider):
 
     provider_type = ProviderType.CODEX.value
     interrupt_key = "Escape"
+    binary = "codex"
 
     @classmethod
     def runtime_state_capability(cls) -> CodexRuntimeStateCapability:
@@ -386,8 +387,8 @@ class CodexProvider(BaseProvider):
             },
         )
 
-    @staticmethod
-    def run_update_preflight(*, timeout: float = CODEX_UPDATE_TIMEOUT_SECONDS) -> None:
+    @classmethod
+    def run_update_preflight(cls, *, timeout: float = CODEX_UPDATE_TIMEOUT_SECONDS) -> None:
         """Run Codex's own updater before launching the interactive runtime.
 
         CAO launches Codex inside managed tmux windows where interactive update
@@ -397,7 +398,10 @@ class CodexProvider(BaseProvider):
         subcommand; if that contract changes, fail before creating a misleading
         hanging runtime.
         """
-        codex_bin = shutil.which("codex")
+        # Resolve from the provider's declared binary so the install check and
+        # ``/providers`` endpoint share the same authoritative source per
+        # ``authoritative-sources-are-referenced-not-copied``.
+        codex_bin = shutil.which(cls.binary)
         if not codex_bin:
             raise ProviderError("Codex update preflight failed: codex binary not found in PATH")
 

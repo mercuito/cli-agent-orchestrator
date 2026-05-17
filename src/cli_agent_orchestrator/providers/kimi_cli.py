@@ -130,6 +130,7 @@ class KimiCliProvider(BaseProvider):
     """
 
     provider_type = ProviderType.KIMI_CLI.value
+    binary = "kimi"
 
     # Class-level flag: ensures ~/.kimi/config.toml MCP timeout is set only once,
     # even when multiple KimiCliProvider instances are created in parallel (e.g.,

@@ -149,6 +149,7 @@ class GeminiCliProvider(BaseProvider):
     """
 
     provider_type = ProviderType.GEMINI_CLI.value
+    binary = "gemini"
 
     def __init__(
         self,

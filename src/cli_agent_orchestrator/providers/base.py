@@ -152,6 +152,7 @@ class BaseProvider(ABC):
 
     provider_type: Optional[str] = None
     interrupt_key: str = "C-c"
+    binary: Optional[str] = None
 
     def __init__(
         self,

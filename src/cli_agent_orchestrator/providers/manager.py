@@ -1,6 +1,8 @@
 """Provider manager as module singleton with direct terminal_id → provider mapping."""
 
 import logging
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Type, cast
 
@@ -22,6 +24,24 @@ from cli_agent_orchestrator.providers.kiro_cli import KiroCliProvider
 from cli_agent_orchestrator.providers.q_cli import QCliProvider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ProviderSchema:
+    """Capability schema for one registered provider.
+
+    Composes the authoritative declarations the dashboard form needs:
+    the provider type string (from ``ProviderType``), the binary name
+    (from the provider class), the runtime install status (resolved via
+    ``shutil.which``), and the provider's declared
+    ``supported_reasoning_efforts`` / ``suggested_models`` capability sets.
+    """
+
+    name: str
+    binary: str
+    installed: bool
+    supported_reasoning_efforts: tuple[str, ...] | None
+    suggested_models: tuple[str, ...] | None
 
 
 class ProviderManager:
@@ -47,6 +67,33 @@ class ProviderManager:
         if provider_type == ProviderType.KIMI_CLI.value:
             return KimiCliProvider
         raise ValueError(f"Unknown provider type: {provider_type}")
+
+    def list_provider_schemas(self) -> list[ProviderSchema]:
+        """Return the capability schema for every registered provider.
+
+        Enumerates from ``ProviderType`` so the registry stays the single
+        source of truth (no parallel provider list). The install status is
+        resolved at call time via ``shutil.which`` against each provider's
+        declared ``binary`` attribute.
+        """
+        schemas: list[ProviderSchema] = []
+        for provider_type in ProviderType:
+            provider_cls = self._provider_class(provider_type.value)
+            binary = provider_cls.binary
+            if binary is None:
+                raise ValueError(
+                    f"Provider {provider_type.value} is missing its 'binary' declaration"
+                )
+            schemas.append(
+                ProviderSchema(
+                    name=provider_type.value,
+                    binary=binary,
+                    installed=shutil.which(binary) is not None,
+                    supported_reasoning_efforts=provider_cls.supported_reasoning_efforts(),
+                    suggested_models=provider_cls.suggested_models(),
+                )
+            )
+        return schemas
 
     def provider_supports_resume(self, provider_type: str) -> bool:
         """Return whether a provider supports agent runtime context preservation."""
