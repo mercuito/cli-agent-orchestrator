@@ -151,6 +151,8 @@ def test_agent_edit_rejects_invalid_saved_config(tmp_path, monkeypatch):
     _patch_agents_root(monkeypatch, tmp_path)
     agent = _agent()
     write_agent(agent, agents_root=tmp_path)
+    config_path = tmp_path / "developer" / "agent.toml"
+    original_config = config_path.read_text()
     editor = tmp_path / "editor.sh"
     editor.write_text("#!/bin/sh\nprintf 'not valid toml = [' > \"$1\"\n")
     os.chmod(editor, 0o755)
@@ -161,6 +163,8 @@ def test_agent_edit_rejects_invalid_saved_config(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "Error:" in result.output
     assert "agent.toml" in result.output
+    assert config_path.read_text() == original_config
+    assert validate_agent_dir(config_path.parent) == []
 
 
 def test_agent_delete_refuses_running_agent(tmp_path, monkeypatch):

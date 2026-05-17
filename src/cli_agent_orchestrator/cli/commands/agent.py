@@ -71,10 +71,12 @@ def create_agent(agent_id: str, provider: str, workdir: str) -> None:
 def edit_agent(agent_id: str) -> None:
     agent = load_agent(agent_id)
     path = AGENTS_ROOT / agent.id / AGENT_CONFIG_FILENAME
+    original_config = path.read_text()
     editor = os.environ.get("EDITOR", "vi")
     subprocess.run([editor, str(path)], check=True)
     errors = validate_agent_dir(path.parent)
     if errors:
+        path.write_text(original_config)
         raise click.ClickException("\n".join(errors))
     click.echo(f"validated {agent_id}")
 
