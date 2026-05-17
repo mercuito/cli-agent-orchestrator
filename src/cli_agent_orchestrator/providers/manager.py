@@ -95,6 +95,18 @@ class ProviderManager:
             )
         return schemas
 
+    def supported_reasoning_efforts(
+        self,
+        provider_type: str,
+    ) -> tuple[str, ...] | None:
+        """Return the ``reasoning_effort`` values a provider class accepts.
+
+        Public wrapper over the provider class's declaration so consumers
+        like ``Agent.__post_init__`` can validate without reaching past the
+        manager API into a private provider lookup.
+        """
+        return self._provider_class(provider_type).supported_reasoning_efforts()
+
     def provider_supports_resume(self, provider_type: str) -> bool:
         """Return whether a provider supports agent runtime context preservation."""
         return self.runtime_state_capability(provider_type) is not None

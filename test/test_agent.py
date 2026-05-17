@@ -30,12 +30,15 @@ def _agent(**overrides: object) -> Agent:
     values = {
         "id": "implementation_partner",
         "display_name": "Implementation Partner",
-        "cli_provider": "codex",
+        # ``claude_code`` is the only provider that declares
+        # ``supported_reasoning_efforts``; the fixture's ``reasoning_effort``
+        # below requires a provider that accepts it.
+        "cli_provider": "claude_code",
         "workdir": "/repo",
         "session_name": "implementation-partner",
         "prompt": "# Agent\n\nHelp with implementation.\n",
         "description": "Developer Agent in a multi-agent system",
-        "model": "gpt-5.2",
+        "model": "claude-opus-4-7",
         "reasoning_effort": "medium",
         "mcp_servers": {"cao-mcp-server": {"command": "cao-mcp-server"}},
         "tools": ("bash",),
@@ -74,6 +77,27 @@ def _agent(**overrides: object) -> Agent:
 def test_agent_model_rejects_invalid_workspace_context_combination():
     with pytest.raises(AgentConfigError, match="resolver_id is required"):
         _agent(workspace_context=AgentWorkspaceContextConfig(enabled=True))
+
+
+def test_agent_model_rejects_unsupported_cli_provider():
+    with pytest.raises(AgentConfigError, match="not a supported provider"):
+        _agent(cli_provider="bogus", reasoning_effort=None)
+
+
+def test_agent_model_rejects_reasoning_effort_on_non_supporting_provider():
+    """A provider that returns None for ``supported_reasoning_efforts``
+    cannot have ``reasoning_effort`` set on the agent."""
+    with pytest.raises(
+        AgentConfigError,
+        match="does not support reasoning_effort",
+    ):
+        _agent(cli_provider="codex", model="gpt-5.2", reasoning_effort="low")
+
+
+def test_agent_model_rejects_reasoning_effort_outside_supported_set():
+    """``reasoning_effort`` must be in the provider's declared supported set."""
+    with pytest.raises(AgentConfigError, match="only supports"):
+        _agent(reasoning_effort="ultra")
 
 
 def test_agent_model_rejects_invalid_linear_tool_access_at_construction():

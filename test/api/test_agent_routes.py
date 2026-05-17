@@ -75,12 +75,15 @@ def _agent(agent_id: str = "implementation_partner") -> Agent:
     return Agent(
         id=agent_id,
         display_name="Implementation Partner",
-        cli_provider="codex",
+        # ``claude_code`` declares ``supported_reasoning_efforts``; the
+        # fixture's ``reasoning_effort`` below requires a provider that
+        # accepts it.
+        cli_provider="claude_code",
         workdir="/repo",
         session_name=agent_id.replace("_", "-"),
         prompt="# Agent\n",
         description="Developer Agent in a multi-agent system",
-        model="gpt-5.2",
+        model="claude-opus-4-7",
         reasoning_effort="medium",
         mcp_servers={"cao-mcp-server": {"command": "cao-mcp-server"}},
         tools=("bash",),
@@ -296,6 +299,78 @@ def test_stop_agent_deletes_existing_live_instance(client, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"success": True}
     assert delete_calls == [("abcd1234", True)]
+
+
+def test_update_agent_rejects_unsupported_cli_provider(client, monkeypatch):
+    """An unknown ``cli_provider`` returns 400 with a clear pointer at the field."""
+    existing_agent = _agent()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.load_agent",
+        lambda agent_id: existing_agent,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.patch_agent_config",
+        lambda agent, *, changed_fields: None,
+    )
+
+    response = client.put(
+        "/agents/implementation_partner",
+        json={"cli_provider": "bogus"},
+    )
+
+    assert response.status_code == 400
+    assert "cli_provider" in response.json()["detail"]
+    assert "bogus" in response.json()["detail"]
+
+
+def test_update_agent_rejects_reasoning_effort_for_non_supporting_provider(client, monkeypatch):
+    """Setting ``reasoning_effort`` on a provider that returns None for
+    ``supported_reasoning_efforts`` returns 400 naming both the value and
+    the provider."""
+    existing_agent = _agent()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.load_agent",
+        lambda agent_id: existing_agent,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.patch_agent_config",
+        lambda agent, *, changed_fields: None,
+    )
+
+    response = client.put(
+        "/agents/implementation_partner",
+        json={"cli_provider": "codex", "model": "gpt-5.2", "reasoning_effort": "low"},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "reasoning_effort" in detail
+    assert "codex" in detail
+
+
+def test_update_agent_rejects_reasoning_effort_outside_supported_set(client, monkeypatch):
+    """``reasoning_effort`` outside the provider's supported set returns
+    400 with the offending value and the accepted set in the error."""
+    existing_agent = _agent()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.load_agent",
+        lambda agent_id: existing_agent,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.patch_agent_config",
+        lambda agent, *, changed_fields: None,
+    )
+
+    response = client.put(
+        "/agents/implementation_partner",
+        json={"reasoning_effort": "ultra"},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "reasoning_effort" in detail
+    assert "ultra" in detail
+    assert "only supports" in detail
 
 
 def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):

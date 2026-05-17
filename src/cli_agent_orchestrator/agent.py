@@ -215,6 +215,28 @@ class Agent:
             _required_str(self.model, f"agents.{self.id}.model")
         if self.reasoning_effort is not None:
             _required_str(self.reasoning_effort, f"agents.{self.id}.reasoning_effort")
+            # Validate against the provider's declared supported_reasoning_efforts
+            # so direct dataclass construction (CLI, tests, internal callers)
+            # gets the same protection as the HTTP write path. Local import
+            # avoids a module-import cycle: providers import ``Agent`` at top
+            # level, and the manager only needs to be resolved at validation
+            # time.
+            from cli_agent_orchestrator.providers.manager import provider_manager
+
+            supported = provider_manager.supported_reasoning_efforts(self.cli_provider)
+            if supported is None:
+                raise AgentConfigError(
+                    f"agents.{self.id}.reasoning_effort is set to "
+                    f"{self.reasoning_effort!r} but provider "
+                    f"{self.cli_provider!r} does not support reasoning_effort"
+                )
+            if self.reasoning_effort not in supported:
+                raise AgentConfigError(
+                    f"agents.{self.id}.reasoning_effort is "
+                    f"{self.reasoning_effort!r} but provider "
+                    f"{self.cli_provider!r} only supports "
+                    f"{list(supported)!r}"
+                )
         object.__setattr__(
             self,
             "mcp_servers",

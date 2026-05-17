@@ -283,11 +283,11 @@ def build_codex_home_materialization(
     if isinstance(codex_config, dict):
         deep_merge(base_config, codex_config)
 
-    reasoning_effort = agent.reasoning_effort
-    if reasoning_effort and not (
-        isinstance(codex_config, dict) and "model_reasoning_effort" in codex_config
-    ):
-        base_config["model_reasoning_effort"] = str(reasoning_effort)
+    # Codex does not declare ``supported_reasoning_efforts`` (see
+    # ``CodexProvider.supported_reasoning_efforts``), so agents bound to
+    # codex cannot set ``reasoning_effort``; the only way to influence
+    # codex's reasoning is via ``codex_config.model_reasoning_effort``,
+    # which the merge above already applied.
 
     # MCP servers from the agent + the mandatory CAO MCP server.
     # User-global mcp_servers are dropped by the policy allowlist.

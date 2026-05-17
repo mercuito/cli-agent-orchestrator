@@ -902,6 +902,7 @@ def test_build_command_includes_reasoning_effort_when_set():
             name="worker",
             description="Worker",
             system_prompt="SYSTEM PROMPT",
+            cli_provider="claude_code",
             reasoning_effort="high",
         ),
     ):
