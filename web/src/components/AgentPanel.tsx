@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, ChevronRight, Edit3, Eye, EyeOff, FileText, Mail, Monitor, Play, Plus, RotateCcw, Save, Send, Terminal as TermIcon, Trash2, X } from 'lucide-react'
+import { Bot, ChevronRight, FileText, Mail, Monitor, Play, Plus, Send, Terminal as TermIcon, Trash2, X } from 'lucide-react'
 import { api, AgentStatus, TerminalMeta } from '../api'
 import { useStore } from '../store'
-import { AgentTimelinePanel } from './AgentTimelinePanel'
-import { formatAgentToml, linearFieldStatus, parseAgentTomlDraft } from './agents-tab/agentTomlSerialization'
+import { AgentConfigTab } from './agents-tab/AgentConfigTab'
+import { AgentDetailPanel } from './agents-tab/AgentDetailPanel'
+import { AgentTimelineTab } from './agents-tab/AgentTimelineTab'
 import { BatonIndicator } from './BatonIndicator'
 import { ConfirmModal } from './ConfirmModal'
 import { InboxPanel } from './InboxPanel'
@@ -40,12 +41,8 @@ export function AgentPanel({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showSpawnModal, setShowSpawnModal] = useState(false)
   const [startingAgentId, setStartingAgentId] = useState<string | null>(null)
-  const [editingAgentId, setEditingAgentId] = useState<string | null>(null)
-  const [agentTomlDraft, setAgentTomlDraft] = useState('')
-  const [agentPromptDraft, setAgentPromptDraft] = useState('')
-  const [agentSaveError, setAgentSaveError] = useState<string | null>(null)
-  const [revealedLinearFields, setRevealedLinearFields] = useState<Record<string, boolean>>({})
-  const [savingAgentId, setSavingAgentId] = useState<string | null>(null)
+  const [stoppingAgentId, setStoppingAgentId] = useState<string | null>(null)
+  const [editingByDefaultAgentId, setEditingByDefaultAgentId] = useState<string | null>(null)
   const [createMode, setCreateMode] = useState(false)
   const [createDraft, setCreateDraft] = useState(emptyCreateDraft)
   const [creatingAgent, setCreatingAgent] = useState(false)
@@ -117,32 +114,30 @@ export function AgentPanel({
     }
   }
 
-  const handleEditAgent = (agent: AgentStatus) => {
-    setEditingAgentId(agent.agent_id)
-    setAgentTomlDraft(formatAgentToml(agent.config))
-    setAgentPromptDraft(agent.config.prompt)
-    setAgentSaveError(null)
+  const handleStopAgent = async (agentId: string) => {
+    setStoppingAgentId(agentId)
+    try {
+      await api.stopAgent(agentId)
+      if (liveTerminal?.agentId === agentId) setLiveTerminal(null)
+      if (activeSession) await selectSession(activeSession)
+      await refreshAgents()
+      showSnackbar({ type: 'success', message: `Agent ${agentId} stopped` })
+    } catch (error) {
+      showSnackbar({ type: 'error', message: error instanceof Error ? error.message : `Failed to stop ${agentId}` })
+    } finally {
+      setStoppingAgentId(null)
+    }
   }
 
-  const handleSaveAgent = async (agent: AgentStatus) => {
-    setSavingAgentId(agent.agent_id)
-    setAgentSaveError(null)
-    try {
-      const updated = await api.updateAgent(agent.agent_id, {
-        ...parseAgentTomlDraft(agentTomlDraft),
-        prompt: agentPromptDraft,
-      })
-      setAgents(previous => previous.map(entry => entry.agent_id === updated.agent_id ? updated : entry))
-      setEditingAgentId(null)
-      setSelectedAgentId(updated.agent_id)
-      showSnackbar({ type: 'success', message: `Agent ${updated.agent_id} updated` })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : `Failed to update ${agent.agent_id}`
-      setAgentSaveError(message)
-      showSnackbar({ type: 'error', message })
-    } finally {
-      setSavingAgentId(null)
-    }
+  const handleAgentUpdated = (updated: AgentStatus) => {
+    setAgents(previous => previous.map(entry => entry.agent_id === updated.agent_id ? updated : entry))
+    setSelectedAgentId(updated.agent_id)
+    if (editingByDefaultAgentId === updated.agent_id) setEditingByDefaultAgentId(null)
+    showSnackbar({ type: 'success', message: `Agent ${updated.agent_id} updated` })
+  }
+
+  const handleAgentSaveError = (message: string) => {
+    showSnackbar({ type: 'error', message })
   }
 
   const handleCreateAgent = async () => {
@@ -158,10 +153,7 @@ export function AgentPanel({
       })
       setAgents(previous => [...previous.filter(agent => agent.agent_id !== created.agent_id), created])
       setSelectedAgentId(created.agent_id)
-      setEditingAgentId(created.agent_id)
-      setAgentTomlDraft(formatAgentToml(created.config))
-      setAgentPromptDraft(created.config.prompt)
-      setAgentSaveError(null)
+      setEditingByDefaultAgentId(created.agent_id)
       setCreateMode(false)
       setCreateDraft(emptyCreateDraft)
       setShowSpawnModal(false)
@@ -235,8 +227,6 @@ export function AgentPanel({
 
   return (
     <div className="space-y-6">
-      <AgentTimelinePanel onFocusTerminal={focusTimelineTerminal} />
-
       <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
@@ -264,100 +254,28 @@ export function AgentPanel({
           )}
         </div>
 
-        <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-4 min-w-0">
-          {selectedAgent ? (
-            <div className="space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">agent.toml</h3>
-                  <p className="text-xs text-gray-500 mt-1">{selectedAgent.display_name} · {selectedAgent.active ? `Running in ${selectedAgent.active_terminal_id}` : 'Stopped'}</p>
-                </div>
-                {editingAgentId === selectedAgent.agent_id ? (
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => handleSaveAgent(selectedAgent)} disabled={savingAgentId === selectedAgent.agent_id} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Save ${selectedAgent.agent_id}`}>
-                      <Save size={13} /> Save
-                    </button>
-                    <button onClick={() => { setEditingAgentId(null); setAgentSaveError(null) }} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Cancel ${selectedAgent.agent_id}`}>
-                      <RotateCcw size={13} /> Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button onClick={() => handleEditAgent(selectedAgent)} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Edit ${selectedAgent.agent_id}`}>
-                    <Edit3 size={13} /> Edit
-                  </button>
-                )}
-              </div>
-              {editingAgentId === selectedAgent.agent_id ? (
-                <div className="space-y-3">
-                  <textarea
-                    aria-label={`${selectedAgent.agent_id} agent.toml`}
-                    value={agentTomlDraft}
-                    onChange={event => setAgentTomlDraft(event.target.value)}
-                    className="w-full min-h-[320px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
-                  />
-                  <div>
-                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">prompt.md</h4>
-                    <textarea
-                      aria-label={`${selectedAgent.agent_id} prompt.md`}
-                      value={agentPromptDraft}
-                      onChange={event => setAgentPromptDraft(event.target.value)}
-                      className="w-full min-h-[180px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
-                    />
-                  </div>
-                  {agentSaveError && (
-                    <p role="alert" className="rounded-lg border border-red-900/60 bg-red-950/50 px-3 py-2 text-xs text-red-200">
-                      {agentSaveError}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <pre className="max-h-[460px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">{formatAgentToml(selectedAgent.config)}</pre>
-                  <div>
-                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">prompt.md</h4>
-                    <pre className="max-h-[260px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">{selectedAgent.config.prompt}</pre>
-                  </div>
-                </div>
-              )}
-              {selectedAgent.config.linear && (
-                <div className="rounded-lg border border-gray-700/50 bg-gray-950 p-3">
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Linear secrets</h4>
-                  {[
-                    { field: 'client_secret', label: 'Client secret', configured: selectedAgent.config.linear.client_secret_configured },
-                    { field: 'webhook_secret', label: 'Webhook secret', configured: selectedAgent.config.linear.webhook_secret_configured },
-                  ].map(({ field, label, configured }) => {
-                    const key = `${selectedAgent.agent_id}:${field}`
-                    const revealed = !!revealedLinearFields[key]
-                    return (
-                      <div key={field} className="flex items-center justify-between gap-3 py-1 text-xs text-gray-300">
-                        <span>{label}</span>
-                        <span className="ml-auto font-mono text-gray-400">{linearFieldStatus(configured, revealed)}</span>
-                        {configured && (
-                          <button
-                            type="button"
-                            onClick={() => setRevealedLinearFields(previous => ({ ...previous, [key]: !previous[key] }))}
-                            className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-gray-300 hover:bg-gray-800"
-                            aria-label={`${revealed ? 'Hide' : 'Reveal'} ${label}`}
-                          >
-                            {revealed ? <EyeOff size={12} /> : <Eye size={12} />}
-                            {revealed ? 'Hide' : 'Reveal'}
-                          </button>
-                        )}
-                      </div>
-                    )
-                  })}
-                  <div className="mt-2 space-y-1 border-t border-gray-800 pt-2 text-xs text-gray-400">
-                    <div>Access token: {selectedAgent.config.linear.access_token_configured ? 'Managed by OAuth callback' : 'Not configured'}</div>
-                    <div>Refresh token: {selectedAgent.config.linear.refresh_token_configured ? 'Managed by OAuth callback' : 'Not configured'}</div>
-                    <div>Token expiry: {selectedAgent.config.linear.token_expires_at || 'Not configured'}</div>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-gray-500 text-sm">Select an agent to view its config.</p>
+        <AgentDetailPanel
+          agent={selectedAgent}
+          onStartAgent={handleStartAgent}
+          onStopAgent={handleStopAgent}
+          startingAgentId={startingAgentId}
+          stoppingAgentId={stoppingAgentId}
+          renderConfigTab={agent => (
+            <AgentConfigTab
+              key={agent.agent_id}
+              agent={agent}
+              onAgentUpdated={handleAgentUpdated}
+              onSaveError={handleAgentSaveError}
+              defaultEditing={editingByDefaultAgentId === agent.agent_id}
+            />
           )}
-        </div>
+          renderTimelineTab={agent => (
+            <AgentTimelineTab
+              agentId={agent.agent_id}
+              onFocusTerminal={focusTimelineTerminal}
+            />
+          )}
+        />
       </div>
 
       <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-5">

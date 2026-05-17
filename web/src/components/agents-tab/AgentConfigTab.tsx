@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Edit3, Eye, EyeOff, RotateCcw, Save } from 'lucide-react'
 import { api, AgentStatus } from '../../api'
 import { formatAgentToml, linearFieldStatus, parseAgentTomlDraft } from './agentTomlSerialization'
@@ -7,17 +7,23 @@ interface AgentConfigTabProps {
   agent: AgentStatus
   onAgentUpdated: (agent: AgentStatus) => void
   onSaveError?: (message: string) => void
+  defaultEditing?: boolean
 }
 
-export function AgentConfigTab({ agent, onAgentUpdated, onSaveError }: AgentConfigTabProps) {
-  const [editing, setEditing] = useState(false)
-  const [tomlDraft, setTomlDraft] = useState('')
-  const [promptDraft, setPromptDraft] = useState('')
+export function AgentConfigTab({ agent, onAgentUpdated, onSaveError, defaultEditing = false }: AgentConfigTabProps) {
+  const [editing, setEditing] = useState(defaultEditing)
+  const [tomlDraft, setTomlDraft] = useState(() => defaultEditing ? formatAgentToml(agent.config) : '')
+  const [promptDraft, setPromptDraft] = useState(() => defaultEditing ? agent.config.prompt : '')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [revealedLinearFields, setRevealedLinearFields] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
+  const isFirstRenderRef = useRef(true)
 
   useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false
+      return
+    }
     setEditing(false)
     setSaveError(null)
     setRevealedLinearFields({})

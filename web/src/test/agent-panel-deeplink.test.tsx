@@ -123,6 +123,7 @@ const createAgent = vi.hoisted(() =>
   vi.fn((body: any) => Promise.resolve(agentStatus(body.id, body.display_name || body.id))),
 )
 const startAgent = vi.hoisted(() => vi.fn())
+const stopAgent = vi.hoisted(() => vi.fn(() => Promise.resolve({ success: true })))
 const getAgentTimeline = vi.hoisted(() =>
   vi.fn(() =>
     Promise.resolve({
@@ -156,6 +157,7 @@ vi.mock('../api', () => ({
     updateAgent,
     createAgent,
     startAgent,
+    stopAgent,
     getAgentTimeline,
     getAgentRelatedEvents: vi.fn(() => Promise.resolve({
       event: null,
@@ -204,14 +206,96 @@ describe('AgentPanel', () => {
   })
 
   describe('agent timeline boundary', () => {
-    it('renders the agent timeline panel through the Agents panel boundary', async () => {
+    it('renders the agent timeline panel through the Agents panel Timeline tab', async () => {
       render(<AgentPanel />)
 
       expect((await screen.findAllByRole('button', { name: /aria/i })).length).toBeGreaterThan(0)
+      fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
+
       expect(await screen.findByTestId('agent-timeline')).toBeInTheDocument()
       expect(screen.getByText('linear:agent_mentioned:mention')).toBeInTheDocument()
       expect(listAgents).toHaveBeenCalled()
       expect(getAgentTimeline).toHaveBeenCalledWith('aria')
+    })
+  })
+
+  describe('unified detail panel layout', () => {
+    it('selecting an agent in the roster updates the detail panel for that agent', async () => {
+      // Given
+      listAgents.mockResolvedValue([
+        agentStatus('aria', 'Aria'),
+        agentStatus('cael', 'Cael'),
+      ] as any)
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+
+      // When
+      fireEvent.click(screen.getByRole('button', { name: /cael/i }))
+
+      // Then
+      expect(await screen.findByRole('heading', { name: 'Cael' })).toBeInTheDocument()
+    })
+
+    it('switching tabs preserves the agent selection', async () => {
+      // Given
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+
+      // When
+      fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
+
+      // Then
+      expect(await screen.findByTestId('agent-timeline')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Aria' })).toBeInTheDocument()
+    })
+
+    it('switching agents preserves the active tab', async () => {
+      // Given
+      listAgents.mockResolvedValue([
+        agentStatus('aria', 'Aria'),
+        agentStatus('cael', 'Cael'),
+      ] as any)
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+      fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
+      await screen.findByTestId('agent-timeline')
+
+      // When
+      fireEvent.click(screen.getByRole('button', { name: /cael/i }))
+
+      // Then
+      await waitFor(() => {
+        expect(getAgentTimeline).toHaveBeenCalledWith('cael')
+      })
+      expect(screen.getByRole('tab', { name: 'Timeline' })).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('renders exactly one Agents roster on the page', async () => {
+      // Given / When
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+
+      // Then
+      expect(screen.getAllByRole('heading', { name: /Agents \(\d+\)/ })).toHaveLength(1)
+    })
+
+    it('stops a running agent through api.stopAgent and refreshes the roster', async () => {
+      // Given
+      listAgents
+        .mockResolvedValueOnce([
+          { ...agentStatus('aria', 'Aria'), active: true, active_terminal_id: 'term-live' } as any,
+        ])
+        .mockResolvedValue([agentStatus('aria', 'Aria')] as any)
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+
+      // When
+      fireEvent.click(screen.getByRole('button', { name: /stop aria/i }))
+
+      // Then
+      await waitFor(() => {
+        expect(stopAgent).toHaveBeenCalledWith('aria')
+      })
     })
   })
 
@@ -220,7 +304,7 @@ describe('AgentPanel', () => {
       render(<AgentPanel />)
 
       expect(await screen.findByRole('heading', { name: /agent.toml/i })).toBeInTheDocument()
-      expect(screen.getByText('Stopped')).toBeInTheDocument()
+      expect(screen.getAllByText('Stopped').length).toBeGreaterThan(0)
       expect(screen.getByText(/workdir = "\/repo"/)).toBeInTheDocument()
       expect(screen.getByText(/session_name = "aria-session"/)).toBeInTheDocument()
       expect(screen.getByText(/cli_provider = "codex"/)).toBeInTheDocument()
@@ -492,6 +576,7 @@ describe('AgentPanel', () => {
 
       render(<AgentPanel />)
 
+      fireEvent.click(await screen.findByRole('tab', { name: 'Timeline' }))
       fireEvent.click(await screen.findByRole('button', { name: /open terminal term-aria-main/i }))
 
       await waitFor(() => {
