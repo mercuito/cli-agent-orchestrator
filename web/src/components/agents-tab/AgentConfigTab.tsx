@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { Edit3, Eye, EyeOff, RotateCcw, Save } from 'lucide-react'
 import { api, AgentStatus } from '../../api'
-import { formatAgentToml, linearFieldStatus, parseAgentTomlDraft } from './agentTomlSerialization'
+import { useProviderSchema } from '../../hooks/useProviderSchema'
+import {
+  formatAgentToml,
+  formatAgentTomlExcluding,
+  linearFieldStatus,
+  parseAgentTomlDraft,
+} from './agentTomlSerialization'
+import {
+  AgentStructuredForm,
+  STRUCTURED_FIELD_KEYS,
+  StructuredFields,
+} from './AgentStructuredForm'
 
 interface AgentConfigTabProps {
   agent: AgentStatus
@@ -10,10 +21,31 @@ interface AgentConfigTabProps {
   defaultEditing?: boolean
 }
 
-export function AgentConfigTab({ agent, onAgentUpdated, onSaveError, defaultEditing = false }: AgentConfigTabProps) {
+function readStructuredFields(agent: AgentStatus): StructuredFields {
+  return {
+    display_name: agent.config.display_name ?? '',
+    description: agent.config.description ?? '',
+    cli_provider: agent.config.cli_provider ?? '',
+    model: agent.config.model ?? '',
+    reasoning_effort: agent.config.reasoning_effort ?? '',
+  }
+}
+
+export function AgentConfigTab({
+  agent,
+  onAgentUpdated,
+  onSaveError,
+  defaultEditing = false,
+}: AgentConfigTabProps) {
+  const providerSchema = useProviderSchema()
   const [editing, setEditing] = useState(defaultEditing)
-  const [tomlDraft, setTomlDraft] = useState(() => defaultEditing ? formatAgentToml(agent.config) : '')
-  const [promptDraft, setPromptDraft] = useState(() => defaultEditing ? agent.config.prompt : '')
+  const [structuredDraft, setStructuredDraft] = useState<StructuredFields>(() =>
+    readStructuredFields(agent),
+  )
+  const [tomlDraft, setTomlDraft] = useState(() =>
+    defaultEditing ? formatAgentTomlExcluding(agent.config, STRUCTURED_FIELD_KEYS) : '',
+  )
+  const [promptDraft, setPromptDraft] = useState(() => (defaultEditing ? agent.config.prompt : ''))
   const [saveError, setSaveError] = useState<string | null>(null)
   const [revealedLinearFields, setRevealedLinearFields] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
@@ -27,11 +59,13 @@ export function AgentConfigTab({ agent, onAgentUpdated, onSaveError, defaultEdit
     setEditing(false)
     setSaveError(null)
     setRevealedLinearFields({})
+    setStructuredDraft(readStructuredFields(agent))
   }, [agent.agent_id])
 
   const handleEdit = () => {
     setEditing(true)
-    setTomlDraft(formatAgentToml(agent.config))
+    setStructuredDraft(readStructuredFields(agent))
+    setTomlDraft(formatAgentTomlExcluding(agent.config, STRUCTURED_FIELD_KEYS))
     setPromptDraft(agent.config.prompt)
     setSaveError(null)
   }
@@ -45,8 +79,18 @@ export function AgentConfigTab({ agent, onAgentUpdated, onSaveError, defaultEdit
     setSaving(true)
     setSaveError(null)
     try {
+      const rawPayload = parseAgentTomlDraft(tomlDraft)
+      const structuredPayload = {
+        display_name: structuredDraft.display_name,
+        description: structuredDraft.description === '' ? null : structuredDraft.description,
+        cli_provider: structuredDraft.cli_provider,
+        model: structuredDraft.model === '' ? null : structuredDraft.model,
+        reasoning_effort:
+          structuredDraft.reasoning_effort === '' ? null : structuredDraft.reasoning_effort,
+      }
       const updated = await api.updateAgent(agent.agent_id, {
-        ...parseAgentTomlDraft(tomlDraft),
+        ...rawPayload,
+        ...structuredPayload,
         prompt: promptDraft,
       })
       onAgentUpdated(updated)
@@ -60,38 +104,94 @@ export function AgentConfigTab({ agent, onAgentUpdated, onSaveError, defaultEdit
     }
   }
 
+  if (providerSchema.status === 'loading') {
+    return (
+      <div className="rounded-lg border border-gray-700/50 bg-gray-950 p-3 text-xs text-gray-400">
+        Loading provider schema…
+      </div>
+    )
+  }
+
+  if (providerSchema.status === 'error' || providerSchema.schemas === null) {
+    return (
+      <div
+        role="alert"
+        className="rounded-lg border border-red-900/60 bg-red-950/50 p-3 text-xs text-red-200"
+      >
+        Failed to load provider schema: {providerSchema.error ?? 'unknown error'}
+      </div>
+    )
+  }
+
+  const schemas = providerSchema.schemas
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">agent.toml</h3>
-          <p className="text-xs text-gray-500 mt-1">{agent.display_name} · {agent.active ? `Running in ${agent.active_terminal_id}` : 'Stopped'}</p>
+          <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+            Configuration
+          </h3>
+          <p className="text-xs text-gray-500 mt-1">
+            {agent.display_name} ·{' '}
+            {agent.active ? `Running in ${agent.active_terminal_id}` : 'Stopped'}
+          </p>
         </div>
         {editing ? (
           <div className="flex items-center gap-2">
-            <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Save ${agent.agent_id}`}>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
+              aria-label={`Save ${agent.agent_id}`}
+            >
               <Save size={13} /> Save
             </button>
-            <button onClick={handleCancel} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Cancel ${agent.agent_id}`}>
+            <button
+              onClick={handleCancel}
+              className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors"
+              aria-label={`Cancel ${agent.agent_id}`}
+            >
               <RotateCcw size={13} /> Cancel
             </button>
           </div>
         ) : (
-          <button onClick={handleEdit} className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors" aria-label={`Edit ${agent.agent_id}`}>
+          <button
+            onClick={handleEdit}
+            className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded-lg transition-colors"
+            aria-label={`Edit ${agent.agent_id}`}
+          >
             <Edit3 size={13} /> Edit
           </button>
         )}
       </div>
+
+      <AgentStructuredForm
+        agentId={agent.agent_id}
+        values={editing ? structuredDraft : readStructuredFields(agent)}
+        schemas={schemas}
+        editing={editing}
+        saveError={saveError}
+        onChange={setStructuredDraft}
+      />
+
       {editing ? (
         <div className="space-y-3">
-          <textarea
-            aria-label={`${agent.agent_id} agent.toml`}
-            value={tomlDraft}
-            onChange={event => setTomlDraft(event.target.value)}
-            className="w-full min-h-[320px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
-          />
           <div>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">prompt.md</h4>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Raw agent.toml (unstructured fields)
+            </h4>
+            <textarea
+              aria-label={`${agent.agent_id} agent.toml`}
+              value={tomlDraft}
+              onChange={event => setTomlDraft(event.target.value)}
+              className="w-full min-h-[200px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              prompt.md
+            </h4>
             <textarea
               aria-label={`${agent.agent_id} prompt.md`}
               value={promptDraft}
@@ -100,37 +200,68 @@ export function AgentConfigTab({ agent, onAgentUpdated, onSaveError, defaultEdit
             />
           </div>
           {saveError && (
-            <p role="alert" className="rounded-lg border border-red-900/60 bg-red-950/50 px-3 py-2 text-xs text-red-200">
+            <p
+              role="alert"
+              className="rounded-lg border border-red-900/60 bg-red-950/50 px-3 py-2 text-xs text-red-200"
+            >
               {saveError}
             </p>
           )}
         </div>
       ) : (
         <div className="space-y-3">
-          <pre className="max-h-[460px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">{formatAgentToml(agent.config)}</pre>
           <div>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">prompt.md</h4>
-            <pre className="max-h-[260px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">{agent.config.prompt}</pre>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Raw agent.toml (unstructured fields)
+            </h4>
+            <pre className="max-h-[300px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">
+              {formatAgentTomlExcluding(agent.config, STRUCTURED_FIELD_KEYS)}
+            </pre>
+          </div>
+          <div>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              prompt.md
+            </h4>
+            <pre className="max-h-[260px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">
+              {agent.config.prompt}
+            </pre>
           </div>
         </div>
       )}
       {agent.config.linear && (
         <div className="rounded-lg border border-gray-700/50 bg-gray-950 p-3">
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Linear secrets</h4>
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            Linear secrets
+          </h4>
           {[
-            { field: 'client_secret', label: 'Client secret', configured: agent.config.linear.client_secret_configured },
-            { field: 'webhook_secret', label: 'Webhook secret', configured: agent.config.linear.webhook_secret_configured },
+            {
+              field: 'client_secret',
+              label: 'Client secret',
+              configured: agent.config.linear.client_secret_configured,
+            },
+            {
+              field: 'webhook_secret',
+              label: 'Webhook secret',
+              configured: agent.config.linear.webhook_secret_configured,
+            },
           ].map(({ field, label, configured }) => {
             const key = `${agent.agent_id}:${field}`
             const revealed = !!revealedLinearFields[key]
             return (
-              <div key={field} className="flex items-center justify-between gap-3 py-1 text-xs text-gray-300">
+              <div
+                key={field}
+                className="flex items-center justify-between gap-3 py-1 text-xs text-gray-300"
+              >
                 <span>{label}</span>
-                <span className="ml-auto font-mono text-gray-400">{linearFieldStatus(configured, revealed)}</span>
+                <span className="ml-auto font-mono text-gray-400">
+                  {linearFieldStatus(configured, revealed)}
+                </span>
                 {configured && (
                   <button
                     type="button"
-                    onClick={() => setRevealedLinearFields(previous => ({ ...previous, [key]: !previous[key] }))}
+                    onClick={() =>
+                      setRevealedLinearFields(previous => ({ ...previous, [key]: !previous[key] }))
+                    }
                     className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-gray-300 hover:bg-gray-800"
                     aria-label={`${revealed ? 'Hide' : 'Reveal'} ${label}`}
                   >
@@ -142,8 +273,18 @@ export function AgentConfigTab({ agent, onAgentUpdated, onSaveError, defaultEdit
             )
           })}
           <div className="mt-2 space-y-1 border-t border-gray-800 pt-2 text-xs text-gray-400">
-            <div>Access token: {agent.config.linear.access_token_configured ? 'Managed by OAuth callback' : 'Not configured'}</div>
-            <div>Refresh token: {agent.config.linear.refresh_token_configured ? 'Managed by OAuth callback' : 'Not configured'}</div>
+            <div>
+              Access token:{' '}
+              {agent.config.linear.access_token_configured
+                ? 'Managed by OAuth callback'
+                : 'Not configured'}
+            </div>
+            <div>
+              Refresh token:{' '}
+              {agent.config.linear.refresh_token_configured
+                ? 'Managed by OAuth callback'
+                : 'Not configured'}
+            </div>
             <div>Token expiry: {agent.config.linear.token_expires_at || 'Not configured'}</div>
           </div>
         </div>

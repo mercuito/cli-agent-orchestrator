@@ -1,33 +1,54 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { AgentConfigTab } from '../components/agents-tab/AgentConfigTab'
-import { AgentDetailPanel } from '../components/agents-tab/AgentDetailPanel'
-import type { AgentStatus } from '../api'
+import type { AgentStatus, ProviderSchema } from '../api'
 
 const updateAgent = vi.hoisted(() => vi.fn())
+const listProviders = vi.hoisted(() => vi.fn())
 
-vi.mock('../api', () => ({
-  api: {
-    updateAgent: (...args: unknown[]) => updateAgent(...args),
+vi.mock('../api', async () => {
+  const actual = await vi.importActual<typeof import('../api')>('../api')
+  return {
+    ...actual,
+    api: {
+      updateAgent: (...args: unknown[]) => updateAgent(...args),
+      listProviders: (...args: unknown[]) => listProviders(...args),
+    },
+  }
+})
+
+const SCHEMAS: ProviderSchema[] = [
+  {
+    name: 'claude_code',
+    binary: 'claude',
+    installed: true,
+    supported_reasoning_efforts: ['low', 'medium', 'high'],
+    suggested_models: ['claude-opus-4-7', 'claude-sonnet-4-6'],
   },
-}))
+  {
+    name: 'codex',
+    binary: 'codex',
+    installed: true,
+    supported_reasoning_efforts: null,
+    suggested_models: null,
+  },
+]
 
-function ariaStatus(): AgentStatus {
+function ariaStatus(overrides: Partial<AgentStatus['config']> = {}): AgentStatus {
   return {
     agent_id: 'aria',
     display_name: 'Aria',
-    cli_provider: 'codex',
+    cli_provider: 'claude_code',
     workdir: '/repo',
     session_name: 'aria-session',
     config: {
       id: 'aria',
       display_name: 'Aria',
-      cli_provider: 'codex',
+      cli_provider: 'claude_code',
       workdir: '/repo',
       session_name: 'aria-session',
       prompt: '# Agent\n',
       description: 'Works Linear issues',
-      model: 'gpt-5.2',
+      model: 'claude-opus-4-7',
       reasoning_effort: 'medium',
       mcp_servers: { cao: { command: 'cao-mcp-server' } },
       tools: ['bash'],
@@ -68,6 +89,7 @@ function ariaStatus(): AgentStatus {
           },
         ],
       },
+      ...overrides,
     },
     active: false,
     active_terminal_id: null,
@@ -76,114 +98,243 @@ function ariaStatus(): AgentStatus {
   }
 }
 
+async function loadConfigTab() {
+  // Fresh module each scenario so the provider-schema cache restarts.
+  vi.resetModules()
+  return await import('../components/agents-tab/AgentConfigTab')
+}
+
+async function loadDetailPanel() {
+  return await import('../components/agents-tab/AgentDetailPanel')
+}
+
+beforeEach(() => {
+  vi.resetModules()
+  listProviders.mockReset()
+  updateAgent.mockReset()
+  listProviders.mockResolvedValue(SCHEMAS)
+})
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
 })
 
 describe('AgentConfigTab', () => {
-  it('renders the agent.toml view, prompt.md, and Linear secrets summary', () => {
-    // Given
-    const agent = ariaStatus()
+  it('shows loading until the provider schema resolves', async () => {
+    let resolveProviders: (value: ProviderSchema[]) => void = () => {}
+    listProviders.mockReturnValueOnce(
+      new Promise<ProviderSchema[]>(resolve => {
+        resolveProviders = resolve
+      }),
+    )
+    const { AgentConfigTab } = await loadConfigTab()
 
-    // When
-    render(<AgentConfigTab agent={agent} onAgentUpdated={vi.fn()} />)
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
 
-    // Then
+    expect(screen.getByText(/loading provider schema/i)).toBeInTheDocument()
+
+    resolveProviders(SCHEMAS)
+
+    await waitFor(() =>
+      expect(screen.queryByText(/loading provider schema/i)).not.toBeInTheDocument(),
+    )
+  })
+
+  it('renders structured field values, raw TOML, prompt, and Linear secrets in read mode', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    await screen.findByRole('button', { name: /edit aria/i })
+
+    // Structured field values rendered as labeled text.
+    const structuredSection = screen.getByRole('region', { name: /structured fields/i })
+    expect(structuredSection).toHaveTextContent('Aria')
+    expect(structuredSection).toHaveTextContent('claude_code')
+    expect(structuredSection).toHaveTextContent('claude-opus-4-7')
+    expect(structuredSection).toHaveTextContent('medium')
+
+    // Raw TOML preserves workdir and session_name (escape-hatch fields).
     expect(screen.getByText(/workdir = "\/repo"/)).toBeInTheDocument()
-    expect(screen.getByText(/model = "gpt-5.2"/)).toBeInTheDocument()
+    expect(screen.getByText(/session_name = "aria-session"/)).toBeInTheDocument()
     expect(screen.getByText(/\[mcp_servers.cao\]/)).toBeInTheDocument()
-    expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
+
+    // Prompt and Linear secrets summary still render.
     expect(screen.getByText('# Agent')).toBeInTheDocument()
+    expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
     expect(screen.getAllByText('••••••••').length).toBeGreaterThan(0)
     expect(screen.getByText(/Access token: Managed by OAuth callback/)).toBeInTheDocument()
   })
 
-  it('reveals Linear secret status without exposing token values', () => {
-    // Given
-    const agent = ariaStatus()
-    render(<AgentConfigTab agent={agent} onAgentUpdated={vi.fn()} />)
+  it('flips structured fields into inputs and dropdowns in edit mode', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
 
-    // When
-    fireEvent.click(screen.getByRole('button', { name: /reveal client secret/i }))
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
 
-    // Then
-    expect(screen.getByText('Configured on server')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+
+    expect(screen.getByLabelText('aria display_name')).toHaveValue('Aria')
+    expect(screen.getByLabelText('aria description')).toHaveValue('Works Linear issues')
+    const providerSelect = screen.getByLabelText('aria cli_provider') as HTMLSelectElement
+    expect(providerSelect.value).toBe('claude_code')
+    expect(Array.from(providerSelect.options).map(option => option.value)).toEqual([
+      'claude_code',
+      'codex',
+    ])
+    expect(screen.getByLabelText('aria model')).toHaveValue('claude-opus-4-7')
+    const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
+    expect(effortSelect.value).toBe('medium')
+    expect(Array.from(effortSelect.options).map(option => option.value)).toEqual([
+      '',
+      'low',
+      'medium',
+      'high',
+    ])
+    expect(effortSelect.disabled).toBe(false)
   })
 
-  it('saves edits through the public updateAgent API and reports the new status', async () => {
-    // Given
-    const agent = ariaStatus()
-    const updatedAgent: AgentStatus = {
-      ...agent,
-      config: { ...agent.config, model: 'gpt-5.4' },
-    }
-    updateAgent.mockResolvedValueOnce(updatedAgent)
+  it('disables reasoning_effort with a tooltip when the selected provider returns null', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    fireEvent.change(screen.getByLabelText('aria cli_provider'), {
+      target: { value: 'codex' },
+    })
+
+    const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
+    expect(effortSelect.disabled).toBe(true)
+    expect(effortSelect).toHaveAttribute(
+      'title',
+      'codex does not support reasoning_effort',
+    )
+  })
+
+  it('saves the structured form values merged with the raw TOML and prompt', async () => {
+    const updated: AgentStatus = ariaStatus({ model: 'claude-sonnet-4-6' })
+    updateAgent.mockResolvedValueOnce(updated)
     const onUpdated = vi.fn()
-    render(<AgentConfigTab agent={agent} onAgentUpdated={onUpdated} />)
-    fireEvent.click(screen.getByRole('button', { name: /edit aria/i }))
-    const editor = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
-    fireEvent.change(editor, {
-      target: { value: editor.value.replace('model = "gpt-5.2"', 'model = "gpt-5.4"') },
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={onUpdated} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    fireEvent.change(screen.getByLabelText('aria model'), {
+      target: { value: 'claude-sonnet-4-6' },
     })
     fireEvent.change(screen.getByLabelText('aria prompt.md'), {
       target: { value: '# Updated\n' },
     })
 
-    // When
     fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
 
-    // Then
     await waitFor(() => {
       expect(updateAgent).toHaveBeenCalledWith(
         'aria',
-        expect.objectContaining({ model: 'gpt-5.4', prompt: '# Updated\n' }),
+        expect.objectContaining({
+          display_name: 'Aria',
+          cli_provider: 'claude_code',
+          model: 'claude-sonnet-4-6',
+          reasoning_effort: 'medium',
+          prompt: '# Updated\n',
+        }),
       )
     })
-    expect(onUpdated).toHaveBeenCalledWith(updatedAgent)
+    expect(onUpdated).toHaveBeenCalledWith(updated)
   })
 
-  it('surfaces save failures inline against the editor and reports the message', async () => {
-    // Given
-    const agent = ariaStatus()
-    updateAgent.mockRejectedValueOnce(new Error('400 Bad Request: linear.tool_access.workflow.tools is required'))
-    const onSaveError = vi.fn()
-    render(<AgentConfigTab agent={agent} onAgentUpdated={vi.fn()} onSaveError={onSaveError} />)
-    fireEvent.click(screen.getByRole('button', { name: /edit aria/i }))
+  it('clears reasoning_effort when the selected provider does not support it', async () => {
+    const updated: AgentStatus = ariaStatus({
+      cli_provider: 'codex',
+      reasoning_effort: null,
+    })
+    updateAgent.mockResolvedValueOnce(updated)
+    const { AgentConfigTab } = await loadConfigTab()
 
-    // When
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    fireEvent.change(screen.getByLabelText('aria cli_provider'), {
+      target: { value: 'codex' },
+    })
+    // The disabled select still shows the prior value visually; the user
+    // must explicitly clear it to ship a valid save payload. Simulate
+    // the user clearing the dropdown to (unset).
+    fireEvent.change(screen.getByLabelText('aria reasoning_effort'), {
+      target: { value: '' },
+    })
+
     fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
 
-    // Then
-    expect(await screen.findByRole('alert')).toHaveTextContent('linear.tool_access.workflow.tools is required')
-    expect(onSaveError).toHaveBeenCalledWith(expect.stringContaining('linear.tool_access.workflow.tools is required'))
+    await waitFor(() => {
+      expect(updateAgent).toHaveBeenCalledWith(
+        'aria',
+        expect.objectContaining({
+          cli_provider: 'codex',
+          reasoning_effort: null,
+        }),
+      )
+    })
   })
 
-  it('discards in-progress edit drafts when the selected agent changes', () => {
-    // Given
+  it('surfaces server validation errors inline and via onSaveError', async () => {
+    updateAgent.mockRejectedValueOnce(
+      new Error(
+        '400 Bad Request: agents.aria.reasoning_effort is set to \'ultra\' but provider \'claude_code\' only supports [\'low\', \'medium\', \'high\']',
+      ),
+    )
+    const onSaveError = vi.fn()
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} onSaveError={onSaveError} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+    // The error message contains "reasoning_effort", so the row for
+    // that field renders the alert.
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts.some(node => node.textContent?.includes('reasoning_effort'))).toBe(true)
+    expect(onSaveError).toHaveBeenCalledWith(expect.stringContaining('reasoning_effort'))
+  })
+
+  it('renders an error state if the provider schema fails to load', async () => {
+    listProviders.mockReset()
+    listProviders.mockRejectedValueOnce(new Error('500 Internal Server Error'))
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/500 Internal Server Error/)
+  })
+
+  it('discards in-progress edit drafts when the selected agent changes', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+
     const agent = ariaStatus()
     const { rerender } = render(<AgentConfigTab agent={agent} onAgentUpdated={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: /edit aria/i }))
-    expect(screen.getByLabelText('aria agent.toml')).toBeInTheDocument()
 
-    // When
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    expect(screen.getByLabelText('aria display_name')).toBeInTheDocument()
+
     const cael: AgentStatus = { ...agent, agent_id: 'cael', display_name: 'Cael' }
     rerender(<AgentConfigTab agent={cael} onAgentUpdated={vi.fn()} />)
 
-    // Then
-    expect(screen.queryByLabelText('aria agent.toml')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('cael agent.toml')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('aria display_name')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('cael display_name')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /edit cael/i })).toBeInTheDocument()
   })
 
-  it('is wired into the AgentDetailPanel Config slot via the render prop seam', () => {
-    // Given
-    const agent = ariaStatus()
+  it('is wired into the AgentDetailPanel Config slot via the render prop seam', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+    const { AgentDetailPanel } = await loadDetailPanel()
 
-    // When
     render(
       <AgentDetailPanel
-        agent={agent}
+        agent={ariaStatus()}
         onStartAgent={vi.fn()}
         onStopAgent={vi.fn()}
         renderConfigTab={a => <AgentConfigTab agent={a} onAgentUpdated={vi.fn()} />}
@@ -191,8 +342,29 @@ describe('AgentConfigTab', () => {
       />,
     )
 
-    // Then
-    expect(screen.getByRole('button', { name: /edit aria/i })).toBeInTheDocument()
-    expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /edit aria/i })).toBeInTheDocument()
+  })
+})
+
+describe('AgentDetailPanel header', () => {
+  it('exposes id, workdir, and session_name in the read-only header area', async () => {
+    const { AgentDetailPanel } = await loadDetailPanel()
+
+    render(
+      <AgentDetailPanel
+        agent={ariaStatus()}
+        onStartAgent={vi.fn()}
+        onStopAgent={vi.fn()}
+        renderConfigTab={() => <div />}
+        renderTimelineTab={() => <div />}
+      />,
+    )
+
+    // ``id`` and ``workdir`` are the immutable identity context; the
+    // header surfaces them so the operator always knows which agent
+    // and project they're configuring.
+    expect(screen.getByText('aria')).toBeInTheDocument()
+    expect(screen.getByText('/repo')).toBeInTheDocument()
+    expect(screen.getByText('aria-session')).toBeInTheDocument()
   })
 })

@@ -27,15 +27,33 @@ function appendValue(lines: string[], key: string, value: unknown) {
 }
 
 export function formatAgentToml(config: AgentConfig): string {
+  return renderAgentToml(config, new Set())
+}
+
+/**
+ * Same as ``formatAgentToml`` but omits the named top-level keys plus
+ * the always-immutable ``id`` field from the output. Used by the Config
+ * tab's raw-TOML section to suppress fields owned by the structured form
+ * (and ``id``, which is owned by the directory name and never editable).
+ */
+export function formatAgentTomlExcluding(
+  config: AgentConfig,
+  excludedKeys: ReadonlyArray<string>,
+): string {
+  return renderAgentToml(config, new Set(['id', ...excludedKeys]))
+}
+
+function renderAgentToml(config: AgentConfig, exclude: Set<string>): string {
   const lines: string[] = []
-  appendValue(lines, 'id', config.id)
-  appendValue(lines, 'display_name', config.display_name)
-  appendValue(lines, 'cli_provider', config.cli_provider)
+  if (!exclude.has('id')) appendValue(lines, 'id', config.id)
+  if (!exclude.has('display_name')) appendValue(lines, 'display_name', config.display_name)
+  if (!exclude.has('cli_provider')) appendValue(lines, 'cli_provider', config.cli_provider)
   appendValue(lines, 'workdir', config.workdir)
   appendValue(lines, 'session_name', config.session_name)
-  appendValue(lines, 'model', config.model)
-  appendValue(lines, 'description', config.description)
-  appendValue(lines, 'reasoning_effort', config.reasoning_effort)
+  if (!exclude.has('model')) appendValue(lines, 'model', config.model)
+  if (!exclude.has('description')) appendValue(lines, 'description', config.description)
+  if (!exclude.has('reasoning_effort'))
+    appendValue(lines, 'reasoning_effort', config.reasoning_effort)
   appendValue(lines, 'tools', config.tools)
   appendValue(lines, 'tool_aliases', config.tool_aliases)
   appendValue(lines, 'tools_settings', config.tools_settings)

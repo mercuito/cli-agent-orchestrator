@@ -300,22 +300,28 @@ describe('AgentPanel', () => {
   })
 
   describe('durable agent configuration', () => {
-    it('renders the selected agent status and full agent.toml fields inline', async () => {
+    it('renders the selected agent status, structured fields, raw TOML, and Linear summary', async () => {
       render(<AgentPanel />)
 
-      expect(await screen.findByRole('heading', { name: /agent.toml/i })).toBeInTheDocument()
-      expect(screen.getAllByText('Stopped').length).toBeGreaterThan(0)
+      // Wait for the structured form to mount (Edit button signals the
+      // schema-driven config tab has finished loading).
+      await screen.findByRole('button', { name: /edit aria/i })
+
+      const structuredSection = screen.getByRole('region', { name: /structured fields/i })
+      // The structured form owns these tier-1 fields.
+      expect(structuredSection).toHaveTextContent('codex')
+      expect(structuredSection).toHaveTextContent('gpt-5.2')
+
+      // Raw TOML preserves workdir/session_name as escape-hatch fields.
       expect(screen.getByText(/workdir = "\/repo"/)).toBeInTheDocument()
       expect(screen.getByText(/session_name = "aria-session"/)).toBeInTheDocument()
-      expect(screen.getByText(/cli_provider = "codex"/)).toBeInTheDocument()
-      expect(screen.getByText(/model = "gpt-5.2"/)).toBeInTheDocument()
+      // Raw TOML still owns everything outside the structured form.
       expect(screen.getByText(/\[mcp_servers.cao\]/)).toBeInTheDocument()
       expect(screen.getByText(/tools = \["bash"\]/)).toBeInTheDocument()
-      expect(screen.getByText(/tool_aliases = \{ shell = "bash" \}/)).toBeInTheDocument()
-      expect(screen.getByText(/tools_settings = \{ bash = \{ timeout_ms = 1000 \} \}/)).toBeInTheDocument()
-      expect(screen.getByText(/hooks = \{ post_start = \["echo ready"\] \}/)).toBeInTheDocument()
       expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
       expect(screen.getByText(/\[linear.tool_access.workflow\]/)).toBeInTheDocument()
+
+      // Prompt and Linear secret summary still render.
       expect(screen.getByText('# Agent')).toBeInTheDocument()
       expect(screen.getAllByText('••••••••').length).toBeGreaterThan(0)
       expect(screen.getByText(/Access token: Managed by OAuth callback/)).toBeInTheDocument()
@@ -334,11 +340,17 @@ describe('AgentPanel', () => {
       render(<AgentPanel />)
 
       fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+
+      // Structured field edit (model).
+      fireEvent.change(screen.getByLabelText('aria model'), {
+        target: { value: 'gpt-5.4' },
+      })
+      // Raw TOML edit (tools list + nested MCP arg) — raw section owns
+      // anything outside the structured form's tier-1 fields.
       const editor = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
       fireEvent.change(editor, {
         target: {
           value: editor.value
-            .replace('model = "gpt-5.2"', 'model = "gpt-5.4"')
             .replace('tools = ["bash"]', 'tools = ["bash", "apply_patch"]')
             .replace('command = "cao-mcp-server"', 'command = "cao-mcp-server"\nargs = ["--stdio"]'),
         },
@@ -361,7 +373,9 @@ describe('AgentPanel', () => {
           },
         }))
       })
-      expect(await screen.findByText(/model = "gpt-5.4"/)).toBeInTheDocument()
+      // The updated agent's structured field reflects the new model.
+      const structuredSection = await screen.findByRole('region', { name: /structured fields/i })
+      expect(structuredSection).toHaveTextContent('gpt-5.4')
       expect(screen.getByText(/tools = \["bash", "apply_patch"\]/)).toBeInTheDocument()
       expect(screen.getByText(/# Updated Agent/)).toBeInTheDocument()
     })

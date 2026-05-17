@@ -58,6 +58,12 @@ export function AgentDetailPanel({
             </span>
           </div>
           <div className="mt-1 truncate font-mono text-xs text-gray-500">{agent.agent_id}</div>
+          <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 font-mono text-xs text-gray-500">
+            <dt className="text-gray-600">workdir</dt>
+            <dd className="truncate text-gray-400">{agent.workdir}</dd>
+            <dt className="text-gray-600">session</dt>
+            <dd className="truncate text-gray-400">{agent.session_name}</dd>
+          </dl>
           {agent.active && agent.active_terminal_id && (
             <div className="mt-1 truncate font-mono text-xs text-emerald-400">
               Terminal {agent.active_terminal_id}
