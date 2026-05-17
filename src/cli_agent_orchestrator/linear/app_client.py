@@ -317,7 +317,7 @@ def access_token_for_app_key(
 
 
 def fetch_viewer(access_token: str) -> Dict[str, Any]:
-    """Fetch the installed Linear app user's viewer identity."""
+    """Fetch the installed Linear app user's viewer agent."""
     try:
         response = requests.post(
             LINEAR_GRAPHQL_URL,
@@ -392,7 +392,7 @@ def linear_graphql(
 
 
 def install_linear_app(code: str, state: Optional[str]) -> Dict[str, Any]:
-    """Complete Linear OAuth app installation and persist the resulting identity."""
+    """Complete Linear OAuth app installation and persist the resulting agent."""
     app_key = app_key_from_oauth_state(state)
     state_verified = validate_oauth_state(state, app_key=app_key)
     token_payload = exchange_oauth_code(code, app_key=app_key)
@@ -452,7 +452,7 @@ def public_cao_terminal_url(terminal_id: str) -> Optional[str]:
 
 
 def public_cao_agent_url(agent_id: str) -> Optional[str]:
-    """Return the public dashboard URL for a durable CAO agent identity."""
+    """Return the public dashboard URL for a durable CAO agent."""
     base_url = public_cao_url()
     if not base_url:
         return None

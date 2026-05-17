@@ -207,18 +207,18 @@ def _terminal_metadata(terminal_id: str) -> Mapping[str, Any] | None:
     return {
         "terminal-impl": {
             "id": "terminal-impl",
-            "agent_identity_id": "implementation_partner",
+            "agent_id": "implementation_partner",
         },
         "terminal-discovery": {
             "id": "terminal-discovery",
-            "agent_identity_id": "discovery_partner",
+            "agent_id": "discovery_partner",
         },
         "terminal-context": {
             "id": "terminal-context",
-            "agent_identity_id": "implementation_partner",
+            "agent_id": "implementation_partner",
             "workspace_context_id": "context-from-db-row",
         },
-        "raw-terminal": {"id": "raw-terminal", "agent_identity_id": None},
+        "raw-terminal": {"id": "raw-terminal", "agent_id": None},
     }.get(terminal_id)
 
 
@@ -413,7 +413,7 @@ update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
     get_issue_dependencies = set(get_issue_material["dependencies"])
     assert {
         "LinearToolProvider._authorized_issue_request",
-        "LinearToolProvider._presence_for_identity",
+        "LinearToolProvider._presence_for_agent",
         "LinearToolProvider._require_returned_issue_allowed",
         "_fetch_issue",
         "_issue_from_payload",
@@ -740,7 +740,7 @@ create_parent_issues = ["CAO-25", "parent-25"]
     # Given the Linear provider grants issue creation only under an authorized parent.
     mcp, registered = _mcp_for_provider(provider, "terminal-impl")
 
-    # When the identity-managed terminal creates a governed sub-issue.
+    # When the agent-managed terminal creates a governed sub-issue.
     result = await mcp.call_tool(
         CREATE_ISSUE_TOOL,
         {
@@ -785,8 +785,7 @@ def test_linear_issue_mutation_post_hook_maps_result_to_invoking_context(
         "cao-implementation-partner",
         "developer-context",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        "implementation_partner",
         workspace_context_id=context.id,
     )
     provider = _provider(
@@ -888,8 +887,7 @@ def test_linear_update_issue_post_hook_does_not_map_unrelated_issue_to_active_co
         "cao-implementation-partner",
         "developer-context",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        "implementation_partner",
         workspace_context_id=context.id,
     )
     provider = _provider(
@@ -1629,7 +1627,7 @@ issues = ["CAO-50", "issue-50"]
     # Given the Linear provider grants comment-write access to one issue.
     mcp, registered = _mcp_for_provider(provider, "terminal-impl")
 
-    # When the identity-managed terminal creates a comment on that issue.
+    # When the agent-managed terminal creates a comment on that issue.
     result = await mcp.call_tool(
         CREATE_COMMENT_TOOL,
         {"issue": "CAO-50", "body": "  Implementation complete.  "},
@@ -2135,10 +2133,10 @@ issues = ["CAO-28", "issue-28"]
 
     monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
 
-    # Given the Linear provider grants read-only issue access to one identity.
+    # Given the Linear provider grants read-only issue access to one agent.
     mcp, registered = _mcp_for_provider(provider, "terminal-impl")
 
-    # When the identity-managed terminal calls both CAO-mediated Linear tools.
+    # When the agent-managed terminal calls both CAO-mediated Linear tools.
     issue_result = await mcp.call_tool("cao_linear.get_issue", {"issue": "CAO-28"})
     comments_result = await mcp.call_tool(
         "cao_linear.list_comments",
@@ -2827,19 +2825,3 @@ def test_linear_tool_access_config_rejects_malformed_entries(
         _provider(tmp_path, tool_access_body)
 
     assert expected in str(exc_info.value)
-
-
-def test_linear_profile_tool_access_targeting_is_rejected(tmp_path):
-    with pytest.raises(LinearWorkspaceProviderConfigError) as exc_info:
-        _provider(
-            tmp_path,
-            """
-[tool_access.reviewer_reads]
-agent_profile = "reviewer"
-tools = ["cao_linear.get_issue"]
-issues = ["CAO-28"]
-""",
-        )
-
-    assert "tool_access.reviewer_reads" in str(exc_info.value)
-    assert "must configure agent_id" in str(exc_info.value)

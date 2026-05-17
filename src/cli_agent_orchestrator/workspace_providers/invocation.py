@@ -7,10 +7,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry
-from cli_agent_orchestrator.services.agent_identity_manager import (
-    AgentIdentityManager,
-    default_agent_identity_manager,
+from cli_agent_orchestrator.agent import AgentRegistry
+from cli_agent_orchestrator.services.agent_manager import (
+    AgentManager,
+    default_agent_manager,
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,
@@ -57,11 +57,11 @@ class ProviderMediatedToolHandlerError(ProviderMediatedToolInvocationError):
 
 @dataclass(frozen=True)
 class ProviderMediatedToolInvocationService:
-    """Resolve identity access and run the provider-mediated call lifecycle."""
+    """Resolve agent access and run the provider-mediated call lifecycle."""
 
     policies: Mapping[str, ProviderToolAccessPolicy]
-    agent_registry: AgentIdentityRegistry | None = None
-    identity_manager: AgentIdentityManager | None = None
+    agent_registry: AgentRegistry | None = None
+    agent_manager: AgentManager | None = None
     terminal_metadata_resolver: TerminalMetadataResolver | None = None
 
     def invoke(
@@ -72,17 +72,17 @@ class ProviderMediatedToolInvocationService:
         tool_name: str,
         arguments: Mapping[str, Any],
     ) -> Any:
-        """Invoke a provider-mediated tool for an identity-managed terminal."""
+        """Invoke a provider-mediated tool for an agent-managed terminal."""
         normalized_tool_name = tool_name.strip()
-        identity = self._resolve_identity_for_terminal(terminal_id)
+        agent = self._resolve_agent_for_terminal(terminal_id)
         policy = self._resolve_policy(provider_name)
         tool = self._resolve_tool(policy, normalized_tool_name)
-        access = self._resolve_access(policy, identity.id, normalized_tool_name)
+        access = self._resolve_access(policy, agent.id, normalized_tool_name)
         context = ProviderToolInvocationContext(
             provider_name=policy.provider_name,
             tool_name=normalized_tool_name,
             terminal_id=terminal_id,
-            agent_identity=identity,
+            agent=agent,
             arguments=arguments,
             access=access,
         )
@@ -95,16 +95,16 @@ class ProviderMediatedToolInvocationService:
     def accessible_tools_for_terminal(
         self, terminal_id: str
     ) -> tuple[tuple[str, ProviderMediatedToolDefinition], ...]:
-        """Return provider-mediated tools visible to an identity-managed terminal.
+        """Return provider-mediated tools visible to an agent-managed terminal.
 
-        The same terminal-to-identity resolution used for invocation is used
+        The same terminal-to-agent resolution used for invocation is used
         here so MCP registration fails closed for raw, unknown, or unmapped
         terminals without widening provider access.
         """
-        identity = self._resolve_identity_for_terminal(terminal_id)
+        agent = self._resolve_agent_for_terminal(terminal_id)
         visible: list[tuple[str, ProviderMediatedToolDefinition]] = []
         for policy in self.policies.values():
-            for access in policy.access_for_identity(identity):
+            for access in policy.access_for_agent(agent):
                 tool = policy.tools.get(access.tool_name)
                 if tool is not None:
                     visible.append((policy.provider_name, tool))
@@ -134,7 +134,7 @@ class ProviderMediatedToolInvocationService:
             )
         return tool
 
-    def _resolve_identity_for_terminal(self, terminal_id: str):
+    def _resolve_agent_for_terminal(self, terminal_id: str):
         metadata = self._terminal_metadata_resolver()(terminal_id)
         if metadata is None:
             raise ProviderMediatedToolAccessDenied(
@@ -143,46 +143,46 @@ class ProviderMediatedToolInvocationService:
                 diagnostics={"terminal_id": terminal_id},
             )
 
-        identity_id = metadata.get("agent_identity_id")
-        if not isinstance(identity_id, str) or not identity_id.strip():
+        agent_id = metadata.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id.strip():
             raise ProviderMediatedToolAccessDenied(
-                "Provider-mediated tool call denied: terminal is not identity-managed",
+                "Provider-mediated tool call denied: terminal is not agent-managed",
                 reason="unmapped_terminal",
                 diagnostics={"terminal_id": terminal_id},
             )
 
-        normalized_identity_id = identity_id.strip()
+        normalized_agent_id = agent_id.strip()
         try:
-            return self._identity_manager().resolve_identity(normalized_identity_id)
+            return self._agent_manager().resolve_agent(normalized_agent_id)
         except Exception as exc:
             raise ProviderMediatedToolAccessDenied(
-                "Provider-mediated tool call denied: terminal identity is not configured",
-                reason="unmapped_identity",
+                "Provider-mediated tool call denied: terminal agent is not configured",
+                reason="unmapped_agent",
                 diagnostics={
                     "terminal_id": terminal_id,
-                    "agent_identity_id": normalized_identity_id,
+                    "agent_id": normalized_agent_id,
                 },
             ) from exc
 
-    def _identity_manager(self) -> AgentIdentityManager:
-        if self.identity_manager is not None:
-            return self.identity_manager
+    def _agent_manager(self) -> AgentManager:
+        if self.agent_manager is not None:
+            return self.agent_manager
         if self.agent_registry is not None:
-            return AgentIdentityManager(configured_identities=self.agent_registry)
-        return default_agent_identity_manager()
+            return AgentManager(configured_agents=self.agent_registry)
+        return default_agent_manager()
 
     def _resolve_access(
-        self, policy: ProviderToolAccessPolicy, agent_identity_id: str, tool_name: str
+        self, policy: ProviderToolAccessPolicy, agent_id: str, tool_name: str
     ) -> ProviderToolAccess:
         for entry in policy.access:
-            if entry.agent_identity_id == agent_identity_id and entry.tool_name == tool_name:
+            if entry.agent_id == agent_id and entry.tool_name == tool_name:
                 return entry
         raise ProviderMediatedToolAccessDenied(
-            "Provider-mediated tool call denied: identity has no configured tool access",
+            "Provider-mediated tool call denied: agent has no configured tool access",
             reason="missing_tool_access",
             diagnostics={
                 "provider_name": policy.provider_name,
-                "agent_identity_id": agent_identity_id,
+                "agent_id": agent_id,
                 "tool_name": tool_name,
             },
         )

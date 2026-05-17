@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentWorkspaceContextConfig
+from cli_agent_orchestrator.agent import Agent, AgentWorkspaceContextConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.workspace_context_store import (
     WORKSPACE_CONTEXT_ROLE_CHILD_WORK_ITEM,
@@ -27,7 +27,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueDelegatedToAgentEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.workspace_contexts import resolve_workspace_context_for_identity
+from cli_agent_orchestrator.workspace_contexts import resolve_workspace_context_for_agent
 
 
 def _agent_session_payload(issue: dict | None, *, session_id: str = "session-1") -> dict:
@@ -52,14 +52,14 @@ def _published_event(payload: dict) -> CaoEvent:
     return publication.event
 
 
-def _context_identity() -> AgentIdentity:
-    return AgentIdentity(
+def _context_agent() -> Agent:
+    return Agent(
         id="implementation_partner",
         display_name="Implementation Partner",
-        agent_profile="developer",
         cli_provider="codex",
         workdir="/tmp/cao",
         session_name="implementation-partner",
+        prompt="",
         workspace_context=AgentWorkspaceContextConfig(
             enabled=True,
             resolver_id=LINEAR_PLANNING_RESOLVER_ID,
@@ -178,12 +178,12 @@ def test_linear_event_without_issue_does_not_guess_context(runtime_inbox_db_sess
     )
 
 
-def test_identity_resolver_explicitly_resolves_traced_linear_provider_event(
+def test_agent_resolver_explicitly_resolves_traced_linear_provider_event(
     runtime_inbox_db_session,
 ):
     register_linear_workspace_context_resolver()
-    resolution = resolve_workspace_context_for_identity(
-        _context_identity(),
+    resolution = resolve_workspace_context_for_agent(
+        _context_agent(),
         _published_event(_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"})),
     )
 
@@ -253,7 +253,9 @@ def test_linear_provider_publication_uses_semantic_event_names():
         assert isinstance(publication.event, event_type)
 
 
-def test_linear_provider_publication_carries_cao_metadata_and_agent_participants():
+def test_linear_provider_publication_carries_cao_metadata_and_agent_participants(
+    runtime_inbox_db_session,
+):
     payload = {
         **_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"}),
         "_cao_linear_agent_id": "implementation_partner",
@@ -272,7 +274,7 @@ def test_linear_provider_publication_carries_cao_metadata_and_agent_participants
     assert event.correlation_id == "session-1"
     assert agent_participants_for(event) == (
         type(event.agent_participants[0])(
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             role=LINEAR_AGENT_PARTICIPANT_ROLE_MENTIONED,
         ),
     )

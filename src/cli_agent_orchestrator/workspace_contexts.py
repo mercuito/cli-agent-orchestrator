@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity
+from cli_agent_orchestrator.agent import Agent
 from cli_agent_orchestrator.events import CaoEvent
 
 
@@ -24,7 +24,7 @@ class WorkspaceContextResolution:
 class ContextAwareNotification:
     """Notification payload with its traced provider event and context resolution."""
 
-    agent_identity_id: str
+    agent_id: str
     message: str
     event: CaoEvent
     resolution: WorkspaceContextResolution
@@ -44,7 +44,7 @@ def register_workspace_context_resolver(
     resolver_id: str,
     resolver: WorkspaceContextResolver,
 ) -> None:
-    """Register a workspace context resolver by durable identity config id."""
+    """Register a workspace context resolver by durable agent config id."""
 
     normalized = _normalize_resolver_id(resolver_id)
     existing = _WORKSPACE_CONTEXT_RESOLVERS.get(normalized)
@@ -55,25 +55,25 @@ def register_workspace_context_resolver(
     _WORKSPACE_CONTEXT_RESOLVERS[normalized] = resolver
 
 
-def resolve_workspace_context_for_identity(
-    identity: AgentIdentity,
+def resolve_workspace_context_for_agent(
+    agent: Agent,
     event: CaoEvent,
 ) -> WorkspaceContextResolution | None:
-    """Resolve the active workspace context for an identity and traced event."""
+    """Resolve the active workspace context for an agent and traced event."""
 
-    if not identity.workspace_context.enabled:
+    if not agent.workspace_context.enabled:
         return None
-    resolver_id = identity.workspace_context.resolver_id
+    resolver_id = agent.workspace_context.resolver_id
     if resolver_id is None:
         raise WorkspaceContextResolverError(
-            f"Workspace context resolver is required for {identity.id}"
+            f"Workspace context resolver is required for {agent.id}"
         )
     normalized = _normalize_resolver_id(resolver_id)
     try:
         resolver = _WORKSPACE_CONTEXT_RESOLVERS[normalized]
     except KeyError as exc:
         raise WorkspaceContextResolverError(
-            f"Unknown workspace context resolver for {identity.id}: {normalized}"
+            f"Unknown workspace context resolver for {agent.id}: {normalized}"
         ) from exc
     return resolver(event)
 

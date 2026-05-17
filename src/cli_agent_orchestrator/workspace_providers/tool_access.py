@@ -3,7 +3,7 @@
 Workspace providers own provider-specific configuration and vocabulary. This
 module owns the CAO-neutral contract providers use after parsing that config:
 declared tools, declared hooks, requested access targets, and preflight
-normalization into identity-scoped access.
+normalization into agent-scoped access.
 """
 
 from __future__ import annotations
@@ -66,20 +66,18 @@ class ProviderToolAccessRequest:
 
     tool_name: str
     location: str
-    agent_identity_id: str | None = None
-    agent_profile: str | None = None
+    agent_id: str | None = None
     pre_hooks: tuple[str, ...] = ()
     post_hooks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class ProviderToolAccess:
-    """Validated provider-mediated tool access for a CAO agent identity."""
+    """Validated provider-mediated tool access for a CAO agent."""
 
     provider_name: str
     tool_name: str
-    agent_identity_id: str
-    agent_profile: str | None
+    agent_id: str
     pre_hooks: tuple[str, ...]
     post_hooks: tuple[str, ...]
     source_location: str
@@ -113,7 +111,7 @@ class ProviderToolInvocationContext:
     provider_name: str
     tool_name: str
     terminal_id: str
-    agent_identity: Agent
+    agent: Agent
     arguments: Mapping[str, Any]
     access: ProviderToolAccess
     hook_name: str | None = None
@@ -132,7 +130,7 @@ class ProviderToolInvocationContext:
             provider_name=self.provider_name,
             tool_name=self.tool_name,
             terminal_id=self.terminal_id,
-            agent_identity=self.agent_identity,
+            agent=self.agent,
             arguments=self.arguments,
             access=self.access,
             hook_name=hook_name,
@@ -183,33 +181,33 @@ class ProviderToolAccessConfigError(ValueError):
 
 @dataclass(frozen=True)
 class ProviderToolAccessPolicy:
-    """Validated provider-mediated tools, hooks, and identity-scoped access."""
+    """Validated provider-mediated tools, hooks, and agent-scoped access."""
 
     provider_name: str
     tools: Mapping[str, ProviderMediatedToolDefinition]
     hooks: Mapping[str, ProviderToolHookDefinition]
     access: tuple[ProviderToolAccess, ...]
 
-    def access_for_identity(self, identity: AgentIdentity) -> tuple[ProviderToolAccess, ...]:
-        """Return the provider tool access entries for one CAO identity instance."""
-        return tuple(entry for entry in self.access if entry.agent_identity_id == identity.id)
+    def access_for_agent(self, agent: Agent) -> tuple[ProviderToolAccess, ...]:
+        """Return the provider tool access entries for one CAO agent instance."""
+        return tuple(entry for entry in self.access if entry.agent_id == agent.id)
 
-    def can_identity_access_tool(self, identity: AgentIdentity, tool_name: str) -> bool:
-        """Return whether an identity has normalized access to a provider tool."""
-        return any(entry.tool_name == tool_name for entry in self.access_for_identity(identity))
+    def can_agent_access_tool(self, agent: Agent, tool_name: str) -> bool:
+        """Return whether an agent has normalized access to a provider tool."""
+        return any(entry.tool_name == tool_name for entry in self.access_for_agent(agent))
 
-    def surface_descriptors_for_identity(
-        self, identity: AgentIdentity
+    def surface_descriptors_for_agent(
+        self, agent: Agent
     ) -> tuple[ProviderMediatedToolSurfaceDescriptor, ...]:
-        """Return stable visible tool contracts for one identity.
+        """Return stable visible tool contracts for one agent.
 
-        Provider access owns the mapping from identity to tool plus configured
+        Provider access owns the mapping from agent to tool plus configured
         hooks, so this projection intentionally lives beside that access policy.
         Handler callables, source locations, credentials, and runtime data are
         excluded because they are not part of the agent-visible MCP contract.
         """
         descriptors: list[ProviderMediatedToolSurfaceDescriptor] = []
-        for access in self.access_for_identity(identity):
+        for access in self.access_for_agent(agent):
             tool = self.tools.get(access.tool_name)
             if tool is None:
                 continue
@@ -225,12 +223,12 @@ class ProviderToolAccessPolicy:
             )
         return tuple(sorted(descriptors, key=lambda item: (item.provider_name, item.name)))
 
-    def runtime_generation_descriptors_for_identity(
-        self, identity: AgentIdentity
+    def runtime_generation_descriptors_for_agent(
+        self, agent: Agent
     ) -> tuple[ProviderMediatedToolRuntimeGenerationDescriptor, ...]:
-        """Return visible tool implementation/runtime material for one identity."""
+        """Return visible tool implementation/runtime material for one agent."""
         descriptors: list[ProviderMediatedToolRuntimeGenerationDescriptor] = []
-        for access in self.access_for_identity(identity):
+        for access in self.access_for_agent(agent):
             tool = self.tools.get(access.tool_name)
             if tool is None:
                 continue
@@ -253,7 +251,7 @@ def normalize_provider_tool_access(
     agent_registry: AgentRegistry,
     profile_exists: Callable[[str], bool],
 ) -> ProviderToolAccessPolicy:
-    """Validate provider declarations and normalize config to identity access.
+    """Validate provider declarations and normalize config to agent access.
 
     Providers call this after translating provider-specific user config into
     ``ProviderToolAccessRequest`` records. CAO then consumes the returned policy
@@ -271,7 +269,7 @@ def normalize_provider_tool_access(
     access: list[ProviderToolAccess] = []
     seen_effective_entries: dict[tuple[str, str], ProviderToolAccess] = {}
 
-    identity_by_id = agent_registry.all()
+    agent_by_id = agent_registry.all()
 
     for request_index, request in enumerate(access_requests):
         request_issue_count = len(issues)
@@ -301,12 +299,9 @@ def normalize_provider_tool_access(
             location=f"{request_location}.post_hooks",
             issues=issues,
         )
-        target_id = request.agent_identity_id.strip() if request.agent_identity_id else None
-        target_profile = request.agent_profile.strip() if request.agent_profile else None
         target_identities = _resolve_target_identities(
-            identity_by_id=identity_by_id,
-            agent_identity_id=target_id,
-            agent_profile=target_profile,
+            agent_by_id=agent_by_id,
+            agent_id=request.agent_id.strip() if request.agent_id else None,
             location=request_location,
             issues=issues,
         )
@@ -314,24 +309,23 @@ def normalize_provider_tool_access(
         if len(issues) > request_issue_count:
             continue
 
-        for identity in target_identities:
+        for agent in target_identities:
             entry = ProviderToolAccess(
                 provider_name=normalized_provider,
                 tool_name=tool_name,
-                agent_identity_id=identity.id,
-                agent_profile=None,
+                agent_id=agent.id,
                 pre_hooks=pre_hooks,
                 post_hooks=post_hooks,
                 source_location=request_location,
             )
-            key = (entry.agent_identity_id, entry.tool_name)
+            key = (entry.agent_id, entry.tool_name)
             previous = seen_effective_entries.get(key)
             if previous is not None:
                 issues.append(
                     ProviderToolAccessIssue(
                         request_location,
                         "duplicates or conflicts with provider tool access entry at "
-                        f"{previous.source_location} for identity {entry.agent_identity_id} "
+                        f"{previous.source_location} for agent {entry.agent_id} "
                         f"and tool {entry.tool_name}",
                     )
                 )
@@ -462,41 +456,24 @@ def _validate_hooks(
 
 def _resolve_target_identities(
     *,
-    identity_by_id: Mapping[str, Agent],
-    agent_identity_id: str | None,
-    agent_profile: str | None,
+    agent_by_id: Mapping[str, Agent],
+    agent_id: str | None,
     location: str,
     issues: list[ProviderToolAccessIssue],
 ) -> tuple[Agent, ...]:
-    if bool(agent_identity_id) == bool(agent_profile):
+    if not agent_id:
+        issues.append(ProviderToolAccessIssue(f"{location}.agent_id", "agent_id is required"))
+        return ()
+    agent = agent_by_id.get(agent_id)
+    if agent is None:
         issues.append(
             ProviderToolAccessIssue(
-                location,
-                "exactly one of agent_identity_id or agent_profile must be configured",
+                f"{location}.agent_id",
+                f"unknown CAO agent: {agent_id}",
             )
         )
         return ()
-
-    if agent_identity_id:
-        identity = identity_by_id.get(agent_identity_id)
-        if identity is None:
-            issues.append(
-                ProviderToolAccessIssue(
-                    f"{location}.agent_identity_id",
-                    f"unknown CAO agent identity: {agent_identity_id}",
-                )
-            )
-            return ()
-        return (identity,)
-
-    assert agent_profile is not None
-    issues.append(
-        ProviderToolAccessIssue(
-            f"{location}.agent_profile",
-            "agent_profile targeting is not supported; configure agent_identity_id",
-        )
-    )
-    return ()
+    return (agent,)
 
 
 __all__ = [

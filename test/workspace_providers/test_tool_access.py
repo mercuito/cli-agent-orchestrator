@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import Agent, AgentRegistry
 from cli_agent_orchestrator.workspace_providers import (
     ProviderMediatedToolDefinition,
     ProviderToolAccessConfigError,
@@ -34,32 +34,32 @@ def _hook(context: ProviderToolInvocationContext) -> ProviderToolPreCallResult |
     return None
 
 
-def _agents() -> AgentIdentityRegistry:
-    return AgentIdentityRegistry(
+def _agents() -> AgentRegistry:
+    return AgentRegistry(
         {
-            "identity_a": AgentIdentity(
-                id="identity_a",
-                display_name="Identity A",
-                agent_profile="developer",
+            "agent_a": Agent(
+                id="agent_a",
+                display_name="Agent A",
                 cli_provider="codex",
                 workdir="/repo",
-                session_name="identity-a",
+                session_name="agent-a",
+                prompt="Developer agent.",
             ),
-            "identity_b": AgentIdentity(
-                id="identity_b",
-                display_name="Identity B",
-                agent_profile="reviewer",
+            "agent_b": Agent(
+                id="agent_b",
+                display_name="Agent B",
                 cli_provider="codex",
                 workdir="/repo",
-                session_name="identity-b",
+                session_name="agent-b",
+                prompt="Reviewer agent.",
             ),
-            "identity_c": AgentIdentity(
-                id="identity_c",
-                display_name="Identity C",
-                agent_profile="developer",
+            "agent_c": Agent(
+                id="agent_c",
+                display_name="Agent C",
                 cli_provider="codex",
                 workdir="/repo",
-                session_name="identity-c",
+                session_name="agent-c",
+                prompt="Another developer agent.",
             ),
         }
     )
@@ -125,7 +125,7 @@ class FakeProvider:
     def __init__(
         self,
         provider_config: Mapping[str, Mapping[str, Any]],
-        agent_registry: AgentIdentityRegistry,
+        agent_registry: AgentRegistry,
         *,
         profile_exists=None,
     ) -> None:
@@ -155,7 +155,7 @@ class FakeProvider:
 def _fake_provider_config(
     *,
     kind: str = "agent",
-    target: str = "identity_a",
+    target: str = "agent_a",
     capability: str = "cao_fake.lookup",
     before: tuple[str, ...] = ("always_allow",),
     after: tuple[str, ...] = (),
@@ -183,20 +183,26 @@ def _initialize_fake_provider(
     return provider
 
 
-def test_fake_provider_config_normalizes_to_identity_scoped_tool_access():
+def test_fake_provider_config_normalizes_to_agent_scoped_tool_access():
     provider = _initialize_fake_provider(
         {
             "partners": {
                 "discovery": {
                     "kind": "agent",
-                    "target": "identity_a",
+                    "target": "agent_a",
                     "capability": "cao_fake.lookup",
                     "before": ["always_allow"],
                     "after": ["record_after"],
                 },
-                "developers": {
-                    "kind": "role_template",
-                    "target": "developer",
+                "developer_a": {
+                    "kind": "agent",
+                    "target": "agent_a",
+                    "capability": "cao_fake.write",
+                    "before": ["audit_both"],
+                },
+                "developer_c": {
+                    "kind": "agent",
+                    "target": "agent_c",
                     "capability": "cao_fake.write",
                     "before": ["audit_both"],
                 },
@@ -206,17 +212,20 @@ def test_fake_provider_config_normalizes_to_identity_scoped_tool_access():
 
     policy = load_provider_tool_access_policies([provider])["fake"]
 
-    identity_a = _agents().get("identity_a")
-    identity_b = _agents().get("identity_b")
-    identity_c = _agents().get("identity_c")
-    assert policy.can_identity_access_tool(identity_a, "cao_fake.lookup")
-    assert policy.can_identity_access_tool(identity_a, "cao_fake.write")
-    assert not policy.can_identity_access_tool(identity_b, "cao_fake.lookup")
-    assert not policy.can_identity_access_tool(identity_b, "cao_fake.write")
-    assert policy.can_identity_access_tool(identity_c, "cao_fake.write")
+    agent_a = _agents().get("agent_a")
+    agent_b = _agents().get("agent_b")
+    agent_c = _agents().get("agent_c")
+    assert policy.can_agent_access_tool(agent_a, "cao_fake.lookup")
+    assert policy.can_agent_access_tool(agent_a, "cao_fake.write")
+    assert not policy.can_agent_access_tool(agent_b, "cao_fake.lookup")
+    assert not policy.can_agent_access_tool(agent_b, "cao_fake.write")
+    assert policy.can_agent_access_tool(agent_c, "cao_fake.write")
     write_access = [entry for entry in policy.access if entry.tool_name == "cao_fake.write"]
-    assert {entry.agent_identity_id for entry in write_access} == {"identity_a", "identity_c"}
-    assert {entry.source_location for entry in write_access} == {"partners.developers"}
+    assert {entry.agent_id for entry in write_access} == {"agent_a", "agent_c"}
+    assert {entry.source_location for entry in write_access} == {
+        "partners.developer_a",
+        "partners.developer_c",
+    }
 
 
 def test_unknown_tool_fails_preflight_with_config_location():
@@ -250,50 +259,48 @@ def test_unsupported_hook_phase_fails_preflight_with_config_location():
     assert "hook always_allow does not support phase post_call" in message
 
 
-def test_identity_reference_must_resolve_before_access_is_exposed():
+def test_agent_reference_must_resolve_before_access_is_exposed():
     with pytest.raises(ProviderToolAccessConfigError) as exc_info:
-        _initialize_fake_provider(_fake_provider_config(target="missing_identity"))
+        _initialize_fake_provider(_fake_provider_config(target="missing_agent"))
 
-    assert "partners.discovery.agent_identity_id" in str(exc_info.value)
-    assert "unknown CAO agent identity: missing_identity" in str(exc_info.value)
-
-
-def test_profile_reference_must_resolve_before_access_is_exposed():
-    with pytest.raises(ProviderToolAccessConfigError) as exc_info:
-        _initialize_fake_provider(
-            _fake_provider_config(kind="role_template", target="missing_profile"),
-            profile_exists=lambda profile: profile != "missing_profile",
-        )
-
-    assert "partners.discovery.agent_profile" in str(exc_info.value)
-    assert "unknown CAO agent profile: missing_profile" in str(exc_info.value)
+    assert "partners.discovery.agent_id" in str(exc_info.value)
+    assert "unknown CAO agent: missing_agent" in str(exc_info.value)
 
 
-def test_profile_without_configured_identities_fails_preflight():
+def test_non_agent_provider_target_fails_closed_before_access_is_exposed():
     with pytest.raises(ProviderToolAccessConfigError) as exc_info:
         _initialize_fake_provider(
-            _fake_provider_config(kind="role_template", target="unused_profile"),
-            profile_exists=lambda profile: profile == "unused_profile",
+            _fake_provider_config(kind="role_template", target="missing_agent"),
         )
 
-    assert "partners.discovery.agent_profile" in str(exc_info.value)
-    assert "no configured CAO agent identities use profile: unused_profile" in str(exc_info.value)
+    assert "partners.discovery.agent_id" in str(exc_info.value)
+    assert "agent_id is required" in str(exc_info.value)
 
 
-def test_duplicate_effective_identity_tool_access_fails_preflight():
+def test_provider_template_target_without_agent_id_fails_preflight():
+    with pytest.raises(ProviderToolAccessConfigError) as exc_info:
+        _initialize_fake_provider(
+            _fake_provider_config(kind="role_template", target="unused_agent"),
+        )
+
+    assert "partners.discovery.agent_id" in str(exc_info.value)
+    assert "agent_id is required" in str(exc_info.value)
+
+
+def test_duplicate_effective_agent_tool_access_fails_preflight():
     with pytest.raises(ProviderToolAccessConfigError) as exc_info:
         _initialize_fake_provider(
             {
                 "partners": {
                     "discovery": {
                         "kind": "agent",
-                        "target": "identity_a",
+                        "target": "agent_a",
                         "capability": "cao_fake.lookup",
                         "before": ["always_allow"],
                     },
-                    "developers": {
-                        "kind": "role_template",
-                        "target": "developer",
+                    "duplicate": {
+                        "kind": "agent",
+                        "target": "agent_a",
                         "capability": "cao_fake.lookup",
                         "before": ["audit_both"],
                     },
@@ -302,11 +309,11 @@ def test_duplicate_effective_identity_tool_access_fails_preflight():
         )
 
     message = str(exc_info.value)
-    assert "partners.developers" in message
+    assert "partners.duplicate" in message
     assert (
         "duplicates or conflicts with provider tool access entry at partners.discovery" in message
     )
-    assert "identity identity_a and tool cao_fake.lookup" in message
+    assert "agent agent_a and tool cao_fake.lookup" in message
 
 
 def test_access_entries_may_omit_pre_call_hooks():
@@ -315,7 +322,7 @@ def test_access_entries_may_omit_pre_call_hooks():
 
     assert len(access) == 1
     assert access[0].pre_hooks == ()
-    assert access[0].agent_identity_id == "identity_a"
+    assert access[0].agent_id == "agent_a"
 
 
 def test_duplicate_provider_tool_access_policy_names_fail_clearly():
@@ -327,7 +334,7 @@ def test_duplicate_provider_tool_access_policy_names_fail_clearly():
                 (
                     ProviderToolAccessRequest(
                         tool_name="cao_fake.lookup",
-                        agent_identity_id="identity_a",
+                        agent_id="agent_a",
                         pre_hooks=("always_allow",),
                         location="partners.discovery",
                     ),

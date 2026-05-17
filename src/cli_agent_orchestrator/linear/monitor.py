@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
 
+from cli_agent_orchestrator.agent import AgentConfigError
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.linear import app_client, monitor_store
 from cli_agent_orchestrator.linear import runtime as linear_runtime
@@ -23,7 +24,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     publish_linear_provider_event,
 )
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
-from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityManager
+from cli_agent_orchestrator.services.agent_manager import AgentManager
 
 DEFAULT_PAGE_SIZE = 25
 DEFAULT_MAX_PAGES = 2
@@ -506,11 +507,11 @@ def _retry_pending_delivery(
     diagnostics: list[LinearMonitorDiagnostic],
 ) -> int:
     try:
-        identity_manager = AgentIdentityManager(identity_providers=(provider,))
-        identity = identity_manager.register_identity(
-            provider.resolve_identity_for_presence(presence)
+        agent_manager = AgentManager(configured_agents=provider.agent_registry)
+        agent = agent_manager.register_agent(
+            provider.resolve_agent_for_presence(presence)
         )
-        handle = AgentRuntimeHandle(identity, identity_manager=identity_manager)
+        handle = AgentRuntimeHandle(agent, agent_manager=agent_manager)
         if db_module.get_oldest_pending_inbox_delivery(handle.inbox_receiver_id) is None:
             return 0
         result = handle.try_deliver_pending()
@@ -650,8 +651,10 @@ def _max_datetime(left: Optional[datetime], right: datetime) -> datetime:
 
 
 def _failure_code(exc: Exception) -> str:
-    if isinstance(exc, app_client.LinearConfigError) or isinstance(
-        exc, linear_workspace_provider.LinearWorkspaceProviderConfigError
+    if (
+        isinstance(exc, app_client.LinearConfigError)
+        or isinstance(exc, linear_workspace_provider.LinearWorkspaceProviderConfigError)
+        or isinstance(exc, AgentConfigError)
     ):
         message = str(exc).lower()
         if "access_token" in message or "refresh_token" in message or "credential" in message:

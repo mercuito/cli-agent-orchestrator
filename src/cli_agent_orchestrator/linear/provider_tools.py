@@ -188,7 +188,7 @@ class LinearToolAccess:
 
     access_id: str
     agent_id: str | None
-    agent_profile: str | None
+    agent_id: str | None
     tools: tuple[str, ...]
     issues: tuple[str, ...]
     create_team_ids: tuple[str, ...] = ()
@@ -287,7 +287,7 @@ def _linear_runtime_dependency_callables(
     issue_read_dependencies: tuple[LinearRuntimeDependency, ...] = (
         ("LinearToolProvider._authorize_before_call", provider._authorize_before_call, False),
         ("LinearToolProvider._authorized_issue_request", provider._authorized_issue_request, True),
-        ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+        ("LinearToolProvider._presence_for_agent", provider._presence_for_agent, True),
         (
             "LinearToolProvider._require_returned_issue_allowed",
             provider._require_returned_issue_allowed,
@@ -319,7 +319,7 @@ def _linear_runtime_dependency_callables(
                 provider._authorized_issue_request,
                 True,
             ),
-            ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+            ("LinearToolProvider._presence_for_agent", provider._presence_for_agent, True),
             (
                 "LinearToolProvider._require_returned_issue_allowed",
                 provider._require_returned_issue_allowed,
@@ -343,7 +343,7 @@ def _linear_runtime_dependency_callables(
                 provider._authorized_issue_request,
                 True,
             ),
-            ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+            ("LinearToolProvider._presence_for_agent", provider._presence_for_agent, True),
             (
                 "LinearToolProvider._require_returned_issue_allowed",
                 provider._require_returned_issue_allowed,
@@ -381,7 +381,7 @@ def _linear_runtime_dependency_callables(
                 provider._validated_create_issue_request,
                 True,
             ),
-            ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+            ("LinearToolProvider._presence_for_agent", provider._presence_for_agent, True),
             (
                 "LinearToolProvider._require_parent_issue_allowed",
                 provider._require_parent_issue_allowed,
@@ -407,7 +407,7 @@ def _linear_runtime_dependency_callables(
                 provider._validated_update_issue_request,
                 True,
             ),
-            ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+            ("LinearToolProvider._presence_for_agent", provider._presence_for_agent, True),
             (
                 "LinearToolProvider._require_returned_issue_allowed",
                 provider._require_returned_issue_allowed,
@@ -436,7 +436,7 @@ def _linear_runtime_dependency_callables(
                 provider._validated_create_project_request,
                 True,
             ),
-            ("LinearToolProvider._presence_for_identity", provider._presence_for_identity, True),
+            ("LinearToolProvider._presence_for_agent", provider._presence_for_agent, True),
             ("_fetch_team", _fetch_team, True),
             ("_team_from_payload", _team_from_payload, True),
             ("_validate_linear_reference", _validate_linear_reference, True),
@@ -589,12 +589,12 @@ class LinearToolProvider:
         )
         issues: list[ProviderToolAccessIssue] = []
         for access in policy.access:
-            if self._find_presence_for_identity(access.agent_identity_id) is None:
+            if self._find_presence_for_agent(access.agent_id) is None:
                 issues.append(
                     ProviderToolAccessIssue(
                         access.source_location,
-                        "grants Linear tool access to identity "
-                        f"{access.agent_identity_id!r}, but that identity has no "
+                        "grants Linear tool access to agent "
+                        f"{access.agent_id!r}, but that agent has no "
                         "Linear presence",
                     )
                 )
@@ -849,8 +849,7 @@ class LinearToolProvider:
                 requests.append(
                     ProviderToolAccessRequest(
                         tool_name=tool_name,
-                        agent_identity_id=access.agent_id,
-                        agent_profile=access.agent_profile,
+                        agent_id=access.agent_id,
                         pre_hooks=(pre_hook,),
                         post_hooks=post_hooks,
                         location=access.location,
@@ -871,7 +870,7 @@ class LinearToolProvider:
         self, context: ProviderToolInvocationContext
     ) -> ProviderToolPreCallResult:
         try:
-            self._presence_for_identity(context.agent_identity.id)
+            self._presence_for_agent(context.agent.id)
             _validated_exploration_request(context.tool_name, context.arguments)
         except LinearToolError as exc:
             return self._deny_with_policy_context(context, exc)
@@ -957,7 +956,7 @@ class LinearToolProvider:
         arguments: Mapping[str, Any],
     ) -> dict[str, Any]:
         issue_key = self._authorized_issue_request(context)
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         issue = _fetch_issue(issue_key, presence)
         self._require_returned_issue_allowed(issue, context.access.source_location)
         return _compact_issue_payload(issue)
@@ -968,7 +967,7 @@ class LinearToolProvider:
         arguments: Mapping[str, Any],
     ) -> dict[str, Any]:
         issue_key = self._authorized_issue_request(context)
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         limit = _comment_limit(arguments.get("limit"))
         issue = _fetch_issue_comments(issue_key, presence, limit=limit)
         self._require_returned_issue_allowed(issue, context.access.source_location)
@@ -988,7 +987,7 @@ class LinearToolProvider:
     ) -> dict[str, Any]:
         issue_key = self._authorized_issue_request(context)
         body = _comment_body_from_arguments(arguments)
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         issue = _fetch_issue(issue_key, presence)
         self._require_returned_issue_allowed(issue, context.access.source_location)
         comment = _create_linear_comment(issue, body, presence)
@@ -1001,14 +1000,14 @@ class LinearToolProvider:
     ) -> dict[str, Any]:
         issue_key = self._authorized_issue_request(context)
         initial_body = _agent_session_initial_body_from_arguments(arguments)
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         issue = _fetch_issue(issue_key, presence)
         self._require_returned_issue_allowed(issue, context.access.source_location)
         agent_session = _open_linear_agent_session_on_issue(
             issue,
             initial_body,
             presence,
-            agent_id=context.agent_identity.id,
+            agent_id=context.agent.id,
         )
         return _compact_created_agent_session_payload(agent_session, issue)
 
@@ -1018,7 +1017,7 @@ class LinearToolProvider:
         arguments: Mapping[str, Any],
     ) -> dict[str, Any]:
         request = self._validated_create_issue_request(context)
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         mutation_input: dict[str, Any] = {}
         parent_issue = None
         for field, value in request.items():
@@ -1063,7 +1062,7 @@ class LinearToolProvider:
         arguments: Mapping[str, Any],
     ) -> dict[str, Any]:
         target_issue_key, request = self._validated_update_issue_request(context)
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         target_issue = _fetch_issue(target_issue_key, presence)
         self._require_returned_issue_allowed(target_issue, context.access.source_location)
         target_issue_id = _required_string(
@@ -1107,7 +1106,7 @@ class LinearToolProvider:
         arguments: Mapping[str, Any],
     ) -> dict[str, Any]:
         request = self._validated_create_project_request(context)
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         mutation_input: dict[str, Any] = {}
         for field, value in request.items():
             if field == "team_ids":
@@ -1348,7 +1347,7 @@ class LinearToolProvider:
         query_func: Any,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        presence = self._presence_for_identity(context.agent_identity.id)
+        presence = self._presence_for_agent(context.agent.id)
         try:
             return cast(dict[str, Any], query_func(presence, **kwargs))
         except linear_queries.LinearProviderQueryError as exc:
@@ -1600,21 +1599,21 @@ class LinearToolProvider:
                 "Linear returned a parent issue that does not match the authorized parent target",
             )
 
-    def _presence_for_identity(self, agent_identity_id: str) -> Any:
-        presence = self._find_presence_for_identity(agent_identity_id)
+    def _presence_for_agent(self, agent_id: str) -> Any:
+        presence = self._find_presence_for_agent(agent_id)
         if presence is None:
             raise LinearToolError(
                 "missing_linear_presence",
-                f"CAO identity {agent_identity_id!r} has Linear tool access but no presence",
+                f"CAO agent {agent_id!r} has Linear tool access but no presence",
             )
         return presence
 
-    def _find_presence_for_identity(self, agent_identity_id: str) -> Any:
+    def _find_presence_for_agent(self, agent_id: str) -> Any:
         return next(
             (
                 candidate
                 for candidate in self._config.presences.values()
-                if candidate.agent_id == agent_identity_id
+                if candidate.agent_id == agent_id
             ),
             None,
         )

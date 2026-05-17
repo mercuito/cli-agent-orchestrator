@@ -8,6 +8,7 @@ import logging
 import re
 from typing import Any, Dict, Optional, cast
 
+from cli_agent_orchestrator.agent import AgentRegistry
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.linear import app_client
@@ -48,11 +49,11 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeNotification,
     AgentRuntimeNotifyResult,
 )
-from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityManager
+from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
     WorkspaceContextResolverError,
-    resolve_workspace_context_for_identity,
+    resolve_workspace_context_for_agent,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,7 @@ def _post_accepted_activity(
     thread_id: Optional[str],
     resolved: LinearResolvedPresence,
 ) -> None:
-    actor_name = resolved.identity.display_name or resolved.identity.id
+    actor_name = resolved.agent.display_name or resolved.agent.id
     _post_lifecycle_activity(
         thread_id,
         {
@@ -178,7 +179,7 @@ def _post_policy_denial_comment(
     if not issue_id:
         return
     reason = _bounded_policy_reason(decision.reason)
-    actor_name = resolved.identity.display_name or resolved.identity.id
+    actor_name = resolved.agent.display_name or resolved.agent.id
     body = "\n\n".join(
         [
             "**CAO policy notice**",
@@ -327,7 +328,7 @@ def _resolve_linear_event(event: LinearIssueContextEvent) -> LinearResolvedPrese
     )
     return LinearResolvedPresence(
         presence=presence,
-        identity=get_linear_workspace_provider().resolve_identity_for_presence(presence),
+        agent=get_linear_workspace_provider().resolve_agent_for_presence(presence),
     )
 
 
@@ -355,7 +356,7 @@ def _incoming_policy_decision(
     if action is None:
         return LinearPolicyDecision.allow()
     request = LinearPolicyRequest(
-        agent_id=resolved.identity.id,
+        agent_id=resolved.agent.id,
         direction="incoming",
         action=action,
         origin="webhook",
@@ -370,18 +371,20 @@ def _runtime_handle_for_resolved_presence(
     resolved: LinearResolvedPresence,
     workspace_context_resolution: WorkspaceContextResolution | None = None,
 ) -> AgentRuntimeHandle:
-    identity_manager = AgentIdentityManager(identity_providers=(get_linear_workspace_provider(),))
-    identity = identity_manager.register_identity(resolved.identity)
-    if not resolved.identity.workspace_context.enabled:
-        return AgentRuntimeHandle(identity, identity_manager=identity_manager)
+    agent_manager = AgentManager(
+        configured_agents=AgentRegistry({resolved.agent.id: resolved.agent})
+    )
+    agent = agent_manager.register_agent(resolved.agent)
+    if not resolved.agent.workspace_context.enabled:
+        return AgentRuntimeHandle(agent, agent_manager=agent_manager)
     if workspace_context_resolution is None:
         raise LinearWorkspaceProviderConfigError(
             "Linear event did not contain an issue that can resolve workspace context"
         )
     return AgentRuntimeHandle(
-        identity,
+        agent,
         workspace_context_id=workspace_context_resolution.workspace_context_id,
-        identity_manager=identity_manager,
+        agent_manager=agent_manager,
     )
 
 
@@ -390,7 +393,7 @@ def _runtime_handle_for_resolved_event(
     event: CaoEvent,
 ) -> AgentRuntimeHandle:
     resolution = _resolve_workspace_context_for_event(resolved, event)
-    if not resolved.identity.workspace_context.enabled:
+    if not resolved.agent.workspace_context.enabled:
         return _runtime_handle_for_resolved_presence(resolved)
     return _runtime_handle_for_resolved_presence(
         resolved,
@@ -404,7 +407,7 @@ def _resolve_workspace_context_for_event(
 ) -> WorkspaceContextResolution | None:
     register_linear_workspace_context_resolver()
     try:
-        return resolve_workspace_context_for_identity(resolved.identity, event)
+        return resolve_workspace_context_for_agent(resolved.agent, event)
     except WorkspaceContextResolverError as exc:
         raise LinearWorkspaceProviderConfigError(str(exc)) from exc
 
@@ -435,7 +438,7 @@ def ensure_discovery_terminal(*, app_key: Optional[str] = None) -> Dict[str, Any
     return _terminal_for_resolved_presence(
         LinearResolvedPresence(
             presence=presence,
-            identity=provider.resolve_identity_for_presence(presence),
+            agent=provider.resolve_agent_for_presence(presence),
         )
     )
 
@@ -452,7 +455,7 @@ def build_terminal_message(
     actor_name = (
         resolved.presence.app_user_name
         if resolved is not None and resolved.presence.app_user_name
-        else resolved.identity.display_name if resolved is not None else "Linear agent"
+        else resolved.agent.display_name if resolved is not None else "Linear agent"
     )
 
     parts = [
@@ -511,7 +514,7 @@ def handle_provider_event(event: LinearIssueContextEvent) -> Optional[str]:
         _update_external_url_once(
             thread_id=thread_id,
             terminal_id=terminal_id,
-            agent_id=resolved.identity.id,
+            agent_id=resolved.agent.id,
             app_key=app_key,
         )
         _post_lifecycle_activity(
@@ -528,7 +531,7 @@ def handle_provider_event(event: LinearIssueContextEvent) -> Optional[str]:
 
     logger.info(
         "Accepted Linear AgentSessionEvent for CAO agent %s (terminal=%s status=%s created=%s)",
-        resolved.identity.id,
+        resolved.agent.id,
         terminal_id,
         result.status.value,
         result.notification.created,
@@ -636,7 +639,7 @@ def notify_agent_for_persisted_event(
     if not decision.allowed:
         logger.info(
             "Suppressed Linear AgentSession notification for CAO agent %s by policy %s: %s",
-            resolved.identity.id,
+            resolved.agent.id,
             decision.policy_name or "unknown",
             decision.reason,
         )
@@ -665,7 +668,7 @@ def notify_agent_for_persisted_event(
         _publish_persisted_external_url_once(
             thread_id=thread_id,
             terminal_id=result.terminal_id,
-            agent_id=resolved.identity.id,
+            agent_id=resolved.agent.id,
             app_key=resolved.presence.app_key,
         )
     if notification.created:
@@ -678,7 +681,7 @@ def notify_agent_for_persisted_event(
     logger.info(
         "Accepted Linear AgentSession inbox notification for CAO agent %s "
         "(inbox=%s terminal=%s status=%s created=%s)",
-        resolved.identity.id,
+        resolved.agent.id,
         result.notification.delivery.notification.id,
         result.terminal_id,
         result.status.value,

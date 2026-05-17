@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry, AgentWorkspaceContextConfig
+from cli_agent_orchestrator.agent import (
+    AgentRegistry,
+    AgentWorkspaceContextConfig,
+    LinearConfig,
+    write_agent,
+)
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.linear import runtime
@@ -20,7 +26,7 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     LinearResolvedPresence,
     LinearWorkspaceProvider,
 )
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from test.support.agent_factory import Agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessageRecord,
@@ -43,14 +49,18 @@ def test_db(runtime_inbox_db_session):
     return runtime_inbox_db_session
 
 
+@pytest.fixture(autouse=True)
+def _disable_agent_policies(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(runtime, "should_enable_linear_agent_policies", lambda: False)
+
+
 @pytest.fixture
-def resolved_presence(implementation_partner_identity_factory):
+def resolved_presence(implementation_partner_agent_factory):
     def _resolved_presence(
         *,
         app_key: str = "implementation_partner",
         agent_id: str = "implementation_partner",
         session_name: str = "implementation-partner",
-        agent_profile: str = "developer",
         cli_provider: str = "codex",
         workdir: str = "/repo",
     ) -> LinearResolvedPresence:
@@ -61,9 +71,8 @@ def resolved_presence(implementation_partner_identity_factory):
                 app_key=app_key,
                 app_user_name="Implementation Partner",
             ),
-            identity=implementation_partner_identity_factory(
+            agent=implementation_partner_agent_factory(
                 id=agent_id,
-                agent_profile=agent_profile,
                 cli_provider=cli_provider,
                 workdir=workdir,
                 session_name=session_name,
@@ -113,14 +122,14 @@ def _linear_agent_session_payload() -> dict:
         "_cao_linear_app_key": "implementation_partner",
         "appUserId": "fresh-linear-app-user-id",
         "data": {
-            "promptContext": '<issue identifier="CAO-43"><title>Durable identity</title></issue>',
+            "promptContext": '<issue identifier="CAO-43"><title>Durable agent</title></issue>',
             "agentSession": {
                 "id": "session-1",
                 "url": "https://linear.app/session/session-1",
                 "issue": {
                     "id": "issue-43",
                     "identifier": "CAO-43",
-                    "title": "Durable identity",
+                    "title": "Durable agent",
                     "url": "https://linear.app/issue/CAO-43",
                 },
             },
@@ -128,7 +137,7 @@ def _linear_agent_session_payload() -> dict:
                 "id": "activity-1",
                 "content": {
                     "type": "prompt",
-                    "body": "Please instantiate the durable identity runtime.",
+                    "body": "Please instantiate the durable agent runtime.",
                 },
             },
         },
@@ -165,7 +174,7 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolve
     resolved = resolved_presence(session_name="linear-discovery-partner")
     provider = Mock()
     provider.resolve_presence.return_value = resolved.presence
-    provider.resolve_identity_for_presence.return_value = resolved.identity
+    provider.resolve_agent_for_presence.return_value = resolved.agent
     monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: provider)
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
 
@@ -173,7 +182,7 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolve
     handle.ensure_started.assert_called_once()
 
 
-def test_terminal_config_comes_from_cao_identity_mapping(monkeypatch, resolved_presence):
+def test_terminal_config_comes_from_cao_agent_mapping(monkeypatch, resolved_presence):
     handle = Mock()
     handle.ensure_started.return_value.as_terminal_metadata.return_value = {"id": "terminal-1"}
     monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
@@ -230,10 +239,10 @@ def test_context_enabled_linear_event_starts_runtime_in_resolved_issue_context(
         resolved = resolved_presence()
         return LinearResolvedPresence(
             presence=resolved.presence,
-            identity=implementation_partner_identity_factory_with_context(resolved.identity),
+            agent=implementation_partner_agent_factory_with_context(resolved.agent),
         )
 
-    def fake_handle(identity, workspace_context_id=None, identity_manager=None):
+    def fake_handle(agent, workspace_context_id=None, agent_manager=None):
         captured["workspace_context_id"] = workspace_context_id
         handle = Mock()
         handle.notify.return_value = Mock(
@@ -274,13 +283,8 @@ def test_context_enabled_linear_event_fails_closed_for_wrong_resolver_id(
         resolved = resolved_presence()
         return LinearResolvedPresence(
             presence=resolved.presence,
-            identity=type(resolved.identity)(
-                id=resolved.identity.id,
-                display_name=resolved.identity.display_name,
-                agent_profile=resolved.identity.agent_profile,
-                cli_provider=resolved.identity.cli_provider,
-                workdir=resolved.identity.workdir,
-                session_name=resolved.identity.session_name,
+            agent=replace(
+                resolved.agent,
                 workspace_context=AgentWorkspaceContextConfig(
                     enabled=True,
                     resolver_id="future_resolver",
@@ -312,10 +316,10 @@ def test_context_enabled_linear_events_switch_only_across_distinct_boundaries(
         resolved = resolved_presence()
         return LinearResolvedPresence(
             presence=resolved.presence,
-            identity=implementation_partner_identity_factory_with_context(resolved.identity),
+            agent=implementation_partner_agent_factory_with_context(resolved.agent),
         )
 
-    def fake_handle(identity, workspace_context_id=None, identity_manager=None):
+    def fake_handle(agent, workspace_context_id=None, agent_manager=None):
         captured_contexts.append(workspace_context_id)
         handle = Mock()
         handle.notify.return_value = Mock(
@@ -359,14 +363,9 @@ def test_context_enabled_linear_events_switch_only_across_distinct_boundaries(
     assert captured_contexts[2] != captured_contexts[0]
 
 
-def implementation_partner_identity_factory_with_context(identity):
-    return type(identity)(
-        id=identity.id,
-        display_name=identity.display_name,
-        agent_profile=identity.agent_profile,
-        cli_provider=identity.cli_provider,
-        workdir=identity.workdir,
-        session_name=identity.session_name,
+def implementation_partner_agent_factory_with_context(agent):
+    return replace(
+        agent,
         workspace_context=AgentWorkspaceContextConfig(
             enabled=True,
             resolver_id="linear_planning",
@@ -584,28 +583,28 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
     test_db,
     tmp_path,
     monkeypatch,
-    implementation_partner_identity_factory,
+    implementation_partner_agent_factory,
     terminal_provider_patcher,
     terminal_send_patcher,
 ):
-    identity = implementation_partner_identity_factory(workdir=str(tmp_path / "repo"))
-    registry = AgentIdentityRegistry({identity.id: identity})
-    config_path = tmp_path / "linear.toml"
-    config_path.write_text("""
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_name = "Implementation Partner"
-""")
+    agent = replace(
+        implementation_partner_agent_factory(workdir=str(tmp_path / "repo")),
+        linear=LinearConfig(
+            app_key="implementation_partner",
+            app_user_name="Implementation Partner",
+        ),
+    )
+    registry = AgentRegistry({agent.id: agent})
+    agents_root = tmp_path / "agents"
+    write_agent(agent, agents_root=agents_root)
     workspace_provider = LinearWorkspaceProvider(
         agent_registry=registry,
-        config_path=config_path,
         preflight_credentials=False,
     )
     monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: workspace_provider)
     monkeypatch.setattr(
-        "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
-        tmp_path / "agents",
+        "cli_agent_orchestrator.agent.AGENTS_ROOT",
+        agents_root,
     )
 
     tmux = Mock()
@@ -621,8 +620,8 @@ app_user_name = "Implementation Partner"
     )
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "load_agent_profile",
-        lambda profile: AgentProfile(name=profile, description="Developer"),
+        "load_agent",
+        lambda agent_id: agent,
     )
     monkeypatch.setattr(
         runtime_agent.terminal_service.provider_manager,
@@ -667,7 +666,7 @@ app_user_name = "Implementation Partner"
     send_input.assert_called_once()
     assert send_input.call_args.args[0] == "terminal-a"
     assert "[CAO inbox notification]" in send_input.call_args.args[1]
-    assert "Please instantiate the durable identity runtime." in send_input.call_args.args[1]
+    assert "Please instantiate the durable agent runtime." in send_input.call_args.args[1]
     update_url.assert_called_once_with(
         "session-1",
         "terminal-a",

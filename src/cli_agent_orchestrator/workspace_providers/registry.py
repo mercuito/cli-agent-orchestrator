@@ -7,10 +7,10 @@ from typing import Callable, Mapping, Optional, Protocol, runtime_checkable
 
 import tomli
 
-from cli_agent_orchestrator.agent_identity import (
-    AgentIdentity,
-    AgentIdentityRegistry,
-    load_agent_identity_registry,
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentRegistry,
+    load_agent_registry,
 )
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.events import CaoEvent, default_cao_event_dispatcher
@@ -42,19 +42,19 @@ class WorkspaceProvider(Protocol):
 
 
 @runtime_checkable
-class AgentIdentityWorkspaceProvider(WorkspaceProvider, Protocol):
-    """Optional workspace-provider surface for resolving CAO agent identities."""
+class AgentWorkspaceProvider(WorkspaceProvider, Protocol):
+    """Optional workspace-provider surface for resolving CAO agents."""
 
-    def resolve_identity_for_agent_id(self, agent_id: str) -> AgentIdentity:
-        """Resolve a durable CAO agent identity through provider-owned mapping."""
+    def resolve_agent_for_agent_id(self, agent_id: str) -> Agent:
+        """Resolve a durable CAO agent through provider-owned mapping."""
 
 
 @runtime_checkable
-class AgentIdentityListingWorkspaceProvider(AgentIdentityWorkspaceProvider, Protocol):
+class AgentListingWorkspaceProvider(AgentWorkspaceProvider, Protocol):
     """Optional workspace-provider surface for listing provider-backed identities."""
 
-    def list_agent_identities(self) -> tuple[AgentIdentity, ...]:
-        """Return provider-backed CAO identities known to this provider."""
+    def list_agents(self) -> tuple[Agent, ...]:
+        """Return provider-backed CAO agents known to this provider."""
 
 
 @runtime_checkable
@@ -91,7 +91,7 @@ class CaoEventPublishingWorkspaceProvider(WorkspaceProvider, Protocol):
         """Return CAO event types published by this provider."""
 
 
-WorkspaceProviderFactory = Callable[[AgentIdentityRegistry], WorkspaceProvider]
+WorkspaceProviderFactory = Callable[[AgentRegistry], WorkspaceProvider]
 
 
 class WorkspaceProviderRegistry:
@@ -104,7 +104,7 @@ class WorkspaceProviderRegistry:
         normalized = _normalize_provider_name(name)
         self._factories[normalized] = factory
 
-    def create(self, name: str, agent_registry: AgentIdentityRegistry) -> WorkspaceProvider:
+    def create(self, name: str, agent_registry: AgentRegistry) -> WorkspaceProvider:
         normalized = _normalize_provider_name(name)
         try:
             factory = self._factories[normalized]
@@ -178,7 +178,7 @@ def initialize_enabled_workspace_providers(
 ) -> list[WorkspaceProvider]:
     """Create and initialize startup workspace providers."""
     enabled = load_enabled_workspace_providers(enabled_config_path)
-    agent_registry = load_agent_identity_registry(agents_config_path)
+    agent_registry = load_agent_registry(agents_config_path)
     provider_registry = registry or default_workspace_provider_registry()
 
     providers: list[WorkspaceProvider] = []
@@ -195,19 +195,6 @@ def initialize_enabled_workspace_providers(
             if isinstance(provider, LinearWorkspaceProvider):
                 set_default_linear_workspace_provider(provider)
         providers.append(provider)
-    if not workspace_provider_config_exists(enabled_config_path):
-        from cli_agent_orchestrator.linear.workspace_provider import (
-            LinearWorkspaceProvider,
-            has_legacy_linear_provider_config,
-            set_default_linear_workspace_provider,
-        )
-
-        if has_legacy_linear_provider_config():
-            provider = LinearWorkspaceProvider(agent_registry=agent_registry)
-            provider.initialize()
-            _register_provider_events(provider)
-            set_default_linear_workspace_provider(provider)
-            providers.append(provider)
     return providers
 
 
@@ -233,11 +220,11 @@ def load_enabled_provider_tool_access_policies(
     enabled_config_path: Optional[Path] = None,
     agents_config_path: Optional[Path] = None,
     registry: Optional[WorkspaceProviderRegistry] = None,
-    agent_registry: Optional[AgentIdentityRegistry] = None,
+    agent_registry: Optional[AgentRegistry] = None,
 ) -> dict[str, ProviderToolAccessPolicy]:
     """Load provider-mediated tool access without initializing unrelated providers."""
     enabled = load_enabled_workspace_providers(enabled_config_path)
-    agents = agent_registry or load_agent_identity_registry(agents_config_path)
+    agents = agent_registry or load_agent_registry(agents_config_path)
     provider_registry = registry or default_workspace_provider_registry()
 
     providers_with_tools: list[WorkspaceProvider] = []
@@ -256,37 +243,24 @@ def load_enabled_provider_tool_access_policies(
     return load_provider_tool_access_policies(providers_with_tools)
 
 
-def resolve_agent_identity_for_runtime(
+def resolve_agent_for_runtime(
     agent_id: str,
     *,
     agents_config_path: Optional[Path] = None,
-) -> AgentIdentity:
-    """Resolve a durable CAO agent identity through the central manager."""
-    from cli_agent_orchestrator.services.agent_identity_manager import (
-        create_default_agent_identity_manager,
+) -> Agent:
+    """Resolve a durable CAO agent through the central manager."""
+    from cli_agent_orchestrator.services.agent_manager import (
+        create_default_agent_manager,
     )
 
-    return create_default_agent_identity_manager(
-        agents_config_path=agents_config_path,
-    ).resolve_identity(agent_id)
+    return create_default_agent_manager(
+        agents_root=agents_config_path,
+    ).resolve_agent(agent_id)
 
 
-def candidate_identity_workspace_providers() -> list[WorkspaceProvider]:
+def candidate_agent_workspace_providers() -> list[WorkspaceProvider]:
     """Return initialized/lazy workspace providers that may own agent mappings."""
-    providers: list[WorkspaceProvider] = []
-    if not workspace_provider_config_exists():
-        from cli_agent_orchestrator.linear.workspace_provider import (
-            LinearWorkspaceProviderConfigError,
-            get_linear_workspace_provider,
-            has_legacy_linear_provider_config,
-        )
-
-        if has_legacy_linear_provider_config():
-            try:
-                providers.append(get_linear_workspace_provider())
-            except LinearWorkspaceProviderConfigError:
-                pass
-    return providers
+    return []
 
 
 def _register_provider_events(provider: WorkspaceProvider) -> None:

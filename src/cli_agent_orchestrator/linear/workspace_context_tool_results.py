@@ -11,7 +11,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
 )
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
-    resolve_workspace_context_for_identity,
+    resolve_workspace_context_for_agent,
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolInvocationContext
 
@@ -27,4 +27,4 @@ def resolve_linear_tool_result_workspace_context(
     if publication is None:
         return None
     register_linear_workspace_context_resolver()
-    return resolve_workspace_context_for_identity(context.agent_identity, publication.event)
+    return resolve_workspace_context_for_agent(context.agent, publication.event)

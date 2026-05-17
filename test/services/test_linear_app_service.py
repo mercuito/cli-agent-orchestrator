@@ -426,7 +426,11 @@ def test_get_issue_returns_linear_issue(monkeypatch):
 
 
 def test_public_cao_terminal_url_points_to_dashboard(monkeypatch):
-    monkeypatch.setenv("LINEAR_CAO_PUBLIC_URL", "https://cao.test/")
+    monkeypatch.setattr(
+        app_client,
+        "linear_env",
+        lambda name: "https://cao.test/" if name == "LINEAR_CAO_PUBLIC_URL" else None,
+    )
     monkeypatch.setattr(
         app_client,
         "create_terminal_dashboard_token",
@@ -440,7 +444,11 @@ def test_public_cao_terminal_url_points_to_dashboard(monkeypatch):
 
 
 def test_public_cao_agent_url_points_to_stable_agent_deep_link(monkeypatch):
-    monkeypatch.setenv("LINEAR_CAO_PUBLIC_URL", "https://cao.test/")
+    monkeypatch.setattr(
+        app_client,
+        "linear_env",
+        lambda name: "https://cao.test/" if name == "LINEAR_CAO_PUBLIC_URL" else None,
+    )
     monkeypatch.setattr(
         app_client,
         "create_agent_dashboard_token",

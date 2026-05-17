@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -10,7 +10,7 @@ from typing import Any, Mapping, Optional
 import pytest
 from fastapi.testclient import TestClient
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityRegistry
+from cli_agent_orchestrator.agent import AgentRegistry, LinearConfig
 from cli_agent_orchestrator.api.main import app
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.events import CaoEventDispatcher
@@ -54,7 +54,7 @@ class RecordingRuntimeHandle:
 
     notifications: list[RecordedNotification] = []
 
-    def __init__(self, _identity: Any, **_kwargs: Any) -> None:
+    def __init__(self, _agent: Any, **_kwargs: Any) -> None:
         self.inbox_receiver_id = "agent:implementation_partner"
 
     def accept_notification(self, notification: Any, *, causing_event: Any = None):
@@ -71,7 +71,7 @@ class RecordingRuntimeHandle:
 class RetryRecordingHandle:
     calls = 0
 
-    def __init__(self, _identity: Any, **_kwargs: Any) -> None:
+    def __init__(self, _agent: Any, **_kwargs: Any) -> None:
         self.inbox_receiver_id = "agent:implementation_partner"
 
     def try_deliver_pending(self, **_kwargs: Any):
@@ -107,22 +107,20 @@ def linear_monitor_world(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     runtime_inbox_db_session,
-    implementation_partner_identity_factory,
+    implementation_partner_agent_factory,
 ):
-    identity = implementation_partner_identity_factory()
-    registry = AgentIdentityRegistry({identity.id: identity})
-    config_path = tmp_path / "linear.toml"
-    config_path.write_text("""
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-access_token = "test-token"
-app_user_id = "app-user-1"
-app_user_name = "Implementation Partner"
-""".strip())
+    agent = replace(
+        implementation_partner_agent_factory(),
+        linear=LinearConfig(
+            app_key="implementation_partner",
+            access_token="test-token",
+            app_user_id="app-user-1",
+            app_user_name="Implementation Partner",
+        ),
+    )
+    registry = AgentRegistry({agent.id: agent})
     provider = LinearWorkspaceProvider(
         agent_registry=registry,
-        config_path=config_path,
         preflight_credentials=False,
     )
     provider.initialize()
@@ -138,14 +136,14 @@ app_user_name = "Implementation Partner"
                 app_user_id="app-user-1",
                 app_user_name="Implementation Partner",
             ),
-            identity=identity,
+            agent=agent,
         ),
     )
     RecordingRuntimeHandle.notifications = []
     monkeypatch.setattr(
         runtime,
         "_runtime_handle_for_resolved_presence",
-        lambda _resolved: RecordingRuntimeHandle(identity),
+        lambda _resolved: RecordingRuntimeHandle(agent),
     )
     yield provider
 

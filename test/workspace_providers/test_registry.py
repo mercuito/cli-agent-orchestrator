@@ -12,6 +12,7 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
     get_linear_workspace_provider,
 )
+from cli_agent_orchestrator.agent import Agent, LinearConfig, write_agent
 from cli_agent_orchestrator.workspace_providers import (
     UnknownWorkspaceProviderError,
     WorkspaceProviderEvent,
@@ -26,11 +27,50 @@ def _future_token_expires_at() -> str:
     return (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
 
+def _agents_root(tmp_path):
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    return agents
+
+
+def _write_agent(
+    agents_root,
+    agent_id: str,
+    *,
+    app_key: str | None = None,
+    app_user_id: str | None = None,
+    app_user_name: str | None = None,
+    access_token: str | None = None,
+    token_expires_at: str | None = None,
+) -> None:
+    write_agent(
+        Agent(
+            id=agent_id,
+            display_name=agent_id.replace("_", " ").title(),
+            cli_provider="codex",
+            workdir="/repo",
+            session_name=agent_id.replace("_", "-"),
+            prompt="",
+            linear=(
+                LinearConfig(
+                    app_key=app_key,
+                    app_user_id=app_user_id,
+                    app_user_name=app_user_name,
+                    access_token=access_token,
+                    token_expires_at=token_expires_at,
+                )
+                if app_key
+                else None
+            ),
+        ),
+        agents_root=agents_root,
+    )
+
+
 def test_unknown_enabled_workspace_provider_fails_clearly(tmp_path):
     enabled = tmp_path / "workspace-providers.toml"
     enabled.write_text('enabled = ["jira"]\n')
-    agents = tmp_path / "agents.toml"
-    agents.write_text("")
+    agents = _agents_root(tmp_path)
 
     with pytest.raises(UnknownWorkspaceProviderError, match="jira"):
         initialize_enabled_workspace_providers(
@@ -42,29 +82,15 @@ def test_unknown_enabled_workspace_provider_fails_clearly(tmp_path):
 def test_initialize_enabled_workspace_providers_loads_linear_provider(tmp_path, monkeypatch):
     enabled = tmp_path / "workspace-providers.toml"
     enabled.write_text('enabled = ["linear"]\n')
-    agents = tmp_path / "agents.toml"
-    agents.write_text("""
-[agents.implementation_partner]
-display_name = "Implementation Partner"
-agent_profile = "developer"
-cli_provider = "codex"
-workdir = "/repo"
-session_name = "implementation-partner"
-""")
-    linear_config = tmp_path / "workspace-providers" / "linear.toml"
-    linear_config.parent.mkdir(parents=True)
-    linear_config.write_text(f"""
-[presences.implementation_partner]
-agent_id = "implementation_partner"
-app_key = "implementation_partner"
-app_user_id = "app-user-impl"
-app_user_name = "Implementation Partner"
-access_token = "access-token"
-token_expires_at = "{_future_token_expires_at()}"
-""")
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.LINEAR_PROVIDER_CONFIG_PATH",
-        linear_config,
+    agents = _agents_root(tmp_path)
+    _write_agent(
+        agents,
+        "implementation_partner",
+        app_key="implementation_partner",
+        app_user_id="app-user-impl",
+        app_user_name="Implementation Partner",
+        access_token="access-token",
+        token_expires_at=_future_token_expires_at(),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
@@ -82,7 +108,7 @@ token_expires_at = "{_future_token_expires_at()}"
         {"_cao_linear_app_key": "implementation_partner"}
     )
     assert resolved.presence.app_user_id == "app-user-impl"
-    assert resolved.identity.session_name == "implementation-partner"
+    assert resolved.agent.session_name == "implementation-partner"
 
 
 def test_initialize_enabled_workspace_providers_registers_declared_provider_events(
@@ -90,8 +116,7 @@ def test_initialize_enabled_workspace_providers_registers_declared_provider_even
 ):
     enabled = tmp_path / "workspace-providers.toml"
     enabled.write_text('enabled = ["example"]\n')
-    agents = tmp_path / "agents.toml"
-    agents.write_text("")
+    agents = _agents_root(tmp_path)
     dispatcher = WorkspaceProviderEventDispatcher()
 
     @dataclass(frozen=True)
@@ -123,35 +148,12 @@ def test_initialize_enabled_workspace_providers_registers_declared_provider_even
     assert dispatcher.published_events("example") == (ExampleEvent,)
 
 
-def test_initialize_workspace_providers_starts_legacy_linear_provider_when_unconfigured(
-    tmp_path, monkeypatch
+def test_initialize_workspace_providers_does_not_start_linear_when_unconfigured(
+    tmp_path,
 ):
     enabled = tmp_path / "missing-workspace-providers.toml"
-    agents = tmp_path / "agents.toml"
-    agents.write_text("")
+    agents = _agents_root(tmp_path)
     initialized = []
-
-    class FakeLinearProvider:
-        name = "linear"
-
-        def __init__(self, *, agent_registry):
-            self.agent_registry = agent_registry
-
-        def initialize(self):
-            initialized.append(self)
-
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.has_legacy_linear_provider_config",
-        lambda: True,
-    )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.LinearWorkspaceProvider",
-        FakeLinearProvider,
-    )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.set_default_linear_workspace_provider",
-        lambda provider: None,
-    )
 
     providers = initialize_enabled_workspace_providers(
         enabled_config_path=enabled,
@@ -159,7 +161,6 @@ def test_initialize_workspace_providers_starts_legacy_linear_provider_when_uncon
     )
 
     assert providers == initialized
-    assert len(providers) == 1
 
 
 def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_access(
@@ -167,28 +168,14 @@ def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_ac
 ):
     enabled = tmp_path / "workspace-providers.toml"
     enabled.write_text('enabled = ["linear"]\n')
-    agents = tmp_path / "agents.toml"
-    agents.write_text("""
-[agents.discovery_partner]
-display_name = "Discovery Partner"
-agent_profile = "developer"
-cli_provider = "codex"
-workdir = "/repo"
-session_name = "discovery-partner"
-""")
-    linear_config = tmp_path / "workspace-providers" / "linear.toml"
-    linear_config.parent.mkdir(parents=True)
-    linear_config.write_text("""
-[presences.discovery_partner]
-agent_id = "discovery_partner"
-app_key = "discovery_partner"
-app_user_id = "app-user-discovery"
-app_user_name = "Discovery Partner"
-access_token = "access-token"
-""")
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.LINEAR_PROVIDER_CONFIG_PATH",
-        linear_config,
+    agents = _agents_root(tmp_path)
+    _write_agent(
+        agents,
+        "discovery_partner",
+        app_key="discovery_partner",
+        app_user_id="app-user-discovery",
+        app_user_name="Discovery Partner",
+        access_token="access-token",
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",

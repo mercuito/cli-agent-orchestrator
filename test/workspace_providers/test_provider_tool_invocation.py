@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import Agent, AgentRegistry
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.workspace_providers import (
     ProviderMediatedToolDefinition,
@@ -34,14 +34,14 @@ class InvocationRecorder:
     fail_post_hook: bool = False
     mutate_post_result: bool = False
     handler_result: dict[str, Any] = field(default_factory=lambda: {"provider": "result"})
-    denial_reason: str = "identity is not allowed to perform this fake action"
+    denial_reason: str = "agent is not allowed to perform this fake action"
     denial_diagnostics: Mapping[str, Any] | None = None
 
     def handler(
         self, context: ProviderToolInvocationContext, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
         self.events.append(
-            f"handler:{context.agent_identity.id}:{context.tool_name}:{arguments['query']}"
+            f"handler:{context.agent.id}:{context.tool_name}:{arguments['query']}"
         )
         if self.fail_handler:
             raise ValueError("provider handler exploded")
@@ -62,7 +62,7 @@ class InvocationRecorder:
         return ProviderToolPreCallResult.deny(
             self.denial_reason,
             self.denial_diagnostics
-            or {"identity": context.agent_identity.id, "tool": context.tool_name},
+            or {"agent": context.agent.id, "tool": context.tool_name},
         )
 
     def post_hook(self, context: ProviderToolInvocationContext) -> ProviderToolPreCallResult | None:
@@ -77,24 +77,24 @@ class InvocationRecorder:
         return ProviderToolPreCallResult.deny("post hooks cannot deny")
 
 
-def _agents() -> AgentIdentityRegistry:
-    return AgentIdentityRegistry(
+def _agents() -> AgentRegistry:
+    return AgentRegistry(
         {
-            "identity_a": AgentIdentity(
-                id="identity_a",
-                display_name="Identity A",
-                agent_profile="developer",
+            "agent_a": Agent(
+                id="agent_a",
+                display_name="Agent A",
                 cli_provider="codex",
                 workdir="/repo",
-                session_name="identity-a",
+                session_name="agent-a",
+                prompt="Developer agent.",
             ),
-            "identity_b": AgentIdentity(
-                id="identity_b",
-                display_name="Identity B",
-                agent_profile="reviewer",
+            "agent_b": Agent(
+                id="agent_b",
+                display_name="Agent B",
                 cli_provider="codex",
                 workdir="/repo",
-                session_name="identity-b",
+                session_name="agent-b",
+                prompt="Reviewer agent.",
             ),
         }
     )
@@ -104,7 +104,7 @@ def _service(
     recorder: InvocationRecorder,
     *,
     terminal_metadata: Mapping[str, Mapping[str, Any]] | None = None,
-    identity_id: str = "identity_a",
+    agent_id: str = "agent_a",
     pre_hooks: tuple[str, ...] = ("always_allow",),
     post_hooks: tuple[str, ...] = ("record_after",),
     policies_enabled: bool = True,
@@ -114,14 +114,14 @@ def _service(
     policy = _policy(
         recorder,
         agents=agents,
-        identity_id=identity_id,
+        agent_id=agent_id,
         pre_hooks=pre_hooks,
         post_hooks=post_hooks,
     )
     metadata = terminal_metadata or {
-        "terminal-a": {"id": "terminal-a", "agent_identity_id": "identity_a"},
-        "terminal-b": {"id": "terminal-b", "agent_identity_id": "identity_b"},
-        "raw-terminal": {"id": "raw-terminal", "agent_identity_id": None},
+        "terminal-a": {"id": "terminal-a", "agent_id": "agent_a"},
+        "terminal-b": {"id": "terminal-b", "agent_id": "agent_b"},
+        "raw-terminal": {"id": "raw-terminal", "agent_id": None},
     }
     return ProviderMediatedToolInvocationService(
         policies={"fake": policy} if policies_enabled else {},
@@ -135,8 +135,8 @@ def _service(
 def _policy(
     recorder: InvocationRecorder,
     *,
-    agents: AgentIdentityRegistry | None = None,
-    identity_id: str = "identity_a",
+    agents: AgentRegistry | None = None,
+    agent_id: str = "agent_a",
     pre_hooks: tuple[str, ...] = ("always_allow",),
     post_hooks: tuple[str, ...] = ("record_after",),
 ) -> ProviderToolAccessPolicy:
@@ -147,7 +147,7 @@ def _policy(
         access_requests=(
             ProviderToolAccessRequest(
                 tool_name="cao_fake.lookup",
-                agent_identity_id=identity_id,
+                agent_id=agent_id,
                 pre_hooks=pre_hooks,
                 post_hooks=post_hooks,
                 location="partners.discovery",
@@ -203,7 +203,7 @@ def test_allowed_invocation_runs_pre_hook_handler_and_post_hook_without_changing
     assert result is recorder.handler_result
     assert recorder.events == [
         "pre_call:always_allow",
-        "handler:identity_a:cao_fake.lookup:alpha",
+        "handler:agent_a:cao_fake.lookup:alpha",
         "post_call:record_after:result",
     ]
 
@@ -220,12 +220,12 @@ def test_pre_call_denial_prevents_handler_execution_with_bounded_diagnostics():
             arguments={"query": "alpha"},
         )
 
-    assert exc_info.value.reason == "identity is not allowed to perform this fake action"
+    assert exc_info.value.reason == "agent is not allowed to perform this fake action"
     assert exc_info.value.diagnostics == {
         "provider_name": "fake",
         "tool_name": "cao_fake.lookup",
         "hook_name": "deny_before",
-        "identity": "identity_a",
+        "agent": "agent_a",
         "tool": "cao_fake.lookup",
     }
     assert recorder.events == ["pre_call:deny_before"]
@@ -315,11 +315,11 @@ def test_pre_call_denial_surfaces_only_provider_vetted_display_context():
     assert exc_info.value.diagnostics["internal_note"] == "this should stay in diagnostics only"
 
 
-def test_unconfigured_terminal_identity_fails_closed_before_provider_code_runs():
+def test_unconfigured_terminal_agent_fails_closed_before_provider_code_runs():
     recorder = InvocationRecorder()
     service = _service(
         recorder,
-        terminal_metadata={"terminal-z": {"id": "terminal-z", "agent_identity_id": "missing"}},
+        terminal_metadata={"terminal-z": {"id": "terminal-z", "agent_id": "missing"}},
     )
 
     with pytest.raises(ProviderMediatedToolAccessDenied) as exc_info:
@@ -330,8 +330,8 @@ def test_unconfigured_terminal_identity_fails_closed_before_provider_code_runs()
             arguments={"query": "alpha"},
         )
 
-    assert exc_info.value.reason == "unmapped_identity"
-    assert exc_info.value.diagnostics["agent_identity_id"] == "missing"
+    assert exc_info.value.reason == "unmapped_agent"
+    assert exc_info.value.diagnostics["agent_id"] == "missing"
     assert recorder.events == []
 
 
@@ -351,7 +351,7 @@ def test_handler_failure_is_reported_cleanly_and_skips_post_hooks():
     assert exc_info.value.diagnostics["error"] == "provider handler exploded"
     assert recorder.events == [
         "pre_call:always_allow",
-        "handler:identity_a:cao_fake.lookup:alpha",
+        "handler:agent_a:cao_fake.lookup:alpha",
     ]
 
 
@@ -369,7 +369,7 @@ def test_post_call_hook_failures_do_not_change_handler_result_or_roll_back():
     assert result is recorder.handler_result
     assert recorder.events == [
         "pre_call:always_allow",
-        "handler:identity_a:cao_fake.lookup:alpha",
+        "handler:agent_a:cao_fake.lookup:alpha",
         "post_call:record_after:result",
     ]
 
@@ -400,8 +400,7 @@ def test_unavailable_post_call_hook_does_not_change_handler_result():
             ProviderToolAccess(
                 provider_name="fake",
                 tool_name="cao_fake.lookup",
-                agent_identity_id="identity_a",
-                agent_profile="developer",
+                agent_id="agent_a",
                 pre_hooks=("always_allow",),
                 post_hooks=("missing_after",),
                 source_location="partners.discovery",
@@ -413,7 +412,7 @@ def test_unavailable_post_call_hook_does_not_change_handler_result():
         agent_registry=agents,
         terminal_metadata_resolver=lambda terminal_id: {
             "id": terminal_id,
-            "agent_identity_id": "identity_a",
+            "agent_id": "agent_a",
         },
     )
 
@@ -427,7 +426,7 @@ def test_unavailable_post_call_hook_does_not_change_handler_result():
     assert result == {"provider": "result"}
     assert recorder.events == [
         "pre_call:always_allow",
-        "handler:identity_a:cao_fake.lookup:alpha",
+        "handler:agent_a:cao_fake.lookup:alpha",
     ]
 
 
@@ -442,8 +441,7 @@ def test_tool_access_without_pre_call_hooks_runs_handler_directly():
             ProviderToolAccess(
                 provider_name="fake",
                 tool_name="cao_fake.lookup",
-                agent_identity_id="identity_a",
-                agent_profile="developer",
+                agent_id="agent_a",
                 pre_hooks=(),
                 post_hooks=(),
                 source_location="partners.discovery",
@@ -455,7 +453,7 @@ def test_tool_access_without_pre_call_hooks_runs_handler_directly():
         agent_registry=agents,
         terminal_metadata_resolver=lambda terminal_id: {
             "id": terminal_id,
-            "agent_identity_id": "identity_a",
+            "agent_id": "agent_a",
         },
     )
 
@@ -467,10 +465,10 @@ def test_tool_access_without_pre_call_hooks_runs_handler_directly():
     )
 
     assert result == {"provider": "result"}
-    assert recorder.events == ["handler:identity_a:cao_fake.lookup:alpha"]
+    assert recorder.events == ["handler:agent_a:cao_fake.lookup:alpha"]
 
 
-def test_default_terminal_metadata_path_resolves_persisted_agent_identity(
+def test_default_terminal_metadata_path_resolves_persisted_agent(
     runtime_inbox_db_session,
 ):
     recorder = InvocationRecorder()
@@ -479,9 +477,8 @@ def test_default_terminal_metadata_path_resolves_persisted_agent_identity(
         "cao-session",
         "window-0",
         "codex",
-        "developer",
-        agent_identity_id="identity_a",
-        workspace_context_id=db_module.ensure_default_workspace_context("identity_a").id,
+        "agent_a",
+        workspace_context_id=db_module.ensure_default_workspace_context("agent_a").id,
     )
     service = _service(recorder, use_default_terminal_metadata=True)
 
@@ -495,6 +492,6 @@ def test_default_terminal_metadata_path_resolves_persisted_agent_identity(
     assert result == {"provider": "result"}
     assert recorder.events == [
         "pre_call:always_allow",
-        "handler:identity_a:cao_fake.lookup:alpha",
+        "handler:agent_a:cao_fake.lookup:alpha",
         "post_call:record_after:result",
     ]
