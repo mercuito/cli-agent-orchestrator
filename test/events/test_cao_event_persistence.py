@@ -52,7 +52,7 @@ from cli_agent_orchestrator.runtime.events import (
     workspace_context_switch_event,
     workspace_runtime_event,
 )
-from cli_agent_orchestrator.services.agent_identity_timeline import AgentIdentityTimelineService
+from cli_agent_orchestrator.services.agent_timeline import AgentTimelineService
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
 LEGACY_LINEAR_MENTIONED_TYPE_KEY = (
@@ -109,7 +109,7 @@ def _linear_issue_context_kwargs(
             if participants is not None
             else (
                 AgentParticipant(
-                    agent_identity_id="implementation_partner",
+                    agent_id="implementation_partner",
                     role="mentioned",
                 ),
             )
@@ -150,7 +150,7 @@ def _linear_issue_context_event(
             source_id=f"msg-{event_name}",
             participants=(
                 AgentParticipant(
-                    agent_identity_id="implementation_partner",
+                    agent_id="implementation_partner",
                     role=participant_role,
                 ),
             ),
@@ -168,14 +168,14 @@ def _linear_issue_created_event() -> LinearIssueCreatedEvent:
         occurred_at=OCCURRED_AT,
         correlation_id=CaoCorrelationId("terminal-1"),
         terminal_id="terminal-1",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         tool_name="create_issue",
         issue={"identifier": "CAO-100", "title": "All event round trip"},
         delivery_id="delivery-created-1",
         metadata={"hook_name": "linear", "phase": "after"},
         agent_participants=(
             AgentParticipant(
-                agent_identity_id="implementation_partner",
+                agent_id="implementation_partner",
                 role="created_issue",
             ),
         ),
@@ -212,7 +212,7 @@ def _all_registered_event_instances() -> tuple[object, ...]:
         ),
         _linear_issue_created_event(),
         notification_accepted_event(
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id="wctx-accepted",
             inbox_notification_id=101,
             inbox_receiver_id="implementation_partner",
@@ -222,7 +222,7 @@ def _all_registered_event_instances() -> tuple[object, ...]:
             causing_event=mention,
         ),
         notification_delivery_event(
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id="wctx-delivery",
             inbox_notification_id=102,
             inbox_receiver_id="implementation_partner",
@@ -237,7 +237,7 @@ def _all_registered_event_instances() -> tuple[object, ...]:
             causing_event=mention,
         ),
         lifecycle_event(
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id="wctx-lifecycle",
             action="launch",
             runtime_status="ready",
@@ -248,7 +248,7 @@ def _all_registered_event_instances() -> tuple[object, ...]:
             causing_event=mention,
         ),
         workspace_context_switch_event(
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             from_workspace_context_id="wctx-old",
             to_workspace_context_id="wctx-new",
             terminal_id="terminal-switch",
@@ -372,7 +372,7 @@ def test_persisted_event_requires_explicit_kind_registration_after_registry_rest
 
 def test_runtime_event_persists_and_reconstructs_as_exact_type(runtime_inbox_db_session) -> None:
     event = lifecycle_event(
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id="wctx-1",
         action="launch",
         runtime_status="ready",
@@ -400,7 +400,7 @@ def test_agent_history_orders_linear_mention_and_runtime_delivery_by_occurrence(
     )
     delivery = replace(
         notification_delivery_event(
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id="wctx-1",
             inbox_notification_id=42,
             inbox_receiver_id="implementation_partner",
@@ -427,11 +427,11 @@ def test_agent_history_orders_linear_mention_and_runtime_delivery_by_occurrence(
     assert delivery_record.event == delivery
     assert isinstance(delivery_record.event, AgentRuntimeNotificationDeliveryEvent)
     assert delivery_record.event.agent_participants == (
-        AgentParticipant(agent_identity_id="implementation_partner", role="delivery_target"),
+        AgentParticipant(agent_id="implementation_partner", role="delivery_target"),
     )
     assert [
         record.event_id
-        for record in db_module.list_cao_events_by_agent_identity("implementation_partner")
+        for record in db_module.list_cao_events_by_agent("implementation_partner")
     ] == [
         str(mention.event_id),
         str(delivery.event_id),
@@ -508,8 +508,8 @@ def test_agent_participant_queries_support_broadcasts_without_duplicate_payload_
 ) -> None:
     event = _linear_mentioned_event(
         participants=(
-            AgentParticipant(agent_identity_id="implementation_partner", role="mentioned"),
-            AgentParticipant(agent_identity_id="reviewer", role="mentioned"),
+            AgentParticipant(agent_id="implementation_partner", role="mentioned"),
+            AgentParticipant(agent_id="reviewer", role="mentioned"),
         )
     )
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
@@ -517,14 +517,14 @@ def test_agent_participant_queries_support_broadcasts_without_duplicate_payload_
     dispatcher.publish(event)
     dispatcher.publish(event)
 
-    partner_records = db_module.list_cao_events_by_agent_identity("implementation_partner")
-    reviewer_records = db_module.list_cao_events_by_agent_identity("reviewer")
+    partner_records = db_module.list_cao_events_by_agent("implementation_partner")
+    reviewer_records = db_module.list_cao_events_by_agent("reviewer")
     with runtime_inbox_db_session() as session:
         canonical_event_count = session.query(CaoEventModel).count()
         participant_rows = (
             session.query(CaoEventAgentParticipantModel)
             .order_by(
-                CaoEventAgentParticipantModel.agent_identity_id.asc(),
+                CaoEventAgentParticipantModel.agent_id.asc(),
                 CaoEventAgentParticipantModel.participant_role.asc(),
             )
             .all()
@@ -534,7 +534,7 @@ def test_agent_participant_queries_support_broadcasts_without_duplicate_payload_
     assert [record.event_id for record in reviewer_records] == [str(event.event_id)]
     assert canonical_event_count == 1
     assert [
-        (row.event_id, row.agent_identity_id, row.participant_role) for row in participant_rows
+        (row.event_id, row.agent_id, row.participant_role) for row in participant_rows
     ] == [
         (str(event.event_id), "implementation_partner", "mentioned"),
         (str(event.event_id), "reviewer", "mentioned"),
@@ -546,37 +546,37 @@ def test_agent_history_uses_participant_index_not_typed_body_mentions(
 ) -> None:
     event = _linear_mentioned_event(
         event_id="linear:agent_mentioned:body-only",
-        participants=(AgentParticipant(agent_identity_id="reviewer", role="mentioned"),),
+        participants=(AgentParticipant(agent_id="reviewer", role="mentioned"),),
     )
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
 
     dispatcher.publish(event)
 
     assert event.agent_id == "implementation_partner"
-    assert db_module.list_cao_events_by_agent_identity("implementation_partner") == ()
+    assert db_module.list_cao_events_by_agent("implementation_partner") == ()
     assert [
-        record.event_id for record in db_module.list_cao_events_by_agent_identity("reviewer")
+        record.event_id for record in db_module.list_cao_events_by_agent("reviewer")
     ] == [str(event.event_id)]
 
 
-def test_agent_identity_timeline_read_exposes_selected_participant_role_from_index(
+def test_agent_timeline_read_exposes_selected_participant_role_from_index(
     runtime_inbox_db_session,
 ) -> None:
     event = _linear_mentioned_event(
         event_id="linear:agent_mentioned:broadcast-role-proof",
         participants=(
-            AgentParticipant(agent_identity_id="implementation_partner", role="mentioned"),
-            AgentParticipant(agent_identity_id="reviewer", role="observer"),
+            AgentParticipant(agent_id="implementation_partner", role="mentioned"),
+            AgentParticipant(agent_id="reviewer", role="observer"),
         ),
     )
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
 
     dispatcher.publish(event)
 
-    partner_records = db_module.list_cao_event_participants_by_agent_identity(
+    partner_records = db_module.list_cao_event_participants_by_agent(
         "implementation_partner"
     )
-    reviewer_records = db_module.list_cao_event_participants_by_agent_identity("reviewer")
+    reviewer_records = db_module.list_cao_event_participants_by_agent("reviewer")
     assert [(record.record.event_id, record.participant_role) for record in partner_records] == [
         (str(event.event_id), "mentioned")
     ]
@@ -590,11 +590,11 @@ def test_duplicate_event_id_does_not_add_participants_from_conflicting_replay(
 ) -> None:
     original = _linear_mentioned_event(
         participants=(
-            AgentParticipant(agent_identity_id="implementation_partner", role="mentioned"),
+            AgentParticipant(agent_id="implementation_partner", role="mentioned"),
         )
     )
     conflicting_replay = _linear_mentioned_event(
-        participants=(AgentParticipant(agent_identity_id="reviewer", role="mentioned"),)
+        participants=(AgentParticipant(agent_id="reviewer", role="mentioned"),)
     )
     dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
 
@@ -607,8 +607,8 @@ def test_duplicate_event_id_does_not_add_participants_from_conflicting_replay(
 
     assert record is not None
     assert record.event == original
-    assert db_module.list_cao_events_by_agent_identity("reviewer") == ()
-    assert [(row.agent_identity_id, row.participant_role) for row in participant_rows] == [
+    assert db_module.list_cao_events_by_agent("reviewer") == ()
+    assert [(row.agent_id, row.participant_role) for row in participant_rows] == [
         ("implementation_partner", "mentioned")
     ]
 
@@ -635,7 +635,7 @@ def test_events_without_participants_persist_but_do_not_match_participant_querie
         source_id="workspace:wctx-1",
     ) == (record,)
     assert db_module.list_cao_events_by_correlation_id("workspace-refresh-1") == (record,)
-    assert db_module.list_cao_events_by_agent_identity("implementation_partner") == ()
+    assert db_module.list_cao_events_by_agent("implementation_partner") == ()
     with runtime_inbox_db_session() as session:
         participant_count = (
             session.query(CaoEventAgentParticipantModel)
@@ -652,7 +652,7 @@ def test_event_log_queries_return_empty_results_for_unknown_facts(runtime_inbox_
     dispatcher.publish(event)
 
     assert db_module.get_cao_event("missing-event") is None
-    assert db_module.list_cao_events_by_agent_identity("missing-agent") == ()
+    assert db_module.list_cao_events_by_agent("missing-agent") == ()
     assert db_module.list_cao_events_by_event_name("missing-event-name") == ()
     assert (
         db_module.list_cao_events_by_source(source_type="linear", source_id="missing-source") == ()
@@ -692,7 +692,7 @@ def test_cao_event_migration_creates_event_log_tables(tmp_path, monkeypatch) -> 
     assert "event_type_key" not in event_columns
     assert "occurred_at" in participant_columns
     assert participant_indexes["ix_cao_event_agent_participants_agent_occurred"] == [
-        "agent_identity_id",
+        "agent_id",
         "occurred_at",
         "event_id",
     ]
@@ -724,15 +724,15 @@ def test_cao_event_migration_updates_legacy_participant_occurrence_index(
             CREATE TABLE cao_event_agent_participants (
                 id INTEGER NOT NULL,
                 event_id VARCHAR NOT NULL,
-                agent_identity_id VARCHAR NOT NULL,
+                agent_id VARCHAR NOT NULL,
                 participant_role VARCHAR NOT NULL,
                 PRIMARY KEY (id),
-                UNIQUE (event_id, agent_identity_id, participant_role)
+                UNIQUE (event_id, agent_id, participant_role)
             )
         """)
         connection.exec_driver_sql("""
             CREATE INDEX ix_cao_event_agent_participants_agent_occurred
-            ON cao_event_agent_participants (agent_identity_id, event_id)
+            ON cao_event_agent_participants (agent_id, event_id)
         """)
         connection.exec_driver_sql("""
             INSERT INTO cao_events (
@@ -756,7 +756,7 @@ def test_cao_event_migration_updates_legacy_participant_occurrence_index(
         """)
         connection.exec_driver_sql("""
             INSERT INTO cao_event_agent_participants (
-                event_id, agent_identity_id, participant_role
+                event_id, agent_id, participant_role
             )
             VALUES ('event-1', 'implementation_partner', 'mentioned')
         """)
@@ -782,7 +782,7 @@ def test_cao_event_migration_updates_legacy_participant_occurrence_index(
     assert event_row == ("linear.agent_mentioned",)
     assert "event_type_key" not in event_columns
     assert participant_indexes["ix_cao_event_agent_participants_agent_occurred"] == [
-        "agent_identity_id",
+        "agent_id",
         "occurred_at",
         "event_id",
     ]
@@ -791,8 +791,8 @@ def test_cao_event_migration_updates_legacy_participant_occurrence_index(
 def test_cao_event_migration_backfills_kind_and_reconstructs_legacy_rows(
     tmp_path,
     monkeypatch,
-    agent_identity_manager_factory,
-    implementation_partner_identity_factory,
+    agent_manager_factory,
+    implementation_partner_agent_factory,
 ) -> None:
     control = _linear_mentioned_event(event_id="linear:agent_mentioned:legacy-migration")
     register_linear_cao_events(CaoEventDispatcher())
@@ -823,10 +823,10 @@ def test_cao_event_migration_backfills_kind_and_reconstructs_legacy_rows(
             CREATE TABLE cao_event_agent_participants (
                 id INTEGER NOT NULL,
                 event_id VARCHAR NOT NULL,
-                agent_identity_id VARCHAR NOT NULL,
+                agent_id VARCHAR NOT NULL,
                 participant_role VARCHAR NOT NULL,
                 PRIMARY KEY (id),
-                UNIQUE (event_id, agent_identity_id, participant_role)
+                UNIQUE (event_id, agent_id, participant_role)
             )
         """)
         connection.exec_driver_sql(
@@ -859,7 +859,7 @@ def test_cao_event_migration_backfills_kind_and_reconstructs_legacy_rows(
         connection.exec_driver_sql(
             """
             INSERT INTO cao_event_agent_participants (
-                event_id, agent_identity_id, participant_role
+                event_id, agent_id, participant_role
             )
             VALUES (?, ?, ?)
             """,
@@ -868,11 +868,11 @@ def test_cao_event_migration_backfills_kind_and_reconstructs_legacy_rows(
 
     db_module._migrate_ensure_cao_event_tables()
     register_linear_cao_events(CaoEventDispatcher())
-    manager = agent_identity_manager_factory(implementation_partner_identity_factory())
-    timeline = AgentIdentityTimelineService(manager)
+    manager = agent_manager_factory(implementation_partner_agent_factory())
+    timeline = AgentTimelineService(manager)
 
     record = db_module.get_cao_event(str(control.event_id))
-    agent_records = db_module.list_cao_events_by_agent_identity("implementation_partner")
+    agent_records = db_module.list_cao_events_by_agent("implementation_partner")
     event_name_records = db_module.list_cao_events_by_event_name(control.event_name)
     source_records = db_module.list_cao_events_by_source(
         source_type=str(control.source.source_type),
@@ -880,7 +880,7 @@ def test_cao_event_migration_backfills_kind_and_reconstructs_legacy_rows(
     )
     correlation_records = db_module.list_cao_events_by_correlation_id(str(control.correlation_id))
     causation_records = db_module.list_cao_events_by_causation_id(str(control.causation_id))
-    timeline_read = timeline.timeline_for_identity("implementation_partner")
+    timeline_read = timeline.timeline_for_agent("implementation_partner")
 
     assert record is not None
     assert isinstance(record.event, LinearAgentMentionedEvent)

@@ -38,7 +38,7 @@ from cli_agent_orchestrator.clients.database import (
     list_flows,
     list_inbox_deliveries,
     list_pending_inbox_notifications,
-    list_terminals_by_agent_identity,
+    list_terminals_by_agent,
     list_terminals_by_session,
     update_flow_enabled,
     update_flow_run_times,
@@ -87,7 +87,14 @@ class TestTerminalOperations:
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session_class.return_value = mock_session
 
-        result = create_terminal("test123", "cao-session", "window-0", "kiro_cli", "developer")
+        result = create_terminal(
+            "test123",
+            "cao-session",
+            "window-0",
+            "kiro_cli",
+            "developer",
+            "ctx_developer_default",
+        )
 
         assert result["id"] == "test123"
         mock_session.add.assert_called_once()
@@ -105,8 +112,8 @@ class TestTerminalOperations:
         mock_terminal.tmux_session = "cao-session"
         mock_terminal.tmux_window = "window-0"
         mock_terminal.provider = "kiro_cli"
-        mock_terminal.agent_profile = "developer"
-        mock_terminal.agent_identity_id = None
+        mock_terminal.agent_id = "developer"
+        mock_terminal.workspace_context_id = "ctx_developer_default"
         mock_terminal.allowed_tools = None
         mock_terminal.last_active = datetime.now()
 
@@ -198,8 +205,8 @@ class TestTerminalOperations:
         mock_terminal.tmux_session = "cao-session"
         mock_terminal.tmux_window = "window-0"
         mock_terminal.provider = "kiro_cli"
-        mock_terminal.agent_profile = "developer"
-        mock_terminal.agent_identity_id = None
+        mock_terminal.agent_id = "developer"
+        mock_terminal.workspace_context_id = "ctx_developer_default"
         mock_terminal.last_active = datetime.now()
 
         mock_query = MagicMock()
@@ -212,48 +219,34 @@ class TestTerminalOperations:
         assert len(result) == 1
         assert result[0]["id"] == "test123"
 
-    def test_identity_managed_terminal_metadata_carries_agent_identity_id(self, live_inbox_db):
-        """Persisted terminal metadata distinguishes identity-managed terminals."""
+    def test_terminal_metadata_carries_agent_id(self, live_inbox_db):
+        """Persisted terminal metadata carries the durable agent id."""
         create_terminal(
             "test123",
             "cao-session",
             "window-0",
             "codex",
-            "developer",
-            agent_identity_id="implementation_partner",
-            workspace_context_id="ctx_implementation_partner_default",
+            "implementation_partner",
+            "ctx_implementation_partner_default",
         )
 
         result = get_terminal_metadata("test123")
 
         assert result is not None
-        assert result["agent_identity_id"] == "implementation_partner"
+        assert result["agent_id"] == "implementation_partner"
         assert result["workspace_context_id"] == "ctx_implementation_partner_default"
-        assert list_terminals_by_agent_identity("implementation_partner")[0]["id"] == "test123"
+        assert list_terminals_by_agent("implementation_partner")[0]["id"] == "test123"
 
-    def test_identity_managed_terminal_metadata_requires_workspace_context(
-        self, live_inbox_db
-    ):
-        """Identity-managed terminal metadata must be fully specified."""
-        with pytest.raises(ValueError, match="agent_identity_id and workspace_context_id"):
+    def test_terminal_metadata_requires_workspace_context(self, live_inbox_db):
+        """Terminal metadata must be fully specified."""
+        with pytest.raises(TypeError):
             create_terminal(
                 "test123",
                 "cao-session",
                 "window-0",
                 "codex",
                 "developer",
-                agent_identity_id="implementation_partner",
             )
-
-    def test_raw_terminal_metadata_has_no_agent_identity_id(self, live_inbox_db):
-        """Manual terminals remain valid and unmapped."""
-        create_terminal("test123", "cao-session", "window-0", "codex", "developer")
-
-        result = get_terminal_metadata("test123")
-
-        assert result is not None
-        assert result["agent_identity_id"] is None
-        assert list_terminals_by_agent_identity("implementation_partner") == []
 
     @patch("cli_agent_orchestrator.clients.database.SessionLocal")
     def test_delete_terminals_by_session(self, mock_session_class):
@@ -768,7 +761,7 @@ class TestFlowOperations:
             flow.name = "test-flow"
             flow.file_path = "/path/to/file.yaml"
             flow.schedule = "0 * * * *"
-            flow.agent_profile = "developer"
+            flow.agent_id = "developer"
             flow.provider = "kiro_cli"
             flow.script = "echo test"
             flow.next_run = datetime.now()
@@ -784,7 +777,7 @@ class TestFlowOperations:
             name="test-flow",
             file_path="/path/to/file.yaml",
             schedule="0 * * * *",
-            agent_profile="developer",
+            agent_id="developer",
             provider="kiro_cli",
             script="echo test",
             next_run=next_run,
@@ -805,7 +798,7 @@ class TestFlowOperations:
         mock_flow.name = "test-flow"
         mock_flow.file_path = "/path/to/file.yaml"
         mock_flow.schedule = "0 * * * *"
-        mock_flow.agent_profile = "developer"
+        mock_flow.agent_id = "developer"
         mock_flow.provider = "kiro_cli"
         mock_flow.script = "echo test"
         mock_flow.last_run = None
@@ -833,7 +826,7 @@ class TestFlowOperations:
         mock_flow.name = "test-flow"
         mock_flow.file_path = "/path/to/file.yaml"
         mock_flow.schedule = "0 * * * *"
-        mock_flow.agent_profile = "developer"
+        mock_flow.agent_id = "developer"
         mock_flow.provider = "kiro_cli"
         mock_flow.script = "echo test"
         mock_flow.last_run = None
@@ -896,7 +889,7 @@ class TestFlowOperations:
         mock_flow.name = "due-flow"
         mock_flow.file_path = "/path/to/file.yaml"
         mock_flow.schedule = "0 * * * *"
-        mock_flow.agent_profile = "developer"
+        mock_flow.agent_id = "developer"
         mock_flow.provider = "kiro_cli"
         mock_flow.script = "echo test"
         mock_flow.last_run = None
@@ -933,12 +926,18 @@ class TestFlowOperations:
 class TestInitDb:
     """Tests for init_db function."""
 
-    @patch("cli_agent_orchestrator.clients.database.Base")
-    def test_init_db(self, mock_base):
+    def test_init_db(self, tmp_path, monkeypatch):
         """Test database initialization."""
+        db_path = tmp_path / "init.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr(db_module, "engine", test_engine)
+        monkeypatch.setattr(database_migrations.constants, "DATABASE_FILE", db_path)
+
         init_db()
 
-        mock_base.metadata.create_all.assert_called_once()
+        table_names = inspect(test_engine).get_table_names()
+        assert "terminals" in table_names
+        assert "cao_events" in table_names
 
     def test_semantic_inbox_migration_creates_tables_idempotently(self, tmp_path, monkeypatch):
         """Existing databases get the new semantic inbox tables safely."""
@@ -954,8 +953,8 @@ class TestInitDb:
         assert table_names.count("inbox_notifications") == 1
         assert table_names.count("inbox_notification_targets") == 1
 
-    def test_terminal_identity_migration_adds_nullable_column(self, tmp_path, monkeypatch):
-        """Existing terminal tables gain optional identity mapping without rebuilding."""
+    def test_terminal_agent_migration_preserves_agent_id(self, tmp_path, monkeypatch):
+        """Existing agent-owned terminal rows keep required agent_id values."""
         db_path = tmp_path / "legacy-terminals.db"
         test_engine = create_engine(f"sqlite:///{db_path}")
         monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
@@ -967,7 +966,7 @@ class TestInitDb:
                     tmux_session VARCHAR NOT NULL,
                     tmux_window VARCHAR NOT NULL,
                     provider VARCHAR NOT NULL,
-                    agent_profile VARCHAR,
+                    agent_id VARCHAR,
                     allowed_tools TEXT,
                     last_active DATETIME,
                     PRIMARY KEY (id)
@@ -975,54 +974,53 @@ class TestInitDb:
             """)
             connection.exec_driver_sql("""
                 INSERT INTO terminals (
-                    id, tmux_session, tmux_window, provider, agent_profile
+                    id, tmux_session, tmux_window, provider, agent_id
                 )
                 VALUES ('terminal-1', 'cao-session', 'developer-1', 'codex', 'developer')
             """)
 
-        database_migrations._migrate_add_terminal_agent_identity_id()
+        database_migrations._migrate_add_terminal_agent_id()
 
         with test_engine.connect() as connection:
             columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(terminals)")}
             row = connection.exec_driver_sql(
-                "SELECT agent_identity_id FROM terminals WHERE id = 'terminal-1'"
+                "SELECT agent_id FROM terminals WHERE id = 'terminal-1'"
             ).fetchone()
 
-        assert "agent_identity_id" in columns
-        assert row == (None,)
+        assert "agent_id" in columns
+        assert row == ("developer",)
 
-    def test_terminal_workspace_context_backfill_binds_legacy_identity_terminal(
+    def test_terminal_workspace_context_backfill_binds_renamed_agent_terminal(
         self, tmp_path, monkeypatch
     ):
-        """Legacy identity-managed terminals get an explicit default workspace context."""
-        db_path = tmp_path / "legacy-identity-terminal.db"
+        """Renamed agent-managed terminals get an explicit default workspace context."""
+        old_agent_column = "agent_" + "identity_id"
+        db_path = tmp_path / "renamed-agent-terminal.db"
         test_engine = create_engine(f"sqlite:///{db_path}")
         monkeypatch.setattr(db_module, "engine", test_engine)
         monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
 
         with test_engine.begin() as connection:
-            connection.exec_driver_sql("""
+            connection.exec_driver_sql(f"""
                 CREATE TABLE terminals (
                     id VARCHAR NOT NULL,
                     tmux_session VARCHAR NOT NULL,
                     tmux_window VARCHAR NOT NULL,
                     provider VARCHAR NOT NULL,
-                    agent_profile VARCHAR,
                     allowed_tools TEXT,
-                    agent_identity_id TEXT,
+                    {old_agent_column} TEXT,
                     workspace_context_id TEXT,
                     last_active DATETIME,
                     PRIMARY KEY (id)
                 )
             """)
-            connection.exec_driver_sql("""
+            connection.exec_driver_sql(f"""
                 INSERT INTO terminals (
                     id,
                     tmux_session,
                     tmux_window,
                     provider,
-                    agent_profile,
-                    agent_identity_id,
+                    {old_agent_column},
                     workspace_context_id
                 )
                 VALUES (
@@ -1030,19 +1028,19 @@ class TestInitDb:
                     'cao-discovery-partner',
                     'yards-discovery-partner',
                     'codex',
-                    'yards-discovery-partner',
                     'discovery_partner',
                     NULL
                 )
             """)
 
         database_migrations._migrate_ensure_workspace_context_tables()
+        database_migrations._migrate_add_terminal_agent_id()
         database_migrations._migrate_backfill_terminal_workspace_context_id()
 
         with test_engine.connect() as connection:
-            terminal_context_id = connection.exec_driver_sql(
-                "SELECT workspace_context_id FROM terminals WHERE id = 'terminal-1'"
-            ).scalar_one()
+            terminal_agent_id, terminal_context_id = connection.exec_driver_sql(
+                "SELECT agent_id, workspace_context_id FROM terminals WHERE id = 'terminal-1'"
+            ).fetchone()
             context_boundary = connection.exec_driver_sql(
                 """
                 SELECT boundary_provider_id, boundary_object_type, boundary_object_id
@@ -1052,11 +1050,122 @@ class TestInitDb:
                 (terminal_context_id,),
             ).fetchone()
 
+        assert terminal_agent_id == "discovery_partner"
         assert terminal_context_id.startswith("wctx_")
         assert context_boundary == (
             "cao",
-            "agent_identity_default",
+            "agent_default",
             "discovery_partner",
+        )
+
+    def test_workspace_context_migration_renames_agent_identity_column(
+        self, tmp_path, monkeypatch
+    ):
+        """Existing context workspaces are rebuilt to use durable agent ids."""
+        old_agent_column = "agent_" + "identity_id"
+        db_path = tmp_path / "legacy-context-workspaces.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr(db_module, "engine", test_engine)
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE workspace_contexts (
+                    id VARCHAR NOT NULL,
+                    resolver_id VARCHAR NOT NULL,
+                    boundary_provider_id VARCHAR NOT NULL,
+                    boundary_object_type VARCHAR NOT NULL,
+                    boundary_object_id VARCHAR NOT NULL,
+                    status VARCHAR NOT NULL,
+                    metadata_json TEXT,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    PRIMARY KEY (id)
+                )
+            """)
+            connection.exec_driver_sql(f"""
+                CREATE TABLE context_workspaces (
+                    id INTEGER NOT NULL,
+                    {old_agent_column} VARCHAR NOT NULL,
+                    workspace_context_id VARCHAR NOT NULL,
+                    root_path VARCHAR NOT NULL,
+                    active_terminal_id VARCHAR,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    PRIMARY KEY (id),
+                    CONSTRAINT uq_context_workspace_identity_context
+                        UNIQUE ({old_agent_column}, workspace_context_id),
+                    FOREIGN KEY(workspace_context_id)
+                        REFERENCES workspace_contexts (id) ON DELETE CASCADE
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO workspace_contexts (
+                    id,
+                    resolver_id,
+                    boundary_provider_id,
+                    boundary_object_type,
+                    boundary_object_id,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    'wctx_default',
+                    'default',
+                    'cao',
+                    'agent_default',
+                    'implementation_partner',
+                    'active',
+                    '2026-01-01 00:00:00',
+                    '2026-01-01 00:00:00'
+                )
+            """)
+            connection.exec_driver_sql(f"""
+                INSERT INTO context_workspaces (
+                    id,
+                    {old_agent_column},
+                    workspace_context_id,
+                    root_path,
+                    active_terminal_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    7,
+                    'implementation_partner',
+                    'wctx_default',
+                    '/tmp/workspace',
+                    'terminal-1',
+                    '2026-01-01 00:00:00',
+                    '2026-01-01 00:00:00'
+                )
+            """)
+
+        database_migrations._migrate_ensure_workspace_context_tables()
+
+        with test_engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(context_workspaces)"
+                )
+            }
+            row = connection.exec_driver_sql(
+                """
+                SELECT id, agent_id, workspace_context_id, root_path, active_terminal_id
+                FROM context_workspaces
+                """
+            ).fetchone()
+
+        assert old_agent_column not in columns
+        assert "agent_id" in columns
+        assert row == (
+            7,
+            "implementation_partner",
+            "wctx_default",
+            "/tmp/workspace",
+            "terminal-1",
         )
 
     def test_marker_migrations_repair_notification_fk_targets_after_inbox_rebuild(

@@ -81,7 +81,7 @@ def test_attached_object_cannot_be_remapped_to_another_context(test_db):
         )
 
 
-def test_context_workspace_is_unique_per_identity_and_context(test_db, tmp_path):
+def test_context_workspace_is_unique_per_agent_and_context(test_db, tmp_path):
     context = db_module.ensure_workspace_context_for_boundary(
         resolver_id="linear_planning",
         provider_id="linear",
@@ -91,24 +91,24 @@ def test_context_workspace_is_unique_per_identity_and_context(test_db, tmp_path)
     root = tmp_path / "agents" / "implementation_partner" / "contexts" / context.id
 
     first = db_module.ensure_context_workspace(
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context.id,
         root_path=root,
     )
     second = db_module.ensure_context_workspace(
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context.id,
         root_path=root,
     )
     assert second.id == first.id
 
     assert db_module.set_context_workspace_active_terminal(
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context.id,
         terminal_id="terminal-1",
     )
     refreshed = db_module.get_context_workspace(
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context.id,
     )
     assert refreshed is not None
@@ -124,14 +124,14 @@ def test_context_workspace_rejects_root_path_conflicts(test_db, tmp_path):
         object_id="CAO-79",
     )
     db_module.ensure_context_workspace(
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context.id,
         root_path=tmp_path / "first",
     )
 
     with pytest.raises(WorkspaceContextConflictError, match="root path differs"):
         db_module.ensure_context_workspace(
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id=context.id,
             root_path=tmp_path / "second",
         )

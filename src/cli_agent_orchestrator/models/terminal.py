@@ -29,13 +29,12 @@ class Terminal(BaseModel):
     name: str = Field(..., description="Terminal/window name")
     provider: ProviderType = Field(..., description="CLI tool provider")
     session_name: str = Field(..., description="Session name")
-    agent_profile: Optional[str] = Field(None, description="Agent profile")
-    agent_identity_id: Optional[str] = Field(
-        None,
-        description="Durable CAO agent identity id when this terminal is identity-managed",
+    agent_id: str = Field(
+        ...,
+        description="Durable CAO agent id when this terminal is agent-managed",
     )
-    workspace_context_id: Optional[str] = Field(
-        None,
+    workspace_context_id: str = Field(
+        ...,
         description="Workspace context id when this terminal is context-managed",
     )
     allowed_tools: Optional[List[str]] = Field(None, description="Resolved runtime capabilities")

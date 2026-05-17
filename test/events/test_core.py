@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 
 import pytest
 
@@ -33,9 +33,10 @@ SOURCE_REF = CaoEventSourceRef(
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class TimelineNoteEvent:
     event_name: ClassVar[str] = "test.timeline_note"
+    kind: Literal["test.timeline_note"] = "test.timeline_note"
 
     event_id: CaoEventId
     source: CaoEventSourceRef
@@ -45,9 +46,10 @@ class TimelineNoteEvent:
     message: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class AgentPromptedEvent:
     event_name: ClassVar[str] = "test.agent_prompted"
+    kind: Literal["test.agent_prompted"] = "test.agent_prompted"
 
     event_id: CaoEventId
     source: CaoEventSourceRef
@@ -135,7 +137,7 @@ def test_dispatcher_supports_all_event_and_concrete_type_subscribers_in_order() 
 
     def handle_agent_event(event: AgentPromptedEvent) -> str:
         seen.append(f"agent:{event.prompt}")
-        return event.agent_participants[0].agent_identity_id
+        return event.agent_participants[0].agent_id
 
     dispatcher.subscribe_all(handler=handle_any_event, subscription_id="timeline")
     dispatcher.subscribe(
@@ -148,7 +150,7 @@ def test_dispatcher_supports_all_event_and_concrete_type_subscribers_in_order() 
         _agent_event(
             (
                 AgentParticipant(
-                    agent_identity_id="implementation_partner",
+                    agent_id="implementation_partner",
                     role="prompt_recipient",
                 ),
             )
@@ -171,7 +173,7 @@ def test_participant_helpers_cover_zero_one_and_many_agent_participants() -> Non
     one_participant = _agent_event(
         (
             AgentParticipant(
-                agent_identity_id="implementation_partner",
+                agent_id="implementation_partner",
             ),
         ),
         event_id="agent-event-2",
@@ -179,11 +181,11 @@ def test_participant_helpers_cover_zero_one_and_many_agent_participants() -> Non
     many_participants = _agent_event(
         (
             AgentParticipant(
-                agent_identity_id="implementation_partner",
+                agent_id="implementation_partner",
                 role="prompt_recipient",
             ),
             AgentParticipant(
-                agent_identity_id="reviewer",
+                agent_id="reviewer",
                 role="mentioned_agent",
             ),
         ),
@@ -202,7 +204,7 @@ def test_generic_timeline_code_can_reason_through_event_protocols() -> None:
     generic_event: CaoEvent = _agent_event(
         (
             AgentParticipant(
-                agent_identity_id="implementation_partner",
+                agent_id="implementation_partner",
                 role="prompt_recipient",
             ),
         )
@@ -210,7 +212,7 @@ def test_generic_timeline_code_can_reason_through_event_protocols() -> None:
     participant_event: WithAgentParticipants = _agent_event(
         (
             AgentParticipant(
-                agent_identity_id="reviewer",
+                agent_id="reviewer",
                 role="mentioned_agent",
             ),
         ),
@@ -230,7 +232,7 @@ def test_dispatcher_rejects_unregistered_or_malformed_event_instances() -> None:
             _agent_event(
                 (
                     AgentParticipant(
-                        agent_identity_id="implementation_partner",
+                        agent_id="implementation_partner",
                         role="prompt_recipient",
                     ),
                 )
@@ -258,7 +260,7 @@ def test_event_metadata_and_participant_values_must_be_non_empty() -> None:
         )
 
     with pytest.raises(InvalidCaoEventError, match="agent participant role must be non-empty"):
-        AgentParticipant(agent_identity_id="implementation_partner", role=" ")
+        AgentParticipant(agent_id="implementation_partner", role=" ")
 
     with pytest.raises(InvalidCaoEventError, match="occurred_at must be timezone-aware"):
         CaoEventDispatcher((TimelineNoteEvent,)).publish(

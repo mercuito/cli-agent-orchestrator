@@ -65,19 +65,19 @@ class WorkspaceContextObjectMappingModel(Base):
 
 
 class ContextWorkspaceModel(Base):
-    """Agent-local workspace for one identity in one workspace context."""
+    """Agent-local workspace for one agent in one workspace context."""
 
     __tablename__ = "context_workspaces"
     __table_args__ = (
         UniqueConstraint(
-            "agent_identity_id",
+            "agent_id",
             "workspace_context_id",
-            name="uq_context_workspace_identity_context",
+            name="uq_context_workspace_agent_context",
         ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    agent_identity_id = Column(String, nullable=False)
+    agent_id = Column(String, nullable=False)
     workspace_context_id = Column(
         String,
         ForeignKey("workspace_contexts.id", ondelete="CASCADE"),
@@ -120,10 +120,10 @@ class WorkspaceContextObjectMappingRecord:
 
 @dataclass(frozen=True)
 class ContextWorkspaceRecord:
-    """Domain record for an identity-local workspace context."""
+    """Domain record for an agent-local workspace context."""
 
     id: int
-    agent_identity_id: str
+    agent_id: str
     workspace_context_id: str
     root_path: Path
     active_terminal_id: str | None
@@ -159,24 +159,24 @@ def workspace_context_id_for_boundary(
     return "wctx_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
 
 
-def default_workspace_context_id(agent_identity_id: str) -> str:
-    """Return the stable default context id for an identity without resolved work."""
+def default_workspace_context_id(agent_id: str) -> str:
+    """Return the stable default context id for an agent without resolved work."""
 
     return workspace_context_id_for_boundary(
         provider_id="cao",
-        object_type="agent_identity_default",
-        object_id=_required_token(agent_identity_id, "agent_identity_id"),
+        object_type="agent_default",
+        object_id=_required_token(agent_id, "agent_id"),
     )
 
 
-def ensure_default_workspace_context(agent_identity_id: str) -> WorkspaceContextRecord:
-    """Ensure an identity has a default context for non-resolved runtime work."""
+def ensure_default_workspace_context(agent_id: str) -> WorkspaceContextRecord:
+    """Ensure an agent has a default context for non-resolved runtime work."""
 
     return ensure_workspace_context_for_boundary(
         resolver_id="default",
         provider_id="cao",
-        object_type="agent_identity_default",
-        object_id=_required_token(agent_identity_id, "agent_identity_id"),
+        object_type="agent_default",
+        object_id=_required_token(agent_id, "agent_id"),
     )
 
 
@@ -305,13 +305,13 @@ def get_workspace_context_for_object(
 
 def ensure_context_workspace(
     *,
-    agent_identity_id: str,
+    agent_id: str,
     workspace_context_id: str,
     root_path: Path,
 ) -> ContextWorkspaceRecord:
-    """Create or return an identity-local workspace for one context."""
+    """Create or return an agent-local workspace for one context."""
 
-    agent_identity_id = _required_token(agent_identity_id, "agent_identity_id")
+    agent_id = _required_token(agent_id, "agent_id")
     workspace_context_id = _required_token(workspace_context_id, "workspace_context_id")
     now = datetime.now()
     with _session_local()() as session:
@@ -320,18 +320,18 @@ def ensure_context_workspace(
         session.execute(
             sqlite_insert(ContextWorkspaceModel)
             .values(
-                agent_identity_id=agent_identity_id,
+                agent_id=agent_id,
                 workspace_context_id=workspace_context_id,
                 root_path=str(root_path),
                 created_at=now,
                 updated_at=now,
             )
-            .on_conflict_do_nothing(index_elements=["agent_identity_id", "workspace_context_id"])
+            .on_conflict_do_nothing(index_elements=["agent_id", "workspace_context_id"])
         )
         row = (
             session.query(ContextWorkspaceModel)
             .filter(
-                ContextWorkspaceModel.agent_identity_id == agent_identity_id,
+                ContextWorkspaceModel.agent_id == agent_id,
                 ContextWorkspaceModel.workspace_context_id == workspace_context_id,
             )
             .first()
@@ -341,7 +341,7 @@ def ensure_context_workspace(
         if row.root_path != str(root_path):
             raise WorkspaceContextConflictError(
                 "context workspace root path differs for "
-                f"{agent_identity_id!r}/{workspace_context_id!r}"
+                f"{agent_id!r}/{workspace_context_id!r}"
             )
         session.commit()
         return _context_workspace_from_row(row)
@@ -349,17 +349,17 @@ def ensure_context_workspace(
 
 def get_context_workspace(
     *,
-    agent_identity_id: str,
+    agent_id: str,
     workspace_context_id: str,
 ) -> ContextWorkspaceRecord | None:
-    """Return one identity-local workspace context row."""
+    """Return one agent-local workspace context row."""
 
     with _session_local()() as session:
         row = (
             session.query(ContextWorkspaceModel)
             .filter(
-                ContextWorkspaceModel.agent_identity_id
-                == _required_token(agent_identity_id, "agent_identity_id"),
+                ContextWorkspaceModel.agent_id
+                == _required_token(agent_id, "agent_id"),
                 ContextWorkspaceModel.workspace_context_id
                 == _required_token(workspace_context_id, "workspace_context_id"),
             )
@@ -370,18 +370,18 @@ def get_context_workspace(
 
 def set_context_workspace_active_terminal(
     *,
-    agent_identity_id: str,
+    agent_id: str,
     workspace_context_id: str,
     terminal_id: str | None,
 ) -> bool:
-    """Update the cached active terminal for an identity/context workspace."""
+    """Update the cached active terminal for an agent/context workspace."""
 
     with _session_local()() as session:
         row = (
             session.query(ContextWorkspaceModel)
             .filter(
-                ContextWorkspaceModel.agent_identity_id
-                == _required_token(agent_identity_id, "agent_identity_id"),
+                ContextWorkspaceModel.agent_id
+                == _required_token(agent_id, "agent_id"),
                 ContextWorkspaceModel.workspace_context_id
                 == _required_token(workspace_context_id, "workspace_context_id"),
             )
@@ -494,7 +494,7 @@ def _context_workspace_from_row(row: ContextWorkspaceModel) -> ContextWorkspaceR
     value = cast(Any, row)
     return ContextWorkspaceRecord(
         id=value.id,
-        agent_identity_id=value.agent_identity_id,
+        agent_id=value.agent_id,
         workspace_context_id=value.workspace_context_id,
         root_path=Path(value.root_path),
         active_terminal_id=value.active_terminal_id,

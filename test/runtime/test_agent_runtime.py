@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from cli_agent_orchestrator.agent import write_agent
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.events import CaoCorrelationId, CaoEventDispatcher, CaoEventId
@@ -37,41 +38,43 @@ def test_session(
     runtime_inbox_db_session,
     tmp_path,
     monkeypatch,
-    implementation_partner_identity_factory,
-    agent_identity_manager_factory,
+    implementation_partner_agent_factory,
+    agent_manager_factory,
 ):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.agent_identity.AGENT_IDENTITY_DATA_ROOT",
+        "cli_agent_orchestrator.agent.AGENTS_ROOT",
         tmp_path / "agents",
     )
     monkeypatch.setattr(runtime_agent.provider_manager, "runtime_state_capability", lambda _: None)
-    identity_manager = agent_identity_manager_factory(implementation_partner_identity_factory())
+    agent = implementation_partner_agent_factory()
+    write_agent(agent, agents_root=tmp_path / "agents")
+    agent_manager = agent_manager_factory(agent)
     monkeypatch.setattr(
         runtime_agent,
-        "default_agent_identity_manager",
-        lambda: identity_manager,
+        "default_agent_manager",
+        lambda: agent_manager,
     )
     monkeypatch.setattr(
         runtime_agent,
-        "_mcp_surface_fingerprint_for_identity",
-        lambda identity: "surface-v1",
+        "_mcp_surface_fingerprint_for_agent",
+        lambda agent: "surface-v1",
     )
     monkeypatch.setattr(
         runtime_agent,
-        "_mcp_runtime_generation_fingerprint_for_identity",
-        lambda identity: "runtime-generation-v1",
+        "_mcp_runtime_generation_fingerprint_for_agent",
+        lambda agent: "runtime-generation-v1",
     )
     return runtime_inbox_db_session
 
 
 @pytest.fixture
-def identity(implementation_partner_identity_factory):
-    return implementation_partner_identity_factory()
+def agent(implementation_partner_agent_factory):
+    return implementation_partner_agent_factory()
 
 
 @pytest.fixture
-def handle(identity) -> AgentRuntimeHandle:
-    return AgentRuntimeHandle(identity)
+def handle(agent) -> AgentRuntimeHandle:
+    return AgentRuntimeHandle(agent)
 
 
 @pytest.fixture
@@ -93,8 +96,7 @@ def _create_terminal(session_name: str = "cao-implementation-partner") -> str:
         session_name,
         "developer-1234",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=_default_workspace_context_id(),
     )["id"]
 
@@ -113,7 +115,7 @@ def _created_terminal_result(terminal_id: str, window_name: str = "developer-567
         session_name="cao-implementation-partner",
         name=window_name,
         provider=Mock(value="codex"),
-        agent_profile="developer",
+        agent_id="developer",
     )
 
 
@@ -217,8 +219,8 @@ def test_status_reports_not_started_without_terminal_metadata(test_session, hand
     assert handle.status() == AgentRuntimeStatus.NOT_STARTED
 
 
-def test_identity_runtime_handle_uses_stable_default_workspace_context(test_session, identity):
-    handle = AgentRuntimeHandle(identity)
+def test_agent_runtime_handle_uses_stable_default_workspace_context(test_session, agent):
+    handle = AgentRuntimeHandle(agent)
     expected_context_id = db_module.default_workspace_context_id("implementation_partner")
 
     assert handle.workspace_context_id == expected_context_id
@@ -226,20 +228,21 @@ def test_identity_runtime_handle_uses_stable_default_workspace_context(test_sess
     assert (
         db_module.get_workspace_context_for_object(
             provider_id="cao",
-            object_type="agent_identity_default",
+            object_type="agent_default",
             object_id="implementation_partner",
         ).id
         == expected_context_id
     )
 
 
-def test_current_terminal_ignores_raw_terminal_in_identity_session(test_session, handle):
+def test_current_terminal_ignores_raw_terminal_in_agent_session(test_session, handle):
     db_module.create_terminal(
         "terminal-1",
         "cao-implementation-partner",
         "developer-raw",
         "codex",
-        "developer",
+        agent_id="raw_agent",
+        workspace_context_id=_default_workspace_context_id("raw_agent"),
     )
 
     assert handle.current_terminal() is None
@@ -279,10 +282,10 @@ def test_status_reports_unreachable_when_provider_cannot_be_queried(
     assert handle.status() == AgentRuntimeStatus.UNREACHABLE
 
 
-def test_ensure_started_creates_terminal_from_agent_identity_when_not_started(
+def test_ensure_started_creates_terminal_from_agent_when_not_started(
     test_session,
     monkeypatch,
-    identity,
+    agent,
     handle,
 ):
     created = Mock(
@@ -290,23 +293,23 @@ def test_ensure_started_creates_terminal_from_agent_identity_when_not_started(
         session_name="cao-implementation-partner",
         name="developer-1234",
         provider=Mock(value="codex"),
-        agent_profile="developer",
+        agent_id="developer",
     )
-    create_terminal_for_agent_identity = Mock(return_value=created)
+    create_terminal_for_agent = Mock(return_value=created)
     monkeypatch.setattr(
         "cli_agent_orchestrator.runtime.agent.tmux_client.session_exists",
         lambda session: False,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.terminal_service.create_terminal_for_agent_identity",
-        create_terminal_for_agent_identity,
+        "cli_agent_orchestrator.runtime.agent.terminal_service.create_terminal_for_agent",
+        create_terminal_for_agent,
     )
 
     terminal = handle.ensure_started()
 
     assert terminal.id == "terminal-1"
-    create_terminal_for_agent_identity.assert_called_once_with(
-        identity.for_workspace_context(handle.workspace_context_id)
+    create_terminal_for_agent.assert_called_once_with(
+        agent.for_workspace_context(handle.workspace_context_id)
     )
 
 
@@ -324,7 +327,7 @@ def test_ensure_started_publishes_lifecycle_event_for_direct_start(
     )
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(return_value=_created_terminal_result("terminal-1")),
     )
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
@@ -340,7 +343,7 @@ def test_ensure_started_publishes_lifecycle_event_for_direct_start(
     assert lifecycle.terminal_id == "terminal-1"
     assert lifecycle.ready is True
     assert lifecycle.fresh is True
-    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert lifecycle.agent_participants[0].agent_id == "implementation_partner"
 
 
 def test_ensure_started_publishes_lifecycle_event_for_direct_reuse(
@@ -364,17 +367,16 @@ def test_ensure_started_publishes_lifecycle_event_for_direct_reuse(
     assert lifecycle.terminal_id == "terminal-1"
     assert lifecycle.ready is True
     assert lifecycle.fresh is True
-    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert lifecycle.agent_participants[0].agent_id == "implementation_partner"
 
 
-def test_current_terminal_rejects_multiple_manifestations_for_identity(test_session, handle):
+def test_current_terminal_rejects_multiple_manifestations_for_agent(test_session, handle):
     db_module.create_terminal(
         "terminal-1",
         "cao-implementation-partner",
         "developer-1",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=_default_workspace_context_id(),
     )
     db_module.create_terminal(
@@ -382,8 +384,7 @@ def test_current_terminal_rejects_multiple_manifestations_for_identity(test_sess
         "cao-implementation-partner",
         "developer-2",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=_default_workspace_context_id(),
     )
 
@@ -391,10 +392,10 @@ def test_current_terminal_rejects_multiple_manifestations_for_identity(test_sess
         handle.current_terminal()
 
 
-def test_context_runtime_uses_identity_and_workspace_context_route(
+def test_context_runtime_uses_agent_and_workspace_context_route(
     test_session,
     monkeypatch,
-    identity,
+    agent,
     terminal_provider_patcher,
     terminal_send_patcher,
 ):
@@ -404,14 +405,13 @@ def test_context_runtime_uses_identity_and_workspace_context_route(
         object_type="issue",
         object_id="CAO-79",
     )
-    handle = AgentRuntimeHandle(identity, workspace_context_id=context.id)
+    handle = AgentRuntimeHandle(agent, workspace_context_id=context.id)
     db_module.create_terminal(
         "terminal-1",
         "cao-implementation-partner",
         "developer-context",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context.id,
     )
     _mark_terminal_fresh(handle)
@@ -430,7 +430,7 @@ def test_context_runtime_uses_identity_and_workspace_context_route(
     send_input.assert_called_once_with("terminal-1", "Context-routed delivery.")
 
 
-def test_context_runtime_ignores_terminals_for_other_contexts(test_session, identity):
+def test_context_runtime_ignores_terminals_for_other_contexts(test_session, agent):
     context_a = db_module.ensure_workspace_context_for_boundary(
         resolver_id="linear_planning",
         provider_id="linear",
@@ -448,20 +448,19 @@ def test_context_runtime_ignores_terminals_for_other_contexts(test_session, iden
         "cao-implementation-partner",
         "developer-context-a",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context_a.id,
     )
 
     assert (
-        AgentRuntimeHandle(identity, workspace_context_id=context_b.id).current_terminal() is None
+        AgentRuntimeHandle(agent, workspace_context_id=context_b.id).current_terminal() is None
     )
 
 
-def test_context_runtime_switches_by_stopping_other_identity_terminal(
+def test_context_runtime_switches_by_stopping_other_agent_terminal(
     test_session,
     monkeypatch,
-    identity,
+    agent,
     terminal_provider_patcher,
     terminal_send_patcher,
     recorded_runtime_events,
@@ -478,15 +477,14 @@ def test_context_runtime_switches_by_stopping_other_identity_terminal(
         object_type="issue",
         object_id="CAO-80",
     )
-    handle_a = AgentRuntimeHandle(identity, workspace_context_id=context_a.id)
-    handle_b = AgentRuntimeHandle(identity, workspace_context_id=context_b.id)
+    handle_a = AgentRuntimeHandle(agent, workspace_context_id=context_a.id)
+    handle_b = AgentRuntimeHandle(agent, workspace_context_id=context_b.id)
     db_module.create_terminal(
         "terminal-1",
         "cao-implementation-partner",
         "developer-context-a",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context_a.id,
     )
     _mark_terminal_fresh(handle_a)
@@ -505,22 +503,21 @@ def test_context_runtime_switches_by_stopping_other_identity_terminal(
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
     create_terminal = Mock()
 
-    def create_target(agent_identity):
-        create_terminal(agent_identity)
+    def create_target(agent):
+        create_terminal(agent)
         db_module.create_terminal(
             "terminal-2",
             "cao-implementation-partner",
             "developer-context-b",
             "codex",
-            "developer",
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id=context_b.id,
         )
         return _created_terminal_result("terminal-2", window_name="developer-context-b")
 
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(side_effect=create_target),
     )
 
@@ -547,22 +544,22 @@ def test_context_runtime_switches_by_stopping_other_identity_terminal(
         for event in recorded_runtime_events
         if isinstance(event, AgentRuntimeWorkspaceContextSwitchEvent)
     )
-    assert switch_event.agent_identity_id == "implementation_partner"
+    assert switch_event.agent_id == "implementation_partner"
     assert switch_event.from_workspace_context_id == context_a.id
     assert switch_event.to_workspace_context_id == context_b.id
     assert switch_event.terminal_id == "terminal-1"
     assert switch_event.runtime_status == AgentRuntimeStatus.IDLE.value
     assert switch_event.outcome == "succeeded"
-    assert switch_event.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert switch_event.agent_participants[0].agent_id == "implementation_partner"
     assert switch_event.agent_participants[0].role == (
         runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_CONTEXT_SWITCH_AGENT
     )
 
 
-def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
+def test_context_runtime_defers_switch_when_other_agent_terminal_is_busy(
     test_session,
     monkeypatch,
-    identity,
+    agent,
     terminal_provider_patcher,
     terminal_send_patcher,
     recorded_runtime_events,
@@ -584,8 +581,7 @@ def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
         "cao-implementation-partner",
         "developer-context-a",
         "codex",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=context_a.id,
     )
     _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
@@ -593,9 +589,9 @@ def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
     delete_terminal = Mock()
     create_terminal = Mock()
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
-    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent_identity", create_terminal)
+    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal)
 
-    result = AgentRuntimeHandle(identity, workspace_context_id=context_b.id).notify(
+    result = AgentRuntimeHandle(agent, workspace_context_id=context_b.id).notify(
         "Deliver later in context B.",
         source_kind="linear_event",
         source_id="event-context-b-busy",
@@ -618,26 +614,25 @@ def test_context_runtime_defers_switch_when_other_identity_terminal_is_busy(
     assert switch_event.to_workspace_context_id == context_b.id
     assert switch_event.runtime_status == AgentRuntimeStatus.BUSY.value
     assert switch_event.outcome == "deferred"
-    assert switch_event.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert switch_event.agent_participants[0].agent_id == "implementation_partner"
 
 
 def test_current_terminal_reports_resume_unsupported_for_provider_without_resume(
     test_session,
-    implementation_partner_identity_factory,
-    agent_identity_manager_factory,
+    implementation_partner_agent_factory,
+    agent_manager_factory,
 ):
-    identity = implementation_partner_identity_factory(cli_provider="kiro_cli")
+    agent = implementation_partner_agent_factory(cli_provider="kiro_cli")
     handle = AgentRuntimeHandle(
-        identity,
-        identity_manager=agent_identity_manager_factory(identity),
+        agent,
+        agent_manager=agent_manager_factory(agent),
     )
     db_module.create_terminal(
         "terminal-1",
         "cao-implementation-partner",
         "developer-1",
         "kiro_cli",
-        "developer",
-        agent_identity_id="implementation_partner",
+        agent_id="implementation_partner",
         workspace_context_id=_default_workspace_context_id(),
     )
 
@@ -659,7 +654,7 @@ def test_notify_accepts_durable_inbox_state_when_startup_fails(
         lambda session: False,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.terminal_service.create_terminal_for_agent_identity",
+        "cli_agent_orchestrator.runtime.agent.terminal_service.create_terminal_for_agent",
         Mock(side_effect=RuntimeError("cannot start")),
     )
 
@@ -687,13 +682,13 @@ def test_notify_accepts_durable_inbox_state_when_startup_fails(
     assert lifecycle.action == AgentRuntimeFreshnessAction.FAILED.value
     assert lifecycle.runtime_status == AgentRuntimeStatus.NOT_STARTED.value
     assert lifecycle.error == "cannot start"
-    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert lifecycle.agent_participants[0].agent_id == "implementation_partner"
     delivery = recorded_runtime_events[2]
     assert isinstance(delivery, AgentRuntimeNotificationDeliveryEvent)
     assert delivery.outcome == "failed"
     assert delivery.attempted is False
     assert delivery.error == "cannot start"
-    assert delivery.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert delivery.agent_participants[0].agent_id == "implementation_partner"
 
 
 def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
@@ -704,7 +699,7 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
     terminal_send_patcher,
 ):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.runtime.agent.terminal_service.create_terminal_for_agent_identity",
+        "cli_agent_orchestrator.runtime.agent.terminal_service.create_terminal_for_agent",
         Mock(side_effect=RuntimeError("cannot start")),
     )
     handle.notify(
@@ -780,12 +775,12 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     ]
     accepted = recorded_runtime_events[0]
     assert isinstance(accepted, AgentRuntimeNotificationAcceptedEvent)
-    assert accepted.agent_identity_id == "implementation_partner"
+    assert accepted.agent_id == "implementation_partner"
     assert accepted.workspace_context_id == handle.workspace_context_id
     assert accepted.inbox_notification_id == result.notification.delivery.notification.id
     assert accepted.source_kind == "linear_event"
     assert accepted.source_id == "event-runtime-causation"
-    assert accepted.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert accepted.agent_participants[0].agent_id == "implementation_partner"
     assert accepted.agent_participants[0].role == (
         runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_NOTIFICATION_RECEIVER
     )
@@ -802,7 +797,7 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     assert lifecycle.agent_participants[0].role == (
         runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_LIFECYCLE_AGENT
     )
-    assert lifecycle.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert lifecycle.agent_participants[0].agent_id == "implementation_partner"
     assert lifecycle.correlation_id == CaoCorrelationId("linear-session-1")
     assert lifecycle.causation_id == "linear:event:mention-1"
 
@@ -819,7 +814,7 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     assert delivery.agent_participants[0].role == (
         runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_DELIVERY_TARGET
     )
-    assert delivery.agent_participants[0].agent_identity_id == "implementation_partner"
+    assert delivery.agent_participants[0].agent_id == "implementation_partner"
     assert delivery.correlation_id == CaoCorrelationId("linear-session-1")
     assert delivery.causation_id == "linear:event:mention-1"
 
@@ -864,21 +859,20 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
     )
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
 
-    def create_replacement(agent_identity):
+    def create_replacement(agent):
         db_module.create_terminal(
             "terminal-2",
             "cao-implementation-partner",
             "developer-5678",
             "codex",
-            "developer",
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id=_default_workspace_context_id(),
         )
         return _created_terminal_result("terminal-2")
 
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(side_effect=create_replacement),
     )
 
@@ -919,13 +913,13 @@ def test_changed_mcp_freshness_restarts_idle_terminal_before_delivery(
     handle._write_applied_runtime_state("terminal-1", handle._desired_runtime_fingerprint())
     monkeypatch.setattr(
         runtime_agent,
-        "_mcp_surface_fingerprint_for_identity",
-        lambda identity: surface_v2,
+        "_mcp_surface_fingerprint_for_agent",
+        lambda agent: surface_v2,
     )
     monkeypatch.setattr(
         runtime_agent,
-        "_mcp_runtime_generation_fingerprint_for_identity",
-        lambda identity: runtime_generation_v2,
+        "_mcp_runtime_generation_fingerprint_for_agent",
+        lambda agent: runtime_generation_v2,
     )
     monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
     delete_terminal = Mock(
@@ -933,21 +927,20 @@ def test_changed_mcp_freshness_restarts_idle_terminal_before_delivery(
     )
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
 
-    def create_replacement(agent_identity):
+    def create_replacement(agent):
         db_module.create_terminal(
             "terminal-2",
             "cao-implementation-partner",
             "developer-5678",
             "codex",
-            "developer",
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id=_default_workspace_context_id(),
         )
         return _created_terminal_result("terminal-2")
 
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(side_effect=create_replacement),
     )
 
@@ -992,22 +985,21 @@ def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(
     )
     create_terminal = Mock()
 
-    def create_replacement(agent_identity):
-        create_terminal(agent_identity)
+    def create_replacement(agent):
+        create_terminal(agent)
         db_module.create_terminal(
             "terminal-2",
             "cao-implementation-partner",
             "developer-5678",
             "codex",
-            "developer",
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id=_default_workspace_context_id(),
         )
         return _created_terminal_result("terminal-2")
 
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(side_effect=create_replacement),
     )
 
@@ -1060,22 +1052,21 @@ def test_stale_refresh_with_no_current_session_restarts_without_resume_payload(
     )
     create_terminal = Mock()
 
-    def create_replacement(agent_identity):
-        create_terminal(agent_identity)
+    def create_replacement(agent):
+        create_terminal(agent)
         db_module.create_terminal(
             "terminal-2",
             "cao-implementation-partner",
             "developer-5678",
             "codex",
-            "developer",
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id=_default_workspace_context_id(),
         )
         return _created_terminal_result("terminal-2")
 
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(side_effect=create_replacement),
     )
 
@@ -1115,7 +1106,7 @@ def test_stale_refresh_surfaces_provider_discovery_failure_without_restarting(
     delete_terminal = Mock()
     create_terminal = Mock()
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", delete_terminal)
-    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent_identity", create_terminal)
+    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal)
 
     result = handle.notify(
         "Do not deliver after provider failure.",
@@ -1131,7 +1122,7 @@ def test_stale_refresh_surfaces_provider_discovery_failure_without_restarting(
     send_input.assert_not_called()
 
 
-def test_fresh_runtime_updates_identity_provider_runtime_cache(
+def test_fresh_runtime_updates_agent_provider_runtime_cache(
     test_session,
     monkeypatch,
     handle,
@@ -1217,21 +1208,20 @@ def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
         Mock(side_effect=lambda terminal_id, **kwargs: db_module.delete_terminal(terminal_id)),
     )
 
-    def create_replacement(agent_identity):
+    def create_replacement(agent):
         db_module.create_terminal(
             "terminal-2",
             "cao-implementation-partner",
             "developer-5678",
             "codex",
-            "developer",
-            agent_identity_id="implementation_partner",
+            agent_id="implementation_partner",
             workspace_context_id=_default_workspace_context_id(),
         )
         return _created_terminal_result("terminal-2")
 
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(side_effect=create_replacement),
     )
 
@@ -1296,7 +1286,7 @@ def test_refresh_failure_keeps_notifications_on_agent_receiver(
     monkeypatch.setattr(runtime_agent.terminal_service, "delete_terminal", Mock(return_value=True))
     monkeypatch.setattr(
         runtime_agent.terminal_service,
-        "create_terminal_for_agent_identity",
+        "create_terminal_for_agent",
         Mock(side_effect=RuntimeError("restart failed")),
     )
 
@@ -1326,7 +1316,7 @@ def test_stale_idle_runtime_does_not_restart_when_old_terminal_stop_fails(
         "delete_terminal",
         Mock(side_effect=RuntimeError("failed to stop old terminal")),
     )
-    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent_identity", create_terminal)
+    monkeypatch.setattr(runtime_agent.terminal_service, "create_terminal_for_agent", create_terminal)
 
     result = handle.try_deliver_pending()
 

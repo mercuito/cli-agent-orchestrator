@@ -153,7 +153,7 @@ def _encode_value(value: object) -> object:
         }
     if isinstance(value, AgentParticipant):
         return {
-            "agent_identity_id": value.agent_identity_id,
+            "agent_id": value.agent_id,
             "role": value.role,
         }
     if isinstance(value, datetime):
@@ -182,7 +182,7 @@ def _decode_value(value: object, target_type: object) -> object:
             raise InvalidCaoEventError("Stored agent participant must be a JSON object")
         role = value.get("role")
         return AgentParticipant(
-            agent_identity_id=str(value["agent_identity_id"]),
+            agent_id=str(value["agent_id"]),
             role=str(role) if role is not None else None,
         )
     if target_type is CaoEventOccurredAt:

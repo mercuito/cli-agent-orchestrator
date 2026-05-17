@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import Agent, AgentRegistry
 from cli_agent_orchestrator.workspace_providers import (
     ProviderMediatedToolDefinition,
     ProviderToolAccessPolicy,
@@ -22,41 +22,42 @@ FAKE_LOOKUP_TOOL = "cao_fake.lookup"
 FAKE_RESTRICTED_TOOL = "cao_fake.restricted"
 
 
-def fake_agent_identities() -> dict[str, AgentIdentity]:
+def fake_agents() -> dict[str, Agent]:
     return {
-        "identity_a": AgentIdentity(
-            id="identity_a",
-            display_name="Identity A",
-            agent_profile="developer",
+        "agent_a": Agent(
+            id="agent_a",
+            display_name="Agent A",
             cli_provider="codex",
             workdir="/repo",
-            session_name="identity-a",
+            session_name="agent-a",
+            prompt="",
         ),
-        "identity_b": AgentIdentity(
-            id="identity_b",
-            display_name="Identity B",
-            agent_profile="reviewer",
+        "agent_b": Agent(
+            id="agent_b",
+            display_name="Agent B",
             cli_provider="codex",
             workdir="/repo",
-            session_name="identity-b",
+            session_name="agent-b",
+            prompt="",
         ),
     }
 
 
-def fake_agent_registry() -> AgentIdentityRegistry:
-    return AgentIdentityRegistry(fake_agent_identities())
+def fake_agent_registry() -> AgentRegistry:
+    return AgentRegistry(fake_agents())
 
 
 def fake_agents_toml() -> str:
     lines: list[str] = []
-    for identity in fake_agent_identities().values():
+    for agent in fake_agents().values():
         lines.append(f"""
-[agents.{identity.id}]
-display_name = "{identity.display_name}"
-agent_profile = "{identity.agent_profile}"
-cli_provider = "{identity.cli_provider}"
-workdir = "{identity.workdir}"
-session_name = "{identity.session_name}"
+[agent]
+id = "{agent.id}"
+display_name = "{agent.display_name}"
+cli_provider = "{agent.cli_provider}"
+workdir = "{agent.workdir}"
+session_name = "{agent.session_name}"
+prompt = ""
 """.strip())
     return "\n\n".join(lines) + "\n"
 
@@ -71,7 +72,7 @@ class FakeProviderRecorder:
         self, context: ProviderToolInvocationContext, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
         self.events.append(
-            f"handler:{context.agent_identity.id}:{context.tool_name}:{arguments['query']}"
+            f"handler:{context.agent.id}:{context.tool_name}:{arguments['query']}"
         )
         return self.handler_result
 
@@ -87,7 +88,7 @@ class FakeProviderRecorder:
         self.events.append(f"{context.phase.value}:{context.hook_name}:{context.tool_name}")
         return ProviderToolPreCallResult.deny(
             "fake policy denied this action",
-            {"identity": context.agent_identity.id, "tool": context.tool_name},
+            {"agent": context.agent.id, "tool": context.tool_name},
         )
 
     def post_hook(self, context: ProviderToolInvocationContext) -> None:
@@ -107,7 +108,7 @@ class FakeProvider:
     def __init__(
         self,
         provider_config: Mapping[str, Mapping[str, Any]],
-        agent_registry: AgentIdentityRegistry,
+        agent_registry: AgentRegistry,
         recorder: FakeProviderRecorder,
     ) -> None:
         self._provider_config = provider_config
@@ -186,8 +187,7 @@ def fake_provider_access_requests_from_config(
         requests.append(
             ProviderToolAccessRequest(
                 tool_name=partner_config["capability"],
-                agent_identity_id=target_value if target_kind == "agent" else None,
-                agent_profile=target_value if target_kind == "role_template" else None,
+                agent_id=target_value if target_kind == "agent" else None,
                 pre_hooks=tuple(partner_config.get("before", ())),
                 post_hooks=tuple(partner_config.get("after", ())),
                 location=f"partners.{partner_name}",
@@ -201,14 +201,14 @@ def fake_provider_config() -> dict[str, dict[str, dict[str, Any]]]:
         "partners": {
             "discovery": {
                 "kind": "agent",
-                "target": "identity_a",
+                "target": "agent_a",
                 "capability": FAKE_LOOKUP_TOOL,
                 "before": ["always_allow"],
                 "after": ["record_after"],
             },
             "restricted": {
                 "kind": "agent",
-                "target": "identity_a",
+                "target": "agent_a",
                 "capability": FAKE_RESTRICTED_TOOL,
                 "before": ["deny_before"],
             },
@@ -221,7 +221,7 @@ def fake_provider_bad_config() -> dict[str, dict[str, dict[str, Any]]]:
         "partners": {
             "bad_discovery": {
                 "kind": "agent",
-                "target": "identity_a",
+                "target": "agent_a",
                 "capability": "cao_fake.missing",
                 "before": ["missing_hook"],
             }

@@ -175,7 +175,7 @@ class LinearIssueCreatedEvent:
     causation_id: CaoCausationId | None = None
 
     terminal_id: str
-    agent_identity_id: str
+    agent_id: str
     tool_name: str
     issue: Mapping[str, Any]
     delivery_id: str | None = None
@@ -290,11 +290,11 @@ def linear_issue_created_event_from_context(
         occurred_at=_now(),
         correlation_id=CaoCorrelationId(context.terminal_id),
         terminal_id=context.terminal_id,
-        agent_identity_id=context.agent_identity.id,
+        agent_id=context.agent.id,
         tool_name=context.tool_name,
         issue=result,
         agent_participants=_agent_participants(
-            context.agent_identity.id,
+            context.agent.id,
             LINEAR_AGENT_PARTICIPANT_ROLE_CREATED_ISSUE,
         ),
         metadata={"hook_name": context.hook_name, "phase": str(context.phase)},
@@ -378,12 +378,12 @@ def _participant_role_for_classification(kind: str) -> str:
 
 
 def _agent_participants(
-    agent_identity_id: str | None,
+    agent_id: str | None,
     role: str,
 ) -> tuple[AgentParticipant, ...]:
-    if agent_identity_id is None:
+    if agent_id is None:
         return ()
-    return (AgentParticipant(agent_identity_id=agent_identity_id, role=role),)
+    return (AgentParticipant(agent_id=agent_id, role=role),)
 
 
 def _cao_event_id(event_name: str, *parts: str | None) -> CaoEventId:

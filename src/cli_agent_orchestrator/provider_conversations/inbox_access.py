@@ -260,8 +260,8 @@ def _plain_source_label(session: Any, delivery: InboxDelivery) -> str:
         .filter(db_module.TerminalModel.id == message.sender_id)
         .first()
     )
-    if terminal is not None and terminal.agent_profile:
-        return _display_from_token(cast(str, terminal.agent_profile))
+    if terminal is not None and terminal.agent_id:
+        return _display_from_token(cast(str, terminal.agent_id))
 
     sender_id = str(cast(str, message.sender_id) or "")
     if sender_id.startswith("agent:"):

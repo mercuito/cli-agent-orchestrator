@@ -43,7 +43,7 @@ def create_notification_for_persisted_event(
     """Create a terminal inbox notification for a persisted provider event.
 
     The persisted event must include a durable message record. Receiver selection
-    stays explicit and caller-owned; this bridge does not route by agent identity.
+    stays explicit and caller-owned; this bridge does not route by agent.
     """
 
     if persisted_event.message is None:

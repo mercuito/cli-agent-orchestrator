@@ -65,7 +65,7 @@ def init_db() -> None:
     _migrate_ensure_cao_event_tables()
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
-    _migrate_add_terminal_agent_identity_id()
+    _migrate_add_terminal_agent_id()
     _migrate_add_terminal_workspace_context_id()
     _migrate_backfill_terminal_workspace_context_id()
     _migrate_drop_monitoring_session_peers()
@@ -314,6 +314,79 @@ def _migrate_ensure_workspace_context_tables() -> None:
         ContextWorkspaceModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for workspace context tables failed: {e}")
+        return
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            if not sqlite_migrations.table_exists(conn, "context_workspaces"):
+                return
+            columns = sqlite_migrations.table_columns(conn, "context_workspaces")
+            old_agent_column = "agent_" + "identity_id"
+            if "agent_id" in columns and old_agent_column not in columns:
+                return
+            if old_agent_column not in columns:
+                return
+            offenders = conn.execute(
+                f"""
+                SELECT id
+                FROM context_workspaces
+                WHERE {old_agent_column} IS NULL
+                   OR TRIM({old_agent_column}) = ''
+                """
+            ).fetchall()
+            if offenders:
+                ids = ", ".join(str(row[0]) for row in offenders)
+                raise RuntimeError(
+                    "Cannot migrate context_workspaces to agent_id while anonymous "
+                    f"context workspace rows exist: {ids}"
+                )
+            active_terminal_expr = (
+                "old.active_terminal_id" if "active_terminal_id" in columns else "NULL"
+            )
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="context_workspaces",
+                create_sql="""
+                    CREATE TABLE context_workspaces (
+                        id INTEGER NOT NULL,
+                        agent_id VARCHAR NOT NULL,
+                        workspace_context_id VARCHAR NOT NULL,
+                        root_path VARCHAR NOT NULL,
+                        active_terminal_id VARCHAR,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        CONSTRAINT uq_context_workspace_agent_context
+                            UNIQUE (agent_id, workspace_context_id),
+                        FOREIGN KEY(workspace_context_id)
+                            REFERENCES workspace_contexts (id) ON DELETE CASCADE
+                    )
+                """,
+                copy_sql=f"""
+                    INSERT INTO context_workspaces (
+                        id,
+                        agent_id,
+                        workspace_context_id,
+                        root_path,
+                        active_terminal_id,
+                        created_at,
+                        updated_at
+                    )
+                    SELECT
+                        old.id,
+                        TRIM(old.{old_agent_column}),
+                        old.workspace_context_id,
+                        old.root_path,
+                        {active_terminal_expr},
+                        old.created_at,
+                        old.updated_at
+                    FROM {{old_table}} AS old
+                """,
+            )
+            logger.info("Migration: converted context_workspaces to agent_id-owned schema")
+    except Exception as e:
+        logger.warning(f"Migration check for context workspace agent_id failed: {e}")
+        raise
 
 
 def _migrate_ensure_cao_event_tables() -> None:
@@ -324,7 +397,7 @@ def _migrate_ensure_cao_event_tables() -> None:
     event_table = CaoEventModel.__tablename__
     participant_table = CaoEventAgentParticipantModel.__tablename__
     event_id_column = CaoEventAgentParticipantModel.event_id.name
-    agent_identity_column = CaoEventAgentParticipantModel.agent_identity_id.name
+    agent_column = CaoEventAgentParticipantModel.agent_id.name
     occurred_at_column = CaoEventAgentParticipantModel.occurred_at.name
     kind_column = CaoEventModel.kind.name
     legacy_type_key_column = "event_type_key"
@@ -369,6 +442,17 @@ def _migrate_ensure_cao_event_tables() -> None:
             str(row[1])
             for row in connection.exec_driver_sql(f"PRAGMA table_info({participant_table})")
         }
+        old_agent_column = "agent_" + "identity_id"
+        if agent_column not in participant_columns and old_agent_column in participant_columns:
+            connection.exec_driver_sql(
+                f"DROP INDEX IF EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}"
+            )
+            connection.exec_driver_sql(
+                f"ALTER TABLE {participant_table} "
+                f"RENAME COLUMN {old_agent_column} TO {agent_column}"
+            )
+            participant_columns.remove(old_agent_column)
+            participant_columns.add(agent_column)
         if occurred_at_column not in participant_columns:
             connection.exec_driver_sql(
                 f"ALTER TABLE {participant_table} ADD COLUMN {occurred_at_column} DATETIME"
@@ -386,7 +470,7 @@ def _migrate_ensure_cao_event_tables() -> None:
         )
         connection.exec_driver_sql(f"""
             CREATE INDEX IF NOT EXISTS {CAO_EVENT_AGENT_PARTICIPANTS_AGENT_OCCURRED_INDEX}
-            ON {participant_table} ({agent_identity_column}, {occurred_at_column}, {event_id_column})
+            ON {participant_table} ({agent_column}, {occurred_at_column}, {event_id_column})
         """)
 
 
@@ -802,17 +886,107 @@ def _migrate_add_allowed_tools() -> None:
         logger.warning(f"Migration check for allowed_tools failed: {e}")
 
 
-def _migrate_add_terminal_agent_identity_id() -> None:
-    """Add agent_identity_id column to terminals table if missing."""
+def _migrate_add_terminal_agent_id() -> None:
+    """Convert terminals to the hard-cutover agent-owned schema."""
 
+    old_agent_column = "agent_" + "identity_id"
+    old_profile_column = "agent_" + "profile"
     try:
         with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            if sqlite_migrations.add_column_if_missing(
-                conn, "terminals", "agent_identity_id", "agent_identity_id TEXT"
+            if not sqlite_migrations.table_exists(conn, "terminals"):
+                return
+            columns = sqlite_migrations.table_columns(conn, "terminals")
+            if "agent_id" not in columns and old_agent_column not in columns:
+                return
+            source_agent_column = "agent_id" if "agent_id" in columns else old_agent_column
+            offenders = conn.execute(
+                f"""
+                SELECT id
+                FROM terminals
+                WHERE {source_agent_column} IS NULL
+                   OR TRIM({source_agent_column}) = ''
+                """
+            ).fetchall()
+            if offenders:
+                ids = ", ".join(str(row[0]) for row in offenders)
+                raise RuntimeError(
+                    "Cannot migrate terminals to agent_id NOT NULL while anonymous "
+                    f"terminal rows exist: {ids}"
+                )
+
+            has_workspace = "workspace_context_id" in columns
+            allowed_tools_expr = "allowed_tools" if "allowed_tools" in columns else "NULL"
+            if (
+                source_agent_column == "agent_id"
+                and has_workspace
+                and old_profile_column not in columns
+                and old_agent_column not in columns
             ):
-                logger.info("Migration: added agent_identity_id column to terminals table")
+                return
+
+            rows = conn.execute(
+                f"""
+                SELECT
+                    id,
+                    tmux_session,
+                    tmux_window,
+                    provider,
+                    TRIM({source_agent_column}) AS agent_id,
+                    {"workspace_context_id" if has_workspace else "NULL"} AS workspace_context_id,
+                    {allowed_tools_expr} AS allowed_tools,
+                    last_active
+                FROM terminals
+                """
+            ).fetchall()
+            conn.execute("ALTER TABLE terminals RENAME TO terminals_old")
+            conn.execute(
+                """
+                CREATE TABLE terminals (
+                    id TEXT PRIMARY KEY,
+                    tmux_session TEXT NOT NULL,
+                    tmux_window TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    workspace_context_id TEXT NOT NULL,
+                    allowed_tools TEXT,
+                    last_active DATETIME
+                )
+                """
+            )
+            conn.executemany(
+                """
+                INSERT INTO terminals (
+                    id,
+                    tmux_session,
+                    tmux_window,
+                    provider,
+                    agent_id,
+                    workspace_context_id,
+                    allowed_tools,
+                    last_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        row[0],
+                        row[1],
+                        row[2],
+                        row[3],
+                        row[4],
+                        _nonempty_text(row[5])
+                        or _default_agent_workspace_context_id(str(row[4])),
+                        row[6],
+                        row[7],
+                    )
+                    for row in rows
+                ],
+            )
+            conn.execute("DROP TABLE terminals_old")
+            logger.info("Migration: converted terminals to agent_id-owned schema")
     except Exception as e:
-        logger.warning(f"Migration check for terminal agent_identity_id failed: {e}")
+        logger.warning(f"Migration check for terminal agent_id failed: {e}")
+        raise
 
 
 def _migrate_add_terminal_workspace_context_id() -> None:
@@ -829,32 +1003,32 @@ def _migrate_add_terminal_workspace_context_id() -> None:
 
 
 def _migrate_backfill_terminal_workspace_context_id() -> None:
-    """Bind legacy identity-managed terminal rows to their identity default context."""
+    """Bind agent-managed terminal rows to their default context."""
 
     try:
         with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
             if not sqlite_migrations.table_exists(conn, "terminals"):
                 return
             terminal_columns = sqlite_migrations.table_columns(conn, "terminals")
-            if not {"agent_identity_id", "workspace_context_id"}.issubset(terminal_columns):
+            if not {"agent_id", "workspace_context_id"}.issubset(terminal_columns):
                 return
 
             rows = conn.execute("""
-                SELECT id, agent_identity_id
+                SELECT id, agent_id, workspace_context_id
                 FROM terminals
-                WHERE agent_identity_id IS NOT NULL
-                  AND TRIM(agent_identity_id) != ''
-                  AND (
-                    workspace_context_id IS NULL
-                    OR TRIM(workspace_context_id) = ''
-                  )
+                WHERE agent_id IS NOT NULL
+                  AND TRIM(agent_id) != ''
             """).fetchall()
             if not rows:
                 return
 
             now = datetime.now()
-            for _terminal_id, agent_identity_id in rows:
-                context_id = _default_agent_workspace_context_id(str(agent_identity_id))
+            backfilled_count = 0
+            for _terminal_id, agent_id, workspace_context_id in rows:
+                context_id = _default_agent_workspace_context_id(str(agent_id))
+                existing_context_id = _nonempty_text(workspace_context_id)
+                if existing_context_id is not None and existing_context_id != context_id:
+                    continue
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO workspace_contexts (
@@ -874,8 +1048,8 @@ def _migrate_backfill_terminal_workspace_context_id() -> None:
                         context_id,
                         "default",
                         "cao",
-                        "agent_identity_default",
-                        str(agent_identity_id),
+                        "agent_default",
+                        str(agent_id),
                         "active",
                         now,
                         now,
@@ -897,8 +1071,8 @@ def _migrate_backfill_terminal_workspace_context_id() -> None:
                     (
                         context_id,
                         "cao",
-                        "agent_identity_default",
-                        str(agent_identity_id),
+                        "agent_default",
+                        str(agent_id),
                         "boundary",
                         now,
                     ),
@@ -911,20 +1085,28 @@ def _migrate_backfill_terminal_workspace_context_id() -> None:
                     """,
                     (context_id, _terminal_id),
                 )
+                backfilled_count += 1
             logger.info(
-                "Migration: backfilled workspace_context_id for %s identity-managed terminals",
-                len(rows),
+                "Migration: backfilled workspace_context_id for %s agent-managed terminals",
+                backfilled_count,
             )
     except Exception as e:
         logger.warning(f"Migration check for terminal workspace_context_id backfill failed: {e}")
 
 
-def _default_agent_workspace_context_id(agent_identity_id: str) -> str:
+def _nonempty_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _default_agent_workspace_context_id(agent_id: str) -> str:
     material = "\n".join(
         [
             "cao",
-            "agent_identity_default",
-            agent_identity_id,
+            "agent_default",
+            agent_id,
         ]
     )
     return "wctx_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]

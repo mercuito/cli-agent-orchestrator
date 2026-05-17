@@ -60,17 +60,17 @@ class CaoEventSourceRef:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentParticipant:
-    """One CAO agent identity involved in an event.
+    """One CAO agent involved in an event.
 
     Participant roles are owned by each event family and intentionally remain
     optional plain strings rather than a framework-wide enum.
     """
 
-    agent_identity_id: str
+    agent_id: str
     role: str | None = None
 
     def __post_init__(self) -> None:
-        _normalize_token(self.agent_identity_id, "agent_identity_id")
+        _normalize_token(self.agent_id, "agent_id")
         if self.role is not None:
             _normalize_token(self.role, "agent participant role")
 
@@ -106,7 +106,7 @@ class CaoEvent(Protocol):
 
 @runtime_checkable
 class WithAgentParticipants(Protocol):
-    """Facet for events that expose involved CAO agent identities."""
+    """Facet for events that expose involved CAO agents."""
 
     @property
     def agent_participants(self) -> tuple[AgentParticipant, ...]:
@@ -300,13 +300,13 @@ def agent_participants_for(event: CaoEvent | WithAgentParticipants) -> tuple[Age
 
 def event_involves_agent(
     event: CaoEvent | WithAgentParticipants,
-    agent_identity_id: str,
+    agent_id: str,
 ) -> bool:
-    """Return whether ``agent_identity_id`` is one of the event's participants."""
+    """Return whether ``agent_id`` is one of the event's participants."""
 
-    normalized_agent_identity_id = _normalize_token(agent_identity_id, "agent_identity_id")
+    normalized_agent_id = _normalize_token(agent_id, "agent_id")
     return any(
-        participant.agent_identity_id == normalized_agent_identity_id
+        participant.agent_id == normalized_agent_id
         for participant in agent_participants_for(event)
     )
 

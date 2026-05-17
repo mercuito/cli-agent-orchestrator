@@ -65,8 +65,8 @@ def _correlation_for(causing_event: CaoEvent | None) -> CaoCorrelationId | None:
     return causing_event.correlation_id
 
 
-def _agent_participants(agent_identity_id: str, role: str) -> tuple[AgentParticipant, ...]:
-    return (AgentParticipant(agent_identity_id=agent_identity_id, role=role),)
+def _agent_participants(agent_id: str, role: str) -> tuple[AgentParticipant, ...]:
+    return (AgentParticipant(agent_id=agent_id, role=role),)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -81,14 +81,14 @@ class _AgentRuntimeEventMetadata:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentRuntimeNotificationAcceptedEvent(_AgentRuntimeEventMetadata):
-    """Runtime accepted a newly durable notification for an agent identity."""
+    """Runtime accepted a newly durable notification for an agent."""
 
     event_name: ClassVar[str] = "agent_runtime_notification_accepted"
     kind: Literal["cao_runtime.agent_runtime_notification_accepted"] = (
         "cao_runtime.agent_runtime_notification_accepted"
     )
 
-    agent_identity_id: str
+    agent_id: str
     workspace_context_id: str
     inbox_notification_id: int
     inbox_receiver_id: str
@@ -106,7 +106,7 @@ class AgentRuntimeNotificationDeliveryEvent(_AgentRuntimeEventMetadata):
         "cao_runtime.agent_runtime_notification_delivery"
     )
 
-    agent_identity_id: str
+    agent_id: str
     workspace_context_id: str
     inbox_notification_id: int
     inbox_receiver_id: str
@@ -127,7 +127,7 @@ class AgentRuntimeLifecycleEvent(_AgentRuntimeEventMetadata):
     event_name: ClassVar[str] = "agent_runtime_lifecycle"
     kind: Literal["cao_runtime.agent_runtime_lifecycle"] = "cao_runtime.agent_runtime_lifecycle"
 
-    agent_identity_id: str
+    agent_id: str
     workspace_context_id: str
     action: str
     runtime_status: str
@@ -146,7 +146,7 @@ class AgentRuntimeWorkspaceContextSwitchEvent(_AgentRuntimeEventMetadata):
         "cao_runtime.agent_runtime_workspace_context_switch"
     )
 
-    agent_identity_id: str
+    agent_id: str
     from_workspace_context_id: str
     to_workspace_context_id: str
     terminal_id: str
@@ -157,7 +157,7 @@ class AgentRuntimeWorkspaceContextSwitchEvent(_AgentRuntimeEventMetadata):
 
 @dataclass(frozen=True, kw_only=True)
 class RuntimeWorkspaceEvent:
-    """Workspace-wide runtime activity that is not scoped to one agent identity."""
+    """Workspace-wide runtime activity that is not scoped to one agent."""
 
     event_name: ClassVar[str] = "runtime_workspace"
     kind: Literal["cao_runtime.runtime_workspace"] = "cao_runtime.runtime_workspace"
@@ -205,7 +205,7 @@ def publish_runtime_event(
 
 def notification_accepted_event(
     *,
-    agent_identity_id: str,
+    agent_id: str,
     workspace_context_id: str,
     inbox_notification_id: int,
     inbox_receiver_id: str,
@@ -219,14 +219,14 @@ def notification_accepted_event(
     return AgentRuntimeNotificationAcceptedEvent(
         event_id=_runtime_event_id(
             AgentRuntimeNotificationAcceptedEvent.event_name,
-            agent_identity_id,
+            agent_id,
             workspace_context_id,
             inbox_notification_id,
         ),
         source=_runtime_source_ref(f"notification:{inbox_notification_id}"),
         correlation_id=_correlation_for(causing_event),
         causation_id=_causation_for(causing_event),
-        agent_identity_id=agent_identity_id,
+        agent_id=agent_id,
         workspace_context_id=workspace_context_id,
         inbox_notification_id=inbox_notification_id,
         inbox_receiver_id=inbox_receiver_id,
@@ -234,7 +234,7 @@ def notification_accepted_event(
         source_kind=source_kind,
         source_id=source_id,
         agent_participants=_agent_participants(
-            agent_identity_id,
+            agent_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_NOTIFICATION_RECEIVER,
         ),
     )
@@ -242,7 +242,7 @@ def notification_accepted_event(
 
 def notification_delivery_event(
     *,
-    agent_identity_id: str,
+    agent_id: str,
     workspace_context_id: str,
     inbox_notification_id: int,
     inbox_receiver_id: str,
@@ -261,7 +261,7 @@ def notification_delivery_event(
     return AgentRuntimeNotificationDeliveryEvent(
         event_id=_runtime_event_id(
             AgentRuntimeNotificationDeliveryEvent.event_name,
-            agent_identity_id,
+            agent_id,
             workspace_context_id,
             inbox_notification_id,
             outcome,
@@ -269,7 +269,7 @@ def notification_delivery_event(
         source=_runtime_source_ref(f"notification:{inbox_notification_id}"),
         correlation_id=_correlation_for(causing_event),
         causation_id=_causation_for(causing_event),
-        agent_identity_id=agent_identity_id,
+        agent_id=agent_id,
         workspace_context_id=workspace_context_id,
         inbox_notification_id=inbox_notification_id,
         inbox_receiver_id=inbox_receiver_id,
@@ -282,7 +282,7 @@ def notification_delivery_event(
         source_kind=source_kind,
         message_body=message_body,
         agent_participants=_agent_participants(
-            agent_identity_id,
+            agent_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_DELIVERY_TARGET,
         ),
     )
@@ -290,7 +290,7 @@ def notification_delivery_event(
 
 def lifecycle_event(
     *,
-    agent_identity_id: str,
+    agent_id: str,
     workspace_context_id: str,
     action: str,
     runtime_status: str,
@@ -305,7 +305,7 @@ def lifecycle_event(
     return AgentRuntimeLifecycleEvent(
         event_id=_runtime_event_id(
             AgentRuntimeLifecycleEvent.event_name,
-            agent_identity_id,
+            agent_id,
             workspace_context_id,
             terminal_id,
             action,
@@ -314,10 +314,10 @@ def lifecycle_event(
             fresh,
             error,
         ),
-        source=_runtime_source_ref(terminal_id or f"agent:{agent_identity_id}"),
+        source=_runtime_source_ref(terminal_id or f"agent:{agent_id}"),
         correlation_id=_correlation_for(causing_event),
         causation_id=_causation_for(causing_event),
-        agent_identity_id=agent_identity_id,
+        agent_id=agent_id,
         workspace_context_id=workspace_context_id,
         action=action,
         runtime_status=runtime_status,
@@ -326,7 +326,7 @@ def lifecycle_event(
         fresh=fresh,
         error=error,
         agent_participants=_agent_participants(
-            agent_identity_id,
+            agent_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_LIFECYCLE_AGENT,
         ),
     )
@@ -363,7 +363,7 @@ def workspace_runtime_event(
 
 def workspace_context_switch_event(
     *,
-    agent_identity_id: str,
+    agent_id: str,
     from_workspace_context_id: str,
     to_workspace_context_id: str,
     terminal_id: str,
@@ -377,7 +377,7 @@ def workspace_context_switch_event(
     return AgentRuntimeWorkspaceContextSwitchEvent(
         event_id=_runtime_event_id(
             AgentRuntimeWorkspaceContextSwitchEvent.event_name,
-            agent_identity_id,
+            agent_id,
             from_workspace_context_id,
             to_workspace_context_id,
             terminal_id,
@@ -388,7 +388,7 @@ def workspace_context_switch_event(
         source=_runtime_source_ref(terminal_id),
         correlation_id=_correlation_for(causing_event),
         causation_id=_causation_for(causing_event),
-        agent_identity_id=agent_identity_id,
+        agent_id=agent_id,
         from_workspace_context_id=from_workspace_context_id,
         to_workspace_context_id=to_workspace_context_id,
         terminal_id=terminal_id,
@@ -396,7 +396,7 @@ def workspace_context_switch_event(
         outcome=outcome,
         error=error,
         agent_participants=_agent_participants(
-            agent_identity_id,
+            agent_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_CONTEXT_SWITCH_AGENT,
         ),
     )

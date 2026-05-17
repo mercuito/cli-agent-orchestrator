@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from cli_agent_orchestrator.agent_identity import AgentIdentityConfigError
+from cli_agent_orchestrator.agent import AgentConfigError
 from cli_agent_orchestrator.api.main import app
 from cli_agent_orchestrator.models.terminal import Terminal
 
@@ -72,15 +72,15 @@ class TestTerminalWebsocketEnvironment:
 
 
 class TestAgentRuntimeTerminalEndpoint:
-    def test_resolves_agent_identity_to_current_terminal_with_token(self, client, monkeypatch):
+    def test_resolves_agent_to_current_terminal_with_token(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
-        identity_manager = MagicMock()
-        identity_manager.status_for_identity.return_value = SimpleNamespace(
+        agent_manager = MagicMock()
+        agent_manager.status_for_agent.return_value = SimpleNamespace(
             active_terminal_id="abcd1234"
         )
 
-        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
+        monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
         monkeypatch.setattr(
             main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
         )
@@ -95,8 +95,8 @@ class TestAgentRuntimeTerminalEndpoint:
                 "name": "developer-1234",
                 "provider": "codex",
                 "session_name": "cao-linear-discovery-partner",
-                "agent_profile": "developer",
-                "agent_identity_id": "discovery_partner",
+                "agent_id": "discovery_partner",
+                "workspace_context_id": "default",
                 "allowed_tools": None,
                 "status": "idle",
                 "last_active": None,
@@ -107,19 +107,19 @@ class TestAgentRuntimeTerminalEndpoint:
 
         assert response.status_code == 200
         assert response.json()["terminal"]["id"] == "abcd1234"
-        assert response.json()["terminal"]["agent_identity_id"] == "discovery_partner"
+        assert response.json()["terminal"]["agent_id"] == "discovery_partner"
         assert response.json()["terminal_token"] == "signed-token"
-        identity_manager.status_for_identity.assert_called_once_with("discovery_partner")
+        agent_manager.status_for_agent.assert_called_once_with("discovery_partner")
 
     def test_returns_404_when_agent_has_no_running_terminal(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
-        identity_manager = MagicMock()
-        identity_manager.status_for_identity.return_value = SimpleNamespace(
+        agent_manager = MagicMock()
+        agent_manager.status_for_agent.return_value = SimpleNamespace(
             active_terminal_id=None
         )
 
-        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
+        monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
         monkeypatch.setattr(
             main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
         )
@@ -129,7 +129,7 @@ class TestAgentRuntimeTerminalEndpoint:
         assert response.status_code == 404
         assert "no running terminal" in response.json()["detail"]
 
-    def test_returns_404_for_unknown_agent_identity(self, client, monkeypatch):
+    def test_returns_404_for_unknown_agent(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
         monkeypatch.setattr(
@@ -137,40 +137,40 @@ class TestAgentRuntimeTerminalEndpoint:
             "validate_agent_dashboard_token",
             lambda token, agent_id: token == "agent-token",
         )
-        identity_manager = MagicMock()
-        identity_manager.status_for_identity.side_effect = AgentIdentityConfigError(
-            "Unknown CAO agent identity"
+        agent_manager = MagicMock()
+        agent_manager.status_for_agent.side_effect = AgentConfigError(
+            "Unknown CAO agent"
         )
-        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
+        monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
 
         response = client.get("/agents/runtime/missing/terminal?agent_token=agent-token")
 
         assert response.status_code == 404
-        assert "Unknown CAO agent identity" in response.json()["detail"]
+        assert "Unknown CAO agent" in response.json()["detail"]
 
     def test_rejects_non_loopback_agent_resolution_without_valid_agent_token(
         self, client, monkeypatch
     ):
         from cli_agent_orchestrator.api import main
 
-        identity_manager = MagicMock()
-        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
+        agent_manager = MagicMock()
+        monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
         monkeypatch.setattr(main, "validate_agent_dashboard_token", lambda token, agent_id: False)
 
         response = client.get("/agents/runtime/discovery_partner/terminal")
 
         assert response.status_code == 403
-        identity_manager.status_for_identity.assert_not_called()
+        agent_manager.status_for_agent.assert_not_called()
 
-    def test_resolves_agent_identity_from_workspace_provider_mapping(self, client, monkeypatch):
+    def test_resolves_agent_from_workspace_provider_mapping(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
-        identity_manager = MagicMock()
-        identity_manager.status_for_identity.return_value = SimpleNamespace(
+        agent_manager = MagicMock()
+        agent_manager.status_for_agent.return_value = SimpleNamespace(
             active_terminal_id="abcd1234"
         )
 
-        monkeypatch.setattr(main, "default_agent_identity_manager", lambda: identity_manager)
+        monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
         monkeypatch.setattr(
             main, "validate_agent_dashboard_token", lambda token, agent_id: token == "agent-token"
         )
@@ -185,8 +185,8 @@ class TestAgentRuntimeTerminalEndpoint:
                 "name": "developer-1234",
                 "provider": "codex",
                 "session_name": "cao-linear-discovery-partner",
-                "agent_profile": "developer",
-                "agent_identity_id": "discovery_partner",
+                "agent_id": "discovery_partner",
+                "workspace_context_id": "default",
                 "allowed_tools": None,
                 "status": "idle",
                 "last_active": None,
@@ -197,7 +197,7 @@ class TestAgentRuntimeTerminalEndpoint:
 
         assert response.status_code == 200
         assert response.json()["terminal"]["id"] == "abcd1234"
-        identity_manager.status_for_identity.assert_called_once_with("discovery_partner")
+        agent_manager.status_for_agent.assert_called_once_with("discovery_partner")
 
 
 class TestWorkingDirectoryEndpoint:
@@ -257,120 +257,71 @@ class TestWorkingDirectoryEndpoint:
 
 
 class TestSessionCreationWithWorkingDirectory:
-    """Test session creation with working_directory parameter."""
+    """Removed anonymous session creation endpoint."""
 
     def test_create_session_passes_working_directory(self, client, tmp_path):
-        """Test that working_directory parameter is passed to service."""
+        """POST /sessions no longer creates anonymous terminals."""
         with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.return_value = Terminal(
-                id="abcd1234",
-                name="test-window",
-                session_name="test-session",
-                provider="q_cli",
-                agent_profile="developer",
-            )
-
             response = client.post(
                 "/sessions",
                 params={
                     "provider": "q_cli",
-                    "agent_profile": "developer",
+                    "agent_id": "developer",
                     "working_directory": str(tmp_path),
                 },
             )
 
-            assert response.status_code == 201
-            # Verify working_directory was passed
-            call_kwargs = mock_svc.create_terminal.call_args.kwargs
-            assert call_kwargs.get("working_directory") == str(tmp_path)
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
 
     def test_create_session_with_working_directory(self, client):
-        """Test POST /sessions with working_directory parameter."""
+        """POST /sessions remains removed even with working_directory."""
         with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
-            mock_svc.create_terminal.return_value = Terminal(
-                id="abcd1234",
-                name="test-window",
-                session_name="test-session",
-                provider="q_cli",
-                agent_profile="developer",
-            )
-
             response = client.post(
                 "/sessions",
                 params={
                     "provider": "q_cli",
-                    "agent_profile": "developer",
+                    "agent_id": "developer",
                     "working_directory": "/custom/path",
                 },
             )
 
-            assert response.status_code == 201
-            call_kwargs = mock_svc.create_terminal.call_args.kwargs
-            assert call_kwargs.get("working_directory") == "/custom/path"
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
 
 
 class TestTerminalCreationWithWorkingDirectory:
-    """Test terminal creation with working_directory parameter."""
+    """Removed anonymous terminal creation endpoint."""
 
     def test_create_terminal_passes_working_directory(self, client, tmp_path):
-        """Test that working_directory parameter is passed to service."""
-        with (
-            patch(
-                "cli_agent_orchestrator.api.main.resolve_provider",
-                side_effect=lambda _, fallback_provider: fallback_provider,
-            ),
-            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
-        ):
-            mock_svc.create_terminal.return_value = Terminal(
-                id="abcd5678",
-                name="test-window",
-                session_name="test-session",
-                provider="q_cli",
-                agent_profile="analyst",
-            )
-
+        """POST /sessions/{session}/terminals no longer creates terminals."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             response = client.post(
                 "/sessions/test-session/terminals",
                 params={
                     "provider": "q_cli",
-                    "agent_profile": "analyst",
+                    "agent_id": "analyst",
                     "working_directory": str(tmp_path),
                 },
             )
 
-            assert response.status_code == 201
-            call_kwargs = mock_svc.create_terminal.call_args.kwargs
-            assert call_kwargs.get("working_directory") == str(tmp_path)
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
 
     def test_create_terminal_in_session_with_working_directory(self, client):
-        """Test POST /sessions/{session}/terminals with working_directory."""
-        with (
-            patch(
-                "cli_agent_orchestrator.api.main.resolve_provider",
-                side_effect=lambda _, fallback_provider: fallback_provider,
-            ),
-            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
-        ):
-            mock_svc.create_terminal.return_value = Terminal(
-                id="abcd5678",
-                name="test-window",
-                session_name="test-session",
-                provider="q_cli",
-                agent_profile="analyst",
-            )
-
+        """POST /sessions/{session}/terminals remains removed."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             response = client.post(
                 "/sessions/test-session/terminals",
                 params={
                     "provider": "q_cli",
-                    "agent_profile": "analyst",
+                    "agent_id": "analyst",
                     "working_directory": "/session/path",
                 },
             )
 
-            assert response.status_code == 201
-            call_kwargs = mock_svc.create_terminal.call_args.kwargs
-            assert call_kwargs.get("working_directory") == "/session/path"
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
 
 
 class TestExitTerminalEndpoint:
@@ -605,112 +556,61 @@ class TestWebSocketLocalhostRestriction:
                 pass
 
 
-class TestCrossProviderResolution:
-    """Test that create_terminal_in_session resolves provider from agent profile
-    while create_session always uses the explicit provider parameter."""
+class TestRemovedAnonymousProviderResolution:
+    """Anonymous creation routes no longer perform provider resolution."""
 
     def test_create_terminal_uses_profile_provider(self, client):
-        """create_terminal_in_session should resolve provider from agent profile."""
-        with (
-            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
-            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
-        ):
-            mock_resolve.return_value = "claude_code"
-            mock_svc.create_terminal.return_value = Terminal(
-                id="abcd1234",
-                name="test-window",
-                session_name="test-session",
-                provider="claude_code",
-                agent_profile="developer",
-            )
-
+        """POST /sessions/{session}/terminals is removed."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             response = client.post(
                 "/sessions/test-session/terminals",
                 params={
                     "provider": "kiro_cli",
-                    "agent_profile": "developer",
+                    "agent_id": "developer",
                 },
             )
 
-            assert response.status_code == 201
-            # Verify resolve_provider was called with the fallback
-            mock_resolve.assert_called_once_with("developer", fallback_provider="kiro_cli")
-            # Verify terminal_service got the resolved provider
-            call_kwargs = mock_svc.create_terminal.call_args.kwargs
-            assert call_kwargs["provider"] == "claude_code"
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
 
     def test_create_terminal_falls_back_when_no_profile_provider(self, client):
-        """create_terminal_in_session should use fallback when profile has no provider."""
-        with (
-            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
-            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
-        ):
-            # resolve_provider returns the fallback (no profile provider key)
-            mock_resolve.return_value = "kiro_cli"
-            mock_svc.create_terminal.return_value = Terminal(
-                id="abcd5678",
-                name="test-window",
-                session_name="test-session",
-                provider="kiro_cli",
-                agent_profile="reviewer",
-            )
-
+        """Removed terminal creation route has no provider fallback path."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             response = client.post(
                 "/sessions/test-session/terminals",
                 params={
                     "provider": "kiro_cli",
-                    "agent_profile": "reviewer",
+                    "agent_id": "reviewer",
                 },
             )
 
-            assert response.status_code == 201
-            call_kwargs = mock_svc.create_terminal.call_args.kwargs
-            assert call_kwargs["provider"] == "kiro_cli"
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
 
     def test_create_session_does_not_resolve_provider(self, client):
-        """create_session should NOT call resolve_provider — CLI flag is the override."""
-        with (
-            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
-            patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc,
-        ):
-            mock_svc.create_terminal.return_value = Terminal(
-                id="abcd1234",
-                name="test-window",
-                session_name="test-session",
-                provider="kiro_cli",
-                agent_profile="supervisor",
-            )
-
+        """POST /sessions is removed and does not dispatch creation."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             response = client.post(
                 "/sessions",
                 params={
                     "provider": "kiro_cli",
-                    "agent_profile": "supervisor",
+                    "agent_id": "supervisor",
                 },
             )
 
-            assert response.status_code == 201
-            # resolve_provider should NOT have been called
-            mock_resolve.assert_not_called()
-            # terminal_service should get the raw provider param
-            call_kwargs = mock_svc.create_terminal.call_args.kwargs
-            assert call_kwargs["provider"] == "kiro_cli"
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
 
     def test_create_terminal_returns_500_on_resolve_error(self, client):
-        """Internal errors during provider resolution should return 500."""
-        with (
-            patch("cli_agent_orchestrator.api.main.resolve_provider") as mock_resolve,
-            patch("cli_agent_orchestrator.api.main.terminal_service"),
-        ):
-            mock_resolve.side_effect = Exception("Unexpected filesystem error")
-
+        """Removed terminal creation route cannot surface provider resolution errors."""
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             response = client.post(
                 "/sessions/test-session/terminals",
                 params={
                     "provider": "kiro_cli",
-                    "agent_profile": "developer",
+                    "agent_id": "developer",
                 },
             )
 
-            assert response.status_code == 500
-            assert "Failed to create terminal" in response.json()["detail"]
+            assert response.status_code == 405
+            mock_svc.create_terminal.assert_not_called()
