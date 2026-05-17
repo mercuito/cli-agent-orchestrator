@@ -140,12 +140,6 @@ class TestCaoHomeDir:
 
         assert DB_DIR == CAO_HOME_DIR / "db"
 
-    def test_local_agent_store_dir_is_under_cao_home(self):
-        """Test that LOCAL_AGENT_STORE_DIR is under CAO_HOME_DIR."""
-        from cli_agent_orchestrator.constants import CAO_HOME_DIR, LOCAL_AGENT_STORE_DIR
-
-        assert LOCAL_AGENT_STORE_DIR == CAO_HOME_DIR / "agent-store"
-
     def test_skills_dir_is_under_cao_home(self):
         """Test that SKILLS_DIR is under CAO_HOME_DIR."""
         from cli_agent_orchestrator.constants import CAO_HOME_DIR, SKILLS_DIR

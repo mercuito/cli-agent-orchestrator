@@ -23,7 +23,7 @@ kimi --version
 kimi login
 
 # Launch with CAO
-cao launch --agents code_supervisor --provider kimi_cli
+cao agent start code_supervisor
 ```
 
 ## Status Detection
@@ -67,9 +67,9 @@ Both thinking and response lines use the `•` (bullet) prefix. The provider dis
 - **Thinking**: `\x1b[38;5;244m•` (gray color 244 + italic)
 - **Response**: Plain `•` without ANSI color prefix
 
-## Agent Profiles
+## Agents
 
-Agent profiles are **optional** for Kimi CLI. If provided, the provider:
+Agents are **optional** for Kimi CLI. If provided, the provider:
 
 1. Creates a temporary YAML agent file that extends Kimi's built-in `default` agent
 2. Writes the system prompt as a separate markdown file
@@ -88,7 +88,7 @@ Temp files are automatically cleaned up when the provider's `cleanup()` method i
 
 ## MCP Server Configuration
 
-MCP servers from agent profiles are passed via `--mcp-config` as a JSON string:
+MCP servers from agents are passed via `--mcp-config` as a JSON string:
 
 ```bash
 kimi --yolo --mcp-config '{"server-name": {"command": "npx", "args": ["-y", "cao-mcp-server"]}}'
@@ -169,7 +169,7 @@ uv run pytest -m e2e test/e2e/test_supervisor_orchestration.py -v -k KimiCli -o 
 Prerequisites for E2E tests:
 - CAO server running (`cao-server`)
 - `kimi` CLI authenticated (`kimi login`)
-- Agent profiles installed (`cao install developer`)
+- Agents installed (`cao install developer`)
 
 ## Troubleshooting
 

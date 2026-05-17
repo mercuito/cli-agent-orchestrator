@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Kiro CLI provider enables CLI Agent Orchestrator (CAO) to work with **Kiro CLI**, an AI-powered coding assistant that operates through agent-based conversations with customizable profiles.
+The Kiro CLI provider enables CLI Agent Orchestrator (CAO) to work with **Kiro CLI**, an AI-powered coding assistant that operates through agent-based conversations with customizable agents.
 
 ## Quick Start
 
@@ -26,17 +26,17 @@ kiro-cli --version
 # Start the CAO server
 cao-server
 
-# Launch a Kiro CLI-backed session (agent profile is required)
-cao launch --agents developer --provider kiro_cli
+# Launch a Kiro CLI-backed session (agent is required)
+cao agent start developer
 ```
 
 Via HTTP API:
 
 ```bash
-curl -X POST "http://localhost:9889/sessions?provider=kiro_cli&agent_profile=developer"
+curl -X POST "http://localhost:9889/sessions?provider=kiro_cli&agent_id=developer"
 ```
 
-**Note**: Kiro CLI requires an agent profile — it cannot be launched without one.
+**Note**: Kiro CLI requires an agent — it cannot be launched without one.
 
 ## Features
 
@@ -44,7 +44,7 @@ curl -X POST "http://localhost:9889/sessions?provider=kiro_cli&agent_profile=dev
 
 The Kiro CLI provider detects terminal states by analyzing ANSI-stripped output:
 
-- **IDLE**: Agent prompt visible (legacy `[profile_name] >` or new TUI `ask a question, or describe a task`), no response content
+- **IDLE**: Agent prompt visible (legacy `[agent_name] >` or new TUI `ask a question, or describe a task`), no response content
 - **PROCESSING**: No idle prompt found in output (agent is generating response)
 - **COMPLETED**: Green arrow (`>`) response marker (legacy) or `▸ Credits:` marker (TUI) present + idle prompt after it
 - **WAITING_USER_ANSWER**: Permission prompt visible (`Allow this action? [y/n/t]:`)
@@ -68,7 +68,7 @@ The provider supports two prompt formats:
 [developer] 50% λ >    # Combined progress and lambda
 ```
 
-Pattern: `\[{agent_profile}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*`
+Pattern: `\[{agent_id}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*`
 
 **New TUI** (default in latest Kiro CLI):
 
@@ -105,15 +105,15 @@ Kiro CLI shows `Allow this action? [y/n/t]:` prompts for sensitive operations (f
 
 ## Configuration
 
-### Agent Profile (Required)
+### Agent Configuration (Required)
 
-Kiro CLI always requires an agent profile. CAO passes it via:
+Kiro CLI always requires an agent. CAO passes it via:
 
 ```
-kiro-cli chat --agent {profile_name}
+kiro-cli chat --agent {agent_name}
 ```
 
-The profile name determines the prompt pattern used for status detection. Built-in profiles include `developer` and `reviewer`.
+The agent name determines the prompt pattern used for status detection. Built-in agents include `developer` and `reviewer`.
 
 ### Launch Command
 
@@ -166,9 +166,9 @@ uv run pytest -m e2e test/e2e/test_supervisor_orchestration.py -v -k KiroCli -o 
 
 ### Common Issues
 
-1. **"Agent profile required" Error**:
-   - Kiro CLI cannot be launched without an agent profile
-   - Always specify `--agents` when launching: `cao launch --agents developer --provider kiro_cli`
+1. **"Agent required" Error**:
+   - Kiro CLI cannot be launched without an agent
+   - Always specify the agent when launching: `cao agent start developer`
 
 2. **Permission Prompts Blocking**:
    - Kiro CLI shows `[y/n/t]` prompts for operations
@@ -189,10 +189,10 @@ uv run pytest -m e2e test/e2e/test_supervisor_orchestration.py -v -k KiroCli -o 
    - The provider supports both legacy (`[name] >`) and new TUI (`ask a question, or describe a task`) formats
    - TUI mode is the default; the provider auto-detects which format is active
    - If you need legacy mode, add `--legacy-ui` via a wrapper script
-   - Check with: `kiro-cli chat --agent your_profile`
+   - Check with: `kiro-cli chat --agent your_agent`
 
-5. **JSON-Only Agent Profiles (AIM-Installed)**:
-   - Agents installed via AIM (Agent Install Manager) may only have `.json` profiles (e.g., `~/.kiro/agents/librarian/agent-spec.json`)
-   - CAO's `load_agent_profile()` primarily scans for `.md` files
-   - If the agent is not found, CAO gracefully falls back — kiro-cli resolves `.json` profiles natively
-   - As a workaround, you can create a stub `.md` file alongside the `.json` profile
+5. **JSON-Only Agents (AIM-Installed)**:
+   - Agents installed via AIM (Agent Install Manager) may only have `.json` agents (e.g., `~/.kiro/agents/librarian/agent-spec.json`)
+   - CAO's `load_agent_id()` primarily scans for `.md` files
+   - If the agent is not found, CAO gracefully falls back — kiro-cli resolves `.json` agents natively
+   - As a workaround, you can create a stub `.md` file alongside the `.json` agent

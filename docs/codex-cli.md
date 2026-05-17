@@ -31,13 +31,13 @@ Create a terminal using the Codex provider:
 cao-server
 
 # In another terminal, launch a Codex-backed CAO session
-cao launch --agents codex_developer --provider codex
+cao agent start codex_developer
 ```
 
 You can also create a session via HTTP API (query parameters):
 
 ```bash
-curl -X POST "http://localhost:9889/sessions?provider=codex&agent_profile=codex_developer"
+curl -X POST "http://localhost:9889/sessions?provider=codex&agent_id=codex_developer"
 ```
 
 ## Features
@@ -73,24 +73,24 @@ This works for both the label format (`assistant: response`) and Codex's native 
 CAO's Codex provider launches `codex` with tmux-compatible flags and relies on your existing Codex CLI configuration/authentication.
 
 - `--provider codex` selects the provider.
-- `--agents <name>` specifies the agent profile. CAO prepares a per-terminal Codex home directory (via `CODEX_HOME`), writing `AGENTS.md` (agent instructions) and `config.toml` (model/MCP/trust settings) into it. When the profile has a `system_prompt`, it is also injected into Codex as `developer_instructions` via the `-c` config override flag.
+- `cao agent start <id>` starts the configured agent. CAO prepares a per-terminal Codex home directory (via `CODEX_HOME`), writing `AGENTS.md` (agent instructions) and `config.toml` (model/MCP/trust settings) into it. The prompt from `prompt.md` is injected into Codex as `developer_instructions` via the `-c` config override flag.
 - Model/timeout/approval settings are configured in Codex CLI itself, with per-agent overrides applied via the per-terminal `CODEX_HOME`.
 
-### Agent Profile Integration
+### Agent Integration
 
-When you launch with an agent profile (e.g., `--agents code_supervisor`), CAO:
+When you launch an agent (e.g., `cao agent start code_supervisor`), CAO:
 
-1. Loads the agent profile from the agent store (built-in or `~/.aws/cli-agent-orchestrator/agent_store/`)
-2. Extracts the `system_prompt` from the profile's Markdown content
+1. Loads the agent from `~/.aws/cli-agent-orchestrator/agents/<id>/`
+2. Extracts the prompt from `prompt.md`
 3. Passes it to Codex via `-c developer_instructions="<prompt>"`, which Codex injects as a developer role message
 
 This enables Codex to operate with role-specific instructions (e.g., supervisor, developer, reviewer) just like other providers.
 
 ### MCP Server Integration
 
-If the agent profile includes `mcpServers`, CAO injects each MCP server into Codex via `-c mcp_servers.<name>.<field>=<value>` config overrides. This is per-session and does not modify the user's global `~/.codex/config.toml`.
+If the agent includes `mcpServers`, CAO injects each MCP server into Codex via `-c mcp_servers.<name>.<field>=<value>` config overrides. This is per-session and does not modify the user's global `~/.codex/config.toml`.
 
-For example, the `code_supervisor` profile includes the `cao-mcp-server` which provides `handoff` and `send_message` tools. This allows the supervisor agent to delegate work to Developer and Reviewer agents through CAO's multi-agent orchestration.
+For example, the `code_supervisor` agent includes the `cao-mcp-server` which provides `handoff` and `send_message` tools. This allows the supervisor agent to delegate work to Developer and Reviewer agents through CAO's multi-agent orchestration.
 
 CAO also sets `tool_timeout_sec=600.0` (10 minutes) for each MCP server to allow long-running operations like handoff. **Important**: The value must be a TOML float (`600.0`, not `600`) because Codex deserializes this field via `Option<f64>`. A TOML integer is silently rejected, falling back to the 60-second default.
 
@@ -106,7 +106,7 @@ The Codex provider automatically adds these flags for tmux compatibility:
 ### 1. Interactive single-agent task
 
 ```bash
-cao launch --agents codex_developer --provider codex
+cao agent start codex_developer
 ```
 
 In the tmux window, type your prompt at the Codex prompt.
@@ -194,10 +194,10 @@ PY
    - Run `cao diagnostics` to validate that CAO can start Codex, detect status transitions, and that
      Codex is using the provisioned `CODEX_HOME`:
      ```bash
-     uv run cao diagnostics --provider codex --agent-profile codex_developer --mode offline
+     uv run cao diagnostics --provider codex --agent-id codex_developer --mode offline
 
      # Online mode may incur provider costs:
-     uv run cao diagnostics --provider codex --agent-profile codex_developer --mode online --allow-billing
+     uv run cao diagnostics --provider codex --agent-id codex_developer --mode online --allow-billing
      ```
    - Check terminal history for unexpected prompts
    - Verify Codex CLI version compatibility
@@ -271,7 +271,7 @@ test/e2e/
 - Running CAO server: `uv run cao-server`
 - Authenticated CLI tools: `codex`, `claude`, `kiro-cli`
 - tmux installed
-- Agent profiles installed: `analysis_supervisor`, `data_analyst`, `report_generator`
+- Agents installed: `analysis_supervisor`, `data_analyst`, `report_generator`
   ```bash
   cao install examples/assign/analysis_supervisor.md
   cao install examples/assign/data_analyst.md
@@ -301,7 +301,7 @@ E2E tests are excluded from default `pytest` runs via the `-m 'not e2e'` addopts
 ## Examples
 
 See the `examples/` directory for a step-by-step walkthrough:
-- `examples/codex-basic/` - Basic Codex usage (includes three agent profiles)
+- `examples/codex-basic/` - Basic Codex usage (includes three agents)
 - `examples/assign/` - Assign (async parallel) workflow with data analysts and report generator
 
 ## Contributing

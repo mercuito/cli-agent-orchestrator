@@ -32,17 +32,17 @@ copilot --help
 # Start CAO server
 cao-server
 
-# Install CAO agent profile into Copilot's agents directory
+# Install CAO agent into Copilot's agents directory
 cao install examples/assign/data_analyst.md --provider copilot_cli
 
 # Launch Copilot-backed terminal
-cao launch --agents data_analyst --provider copilot_cli
+cao agent start data_analyst
 ```
 
 Via HTTP API:
 
 ```bash
-curl -X POST "http://localhost:9889/sessions?provider=copilot_cli&agent_profile=developer"
+curl -X POST "http://localhost:9889/sessions?provider=copilot_cli&agent_id=developer"
 ```
 
 ## Features
@@ -67,7 +67,7 @@ Trust handling is done in `initialize()`. `get_status()` is read-only.
 2. Trimming tail prompts/footer lines
 3. Falling back to assistant-prefix extraction
 
-### Agent Profile Integration
+### Agent Integration
 
 Copilot provider now follows the same split as other providers:
 
@@ -75,7 +75,7 @@ Copilot provider now follows the same split as other providers:
 - provider launch passes `--agent <name>` directly
 - provider does not generate runtime agent markdown files
 
-This keeps provider logic thin and moves profile materialization to install-time.
+This keeps provider logic thin and moves agent materialization to install-time.
 
 ### MCP Integration
 
@@ -146,9 +146,9 @@ uv run pytest -m e2e test/e2e/test_supervisor_orchestration.py::TestCopilotCliSu
    - Verify `copilot --version`
    - Verify required flags in `copilot --help`
 
-2. **Agent profile not applied**
-   - Install profile: `cao install <profile>.md --provider copilot_cli`
-   - Launch with `cao launch --agents <agent-name> --provider copilot_cli`
+2. **Agent not applied**
+   - Create or install an agent configured with `cli_provider = "copilot_cli"`
+   - Launch with `cao agent start <agent-id>`
 
 3. **MCP tools missing**
    - Ensure `cao-mcp-server` is resolvable in current environment

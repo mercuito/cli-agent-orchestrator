@@ -12,7 +12,7 @@ def test_run_provider_diagnostics_requires_allow_billing_for_online():
     with pytest.raises(ValueError, match="allow_billing"):
         run_provider_diagnostics(
             provider="codex",
-            agent_profile="codex_developer",
+            agent_id="codex_developer",
             mode="online",
             allow_billing=False,
             working_directory=".",
@@ -25,7 +25,7 @@ def test_run_provider_diagnostics_rejects_unknown_provider():
     with pytest.raises(ValueError, match="provider"):
         run_provider_diagnostics(
             provider="unknown",
-            agent_profile="x",
+            agent_id="x",
             mode="offline",
             allow_billing=False,
             working_directory=".",
@@ -38,7 +38,7 @@ def test_run_provider_diagnostics_dispatches_to_provider_runner():
 
     fake = DiagnosticResult(
         provider="codex",
-        agent_profile="codex_developer",
+        agent_id="codex_developer",
         mode="offline",
         allow_billing=False,
         ok=True,
@@ -51,7 +51,7 @@ def test_run_provider_diagnostics_dispatches_to_provider_runner():
     ):
         result = run_provider_diagnostics(
             provider="codex",
-            agent_profile="codex_developer",
+            agent_id="codex_developer",
             mode="offline",
             allow_billing=False,
             working_directory=".",
@@ -70,7 +70,7 @@ def test_run_provider_diagnostics_passes_through_common_args():
         captured.update(kwargs)
         return DiagnosticResult(
             provider=kwargs["provider"],
-            agent_profile=kwargs["agent_profile"],
+            agent_id=kwargs["agent_id"],
             mode=kwargs["mode"],
             allow_billing=kwargs["allow_billing"],
             ok=True,
@@ -83,14 +83,14 @@ def test_run_provider_diagnostics_passes_through_common_args():
     ):
         run_provider_diagnostics(
             provider="codex",
-            agent_profile="codex_developer",
+            agent_id="codex_developer",
             mode="offline",
             allow_billing=False,
             working_directory="/tmp",
         )
 
     assert captured["provider"] == "codex"
-    assert captured["agent_profile"] == "codex_developer"
+    assert captured["agent_id"] == "codex_developer"
     assert captured["mode"] == "offline"
     assert captured["allow_billing"] is False
     assert captured["working_directory"] == "/tmp"

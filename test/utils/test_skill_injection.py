@@ -9,7 +9,7 @@ from unittest.mock import patch
 import frontmatter
 import pytest
 
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from test.support.agent_factory import Agent
 from cli_agent_orchestrator.utils import skill_injection
 
 
@@ -42,17 +42,17 @@ class TestComposeAgentPrompt:
 
     @pytest.mark.parametrize("prompt", [None, "", "   ", "\n"])
     def test_returns_none_when_prompt_is_empty(self, prompt):
-        profile = AgentProfile(name="developer", description="Developer", prompt=prompt)
+        profile = Agent(name="developer", description="Developer", prompt=prompt)
 
         assert skill_injection.compose_agent_prompt(profile) is None
 
     def test_returns_profile_prompt_when_prompt_is_set(self):
-        profile = AgentProfile(name="developer", description="Developer", prompt="Profile prompt")
+        profile = Agent(name="developer", description="Developer", prompt="Profile prompt")
 
         assert skill_injection.compose_agent_prompt(profile) == "Profile prompt"
 
     def test_uses_base_prompt_when_provided(self):
-        profile = AgentProfile(
+        profile = Agent(
             name="developer", description="Developer", prompt="Should be ignored"
         )
 
@@ -60,7 +60,7 @@ class TestComposeAgentPrompt:
         assert result == "Custom base"
 
     def test_base_prompt_empty_string_returns_none(self):
-        profile = AgentProfile(name="developer", description="Developer", prompt="Has content")
+        profile = Agent(name="developer", description="Developer", prompt="Has content")
 
         assert skill_injection.compose_agent_prompt(profile, base_prompt="   ") is None
 
@@ -70,7 +70,7 @@ class TestRefreshAgentJsonPrompt:
 
     def test_returns_false_when_json_path_is_missing(self, tmp_path):
         missing_path = tmp_path / "missing.json"
-        profile = AgentProfile(name="developer", description="Developer", prompt="Prompt")
+        profile = Agent(name="developer", description="Developer", prompt="Prompt")
 
         assert skill_injection.refresh_agent_json_prompt(missing_path, profile) is False
         assert not missing_path.exists()
@@ -84,7 +84,7 @@ class TestRefreshAgentJsonPrompt:
         _write_json(json_path, {"name": "developer", "description": "Developer"})
 
         rewritten = skill_injection.refresh_agent_json_prompt(
-            json_path, AgentProfile(name="developer", description="Developer")
+            json_path, Agent(name="developer", description="Developer")
         )
 
         assert rewritten is True
@@ -102,7 +102,7 @@ class TestRefreshAgentJsonPrompt:
         )
 
         rewritten = skill_injection.refresh_agent_json_prompt(
-            json_path, AgentProfile(name="developer", description="Developer")
+            json_path, Agent(name="developer", description="Developer")
         )
 
         assert rewritten is True
@@ -117,7 +117,7 @@ class TestRefreshAgentJsonPrompt:
         )
 
         rewritten = skill_injection.refresh_agent_json_prompt(
-            json_path, AgentProfile(name="developer", description="Developer")
+            json_path, Agent(name="developer", description="Developer")
         )
 
         assert rewritten is True
@@ -136,7 +136,7 @@ class TestRefreshAgentJsonPrompt:
             "cli_agent_orchestrator.utils.skill_injection.os.replace", wraps=os.replace
         ) as mock_replace:
             rewritten = skill_injection.refresh_agent_json_prompt(
-                json_path, AgentProfile(name="developer", description="Developer")
+                json_path, Agent(name="developer", description="Developer")
             )
 
         assert rewritten is True
@@ -150,7 +150,7 @@ class TestRefreshAgentJsonPrompt:
     def test_is_idempotent_for_same_prompt(self, _mock_prompt, tmp_path):
         json_path = tmp_path / "developer.json"
         _write_json(json_path, {"name": "developer", "description": "Developer"})
-        profile = AgentProfile(name="developer", description="Developer")
+        profile = Agent(name="developer", description="Developer")
 
         assert skill_injection.refresh_agent_json_prompt(json_path, profile) is True
         first_bytes = json_path.read_bytes()
@@ -166,7 +166,7 @@ class TestRefreshAgentMdPrompt:
 
     def test_returns_false_when_md_path_is_missing(self, tmp_path):
         missing_path = tmp_path / "missing.agent.md"
-        profile = AgentProfile(name="developer", description="Developer", prompt="Prompt")
+        profile = Agent(name="developer", description="Developer", prompt="Prompt")
 
         assert skill_injection.refresh_agent_md_prompt(missing_path, profile) is False
         assert not missing_path.exists()
@@ -175,7 +175,7 @@ class TestRefreshAgentMdPrompt:
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer agent", "Old prompt body")
 
-        profile = AgentProfile(
+        profile = Agent(
             name="developer", description="Developer", system_prompt="New system prompt"
         )
 
@@ -190,7 +190,7 @@ class TestRefreshAgentMdPrompt:
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer", "Old body")
 
-        profile = AgentProfile(
+        profile = Agent(
             name="developer",
             description="Developer",
             system_prompt="System prompt wins",
@@ -204,7 +204,7 @@ class TestRefreshAgentMdPrompt:
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer", "Old body")
 
-        profile = AgentProfile(name="developer", description="Developer", prompt="Fallback prompt")
+        profile = Agent(name="developer", description="Developer", prompt="Fallback prompt")
 
         skill_injection.refresh_agent_md_prompt(md_path, profile)
         assert _read_agent_md_body(md_path) == "Fallback prompt"
@@ -214,7 +214,7 @@ class TestRefreshAgentMdPrompt:
         _write_agent_md(md_path, "developer", "Developer", "Body")
         temp_path = md_path.with_suffix(".md.tmp")
 
-        profile = AgentProfile(name="developer", description="Developer", prompt="Prompt")
+        profile = Agent(name="developer", description="Developer", prompt="Prompt")
 
         with patch(
             "cli_agent_orchestrator.utils.skill_injection.os.replace", wraps=os.replace
@@ -227,7 +227,7 @@ class TestRefreshAgentMdPrompt:
     def test_is_idempotent_for_same_prompt(self, tmp_path):
         md_path = tmp_path / "developer.agent.md"
         _write_agent_md(md_path, "developer", "Developer", "Body")
-        profile = AgentProfile(name="developer", description="Developer", prompt="Prompt")
+        profile = Agent(name="developer", description="Developer", prompt="Prompt")
 
         skill_injection.refresh_agent_md_prompt(md_path, profile)
         first_bytes = md_path.read_bytes()
@@ -244,34 +244,30 @@ class TestRefreshInstalledAgentForProfile:
     def test_returns_only_q_path_when_only_q_json_exists(self, tmp_path, monkeypatch):
         q_dir = tmp_path / "q"
         copilot_dir = tmp_path / "copilot"
-        q_path = q_dir / "team__developer.json"
-        _write_json(q_path, {"name": "team/developer", "description": "Developer"})
+        q_path = q_dir / "team-developer.json"
+        _write_json(q_path, {"name": "team-developer", "description": "Developer"})
 
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(
             skill_injection,
-            "load_agent_profile",
-            lambda name: AgentProfile(
-                name="team/developer", description="Developer", prompt="Prompt"
-            ),
+            "load_agent",
+            lambda name: Agent(name="team-developer", description="Developer", prompt="Prompt"),
         )
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == [q_path]
 
     def test_returns_copilot_path_when_copilot_agent_exists(self, tmp_path, monkeypatch):
         q_dir = tmp_path / "q"
         copilot_dir = tmp_path / "copilot"
-        copilot_path = copilot_dir / "team__developer.agent.md"
-        _write_agent_md(copilot_path, "team/developer", "Developer", "Old prompt")
+        copilot_path = copilot_dir / "team-developer.agent.md"
+        _write_agent_md(copilot_path, "team-developer", "Developer", "Old prompt")
 
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(
             skill_injection,
-            "load_agent_profile",
-            lambda name: AgentProfile(
-                name="team/developer", description="Developer", prompt="Prompt"
-            ),
+            "load_agent",
+            lambda name: Agent(name="team-developer", description="Developer", prompt="Prompt"),
         )
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == [
             copilot_path
@@ -280,19 +276,17 @@ class TestRefreshInstalledAgentForProfile:
     def test_returns_q_and_copilot_when_both_exist(self, tmp_path, monkeypatch):
         q_dir = tmp_path / "q"
         copilot_dir = tmp_path / "copilot"
-        q_path = q_dir / "team__developer.json"
-        copilot_path = copilot_dir / "team__developer.agent.md"
-        _write_json(q_path, {"name": "team/developer", "description": "Developer"})
-        _write_agent_md(copilot_path, "team/developer", "Developer", "Old prompt")
+        q_path = q_dir / "team-developer.json"
+        copilot_path = copilot_dir / "team-developer.agent.md"
+        _write_json(q_path, {"name": "team-developer", "description": "Developer"})
+        _write_agent_md(copilot_path, "team-developer", "Developer", "Old prompt")
 
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(
             skill_injection,
-            "load_agent_profile",
-            lambda name: AgentProfile(
-                name="team/developer", description="Developer", prompt="Prompt"
-            ),
+            "load_agent",
+            lambda name: Agent(name="team-developer", description="Developer", prompt="Prompt"),
         )
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == [
             q_path,
@@ -304,10 +298,8 @@ class TestRefreshInstalledAgentForProfile:
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", tmp_path / "copilot")
         monkeypatch.setattr(
             skill_injection,
-            "load_agent_profile",
-            lambda name: AgentProfile(
-                name="team/developer", description="Developer", prompt="Prompt"
-            ),
+            "load_agent",
+            lambda name: Agent(name="team-developer", description="Developer", prompt="Prompt"),
         )
         assert skill_injection.refresh_installed_agent_for_profile("team-developer") == []
 
@@ -337,8 +329,8 @@ class TestRefreshAllCaoManagedAgents:
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(
             skill_injection,
-            "load_agent_profile",
-            lambda name: AgentProfile(name="developer", description="Developer", prompt="Prompt"),
+            "load_agent",
+            lambda name: Agent(name="developer", description="Developer", prompt="Prompt"),
         )
 
         refreshed = skill_injection.refresh_all_cao_managed_agents()
@@ -365,8 +357,8 @@ class TestRefreshAllCaoManagedAgents:
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(
             skill_injection,
-            "load_agent_profile",
-            lambda name: AgentProfile(name="developer", description="Developer", prompt="Prompt"),
+            "load_agent",
+            lambda name: Agent(name="developer", description="Developer", prompt="Prompt"),
         )
 
         refreshed = skill_injection.refresh_all_cao_managed_agents()
@@ -412,8 +404,8 @@ class TestRefreshAllCaoManagedAgents:
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
         monkeypatch.setattr(
             skill_injection,
-            "load_agent_profile",
-            lambda name: AgentProfile(name="developer", description="Developer", prompt="Prompt"),
+            "load_agent",
+            lambda name: Agent(name="developer", description="Developer", prompt="Prompt"),
         )
 
         assert skill_injection.refresh_all_cao_managed_agents() == []
@@ -444,12 +436,12 @@ class TestRefreshAllCaoManagedAgents:
     @pytest.mark.parametrize(
         "load_error",
         [
-            FileNotFoundError("profile missing"),
-            RuntimeError("profile missing"),
-            ValueError("invalid profile name"),
+            FileNotFoundError("agent missing"),
+            RuntimeError("agent missing"),
+            ValueError("invalid agent name"),
         ],
     )
-    def test_logs_warning_and_continues_when_source_profile_load_fails(
+    def test_logs_warning_and_continues_when_source_agent_load_fails(
         self, tmp_path, monkeypatch, caplog, load_error
     ):
         context_dir = tmp_path / "agent-context"
@@ -480,21 +472,21 @@ class TestRefreshAllCaoManagedAgents:
             },
         )
 
-        def load_profile(name: str) -> AgentProfile:
+        def load_profile(name: str) -> Agent:
             if name == "good":
-                return AgentProfile(name="good", description="Good agent", prompt="Prompt")
+                return Agent(name="good", description="Good agent", prompt="Prompt")
             raise load_error
 
         monkeypatch.setattr(skill_injection, "AGENT_CONTEXT_DIR", context_dir)
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
-        monkeypatch.setattr(skill_injection, "load_agent_profile", load_profile)
+        monkeypatch.setattr(skill_injection, "load_agent", load_profile)
 
         with caplog.at_level(logging.WARNING):
             refreshed = skill_injection.refresh_all_cao_managed_agents()
 
         assert refreshed == [good_path]
-        assert "source profile could not be loaded" in caplog.text
+        assert "source agent could not be loaded" in caplog.text
         assert "missing" in caplog.text
         assert "prompt" not in _read_json(missing_path)
 
@@ -535,15 +527,15 @@ class TestRefreshAllCaoManagedAgents:
             unmanaged_copilot, "unmanaged-copilot", "Unmanaged Copilot", "External prompt"
         )
 
-        def load_profile(name: str) -> AgentProfile:
-            return AgentProfile(
+        def load_profile(name: str) -> Agent:
+            return Agent(
                 name=name, description=f"{name} description", prompt=f"{name} prompt"
             )
 
         monkeypatch.setattr(skill_injection, "AGENT_CONTEXT_DIR", context_dir)
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)
         monkeypatch.setattr(skill_injection, "COPILOT_AGENTS_DIR", copilot_dir)
-        monkeypatch.setattr(skill_injection, "load_agent_profile", load_profile)
+        monkeypatch.setattr(skill_injection, "load_agent", load_profile)
 
         refreshed = skill_injection.refresh_all_cao_managed_agents()
 

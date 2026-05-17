@@ -9,12 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Launch prompt clarity + `--auto-approve`** — Redesign the `cao launch` confirmation prompt to show `Role` instead of `Blocked`, clearly distinguish `[Y]` / `[--auto-approve]` / `[--yolo]`, and add `--auto-approve` flag to skip the prompt without removing restrictions (for automated flows, scripts, and agent-to-agent launches)
+- **Agent model hard cutover** — Replace profile/identity-era launch surfaces with durable
+  `~/.aws/cli-agent-orchestrator/agents/<id>/agent.toml` + `prompt.md` agents, remove
+  `cao launch`, remove legacy `agents.toml`, `workspace-providers/linear.toml`, and
+  `agent-store/` live config files, and remove Linear environment fallback configuration.
+  This cutover intentionally has no automated migration script; the small live roster is
+  manually migrated once and validated by the agent directory validator before runtime code
+  reads the new shape.
+- **Launch prompt clarity + `--auto-approve`** — Redesign the `cao agent start` confirmation prompt to show `Role` instead of `Blocked`, clearly distinguish `[Y]` / `[--auto-approve]` / `[--yolo]`, and add `--auto-approve` flag to skip the prompt without removing restrictions (for automated flows, scripts, and agent-to-agent launches)
 
 ### Fixed
 
 - **Kiro CLI new TUI support** — Add fallback detection patterns for the new Kiro CLI TUI prompt format (`ask a question, or describe a task`), ensuring CAO works even if `--legacy-ui` is removed in a future version
-- **Agent profile exception handling (#137)** — Fix `load_agent_profile()` wrapping `FileNotFoundError` as `RuntimeError`, which caused `assign()` to fail for JSON-only agent profiles (AIM-installed kiro-cli agents). Callers now receive `FileNotFoundError` directly and handle it gracefully
+- **Agent exception handling (#137)** — Fix `load_agent_id()` wrapping `FileNotFoundError` as `RuntimeError`, which caused `assign()` to fail for JSON-only agents (AIM-installed kiro-cli agents). Callers now receive `FileNotFoundError` directly and handle it gracefully
 - **Missing providers in Web UI (#157)** — Add `gemini_cli`, `kimi_cli`, and `copilot_cli` to the `/agents/providers` endpoint and frontend fallback list so all 7 providers appear in the Web UI dropdown
 
 ## [2.0.0] - 2026-03-28
@@ -22,12 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Gemini CLI provider** — Full integration with Google's Gemini CLI, including status detection, message extraction, and E2E tests (#102)
-- **Kimi CLI provider** — Support for Moonshot's Kimi CLI with agent profiles and MCP server integration (#113)
+- **Kimi CLI provider** — Support for Moonshot's Kimi CLI with agents and MCP server integration (#113)
 - **Copilot CLI provider** — Native GitHub Copilot CLI provider (#82)
 - **Web UI dashboard** — React-based web interface for managing sessions, spawning agents, viewing live terminal status, configuring agent directories, and interacting with agents from the browser (#108)
-- **Provider override in agent profiles** — Agent profiles can now specify a `provider` field to override the default provider, enabling cross-provider workflows (#101)
+- **Provider override in agents** — Agents can now specify a `provider` field to override the default provider, enabling cross-provider workflows (#101)
 - **Auto-inject sender terminal ID** — New `CAO_ENABLE_SENDER_ID_INJECTION` env var automatically appends sender terminal ID and callback instructions to `assign` and `send_message` messages, removing the need for manual prompt engineering (#98)
-- Cross-provider example profiles and updated README with `gemini_cli` documentation (#109)
+- Cross-provider example agents and updated README with `gemini_cli` documentation (#109)
 
 ### Fixed
 
@@ -38,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Terminal init status** — Accept both IDLE and COMPLETED during terminal initialization for providers with initial prompts (#111)
 - **400 Bad Request on non-home directories** — Fix launching agents in directories outside `~/` (e.g., `/Volumes/workplace` on macOS) (#110)
 - **Gemini CLI extraction retry** — Add extraction retry for TUI-based providers where premature COMPLETED status can occur (#117)
-- **Path traversal in agent profile loading** — Validate agent names to reject `/`, `\`, and `..` before path construction (CodeQL py/path-injection) (#129)
+- **Path traversal in agent loading** — Validate agent names to reject `/`, `\`, and `..` before path construction (CodeQL py/path-injection) (#129)
 - **Pre-existing test failure** — Fix `test_skips_provider_dir_same_as_local` failing on macOS due to `/home` symlink resolution (#129)
 
 ### Security
@@ -61,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix handoff worker IDLE wait timeout too short (30s) for slow-initializing providers: some providers can exceed 30s during shell warm-up, CLI startup, and MCP server registration; increased to 120s to act as a fallback
 - Fix inbox message delivery failing for TUI-based providers: inbox service passed `tail_lines=5` to `get_status()` but TUI providers need 50+ lines to find the idle prompt; messages stayed PENDING forever because the supervisor was never detected as IDLE
 - Fix inbox watchdog log tail check (`_has_idle_pattern`) using only 5 lines, which missed the idle prompt for full-screen TUI providers where the prompt sits mid-screen with 30+ padding lines below; increased to 100 lines so the watchdog reliably triggers delivery when the terminal goes IDLE
-- Fix shell command injection risk in Q CLI and Kiro CLI providers: replace f-string command interpolation with `shlex.join()` for safe shell escaping of `agent_profile` values
+- Fix shell command injection risk in Q CLI and Kiro CLI providers: replace f-string command interpolation with `shlex.join()` for safe shell escaping of `agent_id` values
 - Fix Claude Code provider not forwarding `CAO_TERMINAL_ID` to MCP server subprocesses: inject `CAO_TERMINAL_ID` into MCP server `env` config, matching other providers
 - Fix Claude Code provider failing to launch due to tmux `send-keys` corrupting single quotes in long commands; resolved by main branch's paste-buffer approach (`load-buffer` + `paste-buffer -p`)
 - Add missing `wait_for_shell` call to Claude Code provider `initialize()` to match other providers
@@ -80,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix Codex TUI progress spinner causing false COMPLETED: `• Working (0s • esc to interrupt)` matched `ASSISTANT_PREFIX_PATTERN` while TUI `›` hint matched idle prompt; added `TUI_PROGRESS_PATTERN` check to return PROCESSING when spinner is active
 - Fix Codex output extraction returning TUI chrome: apply same TUI footer detection to `extract_last_message_from_script()` and use `cutoff_pos` as extraction boundary when no strict idle prompt found
 - Fix Codex extraction of multi-line user messages: find first `•` assistant marker after user message instead of skipping one line, correctly handling wrapped `[CAO Handoff]` prefix text
-- Fix Claude Code worker agents blocking on workspace trust prompt during handoff/assign: add `--dangerously-skip-permissions` flag to bypass trust dialog since CAO already confirms workspace trust during `cao launch`
+- Fix Claude Code worker agents blocking on workspace trust prompt during handoff/assign: add `--dangerously-skip-permissions` flag to bypass trust dialog since CAO already confirms workspace trust during `cao agent start`
 - Fix Claude Code `PROCESSING_PATTERN` not matching newer Claude Code 2.x spinner format: broaden pattern to match both `(esc to interrupt)` and `(Ns · ↓ tokens · thinking)` formats
 - Fix all providers' `send_input()` using `tmux send_keys(literal=True)` which sends characters individually, allowing TUI hotkeys to intercept user messages; replace with `send_keys_via_paste()` using `tmux set-buffer` + `paste-buffer -p` (bracketed paste mode) to bypass per-character hotkey handling
 
@@ -93,19 +100,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit tests for `TmuxClient.send_keys` validating paste-buffer delivery (`test/clients/test_tmux_send_keys.py`)
 - Claude Code unit tests for `wait_for_shell` lifecycle, shell timeout, `❯` prompt detection, and ANSI-coded output
 - Trust prompt handling tests (6 tests) and workspace confirmation tests (4 tests)
-- Codex provider agent profile support: inject system prompt via `-c developer_instructions` config override, mirroring Claude Code's `--append-system-prompt` behavior
-- Codex provider MCP server support: inject MCP servers from agent profiles via `-c mcp_servers.<name>.<field>=<value>` config overrides (per-session, no global config changes), enabling tools like `handoff` and `send_message` for multi-agent orchestration
+- Codex provider agent support: inject system prompt via `-c developer_instructions` config override, mirroring Claude Code's `--append-system-prompt` behavior
+- Codex provider MCP server support: inject MCP servers from agents via `-c mcp_servers.<name>.<field>=<value>` config overrides (per-session, no global config changes), enabling tools like `handoff` and `send_message` for multi-agent orchestration
 - Codex MCP server `CAO_TERMINAL_ID` environment forwarding: automatically adds `env_vars=["CAO_TERMINAL_ID"]` to all MCP server configs so handoff can create new agent windows in the same tmux session
 - Codex `_build_codex_command()` method with `shlex.join()` for safe shell escaping and proper quote/backslash/newline handling
 - Codex launch flags: `--no-alt-screen` (inline mode for reliable tmux capture) and `--disable shell_snapshot` (prevent SIGTTIN in tmux)
 - Codex `_handle_trust_prompt()` to auto-accept workspace trust dialog during initialization
-- Codex unit tests: `TestCodexBuildCommand` (10 tests) for command building, agent profile injection, MCP server config, escaping, and error handling
+- Codex unit tests: `TestCodexBuildCommand` (10 tests) for command building, agent injection, MCP server config, escaping, and error handling
 - Codex bullet-format status detection tests: `TestCodexBulletFormatStatusDetection` (7 tests) for COMPLETED, PROCESSING, IDLE, code blocks, error detection, multi-turn, and TUI status bar using real `•` bullet response format
 - Codex bullet-format extraction tests: `TestCodexBulletFormatExtraction` (5 tests) for single-line, multi-line, code block, multi-turn, and no-trailing-prompt extraction from `•` bullet format
 - Codex TUI spinner status detection tests: `test_get_status_processing_tui_spinner`, `test_get_status_processing_tui_thinking_spinner`, `test_get_status_processing_dynamic_spinner_text` (3 tests) verifying PROCESSING is returned when TUI progress spinner is active
 - Handoff message context tests: `TestHandoffMessageContext` (6 tests) in `test/mcp_server/test_handoff.py` verifying `[CAO Handoff]` prefix is prepended only for Codex provider, includes supervisor terminal ID, and preserves the original message
-- Multi-agent communication protocol section added to `developer.md` and `reviewer.md` agent profiles explaining handoff vs assign behavior
-- End-to-end test suite (`test/e2e/`) with 15 tests covering handoff, assign, and send_message flows across all 3 providers (codex, claude_code, kiro_cli); uses real `data_analyst` and `report_generator` profiles from `examples/assign/`; gated behind `@pytest.mark.e2e` marker, excluded from default `pytest` runs
+- Multi-agent communication protocol section added to `developer.md` and `reviewer.md` agents explaining handoff vs assign behavior
+- End-to-end test suite (`test/e2e/`) with 15 tests covering handoff, assign, and send_message flows across all 3 providers (codex, claude_code, kiro_cli); uses real `data_analyst` and `report_generator` agents from `examples/assign/`; gated behind `@pytest.mark.e2e` marker, excluded from default `pytest` runs
 - Provider documentation: `docs/claude-code.md` and `docs/kiro-cli.md` covering status detection, message extraction, configuration, implementation notes, E2E testing, and troubleshooting
 - CI workflow `test-codex-provider.yml` for Codex provider-specific unit tests (path-triggered)
 - CI workflow `test-claude-code-provider.yml` for Claude Code provider-specific unit tests (path-triggered)
@@ -116,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `terminal_service.send_special_key()` wrapper function for the new tmux client method
 - Exit terminal endpoint key sequence routing: `POST /terminals/{terminal_id}/exit` now detects `C-`/`M-` prefixed exit commands and sends them as tmux key sequences instead of literal text
 - New CLI commands: `cao info` (show session info) and `cao mcp-server` (start MCP server)
-- New example profiles: `data_analyst` and `report_generator` in `examples/assign/`
+- New example agents: `data_analyst` and `report_generator` in `examples/assign/`
 - Kiro CLI provider: comprehensive docstrings and `shlex.join()` shell safety fix
 - Q CLI provider: `shlex.join()` shell safety fix
 - Session service: comprehensive docstrings
@@ -212,4 +219,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump to v0.51.0, update method name (#31)
 
 - accept optional U+03BB (λ) after % in kiro and q CLIs (#44)
-

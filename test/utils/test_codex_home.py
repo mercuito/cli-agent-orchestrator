@@ -6,9 +6,36 @@ from unittest.mock import patch
 import pytest
 import tomli
 
+from cli_agent_orchestrator.agent import Agent
+
 
 def _read_toml(path: Path) -> dict:
     return tomli.loads(path.read_text())
+
+
+def _agent(
+    *,
+    prompt: str = "x",
+    skills: tuple[str, ...] = (),
+    mcp_servers: dict | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    codex_config: dict | None = None,
+) -> Agent:
+    return Agent(
+        id="codex_developer",
+        display_name="desc",
+        cli_provider="codex",
+        workdir="/repo",
+        session_name="codex-developer",
+        prompt=prompt,
+        description="desc",
+        skills=skills,
+        mcp_servers=mcp_servers or {},
+        model=model,
+        reasoning_effort=reasoning_effort,
+        codex_config=codex_config or {},
+    )
 
 
 class TestPrepareCodexHome:
@@ -23,25 +50,14 @@ class TestPrepareCodexHome:
         with (
             patch("cli_agent_orchestrator.utils.codex_home.shutil.which", return_value=None),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile",
-                return_value=type(
-                    "Profile",
-                    (),
-                    {
-                        "name": "codex_developer",
-                        "description": "x",
-                        "system_prompt": "Hello",
-                        "mcpServers": None,
-                        "model": None,
-                        "codexConfig": None,
-                    },
-                )(),
+                "cli_agent_orchestrator.utils.codex_home.load_agent",
+                return_value=_agent(prompt="Hello"),
             ),
         ):
             with pytest.raises(ValueError, match="codex"):
                 prepare_codex_home(
                     terminal_id="abcd1234",
-                    agent_profile="codex_developer",
+                    agent_id="codex_developer",
                     working_directory=str(tmp_path / "work"),
                     cao_home_dir=tmp_path / "cao",
                     global_codex_home_dir=global_codex_home,
@@ -60,25 +76,14 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile",
-                return_value=type(
-                    "Profile",
-                    (),
-                    {
-                        "name": "codex_developer",
-                        "description": "x",
-                        "system_prompt": "Hello",
-                        "mcpServers": None,
-                        "model": None,
-                        "codexConfig": None,
-                    },
-                )(),
+                "cli_agent_orchestrator.utils.codex_home.load_agent",
+                return_value=_agent(prompt="Hello"),
             ),
         ):
             with pytest.raises(ValueError, match="auth\\.json"):
                 prepare_codex_home(
                     terminal_id="abcd1234",
-                    agent_profile="codex_developer",
+                    agent_id="codex_developer",
                     working_directory=str(tmp_path / "work"),
                     cao_home_dir=tmp_path / "cao",
                     global_codex_home_dir=global_codex_home,
@@ -92,18 +97,7 @@ class TestPrepareCodexHome:
         (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "You are codex dev.\nFollow rules.",
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-            },
-        )()
+        agent = _agent(prompt="You are codex dev.\nFollow rules.")
 
         with (
             patch(
@@ -114,12 +108,12 @@ class TestPrepareCodexHome:
                 return_value=True,
             ),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -127,7 +121,7 @@ class TestPrepareCodexHome:
 
         agents_md = codex_home / "AGENTS.md"
         assert agents_md.exists()
-        assert agents_md.read_text().strip() == profile.system_prompt
+        assert agents_md.read_text().strip() == agent.prompt
 
     def test_prepare_codex_home_materializes_profile_scoped_skills(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -152,19 +146,7 @@ class TestPrepareCodexHome:
         (skill_dir / "references" / "brief.md").write_text("Brief template\n")
         monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", skill_store)
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "Use your role skills.",
-                "skills": ["discovery-intake"],
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-            },
-        )()
+        agent = _agent(prompt="Use your role skills.", skills=("discovery-intake",))
 
         with (
             patch(
@@ -172,12 +154,12 @@ class TestPrepareCodexHome:
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -201,22 +183,10 @@ class TestPrepareCodexHome:
         (skill_dir / "SKILL.md").write_text("first version\n")
         monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", skill_store)
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "Use your role skills.",
-                "skills": ["discovery-intake"],
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-            },
-        )()
+        agent = _agent(prompt="Use your role skills.", skills=("discovery-intake",))
 
         with patch(
-            "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+            "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
         ):
             first = build_codex_home_materialization(
                 "codex_developer",
@@ -252,19 +222,7 @@ class TestPrepareCodexHome:
         (global_codex_home / "history.jsonl").write_text('{"not":"copied"}\n')
         (global_codex_home / "logs_2.sqlite").write_text("logs")
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-                "reasoning_effort": None,
-            },
-        )()
+        agent = _agent()
 
         with (
             patch(
@@ -275,12 +233,12 @@ class TestPrepareCodexHome:
                 return_value=True,
             ),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -291,30 +249,18 @@ class TestPrepareCodexHome:
         assert not (codex_home / "history.jsonl").exists()
         assert not (codex_home / "logs_2.sqlite").exists()
 
-    def test_prepare_identity_codex_home_uses_provider_owned_identity_dir(
+    def test_prepare_agent_codex_home_uses_provider_owned_agent_dir(
         self,
         tmp_path: Path,
     ):
-        from cli_agent_orchestrator.utils.codex_home import prepare_identity_codex_home
+        from cli_agent_orchestrator.utils.codex_home import prepare_agent_codex_home
 
         global_codex_home = tmp_path / "global" / ".codex"
         global_codex_home.mkdir(parents=True)
         (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
         provider_data_dir = tmp_path / "cao" / "agents" / "agent-1" / "providers" / "codex"
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "identity prompt",
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-                "reasoning_effort": None,
-            },
-        )()
+        agent = _agent(prompt="agent prompt")
 
         with (
             patch(
@@ -322,13 +268,13 @@ class TestPrepareCodexHome:
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
-            codex_home = prepare_identity_codex_home(
+            codex_home = prepare_agent_codex_home(
                 provider_data_dir,
                 terminal_id="terminal-a",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 global_codex_home_dir=global_codex_home,
             )
@@ -348,25 +294,18 @@ class TestPrepareCodexHome:
         workdir = tmp_path / "work"
         workdir.mkdir()
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": {
+        agent = _agent(
+            mcp_servers={
                     "example": {
                         "command": "echo",
                         "args": ["hello"],
                         "enabled": True,
                     }
                 },
-                "model": "gpt-5.2",
-                "reasoning_effort": "low",
-                "codexConfig": {"model_reasoning_effort": "high"},
-            },
-        )()
+            model="gpt-5.2",
+            reasoning_effort="low",
+            codex_config={"model_reasoning_effort": "high"},
+        )
 
         with (
             patch(
@@ -377,12 +316,12 @@ class TestPrepareCodexHome:
                 return_value=True,
             ),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(workdir),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -411,19 +350,7 @@ class TestPrepareCodexHome:
         workdir = tmp_path / "work"
         workdir.mkdir()
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": None,
-                "model": None,
-                "reasoning_effort": "high",
-                "codexConfig": None,
-            },
-        )()
+        agent = _agent(reasoning_effort="high")
 
         with (
             patch(
@@ -434,12 +361,12 @@ class TestPrepareCodexHome:
                 return_value=True,
             ),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(workdir),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -456,24 +383,15 @@ class TestPrepareCodexHome:
         (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": {
+        agent = _agent(
+            mcp_servers={
                     "cao-mcp-server": {
                         "command": "uvx",
                         "args": ["--from", "somewhere", "cao-mcp-server"],
                         "enabled": True,
                     }
                 },
-                "model": None,
-                "codexConfig": None,
-            },
-        )()
+        )
 
         with (
             patch(
@@ -484,12 +402,12 @@ class TestPrepareCodexHome:
                 return_value=True,
             ),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -506,18 +424,7 @@ class TestPrepareCodexHome:
         (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-            },
-        )()
+        agent = _agent()
 
         with (
             patch(
@@ -528,13 +435,13 @@ class TestPrepareCodexHome:
                 return_value=False,
             ),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             with pytest.raises(ValueError, match="login"):
                 prepare_codex_home(
                     terminal_id="abcd1234",
-                    agent_profile="codex_developer",
+                    agent_id="codex_developer",
                     working_directory=str(tmp_path / "work"),
                     cao_home_dir=tmp_path / "cao",
                     global_codex_home_dir=global_codex_home,
@@ -575,19 +482,7 @@ class TestPrepareCodexHome:
         )
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-                "reasoning_effort": None,
-            },
-        )()
+        agent = _agent()
 
         with (
             patch(
@@ -595,12 +490,12 @@ class TestPrepareCodexHome:
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -646,19 +541,7 @@ class TestPrepareCodexHome:
         )
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-                "reasoning_effort": None,
-            },
-        )()
+        agent = _agent()
 
         with (
             patch(
@@ -666,12 +549,12 @@ class TestPrepareCodexHome:
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -691,19 +574,7 @@ class TestPrepareCodexHome:
         )
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": None,
-                "model": "gpt-5.5-profile-override",
-                "codexConfig": None,
-                "reasoning_effort": "high",
-            },
-        )()
+        agent = _agent(model="gpt-5.5-profile-override", reasoning_effort="high")
 
         with (
             patch(
@@ -711,12 +582,12 @@ class TestPrepareCodexHome:
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,
@@ -735,19 +606,7 @@ class TestPrepareCodexHome:
         # No config.toml in global; only auth.json.
         (global_codex_home / "auth.json").write_text('{"ok":true}\n')
 
-        profile = type(
-            "Profile",
-            (),
-            {
-                "name": "codex_developer",
-                "description": "desc",
-                "system_prompt": "x",
-                "mcpServers": None,
-                "model": None,
-                "codexConfig": None,
-                "reasoning_effort": None,
-            },
-        )()
+        agent = _agent()
 
         with (
             patch(
@@ -755,12 +614,12 @@ class TestPrepareCodexHome:
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
             patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent_profile", return_value=profile
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
             ),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
-                agent_profile="codex_developer",
+                agent_id="codex_developer",
                 working_directory=str(tmp_path / "work"),
                 cao_home_dir=tmp_path / "cao",
                 global_codex_home_dir=global_codex_home,

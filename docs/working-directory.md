@@ -23,14 +23,14 @@ With `CAO_ENABLE_WORKING_DIRECTORY=true`:
 ```python
 # Handoff to agent in specific package directory
 result = await handoff(
-    agent_profile="developer",
+    agent_id="developer",
     message="Fix the bug in UserService.java",
     working_directory="/workspace/src/MyPackage"
 )
 
 # Assign task with specific working directory
 result = await assign(
-    agent_profile="reviewer",
+    agent_id="reviewer",
     message="Review the changes in the authentication module",
     working_directory="/workspace/src/AuthModule"
 )

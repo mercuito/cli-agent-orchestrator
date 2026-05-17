@@ -25,7 +25,7 @@ from cli_agent_orchestrator.diagnostics.runner import _PROVIDER_RUNNERS
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import session_service, terminal_service
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.codex_home import cleanup_codex_home, prepare_codex_home
 
 
@@ -107,14 +107,14 @@ def _poll_status(
 def run_codex_diagnostics(
     *,
     provider: str,
-    agent_profile: str,
+    agent_id: str,
     mode: str,
     allow_billing: bool,
     working_directory: str,
 ) -> DiagnosticResult:
     result = DiagnosticResult(
         provider=provider,
-        agent_profile=agent_profile,
+        agent_id=agent_id,
         mode=mode,
         allow_billing=allow_billing,
         ok=False,
@@ -157,14 +157,14 @@ def run_codex_diagnostics(
         if not step.ok:
             return result.finalize()
 
-        # Step: load agent profile
-        step = _step("agent profile loads")
+        # Step: load agent
+        step = _step("agent loads")
         start = time.monotonic()
         profile = None
         try:
-            profile = load_agent_profile(agent_profile)
+            profile = load_agent(agent_id)
             step.ok = True
-            step.data = {"name": profile.name, "description": profile.description}
+            step.data = {"name": profile.id, "description": profile.description}
         except Exception as e:
             step.details = str(e)
         finally:
@@ -180,7 +180,7 @@ def run_codex_diagnostics(
         prepared_terminal_id = f"diag-{run_id}"
         try:
             workdir = os.path.realpath(working_directory)
-            prepared_home = prepare_codex_home(prepared_terminal_id, agent_profile, workdir)
+            prepared_home = prepare_codex_home(prepared_terminal_id, agent_id, workdir)
 
             expected = ["auth.json", "config.toml", "AGENTS.md"]
             missing = [name for name in expected if not (prepared_home / name).exists()]
@@ -227,8 +227,8 @@ def run_codex_diagnostics(
             server_names = _extract_mcp_server_names(payload)
 
             expected = {"cao-mcp-server"}
-            if isinstance(profile.mcpServers, dict):
-                expected |= set(profile.mcpServers.keys())
+            if isinstance(profile.mcp_servers, dict):
+                expected |= set(profile.mcp_servers.keys())
 
             missing = sorted([name for name in expected if name not in server_names])
             if missing:
@@ -254,7 +254,7 @@ def run_codex_diagnostics(
             session_hint = f"diag-{run_id}"
             terminal = terminal_service.create_terminal(
                 provider="codex",
-                agent_profile=agent_profile,
+                agent_id=agent_id,
                 session_name=session_hint,
                 new_session=True,
                 working_directory=os.path.realpath(working_directory),

@@ -19,7 +19,7 @@ class DiagnosticStepResult(BaseModel):
 
 class DiagnosticResult(BaseModel):
     provider: str
-    agent_profile: str
+    agent_id: str
     mode: str
     allow_billing: bool
     ok: bool

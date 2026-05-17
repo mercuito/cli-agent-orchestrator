@@ -27,13 +27,13 @@ claude setup-token
 cao-server
 
 # Launch a Claude Code-backed session
-cao launch --agents developer --provider claude_code
+cao agent start developer
 ```
 
 Via HTTP API:
 
 ```bash
-curl -X POST "http://localhost:9889/sessions?provider=claude_code&agent_profile=developer"
+curl -X POST "http://localhost:9889/sessions?provider=claude_code&agent_id=developer"
 ```
 
 ## Features
@@ -65,20 +65,20 @@ CAO launches Claude Code with `--dangerously-skip-permissions` to bypass:
 - **Workspace trust dialog**: The "Yes, I trust this folder" prompt that appears for new directories
 - **Tool permission prompts**: Approval dialogs for file edits, command execution, etc.
 
-This is safe because CAO already confirms workspace trust during `cao launch` ("Do you trust all the actions in this folder?") or via `--yolo` flag. Without this flag, worker agents spawned via handoff/assign would block on the trust dialog with no way to accept it interactively.
+This is safe because CAO already confirms workspace trust during `cao agent start` ("Do you trust all the actions in this folder?") or via `--yolo` flag. Without this flag, worker agents spawned via handoff/assign would block on the trust dialog with no way to accept it interactively.
 
 A fallback `_handle_trust_prompt()` method also monitors for the trust dialog and sends Enter to accept it, in case the flag doesn't cover all scenarios.
 
 ## Configuration
 
-### Agent Profile Integration
+### Agent Integration
 
-When launched with an agent profile (e.g., `--agents code_supervisor`), CAO:
+When launched with an agent (e.g., `cao agent start code_supervisor`), CAO:
 
-1. Loads the profile from the agent store
-2. Extracts the system prompt from the Markdown content
+1. Loads the agent from `~/.aws/cli-agent-orchestrator/agents/<id>/`
+2. Extracts the system prompt from `prompt.md`
 3. Passes it via `--append-system-prompt` (newlines escaped to `\n` for tmux compatibility)
-4. Injects MCP servers via `--mcp-config` JSON if the profile defines `mcpServers`
+4. Injects MCP servers via `--mcp-config` JSON if the agent defines `mcp_servers`
 
 ### Launch Command
 
@@ -93,28 +93,28 @@ runtime material:
 
 ```
 claude --dangerously-skip-permissions \
-  --settings <identity-provider-dir>/settings.json \
-  --plugin-dir <identity-provider-dir>/plugins/cao-profile-skills \
+  --settings <agent-provider-dir>/settings.json \
+  --plugin-dir <agent-provider-dir>/plugins/cao-agent-skills \
   --strict-mcp-config \
-  --session-id <identity-session-id>
+  --session-id <agent-session-id>
 ```
 
-When CAO refreshes an identity runtime and Claude has a persisted session, it
+When CAO refreshes an agent runtime and Claude has a persisted session, it
 uses Claude's native resume path:
 
 ```
-claude ... --resume <identity-session-id>
+claude ... --resume <agent-session-id>
 ```
 
-### Identity Runtime Storage
+### Agent Runtime Storage
 
-Claude Code identity launches keep CAO-generated runtime files under the
-agent identity's provider data directory:
+Claude Code agent launches keep CAO-generated runtime files under the
+agent's provider data directory:
 
-- `settings.json`: CAO-owned Claude settings for this identity launch.
-- `plugins/cao-profile-skills/`: profile-scoped skills materialized as a
+- `settings.json`: CAO-owned Claude settings for this agent launch.
+- `plugins/cao-agent-skills/`: agent-scoped skills materialized as a
   Claude plugin.
-- `session-id`: CAO's durable Claude session UUID for the identity.
+- `session-id`: CAO's durable Claude session UUID for the agent.
 
 Claude login is intentionally not copied into this directory. Claude Code's
 OAuth state is tied to the normal user/keychain path, and copying

@@ -6,8 +6,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from cli_agent_orchestrator.agent import Agent as CaoAgent, write_agent
 from cli_agent_orchestrator.cli.commands.skills import skills
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from test.support.agent_factory import Agent
 from cli_agent_orchestrator.utils.skill_injection import refresh_agent_json_prompt
 
 
@@ -86,11 +87,11 @@ class TestSkillsAddCommand:
     def test_add_refreshes_cao_managed_agent_prompt(self, runner, tmp_path, monkeypatch):
         """Adding a skill should refresh CAO-managed installed agent JSONs."""
         skill_store = tmp_path / "skill-store"
-        local_store = tmp_path / "agent-store"
         context_dir = tmp_path / "agent-context"
+        agents_root = tmp_path / "agents"
         q_dir = tmp_path / "q"
         copilot_dir = tmp_path / "copilot"
-        for path in (skill_store, local_store, context_dir, q_dir):
+        for path in (skill_store, context_dir, agents_root, q_dir):
             path.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr("cli_agent_orchestrator.cli.commands.skills.SKILLS_DIR", skill_store)
@@ -102,19 +103,29 @@ class TestSkillsAddCommand:
         monkeypatch.setattr(
             "cli_agent_orchestrator.utils.skill_injection.COPILOT_AGENTS_DIR", copilot_dir
         )
+        monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
         monkeypatch.setattr(
-            "cli_agent_orchestrator.utils.agent_profiles.LOCAL_AGENT_STORE_DIR", local_store
+            "cli_agent_orchestrator.services.settings_service.get_agent_dirs",
+            lambda: {},
+            raising=False,
         )
         monkeypatch.setattr(
-            "cli_agent_orchestrator.services.settings_service.get_agent_dirs", lambda: {}
-        )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.settings_service.get_extra_agent_dirs", lambda: []
+            "cli_agent_orchestrator.services.settings_service.get_extra_agent_dirs",
+            lambda: [],
+            raising=False,
         )
 
-        (local_store / "developer.md").write_text(
-            "---\nname: developer\ndescription: Developer\nprompt: Base prompt\n---\nBody\n",
-            encoding="utf-8",
+        write_agent(
+            CaoAgent(
+                id="developer",
+                display_name="Developer",
+                description="Developer",
+                cli_provider="q_cli",
+                workdir=str(tmp_path),
+                session_name="developer",
+                prompt="Base prompt",
+            ),
+            agents_root=agents_root,
         )
         context_file = context_dir / "developer.md"
         context_file.write_text("context", encoding="utf-8")
@@ -327,11 +338,11 @@ class TestSkillsRemoveCommand:
     def test_remove_refreshes_cao_managed_agent_prompt(self, runner, tmp_path, monkeypatch):
         """Removing a skill should refresh CAO-managed installed agent JSONs."""
         skill_store = tmp_path / "skill-store"
-        local_store = tmp_path / "agent-store"
         context_dir = tmp_path / "agent-context"
+        agents_root = tmp_path / "agents"
         q_dir = tmp_path / "q"
         copilot_dir = tmp_path / "copilot"
-        for path in (skill_store, local_store, context_dir, q_dir):
+        for path in (skill_store, context_dir, agents_root, q_dir):
             path.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr("cli_agent_orchestrator.cli.commands.skills.SKILLS_DIR", skill_store)
@@ -343,19 +354,29 @@ class TestSkillsRemoveCommand:
         monkeypatch.setattr(
             "cli_agent_orchestrator.utils.skill_injection.COPILOT_AGENTS_DIR", copilot_dir
         )
+        monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
         monkeypatch.setattr(
-            "cli_agent_orchestrator.utils.agent_profiles.LOCAL_AGENT_STORE_DIR", local_store
+            "cli_agent_orchestrator.services.settings_service.get_agent_dirs",
+            lambda: {},
+            raising=False,
         )
         monkeypatch.setattr(
-            "cli_agent_orchestrator.services.settings_service.get_agent_dirs", lambda: {}
-        )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.settings_service.get_extra_agent_dirs", lambda: []
+            "cli_agent_orchestrator.services.settings_service.get_extra_agent_dirs",
+            lambda: [],
+            raising=False,
         )
 
-        (local_store / "developer.md").write_text(
-            "---\nname: developer\ndescription: Developer\nprompt: Base prompt\n---\nBody\n",
-            encoding="utf-8",
+        write_agent(
+            CaoAgent(
+                id="developer",
+                display_name="Developer",
+                description="Developer",
+                cli_provider="q_cli",
+                workdir=str(tmp_path),
+                session_name="developer",
+                prompt="Base prompt",
+            ),
+            agents_root=agents_root,
         )
         _create_skill(skill_store / "python-testing", "python-testing", "Pytest conventions")
         context_file = context_dir / "developer.md"
@@ -374,7 +395,7 @@ class TestSkillsRemoveCommand:
         )
         refresh_agent_json_prompt(
             agent_json,
-            AgentProfile(name="developer", description="Developer", prompt="Base prompt"),
+            Agent(name="developer", description="Developer", prompt="Base prompt"),
         )
 
         result = runner.invoke(skills, ["remove", "python-testing"])

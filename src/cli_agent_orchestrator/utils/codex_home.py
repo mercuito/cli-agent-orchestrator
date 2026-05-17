@@ -1,7 +1,7 @@
 """Codex home management for CAO-managed terminals and identities.
 
 Codex CLI supports selecting its home directory via the `CODEX_HOME` environment variable. By
-creating separate homes per raw CAO terminal or durable CAO identity we can isolate agent configs,
+creating separate homes per raw CAO terminal or durable CAO agent we can isolate agent configs,
 MCP server registrations, and per-agent instructions (`AGENTS.md`).
 """
 
@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, Optional
 import tomli
 
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.config_inheritance import (
     InheritPolicy,
     apply_inherit_policy,
@@ -35,7 +35,7 @@ from cli_agent_orchestrator.utils.skills import (
 #
 # Intentional choices:
 #   - allowlist is tiny. Codex adds config sections every release and several
-#     (agents.*.config_file, profiles.*.instructions_file, mcp_servers.*.cwd)
+#     (agents.*.config_file, agents.*.instructions_file, mcp_servers.*.cwd)
 #     contain relative filesystem paths that silently break when copied to a
 #     per-terminal CODEX_HOME. Default-deny is the only safe posture.
 #   - disable_plugins is NOT set. Empirically Codex overwrites any local
@@ -230,12 +230,12 @@ def _copy_codex_auth_state(global_codex_home_dir: Path, terminal_codex_home: Pat
     return copied
 
 
-def _profile_skill_names(profile: Any) -> tuple[str, ...]:
-    raw_names = getattr(profile, "skills", None)
+def _agent_skill_names(agent: Any) -> tuple[str, ...]:
+    raw_names = getattr(agent, "skills", None)
     if raw_names is None:
         return ()
-    if not isinstance(raw_names, list) or not all(isinstance(item, str) for item in raw_names):
-        raise ValueError("Agent profile skills must be a list of skill names")
+    if not isinstance(raw_names, tuple) or not all(isinstance(item, str) for item in raw_names):
+        raise ValueError("Agent skills must be a tuple of skill names")
     return tuple(validate_skill_name(item) for item in raw_names)
 
 
@@ -251,7 +251,7 @@ def _materialize_profile_skills(codex_home: Path, skill_names: Iterable[str]) ->
 
 
 def build_codex_home_materialization(
-    agent_profile: str,
+    agent_id: str,
     working_directory: str,
     *,
     global_codex_home_dir: Optional[Path] = None,
@@ -260,8 +260,8 @@ def build_codex_home_materialization(
     global_codex_home_dir = (
         (Path.home() / ".codex") if global_codex_home_dir is None else global_codex_home_dir
     )
-    profile = load_agent_profile(agent_profile)
-    skill_names = _profile_skill_names(profile)
+    agent = load_agent(agent_id)
+    skill_names = _agent_skill_names(agent)
 
     # Start from a filtered slice of the user's global ~/.codex/config.toml.
     # The inheritance policy (see CODEX_INHERIT_POLICY) allowlists the few
@@ -276,28 +276,27 @@ def build_codex_home_materialization(
     # entries are dropped by the policy allowlist.
     base_config["projects"] = {str(Path(working_directory)): {"trust_level": "trusted"}}
 
-    if getattr(profile, "model", None):
-        base_config["model"] = profile.model  # type: ignore[attr-defined]
+    if agent.model:
+        base_config["model"] = agent.model
 
-    codex_config = getattr(profile, "codexConfig", None)
+    codex_config = agent.codex_config
     if isinstance(codex_config, dict):
         deep_merge(base_config, codex_config)
 
-    reasoning_effort = getattr(profile, "reasoning_effort", None)
+    reasoning_effort = agent.reasoning_effort
     if reasoning_effort and not (
         isinstance(codex_config, dict) and "model_reasoning_effort" in codex_config
     ):
         base_config["model_reasoning_effort"] = str(reasoning_effort)
 
-    # MCP servers from the agent profile + the mandatory CAO MCP server.
+    # MCP servers from the agent + the mandatory CAO MCP server.
     # User-global mcp_servers are dropped by the policy allowlist.
     mcp_servers: Dict[str, Any] = {}
     if isinstance(base_config.get("mcp_servers"), dict):
         mcp_servers = base_config["mcp_servers"]  # type: ignore[assignment]
 
-    profile_mcp = getattr(profile, "mcpServers", None)
-    if isinstance(profile_mcp, dict):
-        for name, server in profile_mcp.items():
+    if isinstance(agent.mcp_servers, dict):
+        for name, server in agent.mcp_servers.items():
             if isinstance(server, dict):
                 entry: Dict[str, Any] = {}
                 if "command" in server:
@@ -322,14 +321,14 @@ def build_codex_home_materialization(
 
     return CodexHomeMaterialization(
         config=base_config,
-        agents_md=(profile.system_prompt or "").rstrip() + "\n",  # type: ignore[attr-defined]
+        agents_md=(agent.prompt or "").rstrip() + "\n",
         skill_fingerprints=_skill_fingerprints(skill_names),
     )
 
 
 def prepare_codex_home(
     terminal_id: str,
-    agent_profile: str,
+    agent_id: str,
     working_directory: str,
     *,
     cao_home_dir: Optional[Path] = None,
@@ -348,22 +347,22 @@ def prepare_codex_home(
     return _prepare_codex_home_at(
         terminal_codex_home,
         terminal_id=terminal_id,
-        agent_profile=agent_profile,
+        agent_id=agent_id,
         working_directory=working_directory,
         global_codex_home_dir=global_codex_home_dir,
         cleanup_on_login_failure=True,
     )
 
 
-def prepare_identity_codex_home(
+def prepare_agent_codex_home(
     provider_data_dir: Path,
     terminal_id: str,
-    agent_profile: str,
+    agent_id: str,
     working_directory: str,
     *,
     global_codex_home_dir: Optional[Path] = None,
 ) -> Path:
-    """Prepare an identity-scoped Codex CODEX_HOME below the provider-owned data dir."""
+    """Prepare an agent-scoped Codex CODEX_HOME below the provider-owned data dir."""
     global_codex_home_dir = (
         (Path.home() / ".codex") if global_codex_home_dir is None else global_codex_home_dir
     )
@@ -371,7 +370,7 @@ def prepare_identity_codex_home(
     return _prepare_codex_home_at(
         codex_home,
         terminal_id=terminal_id,
-        agent_profile=agent_profile,
+        agent_id=agent_id,
         working_directory=working_directory,
         global_codex_home_dir=global_codex_home_dir,
         cleanup_on_login_failure=False,
@@ -382,7 +381,7 @@ def _prepare_codex_home_at(
     codex_home: Path,
     *,
     terminal_id: str,
-    agent_profile: str,
+    agent_id: str,
     working_directory: str,
     global_codex_home_dir: Path,
     cleanup_on_login_failure: bool,
@@ -396,7 +395,7 @@ def _prepare_codex_home_at(
     _copy_codex_auth_state(global_codex_home_dir, codex_home)
 
     if not _codex_login_ok(codex_home):
-        # Best-effort cleanup only for volatile raw terminal homes. Identity
+        # Best-effort cleanup only for volatile raw terminal homes. Agent
         # provider dirs are durable provider-owned state and must not be removed
         # by CAO during a failed launch.
         if cleanup_on_login_failure:
@@ -406,7 +405,7 @@ def _prepare_codex_home_at(
         )
 
     materialization = build_codex_home_materialization(
-        agent_profile,
+        agent_id,
         working_directory,
         global_codex_home_dir=global_codex_home_dir,
     )

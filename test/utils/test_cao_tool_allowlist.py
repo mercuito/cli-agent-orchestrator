@@ -2,7 +2,7 @@
 
 The resolver decides which ``cao-mcp-server`` tools an agent is allowed to
 call, based on (in priority order):
-  1. ``profile.caoTools`` — explicit per-profile allowlist
+  1. ``agent.cao_tools`` — explicit per-agent allowlist
   2. ``None`` — nothing configured
 
 Returning ``None`` is deliberately distinct from returning ``[]`` (empty
@@ -15,15 +15,15 @@ No runtime wiring yet — this phase only adds the mechanism.
 
 from __future__ import annotations
 
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from test.support.agent_factory import Agent
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 
 
-def _profile(**kwargs) -> AgentProfile:
-    """Build a minimal valid AgentProfile with overrides."""
+def _profile(**kwargs) -> Agent:
+    """Build a minimal valid Agent with overrides."""
     defaults = {"name": "test", "description": "t"}
     defaults.update(kwargs)
-    return AgentProfile(**defaults)
+    return Agent(**defaults)
 
 
 class TestProfileExplicitAllowlistWins:
@@ -50,17 +50,17 @@ class TestNothingConfigured:
         result = resolve_cao_tool_allowlist(profile)
         assert result is None
 
-class TestAgentProfileFieldSchema:
-    """caoTools must be an optional list-of-strings field on AgentProfile."""
+class TestAgentFieldSchema:
+    """cao_tools must be an optional tuple-of-strings field on Agent."""
 
     def test_profile_accepts_cao_tools_list(self):
-        profile = AgentProfile(name="x", description="y", caoTools=["send_message"])
-        assert profile.caoTools == ["send_message"]
+        profile = Agent(name="x", description="y", caoTools=["send_message"])
+        assert profile.cao_tools == ("send_message",)
 
     def test_profile_cao_tools_defaults_to_none(self):
-        profile = AgentProfile(name="x", description="y")
-        assert profile.caoTools is None
+        profile = Agent(name="x", description="y")
+        assert profile.cao_tools is None
 
     def test_profile_accepts_empty_list(self):
-        profile = AgentProfile(name="x", description="y", caoTools=[])
-        assert profile.caoTools == []
+        profile = Agent(name="x", description="y", caoTools=[])
+        assert profile.cao_tools == ()

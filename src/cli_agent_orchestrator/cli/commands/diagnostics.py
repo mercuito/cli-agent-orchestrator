@@ -12,7 +12,7 @@ from cli_agent_orchestrator.diagnostics.runner import run_provider_diagnostics
 
 @click.command()
 @click.option("--provider", required=True, help="Provider to diagnose (e.g. codex)")
-@click.option("--agent-profile", required=True, help="Agent profile name to use")
+@click.option("--agent-id", required=True, help="Agent id to use")
 @click.option(
     "--mode",
     type=click.Choice(["offline", "online"], case_sensitive=False),
@@ -34,7 +34,7 @@ from cli_agent_orchestrator.diagnostics.runner import run_provider_diagnostics
 @click.option("--json", "json_output", is_flag=True, help="Output structured JSON")
 def diagnostics(
     provider: str,
-    agent_profile: str,
+    agent_id: str,
     mode: str,
     allow_billing: bool,
     working_directory: str,
@@ -44,7 +44,7 @@ def diagnostics(
     try:
         result = run_provider_diagnostics(
             provider=provider,
-            agent_profile=agent_profile,
+            agent_id=agent_id,
             mode=mode,
             allow_billing=allow_billing,
             working_directory=working_directory,

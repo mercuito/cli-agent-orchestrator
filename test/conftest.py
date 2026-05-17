@@ -10,11 +10,11 @@ from sqlalchemy import create_engine, event as sa_event, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from cli_agent_orchestrator.agent_identity import AgentIdentity, AgentIdentityRegistry
+from cli_agent_orchestrator.agent import Agent, AgentRegistry
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.services.agent_identity_manager import AgentIdentityManager
+from cli_agent_orchestrator.services.agent_manager import AgentManager
 
 
 @pytest.fixture
@@ -43,42 +43,40 @@ def runtime_inbox_db_session(monkeypatch: pytest.MonkeyPatch) -> sessionmaker:
 
 
 @pytest.fixture
-def implementation_partner_identity_factory():
-    def _identity(**overrides: str | None) -> AgentIdentity:
+def implementation_partner_agent_factory():
+    def _agent(**overrides: str | None) -> Agent:
         values = {
             "id": "implementation_partner",
             "display_name": "Implementation Partner",
-            "agent_profile": "developer",
             "cli_provider": "codex",
             "workdir": "/repo",
             "session_name": "implementation-partner",
+            "prompt": "",
         }
         values.update(overrides)
-        return AgentIdentity(**values)
+        return Agent(**values)
 
-    return _identity
+    return _agent
 
 
 @pytest.fixture
-def agent_identity_manager_factory():
-    """Sanctioned manager-backed factory for framework-consumed test identities."""
+def agent_manager_factory():
+    """Sanctioned manager-backed factory for framework-consumed test agents."""
 
     def _manager(
-        *identities: AgentIdentity,
+        *agents: Agent,
         terminals: list[dict[str, object]] | None = None,
         providers: tuple[object, ...] = (),
-    ) -> AgentIdentityManager:
-        manager = AgentIdentityManager(
-            configured_identities=AgentIdentityRegistry({}),
-            identity_providers=providers,
+    ) -> AgentManager:
+        manager = AgentManager(
+            configured_agents=AgentRegistry({}),
             terminal_lister=lambda: list(terminals or []),
             terminal_metadata_resolver=lambda terminal_id: {
                 terminal["id"]: terminal for terminal in terminals or []
             }.get(terminal_id),
-            profile_loader=lambda profile: object(),
         )
-        for identity in identities:
-            manager.register_identity(identity)
+        for agent in agents:
+            manager.register_agent(agent)
         return manager
 
     return _manager

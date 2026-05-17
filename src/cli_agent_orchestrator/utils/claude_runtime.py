@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.skills import (
     materialize_skill,
     skill_file_fingerprints,
@@ -28,19 +28,19 @@ CLAUDE_SETTINGS_FILE = "settings.json"
 
 @dataclass(frozen=True)
 class ClaudeRuntimeMaterialization:
-    """Claude-owned files that CAO materializes for one identity runtime."""
+    """Claude-owned files that CAO materializes for one agent runtime."""
 
     settings: Dict[str, Any]
     plugin_manifest: Dict[str, Any]
     skill_fingerprints: Dict[str, Dict[str, str]]
 
 
-def _profile_skill_names(profile: Any) -> tuple[str, ...]:
-    raw_names = getattr(profile, "skills", None)
+def _agent_skill_names(agent: Any) -> tuple[str, ...]:
+    raw_names = getattr(agent, "skills", None)
     if raw_names is None:
         return ()
-    if not isinstance(raw_names, list) or not all(isinstance(item, str) for item in raw_names):
-        raise ValueError("Agent profile skills must be a list of skill names")
+    if not isinstance(raw_names, tuple) or not all(isinstance(item, str) for item in raw_names):
+        raise ValueError("Agent skills must be a tuple of skill names")
     return tuple(validate_skill_name(item) for item in raw_names)
 
 
@@ -52,19 +52,19 @@ def _plugin_manifest() -> Dict[str, Any]:
     return {
         "name": CLAUDE_PLUGIN_NAME,
         "version": CLAUDE_PLUGIN_VERSION,
-        "description": "CAO materialized profile-scoped skills for this agent identity.",
+        "description": "CAO materialized profile-scoped skills for this agent.",
         "author": {"name": "CLI Agent Orchestrator"},
     }
 
 
-def build_claude_runtime_materialization(agent_profile: str) -> ClaudeRuntimeMaterialization:
-    """Build Claude-owned identity runtime material without writing it."""
-    profile = load_agent_profile(agent_profile)
-    skill_names = _profile_skill_names(profile)
+def build_claude_runtime_materialization(agent_id: str) -> ClaudeRuntimeMaterialization:
+    """Build Claude-owned agent runtime material without writing it."""
+    agent = load_agent(agent_id)
+    skill_names = _agent_skill_names(agent)
     return ClaudeRuntimeMaterialization(
         settings={
             # CAO launches Claude with --dangerously-skip-permissions intentionally.
-            # Keep this in a CAO-owned settings file for identity launches instead
+            # Keep this in a CAO-owned settings file for agent launches instead
             # of mutating the user's global ~/.claude/settings.json.
             "skipDangerousModePermissionPrompt": True,
         },
@@ -98,7 +98,7 @@ def _read_session_id(provider_data_dir: Path) -> str | None:
 
 
 def ensure_claude_session_id(provider_data_dir: Path) -> str:
-    """Return this identity's Claude session id, creating it if needed."""
+    """Return this agent's Claude session id, creating it if needed."""
     existing = _read_session_id(provider_data_dir)
     if existing is not None:
         return existing
@@ -133,10 +133,10 @@ def claude_login_ok() -> bool:
     return data.get("loggedIn") is True
 
 
-def prepare_identity_claude_runtime(
+def prepare_agent_claude_runtime(
     provider_data_dir: Path,
     terminal_id: str,
-    agent_profile: str,
+    agent_id: str,
     working_directory: str,
 ) -> Path:
     """Prepare Claude-owned runtime material below the provider-owned data dir.
@@ -145,7 +145,7 @@ def prepare_identity_claude_runtime(
     home/keychain path. Copying ``~/.claude.json`` into an isolated HOME is not
     sufficient for login. CAO therefore keeps Claude auth on the real user path
     and preflights it, while putting CAO-generated settings/plugins/session ids
-    under the identity provider directory.
+    under the agent provider directory.
     """
     if not shutil.which("claude"):
         raise ValueError("claude binary not found in PATH")
@@ -156,7 +156,7 @@ def prepare_identity_claude_runtime(
         )
 
     provider_data_dir.mkdir(parents=True, exist_ok=True)
-    materialization = build_claude_runtime_materialization(agent_profile)
+    materialization = build_claude_runtime_materialization(agent_id)
 
     _write_json(provider_data_dir / CLAUDE_SETTINGS_FILE, materialization.settings)
 

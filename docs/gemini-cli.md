@@ -20,7 +20,7 @@ gemini --version
 
 ```bash
 # Launch with CAO
-cao launch --agents code_supervisor --provider gemini_cli
+cao agent start code_supervisor
 ```
 
 ## Status Detection
@@ -72,9 +72,9 @@ Tool calls appear in rounded-corner boxes:
 ╰──────────────────────────────╯
 ```
 
-## Agent Profiles
+## Agents
 
-Agent profiles are **optional** for Gemini CLI. When an agent profile is provided:
+Agents are **optional** for Gemini CLI. When an agent is provided:
 
 1. **System prompt**: Injected via two mechanisms:
    - **Primary**: The `-i` (prompt-interactive) flag sends the system prompt as the first user message. Gemini strongly adopts the role from `-i`, making it effective for supervisor orchestration.
@@ -85,7 +85,7 @@ Agent profiles are **optional** for Gemini CLI. When an agent profile is provide
 
 ## MCP Server Configuration
 
-MCP servers from agent profiles are registered by writing directly to `~/.gemini/settings.json` before launching the `gemini` command. This replaces the previous approach of chaining `gemini mcp add --scope user` commands, which spawned a Node.js process for each server (~2-3s overhead each).
+MCP servers from agents are registered by writing directly to `~/.gemini/settings.json` before launching the `gemini` command. This replaces the previous approach of chaining `gemini mcp add --scope user` commands, which spawned a Node.js process for each server (~2-3s overhead each).
 
 ```json
 {
@@ -194,7 +194,7 @@ uv run pytest test/e2e/test_supervisor_orchestration.py -v -k Gemini -o "addopts
 Prerequisites for E2E tests:
 - CAO server running (`cao-server`)
 - `gemini` CLI authenticated
-- Agent profiles installed (`cao install developer`, `cao install examples/assign/analysis_supervisor.md`)
+- Agents installed (`cao install developer`, `cao install examples/assign/analysis_supervisor.md`)
 
 ## Troubleshooting
 

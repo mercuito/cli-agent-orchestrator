@@ -33,7 +33,7 @@ def require_cao_server():
 def warmup_mcp_server_cache():
     """Pre-warm the uvx cache for cao-mcp-server.
 
-    Agent profiles launch cao-mcp-server via ``uvx --from git+...``. On a cold
+    Agents launch cao-mcp-server via ``uvx --from git+...``. On a cold
     cache uvx must download and install ~80 packages, which takes ~20s and
     exceeds Codex's default 10s MCP startup timeout. Running uvx once here
     populates the cache so that all subsequent provider launches resolve
@@ -122,7 +122,7 @@ def require_copilot():
 
 def create_terminal(
     provider: str,
-    agent_profile: str,
+    agent_id: str,
     session_name: str,
     retries: int = 1,
     retry_delay: float = 30.0,
@@ -153,7 +153,7 @@ def create_terminal(
             f"{API_BASE_URL}/sessions",
             params={
                 "provider": provider,
-                "agent_profile": agent_profile,
+                "agent_id": agent_id,
                 "session_name": attempt_session_name,
             },
         )

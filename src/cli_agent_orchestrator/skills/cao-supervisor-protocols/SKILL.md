@@ -13,8 +13,8 @@ This skill covers how supervisors should dispatch work, decide between `assign`,
 
 From `cao-mcp-server`, supervisors orchestrate work with:
 
-- `assign(agent_profile, message)` for asynchronous work that returns immediately
-- `handoff(agent_profile, message)` for synchronous work that blocks until the worker finishes
+- `assign(agent_id, message)` for asynchronous work that returns immediately
+- `handoff(agent_id, message)` for synchronous work that blocks until the worker finishes
 - `send_message(receiver_id, message)` for direct messages to an existing terminal
 
 Some CAO deployments may also expose baton tools while baton control is being

@@ -9,12 +9,12 @@ from cli_agent_orchestrator.diagnostics.models import DiagnosticResult
 
 def _not_implemented(**kwargs) -> DiagnosticResult:
     provider = kwargs.get("provider", "unknown")
-    agent_profile = kwargs.get("agent_profile", "unknown")
+    agent_id = kwargs.get("agent_id", "unknown")
     mode = kwargs.get("mode", "offline")
     allow_billing = bool(kwargs.get("allow_billing", False))
     return DiagnosticResult(
         provider=provider,
-        agent_profile=agent_profile,
+        agent_id=agent_id,
         mode=mode,
         allow_billing=allow_billing,
         ok=False,
@@ -31,7 +31,7 @@ _PROVIDER_RUNNERS: Dict[str, Callable[..., DiagnosticResult]] = {
 def run_provider_diagnostics(
     *,
     provider: str,
-    agent_profile: str,
+    agent_id: str,
     mode: str = "offline",
     allow_billing: bool = False,
     working_directory: str = ".",
@@ -47,7 +47,7 @@ def run_provider_diagnostics(
 
     return runner(
         provider=provider,
-        agent_profile=agent_profile,
+        agent_id=agent_id,
         mode=mode,
         allow_billing=allow_billing,
         working_directory=working_directory,

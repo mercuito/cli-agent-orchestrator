@@ -14,18 +14,17 @@ from cli_agent_orchestrator.constants import (
     COPILOT_AGENTS_DIR,
     Q_AGENTS_DIR,
 )
-from cli_agent_orchestrator.models.agent_profile import AgentProfile
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.agent import Agent, load_agent
 
 logger = logging.getLogger(__name__)
 
 
-def compose_agent_prompt(profile: AgentProfile, base_prompt: Optional[str] = None) -> Optional[str]:
-    """Compose the baked prompt from profile prompt only.
+def compose_agent_prompt(agent: Agent, base_prompt: Optional[str] = None) -> Optional[str]:
+    """Compose the baked prompt from an agent prompt only.
 
-    When *base_prompt* is provided it is used instead of ``profile.prompt``.
+    When *base_prompt* is provided it is used instead of ``agent.prompt``.
     This is needed for providers like Copilot where the effective prompt is
-    resolved from ``system_prompt`` falling back to ``prompt``.
+    resolved from provider-native prompt fields.
 
     Provider-neutral skills are delivered through provider-native skill storage,
     not appended as CAO prompt text.
@@ -33,12 +32,12 @@ def compose_agent_prompt(profile: AgentProfile, base_prompt: Optional[str] = Non
     if base_prompt is not None:
         effective = base_prompt.strip()
     else:
-        effective = profile.prompt.strip() if profile.prompt else ""
+        effective = agent.prompt.strip() if agent.prompt else ""
 
     return effective or None
 
 
-def refresh_agent_json_prompt(json_path: Path, profile: AgentProfile) -> bool:
+def refresh_agent_json_prompt(json_path: Path, agent: Agent) -> bool:
     """Atomically rewrite the prompt field of one installed Q agent JSON."""
     if not json_path.exists():
         return False
@@ -50,7 +49,7 @@ def refresh_agent_json_prompt(json_path: Path, profile: AgentProfile) -> bool:
         raise ValueError(f"Agent config at '{json_path}' must be a JSON object")
 
     config: dict[str, Any] = loaded_config
-    new_prompt = compose_agent_prompt(profile)
+    new_prompt = compose_agent_prompt(agent)
     if new_prompt is None:
         config.pop("prompt", None)
     else:
@@ -68,22 +67,20 @@ def refresh_agent_json_prompt(json_path: Path, profile: AgentProfile) -> bool:
     return True
 
 
-def refresh_agent_md_prompt(md_path: Path, profile: AgentProfile) -> bool:
+def refresh_agent_md_prompt(md_path: Path, agent: Agent) -> bool:
     """Atomically rewrite the body of one installed Copilot ``.agent.md`` file.
 
     Preserves the YAML frontmatter (name, description) while replacing the
-    Markdown body with the composed prompt (profile base prompt + skill catalog).
+    Markdown body with the composed prompt.
     """
     if not md_path.exists():
         return False
 
     post = frontmatter.load(md_path)
 
-    # Copilot prompt resolution: system_prompt takes priority over prompt
-    system_prompt = profile.system_prompt.strip() if profile.system_prompt else ""
-    base = system_prompt or (profile.prompt.strip() if profile.prompt else "")
+    base = agent.prompt.strip() if agent.prompt else ""
 
-    new_body = compose_agent_prompt(profile, base_prompt=base)
+    new_body = compose_agent_prompt(agent, base_prompt=base)
     post.content = (new_body or "").rstrip()
 
     temp_path = md_path.with_suffix(md_path.suffix + ".tmp")
@@ -98,17 +95,17 @@ def refresh_agent_md_prompt(md_path: Path, profile: AgentProfile) -> bool:
 
 
 def refresh_installed_agent_for_profile(profile_name: str) -> List[Path]:
-    """Refresh installed Q and Copilot agents for one source profile."""
-    profile = load_agent_profile(profile_name)
-    safe_name = profile.name.replace("/", "__")
+    """Refresh installed Q and Copilot agents for one source agent."""
+    agent = load_agent(profile_name)
+    safe_name = agent.id.replace("/", "__")
     refreshed_paths: List[Path] = []
 
     q_path = Q_AGENTS_DIR / f"{safe_name}.json"
-    if refresh_agent_json_prompt(q_path, profile):
+    if refresh_agent_json_prompt(q_path, agent):
         refreshed_paths.append(q_path)
 
     copilot_path = COPILOT_AGENTS_DIR / f"{safe_name}.agent.md"
-    if refresh_agent_md_prompt(copilot_path, profile):
+    if refresh_agent_md_prompt(copilot_path, agent):
         refreshed_paths.append(copilot_path)
 
     return refreshed_paths
@@ -132,50 +129,50 @@ def refresh_all_cao_managed_agents() -> List[Path]:
         if not _is_cao_managed_resources(resources):
             continue
 
-        profile_name = config.get("name")
-        if not isinstance(profile_name, str) or not profile_name:
+        agent_name = config.get("name")
+        if not isinstance(agent_name, str) or not agent_name:
             logger.warning("Skipping CAO-managed agent with missing name: %s", json_path)
             continue
 
         try:
-            profile = load_agent_profile(profile_name)
+            agent = load_agent(agent_name)
         except Exception as exc:
             # Bulk refresh should never let one bad installed JSON block the rest.
             logger.warning(
-                "Skipping CAO-managed agent '%s' at %s: source profile could not be loaded: %s",
-                profile_name,
+                "Skipping CAO-managed agent '%s' at %s: source agent could not be loaded: %s",
+                agent_name,
                 json_path,
                 exc,
             )
             continue
 
-        if refresh_agent_json_prompt(json_path, profile):
+        if refresh_agent_json_prompt(json_path, agent):
             refreshed_paths.append(json_path)
 
     # Copilot .agent.md agents — identified by matching context file in AGENT_CONTEXT_DIR
     for md_path in _iter_installed_copilot_agents():
         post = frontmatter.load(md_path)
-        profile_name = post.metadata.get("name")
-        if not isinstance(profile_name, str) or not profile_name:
+        agent_name = post.metadata.get("name")
+        if not isinstance(agent_name, str) or not agent_name:
             logger.warning("Skipping Copilot agent with missing name: %s", md_path)
             continue
 
-        if not _is_cao_managed_copilot_agent(profile_name):
+        if not _is_cao_managed_copilot_agent(agent_name):
             continue
 
         try:
-            profile = load_agent_profile(profile_name)
+            agent = load_agent(agent_name)
         except Exception as exc:
             logger.warning(
                 "Skipping CAO-managed Copilot agent '%s' at %s: "
-                "source profile could not be loaded: %s",
-                profile_name,
+                "source agent could not be loaded: %s",
+                agent_name,
                 md_path,
                 exc,
             )
             continue
 
-        if refresh_agent_md_prompt(md_path, profile):
+        if refresh_agent_md_prompt(md_path, agent):
             refreshed_paths.append(md_path)
 
     return refreshed_paths

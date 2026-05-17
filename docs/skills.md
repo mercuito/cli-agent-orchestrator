@@ -2,7 +2,7 @@
 
 ## Overview
 
-Skills are reusable blocks of instructional content — domain knowledge, conventions, procedures, guidelines — that can be shared across agent profiles. Instead of duplicating the same instructions in every agent profile that needs them, you define the knowledge once as a skill and reference it from any profile.
+Skills are reusable blocks of instructional content — domain knowledge, conventions, procedures, guidelines — that can be shared across agents. Instead of duplicating the same instructions in every agent that needs them, you define the knowledge once as a skill and reference it from any profile.
 
 Skills are loaded lazily: only the skill name and description are injected into the agent's prompt at launch. The full content is retrieved on demand when the agent decides it needs it, preserving context window budget.
 
@@ -12,8 +12,8 @@ All skills live in a single directory: `~/.aws/cli-agent-orchestrator/skills/`. 
 
 Use skills when:
 
-- **Multiple agents need the same knowledge.** Testing conventions, coding standards, deployment procedures, or communication protocols that apply across agent profiles.
-- **You want to keep agent profiles focused.** Profiles should define *who* the agent is, which runtime/MCP surfaces it may use, and which MCP servers it can see. Skills define *what* the agent knows how to do.
+- **Multiple agents need the same knowledge.** Testing conventions, coding standards, deployment procedures, or communication protocols that apply across agents.
+- **You want to keep agents focused.** Agents should define *who* the agent is, which runtime/MCP surfaces it may use, and which MCP servers it can see. Skills define *what* the agent knows how to do.
 - **You want to save context window budget.** An agent working on a simple file rename doesn't need a 2,000-word database migration guide loaded upfront. With skills, the agent loads the full content only when it's relevant.
 - **You need organization-specific knowledge.** Custom skills for your team's internal tooling, review processes, or domain-specific workflows.
 
@@ -102,7 +102,7 @@ CAO ships with two builtin skills:
 
 All installed skills are available to all CAO agents — there is no per-profile skill declaration. When an agent is launched, CAO appends a catalog block to the prompt listing every installed skill's name and description, along with instructions to use the `load_skill` MCP tool to retrieve full content. The agent then decides when and whether to load each skill based on the task at hand.
 
-You can explicitly instruct the agent to load specific skills eagerly in the agent profile body:
+You can explicitly instruct the agent to load specific skills eagerly in the agent body:
 
 ```markdown
 Before starting any task, load the python-testing and code-style skills.
@@ -201,4 +201,4 @@ Running `cao skills add --force` refreshes Copilot CLI agent files immediately. 
 ## Known Limitations
 
 - **No nested skill directories.** Skills must be immediate subdirectories of the skill store. Nested paths (e.g., `skills/team/python-testing/`) are not discovered by CAO's skill catalog. Kiro's `skill://` glob handles nested paths natively, but other providers do not.
-- **No per-profile skill scoping.** All installed skills are available to all agents. There is currently no way to restrict which skills a specific agent profile can see. A `skills` field in agent profile frontmatter for declaring allowed skills is a planned future addition.
+- **No per-profile skill scoping.** All installed skills are available to all agents. There is currently no way to restrict which skills a specific agent can see. A `skills` field in agent frontmatter for declaring allowed skills is a planned future addition.
