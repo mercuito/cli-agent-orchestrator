@@ -19,6 +19,7 @@ def _agent(
     skills: tuple[str, ...] = (),
     mcp_servers: dict | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     codex_config: dict | None = None,
 ) -> Agent:
     return Agent(
@@ -32,6 +33,7 @@ def _agent(
         skills=skills,
         mcp_servers=mcp_servers or {},
         model=model,
+        reasoning_effort=reasoning_effort,
         codex_config=codex_config or {},
     )
 
@@ -335,6 +337,97 @@ class TestPrepareCodexHome:
 
         # CAO MCP server is always present
         assert data["mcp_servers"]["cao-mcp-server"]["command"] == "cao-mcp-server"
+
+    def test_prepare_codex_home_applies_reasoning_effort_when_not_overridden(self, tmp_path: Path):
+        """``agent.reasoning_effort`` flows into ``model_reasoning_effort``.
+
+        Restored after the codex provider regained its
+        ``supported_reasoning_efforts`` declaration. Pairs with
+        ``test_profile_codex_config_model_reasoning_effort_wins`` below,
+        which covers the explicit-codex_config-wins case.
+        """
+        from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
+        (global_codex_home / "auth.json").write_text('{"ok":true}\n')
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+
+        agent = _agent(reasoning_effort="high")
+
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=True,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
+            ),
+        ):
+            codex_home = prepare_codex_home(
+                terminal_id="abcd1234",
+                agent_id="codex_developer",
+                working_directory=str(workdir),
+                cao_home_dir=tmp_path / "cao",
+                global_codex_home_dir=global_codex_home,
+            )
+
+        data = _read_toml(codex_home / "config.toml")
+        assert data["model_reasoning_effort"] == "high"
+
+    def test_prepare_codex_home_codex_config_wins_over_agent_reasoning_effort(
+        self, tmp_path: Path
+    ):
+        """Explicit ``codex_config.model_reasoning_effort`` overrides the agent-level value.
+
+        The fallback only fires when the agent did not set
+        ``codex_config.model_reasoning_effort`` itself. When both are
+        present, the per-agent codex_config remains the lowest-level
+        override.
+        """
+        from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
+
+        global_codex_home = tmp_path / "global" / ".codex"
+        global_codex_home.mkdir(parents=True)
+        (global_codex_home / "config.toml").write_text('model = "gpt-5.2"\n')
+        (global_codex_home / "auth.json").write_text('{"ok":true}\n')
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+
+        agent = _agent(
+            reasoning_effort="low",
+            codex_config={"model_reasoning_effort": "high"},
+        )
+
+        with (
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
+                return_value=True,
+            ),
+            patch(
+                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
+            ),
+        ):
+            codex_home = prepare_codex_home(
+                terminal_id="abcd1234",
+                agent_id="codex_developer",
+                working_directory=str(workdir),
+                cao_home_dir=tmp_path / "cao",
+                global_codex_home_dir=global_codex_home,
+            )
+
+        data = _read_toml(codex_home / "config.toml")
+        assert data["model_reasoning_effort"] == "high"
 
     def test_prepare_codex_home_overrides_cao_mcp_server_to_local_binary(self, tmp_path: Path):
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
