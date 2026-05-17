@@ -104,8 +104,6 @@ class AgentManager:
         if metadata is None:
             raise AgentConfigError(f"Unknown terminal: {terminal_id}")
         agent_id = _terminal_agent_id(metadata)
-        if agent_id is None:
-            raise AgentConfigError(f"Terminal {terminal_id!r} is not agent-managed")
         try:
             return self.resolve_agent(agent_id)
         except AgentConfigError as exc:
@@ -136,8 +134,6 @@ class AgentManager:
         orphans: list[OrphanedAgentTerminalReference] = []
         for terminal in self._terminal_lister():
             agent_id = _terminal_agent_id(terminal)
-            if agent_id is None:
-                continue
             try:
                 self.resolve_agent(agent_id)
             except AgentConfigError:
@@ -199,8 +195,11 @@ def default_agent_manager() -> AgentManager:
     return create_default_agent_manager()
 
 
-def _terminal_agent_id(metadata: Mapping[str, object]) -> Optional[str]:
-    return _optional_str(metadata.get("agent_id"))
+def _terminal_agent_id(metadata: Mapping[str, object]) -> str:
+    value = metadata["agent_id"]
+    if not isinstance(value, str):
+        raise AgentConfigError("terminal agent_id must be a non-empty string")
+    return _required_token(value, "terminal agent_id")
 
 
 def _required_token(value: str, label: str) -> str:

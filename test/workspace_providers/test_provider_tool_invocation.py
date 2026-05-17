@@ -118,7 +118,6 @@ def _service(
     metadata = terminal_metadata or {
         "terminal-a": {"id": "terminal-a", "agent_id": "agent_a"},
         "terminal-b": {"id": "terminal-b", "agent_id": "agent_b"},
-        "raw-terminal": {"id": "raw-terminal", "agent_id": None},
     }
     return ProviderMediatedToolInvocationService(
         policies={"fake": policy} if policies_enabled else {},
@@ -231,8 +230,6 @@ def test_pre_call_denial_prevents_handler_execution_with_bounded_diagnostics():
     ("terminal_id", "provider_name", "tool_name", "policies_enabled", "reason"),
     (
         ("missing-terminal", "fake", "cao_fake.lookup", True, "unknown_terminal"),
-        ("raw-terminal", "fake", "cao_fake.lookup", True, "unmapped_terminal"),
-        ("raw-terminal", "fake", "cao_fake.missing", True, "unmapped_terminal"),
         ("terminal-b", "fake", "cao_fake.lookup", True, "missing_tool_access"),
         ("terminal-a", "missing", "cao_fake.lookup", True, "unknown_or_unavailable_provider"),
         ("terminal-a", "fake", "cao_fake.missing", True, "unknown_tool"),
@@ -258,6 +255,24 @@ def test_provider_mediated_tools_fail_closed_before_provider_code_runs(
         )
 
     assert exc_info.value.reason == reason
+    assert recorder.events == []
+
+
+def test_provider_mediated_tools_reject_invalid_terminal_agent_metadata():
+    recorder = InvocationRecorder()
+    service = _service(
+        recorder,
+        terminal_metadata={"terminal-invalid": {"id": "terminal-invalid"}},
+    )
+
+    with pytest.raises(KeyError, match="agent_id"):
+        service.invoke(
+            terminal_id="terminal-invalid",
+            provider_name="fake",
+            tool_name="cao_fake.lookup",
+            arguments={"query": "alpha"},
+        )
+
     assert recorder.events == []
 
 

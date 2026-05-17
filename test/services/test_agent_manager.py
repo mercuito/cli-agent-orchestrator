@@ -105,9 +105,7 @@ def test_active_and_inactive_status_derive_from_terminal_rows():
     assert active.last_active_at == last_active
     assert inactive.active is False
     assert inactive.active_terminal_id is None
-    assert [status.agent_id for status in manager.list_statuses(active=True)] == [
-        "agent_a"
-    ]
+    assert [status.agent_id for status in manager.list_statuses(active=True)] == ["agent_a"]
 
 
 def test_orphaned_terminal_references_are_diagnostic_not_valid_agents():
@@ -127,9 +125,7 @@ def test_orphaned_terminal_references_are_diagnostic_not_valid_agents():
         ],
     )
 
-    assert [status.agent_id for status in manager.list_statuses(active=True)] == [
-        "agent_a"
-    ]
+    assert [status.agent_id for status in manager.list_statuses(active=True)] == ["agent_a"]
     orphan = manager.orphaned_terminal_references()[0]
     assert orphan.terminal_id == "terminal-orphan"
     assert orphan.agent_id == "missing"
@@ -148,3 +144,28 @@ def test_terminal_agent_resolution_fails_for_unknown_mapping():
 
     with pytest.raises(AgentConfigError, match="references unknown"):
         manager.agent_for_terminal("terminal-orphan")
+
+
+def test_terminal_rows_without_agent_id_are_invalid():
+    manager = _manager(
+        terminals=[
+            {
+                "id": "terminal-missing",
+                "workspace_context_id": "wctx-missing",
+            },
+            {
+                "id": "terminal-null",
+                "agent_id": None,
+                "workspace_context_id": "wctx-null",
+            },
+        ],
+    )
+
+    with pytest.raises(KeyError, match="agent_id"):
+        manager.agent_for_terminal("terminal-missing")
+
+    with pytest.raises(KeyError, match="agent_id"):
+        manager.orphaned_terminal_references()
+
+    with pytest.raises(AgentConfigError, match="terminal agent_id"):
+        manager.agent_for_terminal("terminal-null")

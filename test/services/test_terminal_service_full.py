@@ -238,6 +238,7 @@ class TestGetTerminal:
             "provider": "kiro_cli",
             "tmux_session": "cao-session",
             "agent_id": "developer",
+            "workspace_context_id": "wctx-developer",
             "last_active": datetime.now(),
         }
         mock_provider = MagicMock()
@@ -248,6 +249,27 @@ class TestGetTerminal:
 
         assert result["id"] == "test1234"
         assert result["status"] == TerminalStatus.IDLE.value
+        assert result["agent_id"] == "developer"
+        assert result["workspace_context_id"] == "wctx-developer"
+
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_get_terminal_requires_agent_ownership(self, mock_get_metadata, mock_provider_manager):
+        """Terminal reads fail for invalid post-cutover ownership metadata."""
+        mock_get_metadata.return_value = {
+            "id": "test1234",
+            "tmux_window": "developer-abcd",
+            "provider": "kiro_cli",
+            "tmux_session": "cao-session",
+            "workspace_context_id": "wctx-developer",
+            "last_active": datetime.now(),
+        }
+        mock_provider = MagicMock()
+        mock_provider.get_status.return_value = TerminalStatus.IDLE
+        mock_provider_manager.get_provider.return_value = mock_provider
+
+        with pytest.raises(KeyError, match="agent_id"):
+            get_terminal("test1234")
 
     @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
     def test_get_terminal_not_found(self, mock_get_metadata):
@@ -267,6 +289,7 @@ class TestGetTerminal:
             "provider": "kiro_cli",
             "tmux_session": "cao-session",
             "agent_id": "developer",
+            "workspace_context_id": "wctx-developer",
             "last_active": datetime.now(),
         }
         mock_provider_manager.get_provider.return_value = None

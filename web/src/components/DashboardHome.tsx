@@ -241,7 +241,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3 min-w-0">
                           <TermIcon size={14} className="text-gray-400 shrink-0" />
-                          <span className="text-sm font-medium text-gray-200 truncate">{t.agent_id || 'default'}</span>
+                          <span className="text-sm font-medium text-gray-200 truncate">{t.agent_id}</span>
                           <span className="text-xs font-mono text-gray-500">{t.id}</span>
                           <StatusBadge status={terminalStatuses[t.id] || null} />
                           <MonitoringIndicator terminalId={t.id} />
@@ -337,7 +337,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
         title="Close Terminal"
         message="This will kill the tmux window and terminate the agent process."
         details={pendingClose ? [
-          { label: 'Terminal', value: `${pendingClose.agent_id || 'default'} (${pendingClose.id})` },
+          { label: 'Terminal', value: `${pendingClose.agent_id} (${pendingClose.id})` },
           { label: 'Session', value: pendingClose.tmux_session },
         ] : []}
         confirmLabel="Close Terminal"
@@ -351,7 +351,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
         title="Graceful Exit"
         message="This will send the provider-specific exit command (e.g., /exit)."
         details={pendingExit ? [
-          { label: 'Terminal', value: `${pendingExit.agent_id || 'default'} (${pendingExit.id})` },
+          { label: 'Terminal', value: `${pendingExit.agent_id} (${pendingExit.id})` },
           { label: 'Provider', value: pendingExit.provider },
         ] : []}
         confirmLabel="Send Exit"

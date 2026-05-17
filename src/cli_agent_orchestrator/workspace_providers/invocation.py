@@ -143,14 +143,9 @@ class ProviderMediatedToolInvocationService:
                 diagnostics={"terminal_id": terminal_id},
             )
 
-        agent_id = metadata.get("agent_id")
+        agent_id = metadata["agent_id"]
         if not isinstance(agent_id, str) or not agent_id.strip():
-            raise ProviderMediatedToolAccessDenied(
-                "Provider-mediated tool call denied: terminal is not agent-managed",
-                reason="unmapped_terminal",
-                diagnostics={"terminal_id": terminal_id},
-            )
-
+            raise RuntimeError(f"Terminal {terminal_id!r} has invalid agent_id metadata")
         normalized_agent_id = agent_id.strip()
         try:
             return self._agent_manager().resolve_agent(normalized_agent_id)
@@ -335,7 +330,9 @@ def _append_display_denial_context(message: str, diagnostics: Mapping[str, Any])
     policy_reason = diagnostics.get("policy_reason")
     parts: list[str] = []
     if display_detail:
-        parts.append(f"Detail: {_bounded_text(str(display_detail), limit=_MAX_DIAGNOSTIC_VALUE_CHARS)}")
+        parts.append(
+            f"Detail: {_bounded_text(str(display_detail), limit=_MAX_DIAGNOSTIC_VALUE_CHARS)}"
+        )
     if policy_reason:
         parts.append(
             f"Policy reason: {_bounded_text(str(policy_reason), limit=_MAX_DIAGNOSTIC_VALUE_CHARS)}"

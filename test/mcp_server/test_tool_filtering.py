@@ -145,13 +145,13 @@ class TestRegisterTools:
 class TestResolveAllowlistForTerminal:
     @patch("cli_agent_orchestrator.mcp_server.server.load_agent")
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_happy_path(self, mock_get, mock_load_profile):
-        """Fetch terminal metadata, load profile, delegate to resolver."""
-        mock_get.return_value.json.return_value = {"agent_id": "some_profile"}
+    def test_happy_path(self, mock_get, mock_load_agent):
+        """Fetch terminal metadata, load the agent, delegate to resolver."""
+        mock_get.return_value.json.return_value = {"agent_id": "some_agent"}
         mock_get.return_value.raise_for_status.return_value = None
 
-        fake_profile = MagicMock()
-        mock_load_profile.return_value = fake_profile
+        fake_agent = MagicMock()
+        mock_load_agent.return_value = fake_agent
 
         with patch(
             "cli_agent_orchestrator.mcp_server.server.resolve_cao_tool_allowlist",
@@ -160,8 +160,8 @@ class TestResolveAllowlistForTerminal:
             result = server._resolve_allowlist_for_terminal("abc123")
 
         assert result == ["send_message"]
-        mock_load_profile.assert_called_once_with("some_profile")
-        mock_resolve.assert_called_once_with(fake_profile)
+        mock_load_agent.assert_called_once_with("some_agent")
+        mock_resolve.assert_called_once_with(fake_agent)
 
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
     def test_api_unreachable_returns_none_permissive(self, mock_get):
@@ -193,13 +193,11 @@ class TestResolveAllowlistForTerminal:
 
     @patch("cli_agent_orchestrator.mcp_server.server.load_agent")
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_unknown_profile_returns_none_permissive(self, mock_get, mock_load_profile):
-        """If the profile can't be loaded (e.g. stale DB row referencing a
-        deleted profile), fall back to permissive rather than leaving the
-        agent with zero tools."""
+    def test_unknown_agent_returns_none_permissive(self, mock_get, mock_load_agent):
+        """If a stale DB row references a deleted agent, fall back to permissive."""
         mock_get.return_value.json.return_value = {"agent_id": "missing"}
         mock_get.return_value.raise_for_status.return_value = None
-        mock_load_profile.side_effect = FileNotFoundError("no such profile")
+        mock_load_agent.side_effect = FileNotFoundError("no such agent")
 
         result = server._resolve_allowlist_for_terminal("abc123")
 
@@ -207,7 +205,7 @@ class TestResolveAllowlistForTerminal:
 
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
     def test_missing_agent_id_field_returns_none(self, mock_get):
-        """Defensive against a malformed API response."""
+        """Malformed API responses fail open but are not a supported terminal shape."""
         mock_get.return_value.json.return_value = {}  # no agent_id key
         mock_get.return_value.raise_for_status.return_value = None
 

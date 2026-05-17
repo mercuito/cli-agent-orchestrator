@@ -170,10 +170,8 @@ def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
         )
         response.raise_for_status()
         metadata = response.json()
-        profile_name = metadata.get("agent_id")
-        if not profile_name:
-            return None
-        agent = load_agent(profile_name)
+        agent_id = metadata["agent_id"]
+        agent = load_agent(agent_id)
         return resolve_cao_tool_allowlist(agent)
     except Exception as e:
         logger.warning(
@@ -306,9 +304,7 @@ def _resolve_child_allowed_tools(
 
     try:
         child_agent = load_agent(child_agent_id)
-        mcp_server_names = (
-            list(child_agent.mcp_servers.keys()) if child_agent.mcp_servers else None
-        )
+        mcp_server_names = list(child_agent.mcp_servers.keys()) if child_agent.mcp_servers else None
         child_allowed = resolve_runtime_capabilities(
             child_agent.runtime_capabilities, mcp_server_names
         )
@@ -335,9 +331,7 @@ def _resolve_child_allowed_tools(
     return ",".join(child_allowed)
 
 
-def _create_terminal(
-    agent_id: str, working_directory: Optional[str] = None
-) -> Tuple[str, str]:
+def _create_terminal(agent_id: str, working_directory: Optional[str] = None) -> Tuple[str, str]:
     """Create a new terminal with the specified agent.
 
     Args:
