@@ -84,11 +84,11 @@ def test_agent_model_rejects_invalid_linear_tool_access_at_construction():
             issues=("CAO-1",),
         )
 
-    with pytest.raises(AgentConfigError, match="issues must be a non-empty tuple"):
+    with pytest.raises(AgentConfigError, match="issues must be a tuple"):
         LinearToolAccessConfig(
-            access_id="empty_issues",
+            access_id="invalid_issues",
             tools=("cao_linear.get_issue",),
-            issues=(),
+            issues=("",),
         )
 
     with pytest.raises(AgentConfigError, match="linear.tool_access must contain"):

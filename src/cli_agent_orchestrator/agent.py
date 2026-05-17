@@ -114,7 +114,7 @@ class LinearToolAccessConfig:
     def __post_init__(self) -> None:
         _safe_path_segment(self.access_id, label="linear.tool_access id")
         _require_non_empty_str_tuple(self.tools, "linear.tool_access.tools")
-        _require_non_empty_str_tuple(self.issues, "linear.tool_access.issues")
+        _require_str_tuple(self.issues, "linear.tool_access.issues")
         _require_str_tuple(self.create_team_ids, "linear.tool_access.create_team_ids")
         _require_str_tuple(self.create_project_ids, "linear.tool_access.create_project_ids")
         _require_str_tuple(self.create_parent_issues, "linear.tool_access.create_parent_issues")

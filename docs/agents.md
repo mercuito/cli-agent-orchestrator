@@ -81,10 +81,14 @@ Tool access policies live below `[linear.tool_access.<access_id>]`.
 Required tool-access fields:
 
 - `tools`: list of `cao_linear.*` tools.
-- `issues`: list of allowed issue identifiers or `"*"`.
 
 Optional tool-access fields:
 
+- `issues`: list of allowed issue identifiers or `"*"`. Required when any
+  configured tool targets an existing issue, such as `cao_linear.get_issue`,
+  `cao_linear.create_comment`, `cao_linear.open_agent_session_on_issue`, or
+  `cao_linear.update_issue`; create-only access can omit it when the create
+  policy fields below authorize the target.
 - `create_team_ids`: Linear team ids allowed for issue creation.
 - `create_project_ids`: Linear project ids allowed for issue creation.
 - `create_parent_issues`: parent issue identifiers allowed for issue creation.
