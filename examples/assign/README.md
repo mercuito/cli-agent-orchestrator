@@ -49,7 +49,7 @@ graph TD
 - **Parallel execution**: 3 Data Analysts run simultaneously
 - **Final assembly**: Supervisor combines results when all Data Analysts complete
 
-## Agent Profiles
+## Agents
 
 Agents that need CAO orchestration must declare both the **cao-mcp-server**
 MCP server and the specific `caoTools` they may call:
@@ -72,7 +72,7 @@ mcpServers:
 ```
 
 The MCP server exposes CAO orchestration tools; `caoTools` chooses which of
-those named MCP tools this profile may use:
+those named MCP tools this agent may use:
 
 ### 1. `handoff` - Sequential/Blocking Pattern
 **When to use:** Need results before continuing
@@ -88,7 +88,7 @@ those named MCP tools this profile may use:
 Use handoff when you need complete results:
 
 handoff(
-  agent_profile="report_generator",
+  agent_id="report_generator",
   message="Create report template with sections: Summary, Analysis, Conclusions"
 )
 
@@ -112,7 +112,7 @@ Use assign for parallel tasks:
 
 2. Assign with callback instructions:
    assign(
-     agent_profile="data_analyst",
+     agent_id="data_analyst",
      message="Analyze dataset [values]. 
               Send results to terminal {my_id} using send_message."
    )
@@ -141,7 +141,7 @@ send_message(
 Message will be delivered to terminal abc12345's inbox.
 ```
 
-## Agent Profile Details
+## Agent Details
 
 ### 1. Analysis Supervisor (`analysis_supervisor.md`)
 - Orchestrates the entire workflow
@@ -168,7 +168,7 @@ Message will be delivered to terminal abc12345's inbox.
 cao-server
 ```
 
-2. Install the agent profiles:
+2. Install the agents:
 ```bash
 cao install examples/assign/analysis_supervisor.md
 cao install examples/assign/data_analyst.md
@@ -177,15 +177,7 @@ cao install examples/assign/report_generator.md
 
 3. Launch the supervisor:
 ```bash
-# Using default provider (kiro_cli)
-cao launch --agents analysis_supervisor
-
-# Or specify a different provider
-cao launch --agents analysis_supervisor --provider claude_code
-cao launch --agents analysis_supervisor --provider codex
-cao launch --agents analysis_supervisor --provider copilot_cli
-cao launch --agents analysis_supervisor --provider gemini_cli
-cao launch --agents analysis_supervisor --provider kimi_cli
+cao agent start analysis_supervisor
 ```
 
 ## Usage
@@ -212,13 +204,13 @@ Needs this for Data Analysts to send results back
 
 ### Step 2: Supervisor Assigns to Data Analysts (Parallel)
 ```
-assign(agent_profile="data_analyst", 
+assign(agent_id="data_analyst",
        message="Analyze Dataset A: [values]. Send to super123.")
 
-assign(agent_profile="data_analyst",
+assign(agent_id="data_analyst",
        message="Analyze Dataset B: [values]. Send to super123.")
 
-assign(agent_profile="data_analyst",
+assign(agent_id="data_analyst",
        message="Analyze Dataset C: [values]. Send to super123.")
 
 All 3 assigns return immediately - Data Analysts work in parallel
@@ -226,7 +218,7 @@ All 3 assigns return immediately - Data Analysts work in parallel
 
 ### Step 3: Supervisor Handoffs to Report Generator
 ```
-handoff(agent_profile="report_generator",
+handoff(agent_id="report_generator",
         message="Create report template...")
 
 Supervisor WAITS for Report Generator to complete
@@ -332,10 +324,10 @@ T=33s:  Present final report
 
 ## E2E Testing
 
-The `data_analyst` and `report_generator` profiles from this directory are used in the E2E test suite to validate assign and handoff flows across all providers (codex, claude_code, kiro_cli, kimi_cli, gemini_cli).
+The `data_analyst` and `report_generator` agents from this directory are used in the E2E test suite to validate assign and handoff flows across all providers (codex, claude_code, kiro_cli, kimi_cli, gemini_cli).
 
 ```bash
-# Install profiles for E2E testing
+# Install agents for E2E testing
 cao install examples/assign/data_analyst.md
 cao install examples/assign/report_generator.md
 

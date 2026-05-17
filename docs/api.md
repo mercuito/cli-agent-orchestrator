@@ -74,7 +74,7 @@ Create a new session with one terminal.
 
 **Parameters:**
 - `provider` (string, required): Provider type ("kiro_cli", "claude_code", "codex", "gemini_cli", "kimi_cli", "copilot_cli", or "q_cli")
-- `agent_profile` (string, required): Agent profile name
+- `agent_id` (string, required): Agent name
 - `session_name` (string, optional): Custom session name
 - `working_directory` (string, optional): Working directory for the agent session
 
@@ -111,7 +111,7 @@ Create an additional terminal in an existing session.
 
 **Parameters:**
 - `provider` (string, required): Provider type
-- `agent_profile` (string, required): Agent profile name
+- `agent_id` (string, required): Agent name
 - `working_directory` (string, optional): Working directory for the terminal
 
 **Response:** Terminal object (201 Created)
@@ -131,7 +131,7 @@ Get terminal details.
   "name": "string",
   "provider": "kiro_cli|claude_code|codex|gemini_cli|kimi_cli|copilot_cli|q_cli",
   "session_name": "string",
-  "agent_profile": "string",
+  "agent_id": "string",
   "status": "idle|processing|completed|waiting_user_answer|error",
   "last_active": "timestamp"
 }

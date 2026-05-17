@@ -34,7 +34,7 @@ This example demonstrates how to use the **Codex CLI provider** for basic AI age
 cao-server
 
 # In another terminal, create a Codex session
-cao launch --agents developer --provider codex
+cao agent start developer
 ```
 
 ### 2. Send Your First Task
@@ -77,30 +77,31 @@ print(resp.json()["output"])
 PY
 ```
 
-## Agent Profiles
+## Agents
 
-Nothing in this example ships its own agent profiles — profiles describe an
+Nothing in this example ships its own agents — agents describe an
 agent identity and its permitted runtime/MCP surfaces, while the provider is a
 runtime choice.
-Use the built-in profiles CAO ships with and select `--provider codex` at
-launch time:
+Use agents configured with `cli_provider = "codex"`:
 
-| Profile | Purpose |
+| Agent | Purpose |
 |---|---|
 | `developer` | General programming and development tasks |
 | `reviewer` | Code review, security analysis, best practices |
 | `code_supervisor` | Orchestrates developer + reviewer via `assign`/`handoff` |
 
-If you want a specialized variant (e.g., a "documenter" agent), author your own
-profile with `cao install ./my-profile.md` and pick any provider at launch.
+If you want a specialized variant (e.g., a "documenter" agent), create or
+install a durable agent and set its `cli_provider` to `codex`.
 
 ## Setup
 
-When using the `codex` provider with `--agents`, CAO loads the specified agent profile and injects its system prompt into Codex as `developer_instructions`. This means Codex adopts the identity and instructions defined in the agent profile.
+When using the `codex` provider, CAO loads the specified agent and injects its
+prompt into Codex as `developer_instructions`. This means Codex adopts the
+identity and instructions defined in the agent.
 
-Agent profiles are loaded from:
-1. Local store: `~/.aws/cli-agent-orchestrator/agent_store/<name>.md`
-2. Built-in store: `src/cli_agent_orchestrator/agent_store/<name>.md`
+Agents are loaded from:
+1. Local store: `~/.aws/cli-agent-orchestrator/agents/<id>/agent.toml`
+2. Prompt file: `~/.aws/cli-agent-orchestrator/agents/<id>/prompt.md`
 
 ## Usage Examples
 
@@ -108,7 +109,7 @@ Agent profiles are loaded from:
 
 ```bash
 # Launch a Codex developer
-cao launch --agents developer --provider codex
+cao agent start developer
 
 # In the agent terminal:
 "Write a Python function that:
@@ -129,7 +130,7 @@ Include proper error handling and docstring."
 
 ```bash
 # Launch a Codex reviewer
-cao launch --agents reviewer --provider codex
+cao agent start reviewer
 ```
 
 Paste this prompt into the Codex CLI:
@@ -154,7 +155,7 @@ Focus on:
 
 ```bash
 # Launch a Codex documenter
-cao launch --agents developer --provider codex
+cao agent start developer
 
 # Request documentation:
 "Create comprehensive README documentation for a Python package that:
@@ -213,7 +214,7 @@ def validate_email(email):
 
 ```bash
 # Launch developer
-cao launch --agents developer --provider codex
+cao agent start developer
 
 # Multi-step task:
 "1. First, write a Python class for User with fields: id, name, email, created_at
@@ -227,7 +228,7 @@ Proceed step by step and show me each part."
 
 ```bash
 # Launch reviewer then developer
-cao launch --agents reviewer --provider codex
+cao agent start reviewer
 ```
 
 Paste this prompt into the Codex CLI:
@@ -288,7 +289,7 @@ After mastering the basics, explore:
 
 - **Multi-Agent Patterns**: See `examples/assign/` for step-by-step patterns you can adapt to Codex
 - **Workflow Integration**: Combine with other providers
-- **Custom Agent Profiles**: Create specialized Codex agents
+- **Custom Agents**: Create specialized Codex agents
 - **MCP Integration**: Use Codex agents in MCP workflows
 
 ## Support

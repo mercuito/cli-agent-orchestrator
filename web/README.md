@@ -27,7 +27,7 @@ A single-page dashboard for managing CLI Agent Orchestrator sessions, agents, fl
 │              cao-server (:9889)                       │
 │  REST API: /sessions, /terminals, /agents, /flows    │
 │  WebSocket: /terminals/{id}/ws (live PTY)            │
-│  Settings: /settings/agent-dirs                      │
+│  Settings: provider runtime settings                 │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -63,11 +63,11 @@ In development mode, Vite proxies API requests (`/sessions`, `/terminals`, `/age
 
 ### Home (`DashboardHome.tsx`)
 
-The main dashboard showing all active sessions with their terminals. Provides session creation (provider + agent profile selection), session deletion, and real-time terminal status via polling. Clicking a terminal opens it in the Terminal View.
+The main dashboard showing all active sessions with their terminals. Provides session creation (provider + agent selection), session deletion, and real-time terminal status via polling. Clicking a terminal opens it in the Terminal View.
 
 ### Agents (`AgentPanel.tsx`)
 
-Lists all discovered agent profiles from all configured directories (built-in, local store, provider-specific, custom). Shows profile name, description, and source label. Supports launching agents directly with provider and working directory selection.
+Lists durable CAO agents from `~/.aws/cli-agent-orchestrator/agents/`. The right panel shows the selected agent's `agent.toml`, current runtime status, and edit controls backed by the `/agents` API. The spawn modal starts an existing agent or creates a new durable agent before start.
 
 ### Flows (`FlowsPanel.tsx`)
 
@@ -75,17 +75,7 @@ Manages scheduled agent sessions (cron-based). Lists all flows with schedule, ne
 
 ### Settings (`SettingsPanel.tsx`)
 
-Configures agent profile directories per provider. Reads and writes to `~/.aws/cli-agent-orchestrator/settings.json` via the `/settings/agent-dirs` API endpoint. Default directories:
-
-| Provider | Default Directory |
-|----------|------------------|
-| Kiro CLI | `~/.kiro/agents` |
-| Q CLI | `~/.aws/amazonq/cli-agents` |
-| Claude Code | `~/.aws/cli-agent-orchestrator/agent-store` |
-| Codex | `~/.aws/cli-agent-orchestrator/agent-store` |
-| CAO Installed | `~/.aws/cli-agent-orchestrator/agent-context` |
-
-Users can also add extra custom directories that are scanned for agent profiles.
+Configures provider runtime behavior stored in `~/.aws/cli-agent-orchestrator/settings.json`, such as provider-specific paste handling. Durable agents are managed through the Agents page and `/agents` API.
 
 For details on the settings service backend, see [docs/settings.md](../docs/settings.md).
 

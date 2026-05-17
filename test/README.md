@@ -119,7 +119,7 @@ test/
 │   ├── test_session_service.py
 │   └── test_terminal_service_full.py
 └── utils/                    # Utility tests
-    ├── test_agent_profiles.py
+    ├── test_agent_ids.py
     ├── test_logging.py
     ├── test_template.py
     └── test_terminal.py
@@ -138,7 +138,7 @@ The project aims for >90% test coverage for core modules.
 - `models/` - All Pydantic models
 - `providers/` - All provider implementations (claude_code, codex, gemini_cli, kiro_cli, q_cli)
 - `services/inbox_service.py`, `services/session_service.py` - Core services
-- `utils/` - All utility modules (agent_profiles, logging, template, terminal)
+- `utils/` - All utility modules (agent_ids, logging, template, terminal)
 
 **Modules at 90%+ Coverage:**
 - `cli/main.py` (93%) - Main CLI entry point

@@ -107,7 +107,7 @@ Before using CAO, install at least one supported CLI agent tool:
 
 ## Quick Start
 
-### 1. Install Agent Profiles
+### 1. Install Agents
 
 Install the supervisor agent (the orchestrator that delegates to other agents):
 
@@ -129,7 +129,7 @@ cao install ./my-custom-agent.md
 cao install https://example.com/agents/custom-agent.md
 ```
 
-For details on creating custom agent profiles, see [docs/agent-profile.md](docs/agent-profile.md).
+For details on creating custom agents, see [docs/agents.md](docs/agents.md).
 
 ### 2. Start the Server
 
@@ -137,22 +137,12 @@ For details on creating custom agent profiles, see [docs/agent-profile.md](docs/
 cao-server
 ```
 
-### 3. Launch the Supervisor
+### 3. Start the Supervisor
 
-In another terminal, launch the supervisor agent:
+In another terminal, start the supervisor agent:
 
 ```bash
-cao launch --agents code_supervisor
-
-# Or specify a provider
-cao launch --agents code_supervisor --provider kiro_cli
-cao launch --agents code_supervisor --provider claude_code
-cao launch --agents code_supervisor --provider codex
-cao launch --agents code_supervisor --provider gemini_cli
-cao launch --agents code_supervisor --provider kimi_cli
-cao launch --agents code_supervisor --provider copilot_cli
-# Unrestricted access + skip confirmation (DANGEROUS)
-cao launch --agents code_supervisor --yolo
+cao agent start code_supervisor
 ```
 
 The supervisor will coordinate and delegate tasks to worker agents (developer, reviewer, etc.) as needed using the orchestration patterns.
@@ -293,7 +283,7 @@ When an agent calls an MCP tool, the server identifies the caller by their `CAO_
 
 When `handoff`/`assign` spawns a worker terminal, CAO determines which provider to use:
 
-1. If the agent profile frontmatter sets `provider: ...`, that provider is used.
+1. If the agent frontmatter sets `provider: ...`, that provider is used.
 2. Otherwise, if `CAO_TERMINAL_ID` is set (tool called from inside a CAO terminal), the worker inherits the caller's provider.
 3. Otherwise, CAO uses `DEFAULT_PROVIDER`.
 
@@ -305,7 +295,7 @@ CAO supports three orchestration patterns:
 
 **1. Handoff** - Transfer control to another agent and wait for completion
 
-- Creates a new terminal with the specified agent profile
+- Creates a new terminal with the specified agent
 - Sends the task message and waits for the agent to finish
 - Returns the agent's output to the caller
 - Automatically exits the agent after completion
@@ -317,7 +307,7 @@ Example: Sequential code review workflow
 
 **2. Assign** - Spawn an agent to work independently (async)
 
-- Creates a new terminal with the specified agent profile
+- Creates a new terminal with the specified agent
 - Sends the task message with callback instructions
 - Returns immediately with the terminal ID
 - Agent continues working in the background
@@ -345,7 +335,7 @@ Example: Multi-role feature development
 
 ### Custom Orchestration
 
-The `cao-server` runs on `http://localhost:9889` by default and exposes REST APIs for session management, terminal control, and messaging. The CLI commands (`cao launch`, `cao shutdown`) and MCP server tools (`handoff`, `assign`, `send_message`) are just examples of how these APIs can be packaged together.
+The `cao-server` runs on `http://localhost:9889` by default and exposes REST APIs for session management, terminal control, and messaging. The CLI commands (`cao agent start`, `cao shutdown`) and MCP server tools (`handoff`, `assign`, `send_message`) are just examples of how these APIs can be packaged together.
 
 You can combine the three orchestration modes above into custom workflows, or create entirely new orchestration patterns using the underlying APIs to fit your specific needs.
 
@@ -357,7 +347,7 @@ Flows allow you to schedule agent sessions to run automatically based on cron ex
 
 ### Prerequisites
 
-Install the agent profile you want to use:
+Install the agent you want to use:
 
 ```bash
 cao install developer
@@ -400,7 +390,7 @@ A flow that runs at regular intervals with a static prompt (no script needed):
 ---
 name: daily-standup
 schedule: "0 9 * * 1-5"  # 9am weekdays
-agent_profile: developer
+agent_id: developer
 provider: kiro_cli  # Optional, defaults to kiro_cli
 ---
 
@@ -417,7 +407,7 @@ A flow that monitors a service and only executes when there's an issue:
 ---
 name: monitor-service
 schedule: "*/5 * * * *"  # Every 5 minutes
-agent_profile: developer
+agent_id: developer
 script: ./health-check.sh
 ---
 
@@ -478,27 +468,23 @@ For configuration and usage details, see [docs/working-directory.md](docs/workin
 
 ## Cross-Provider Orchestration
 
-By default, worker agents inherit the provider of the terminal that spawned them. To run specific agents on different providers, add a `provider` key to the agent profile frontmatter:
+Each durable agent declares its provider in `agent.toml`. To run specific agents on different providers, edit the agent config:
 
-```markdown
----
-name: developer
-description: Developer Agent
-provider: claude_code
----
+```toml
+id = "developer"
+display_name = "Developer"
+cli_provider = "claude_code"
 ```
 
 Valid values: `kiro_cli`, `claude_code`, `codex`, `q_cli`, `gemini_cli`, `kimi_cli`, `copilot_cli`.
 
-When a supervisor calls `assign` or `handoff`, CAO reads the worker's agent profile and uses the declared provider if present. If the key is missing or invalid, the worker falls back to the supervisor's provider.
-
-The `cao launch --provider` flag always takes precedence — it is treated as an explicit override and the profile's `provider` key is not consulted for the initial session.
+When a supervisor calls `assign` or `handoff`, CAO reads the worker's durable agent config and uses the declared provider.
 
 For ready-to-use examples, see [`examples/cross-provider/`](examples/cross-provider/).
 
 ## Tool Restrictions
 
-CAO controls what tools each agent can use through `role` in the agent profile. Built-in roles (`supervisor`, `developer`, `reviewer`) map to sensible defaults, and `allowedTools` provides fine-grained override when needed. CAO translates restrictions to each provider's native enforcement mechanism — 5 of 7 providers support hard enforcement.
+CAO controls what tools each agent can use through `role` in the agent. Built-in roles (`supervisor`, `developer`, `reviewer`) map to sensible defaults, and `allowedTools` provides fine-grained override when needed. CAO translates restrictions to each provider's native enforcement mechanism — 5 of 7 providers support hard enforcement.
 
 ```yaml
 ---
@@ -508,12 +494,12 @@ role: supervisor  # @cao-mcp-server, fs_read, fs_list
 ```
 
 ```bash
-cao launch --agents code_supervisor                  # Uses role defaults (confirmation prompt shown)
-cao launch --agents code_supervisor --auto-approve   # Skip prompt (restrictions still enforced)
-cao launch --agents code_supervisor --yolo           # Unrestricted access (WARNING shown)
+cao agent start code_supervisor
+cao agent show code_supervisor
+cao agent edit code_supervisor
 ```
 
-For the full reference — roles, tool vocabulary, custom roles, launch prompts, provider enforcement, and known limitations — see [docs/tool-restrictions.md](docs/tool-restrictions.md).
+For the full reference — roles, tool vocabulary, custom roles, provider enforcement, and known limitations — see [docs/tool-restrictions.md](docs/tool-restrictions.md).
 
 ## Skills
 

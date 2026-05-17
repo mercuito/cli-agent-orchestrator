@@ -1,7 +1,7 @@
 # Tool Restrictions
 
 CAO has more than one thing people casually call "tools." Keep these surfaces
-separate when writing profiles or provider integrations.
+separate when writing agents or provider integrations.
 
 ## Surfaces
 
@@ -12,7 +12,7 @@ separate when writing profiles or provider integrations.
 | Provider-mediated MCP tools | Provider config, such as Linear tool access config | Named tools supplied by a workspace provider and mediated through CAO. |
 | External provider schema fields | Provider-specific config, such as Q/Kiro `allowedTools` | Fields CAO writes for an external CLI provider. These names are not CAO profile vocabulary. |
 
-`role` is not a profile access-control field. Profiles should express their
+`role` is not a profile access-control field. Agents should express their
 identity in their name, prompt, skills, tags, and explicit access fields.
 
 ## Runtime Capabilities
@@ -42,7 +42,7 @@ Current runtime capability vocabulary:
 If `runtimeCapabilities` is omitted, CAO defaults to developer-like native
 access: `@builtin`, `fs_*`, and `execute_bash`.
 
-Profiles do not support `allowedTools`. Use `runtimeCapabilities` for
+Agents do not support `allowedTools`. Use `runtimeCapabilities` for
 provider-native access and `caoTools` for named CAO MCP tools.
 
 ## CAO MCP Tools
@@ -61,8 +61,8 @@ caoTools:
 ```
 
 `caoTools: []` explicitly denies all CAO MCP tools. `caoTools` omitted means no
-profile-specific CAO MCP allowlist is configured; the current server startup path
-falls open for older profiles. Prefer explicit `caoTools` on new profiles.
+agent-specific CAO MCP allowlist is configured. Prefer explicit `caoTools` on
+new agents.
 
 Provider-mediated MCP tools, such as Linear tools, are not listed in `caoTools`.
 They are configured through the owning provider's access policy because the
@@ -70,22 +70,15 @@ provider owns that tool vocabulary.
 
 ## Launch Overrides
 
-Use `--runtime-capability` to override profile runtime capabilities at launch:
+Configure runtime capabilities in `agent.toml` before launch:
 
 ```bash
-cao launch --agents reviewer \
-  --runtime-capability fs_read \
-  --runtime-capability fs_list
+cao agent edit reviewer
+cao agent start reviewer
 ```
 
-`--auto-approve` only skips the confirmation prompt. It does not change access.
-
-`--yolo` sets unrestricted runtime access (`["*"]`) and skips the confirmation
-prompt:
-
-```bash
-cao launch --agents developer --yolo
-```
+Provider-specific approval behavior is configured by each provider and the
+agent's runtime capability settings.
 
 ## Confirmation Prompt
 
@@ -125,9 +118,9 @@ rely on soft enforcement for security-critical workloads.
 ## Delegation
 
 When one agent creates another terminal through CAO, the child terminal resolves
-runtime capabilities from the child profile. The parent's access does not become
+runtime capabilities from the child agent. The parent's access does not become
 the child's access. The parent remains responsible for delegating to an
-appropriate profile.
+appropriate agent.
 
 ## Quick Reference
 
@@ -136,9 +129,9 @@ appropriate profile.
 | Limit native filesystem/shell access | Set `runtimeCapabilities`. |
 | Allow or deny CAO orchestration/inbox tools | Set `caoTools`. |
 | Configure Linear or another workspace provider's MCP tools | Use that provider's access config. |
-| Override runtime access at launch | Use `--runtime-capability`. |
-| Skip confirmation in scripts/automation | Use `--auto-approve`. |
-| Remove native runtime restrictions | Use `--yolo`. |
+| Change runtime access | Edit `runtimeCapabilities` in `agent.toml`. |
+| Skip provider-specific confirmations | Configure the provider-specific approval setting. |
+| Remove native runtime restrictions | Set unrestricted runtime capabilities in `agent.toml`. |
 
 ## Known Limitations
 
