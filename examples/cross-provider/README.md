@@ -1,8 +1,8 @@
 # Cross-Provider Examples
 
 Agents that demonstrate cross-provider workflows where a supervisor on one
-provider delegates to workers on different providers via the `provider` key in
-their frontmatter.
+provider delegates to workers on different providers via each worker's
+`cli_provider` field in `agent.toml`.
 
 ## How It Works
 

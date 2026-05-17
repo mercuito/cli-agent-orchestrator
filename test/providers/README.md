@@ -43,7 +43,7 @@ test/providers/
    - Successful initialization
    - Shell timeout handling
    - Q CLI timeout handling
-   - Different agent profiles
+   - Different agent ids
 
 2. **Status Detection (7 tests)**
    - IDLE status
@@ -96,7 +96,7 @@ test/providers/
    - Simple query execution
    - Status detection
    - Exit command
-   - Different agent profiles
+   - Different agent ids
 
 2. **Handoff Scenarios (2 tests)**
    - Status transitions during handoff
@@ -355,8 +355,8 @@ uv run pytest test/providers/test_q_cli_unit.py::TestQCliProviderHandoffScenario
    - Successful initialization (with `wait_for_shell` assertion)
    - Shell timeout handling
    - Claude Code timeout handling
-   - Initialization with agent profile
-   - Invalid agent profile error handling
+   - Initialization with agent id
+   - Invalid agent id error handling
    - MCP server configuration
    - Command verification (`claude` sent to tmux)
 
@@ -416,16 +416,16 @@ uv run pytest test/providers/test_claude_code_unit.py::TestClaudeCodeProviderIni
    - Codex timeout handling
 
 2. **Command Building (10 tests)**
-   - Base command without agent profile
-   - Command with agent profile (developer_instructions injection)
+   - Base command without agent id
+   - Command with agent id (developer_instructions injection)
    - Double quote escaping in system prompts
    - Newline escaping for TOML/tmux compatibility
    - MCP server config injection via `-c mcp_servers.<name>.<field>`
    - MCP server with environment variables
    - Empty system prompt handling
    - None system prompt handling
-   - Agent profile load failure (ProviderError)
-   - Initialize with agent profile end-to-end
+   - Agent load failure (ProviderError)
+   - Initialize with agent id end-to-end
 
 3. **Status Detection — Label Format (14 tests)**
    - IDLE, COMPLETED, PROCESSING, WAITING_USER_ANSWER, ERROR states
@@ -489,11 +489,11 @@ uv run pytest test/providers/test_codex_provider_unit.py::TestCodexBuildCommand 
    - Successful initialization (GEMINI.md system prompt injection, `-i` flag)
    - Shell timeout handling
    - Gemini CLI timeout handling
-   - Initialization with agent profile
+   - Initialization with agent id
 
 2. **Command Building (8 tests)**
-   - Base command without agent profile
-   - Command with agent profile (GEMINI.md injection)
+   - Base command without agent id
+   - Command with agent id (GEMINI.md injection)
    - MCP server configuration (`~/.gemini/settings.json`)
    - MCP server with environment variables
    - Empty/None system prompt handling

@@ -79,7 +79,7 @@ class TestClaudeCodeProviderInitialization:
     def test_initialize_with_agent_id(
         self, mock_tmux, mock_wait_status, mock_wait_shell, mock_load, _
     ):
-        """Test initialization with agent profile."""
+        """Test initialization with agent id."""
         mock_wait_shell.return_value = True
         mock_wait_status.return_value = True
         mock_tmux.get_history.return_value = "Welcome to Claude Code v2.0"

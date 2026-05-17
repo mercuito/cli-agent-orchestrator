@@ -79,7 +79,7 @@ def provider(mock_tmux):
         terminal_id="test-123",
         session_name="test-session",
         window_name="test-window",
-        agent_profile="developer",
+        agent_id="developer",
     )
 
 

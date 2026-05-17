@@ -1,14 +1,14 @@
 """E2E tests for cross-provider orchestration (PR #101).
 
-Verifies that agents with a ``provider`` key in their frontmatter
-cause CAO to launch the worker on the declared provider, even when the
-session was started on a different provider.
+Verifies that agents with ``cli_provider`` in their durable ``agent.toml``
+cause CAO to launch the worker on the declared provider, even when the session
+was started on a different provider.
 
 Flow:
 1. Create a session on provider A (the "supervisor" provider).
-2. Add a terminal via ``POST /sessions/{session}/terminals`` using an
-   agent that declares ``provider: B`` in its frontmatter.
-3. ``resolve_provider()`` reads the profile and overrides the fallback.
+2. Add a terminal via ``POST /sessions/{session}/terminals`` using an agent
+   that declares ``cli_provider = "B"`` in ``agent.toml``.
+3. CAO reads the durable agent config and overrides the fallback.
 4. Verify the new terminal reports ``provider == B``.
 5. Send a data-analysis task and confirm COMPLETED + valid output.
 

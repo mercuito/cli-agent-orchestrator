@@ -82,7 +82,7 @@ from cli_agent_orchestrator.providers.new_cli import NewCliProvider
 # In create_provider():
 elif provider_type == ProviderType.NEW_CLI.value:
     provider = NewCliProvider(
-        terminal_id, tmux_session, tmux_window, agent_profile, allowed_tools
+        terminal_id, tmux_session, tmux_window, agent, allowed_tools
     )
 ```
 
@@ -99,7 +99,7 @@ There are three approaches depending on the CLI's capabilities. Read `docs/tool-
 
 **Hard enforcement via CLI flags** (e.g., Claude Code, Copilot CLI): Add the provider to `TOOL_MAPPING` in `src/cli_agent_orchestrator/utils/tool_mapping.py` to translate CAO vocabulary to native tool names.
 
-**Hard enforcement via agent JSON** (e.g., Kiro CLI, Q CLI): The CLI reads `allowedTools` from the agent profile. No `TOOL_MAPPING` entry needed — CAO passes vocabulary directly.
+**Hard enforcement via provider-native config** (e.g., Kiro CLI, Q CLI): CAO derives the provider policy from durable `agent.toml` fields such as `runtime_capabilities`. No legacy profile or install path should be introduced.
 
 **Soft enforcement via system prompt** (e.g., Kimi CLI, Codex): No native restriction mechanism. CAO prepends restriction instructions to the system prompt. No `TOOL_MAPPING` entry needed.
 
@@ -115,7 +115,7 @@ File: `test/providers/test_new_cli_unit.py`
 
 Read `references/test-guide.md` for the full test structure. Minimum coverage:
 
-1. **Initialization** — successful start, shell timeout, CLI timeout, agent profiles
+1. **Initialization** — successful start, shell timeout, CLI timeout, durable agents
 2. **Status detection** — IDLE, PROCESSING, COMPLETED, WAITING_USER_ANSWER, ERROR, empty output
 3. **Message extraction** — successful extraction, edge cases, error handling
 4. **Regex patterns** — verify each pattern matches expected terminal output
@@ -129,12 +129,15 @@ Add test classes to existing e2e test files and a fixture in `test/e2e/conftest.
 
 ### Step 9: Validate with assign + handoff orchestration
 
-This is the canonical multi-agent e2e test. It exercises assign (non-blocking), handoff (blocking), send_message (async inbox), and status detection under concurrent load. Use the `examples/assign/` profiles:
+This is the canonical multi-agent e2e test. It exercises assign (non-blocking), handoff (blocking), send_message (async inbox), and status detection under concurrent load. Create durable agents from the `examples/assign/` prompts:
 
 ```bash
-cao install examples/assign/data_analyst.md
-cao install examples/assign/report_generator.md
-cao install examples/assign/analysis_supervisor.md
+cao agent create data_analyst --provider codex --workdir "$PWD"
+cp examples/assign/data_analyst.md ~/.aws/cli-agent-orchestrator/agents/data_analyst/prompt.md
+cao agent create report_generator --provider codex --workdir "$PWD"
+cp examples/assign/report_generator.md ~/.aws/cli-agent-orchestrator/agents/report_generator/prompt.md
+cao agent create analysis_supervisor --provider codex --workdir "$PWD"
+cp examples/assign/analysis_supervisor.md ~/.aws/cli-agent-orchestrator/agents/analysis_supervisor/prompt.md
 cao agent edit analysis_supervisor
 cao agent start analysis_supervisor
 ```
@@ -151,7 +154,7 @@ See `test/e2e/test_assign.py` for the automated version. Reference: https://gith
 
 ### Step 10: Documentation
 
-Create `docs/new-cli.md` with prerequisites, launch examples, agent profile format, known limitations, and troubleshooting. Update `README.md` provider table and `CHANGELOG.md`.
+Create `docs/new-cli.md` with prerequisites, launch examples, durable `agent.toml` fields, known limitations, and troubleshooting. Update `README.md` provider table and `CHANGELOG.md`.
 
 ## File Checklist
 

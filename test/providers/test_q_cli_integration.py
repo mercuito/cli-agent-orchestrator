@@ -239,7 +239,7 @@ class TestQCliProviderIntegration:
     def test_real_q_chat_with_different_profile(
         self, ensure_test_agent, test_session_name, cleanup_session
     ):
-        """Test Q CLI with a different agent profile if available."""
+        """Test Q CLI with a different agent id if available."""
         # Create a test tmux session
         terminal_id = "test1234"
         window_name = "window-0"

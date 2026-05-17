@@ -11,9 +11,9 @@ import time
 from typing import Optional
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ ANSI_CODE_PATTERN = r"\x1b\[[0-9;]*m"
 # What the idle prompt looks like when the CLI is waiting for user input.
 # Examples from existing providers:
 #   Claude Code: r"[>❯][\s\xa0]"
-#   Kiro CLI:    r"\[{agent_profile}\]\s*(?:\d+%\s*)?>"
+#   Kiro CLI:    r"\[{agent_id}\]\s*(?:\d+%\s*)?>"
 #   Codex:       r"❯\s"
 IDLE_PROMPT_PATTERN = r"YOUR_IDLE_PATTERN_HERE"
 
@@ -69,12 +69,12 @@ class NewCliProvider(BaseProvider):
         terminal_id: str,
         session_name: str,
         window_name: str,
-        agent_profile: Optional[str] = None,
+        agent_id: Optional[str] = None,
         allowed_tools: Optional[list] = None,
     ):
         super().__init__(terminal_id, session_name, window_name, allowed_tools)
         self._initialized = False
-        self._agent_profile = agent_profile
+        self._agent_id = agent_id
 
     # ----- Optional property overrides -----
 
@@ -91,30 +91,30 @@ class NewCliProvider(BaseProvider):
     # ----- Build launch command -----
 
     def _build_command(self) -> str:
-        """Build the CLI launch command with agent profile and MCP config.
+        """Build the CLI launch command with durable agent config.
         
-        Loads the agent profile to get system prompt and MCP server config,
-        then constructs the full command string.
+        Loads the durable agent to get prompt and MCP server config, then
+        constructs the full command string.
         """
         command_parts = ["new-cli"]  # Base command
 
-        if self._agent_profile is not None:
+        if self._agent_id is not None:
             try:
-                profile = load_agent_profile(self._agent_profile)
+                agent = load_agent(self._agent_id)
 
                 # Add system prompt if present
-                if profile.system_prompt:
-                    command_parts.extend(["--system-prompt", profile.system_prompt])
+                if agent.prompt:
+                    command_parts.extend(["--system-prompt", agent.prompt])
 
                 # Add MCP config if present
                 # Inject CAO_TERMINAL_ID so MCP servers can identify this terminal
-                if profile.mcpServers:
+                if agent.mcp_servers:
                     # Build MCP config dict, injecting CAO_TERMINAL_ID
                     pass  # Implementation depends on CLI's MCP config format
 
             except Exception as e:
                 raise ProviderError(
-                    f"Failed to load agent profile '{self._agent_profile}': {e}"
+                    f"Failed to load agent '{self._agent_id}': {e}"
                 )
 
         # Apply tool restrictions if the CLI supports native enforcement

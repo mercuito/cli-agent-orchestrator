@@ -93,7 +93,7 @@ class TestKiroCliProviderInitialization:
         )
 
     def test_initialization_with_different_agents(self):
-        """Test initialization with various agent profile names."""
+        """Test initialization with various agent ids."""
         test_profiles = ["developer", "code-reviewer", "test_agent", "agent123"]
 
         for profile in test_profiles:
@@ -668,7 +668,7 @@ class TestKiroCliProviderEdgeCases:
 
     @patch("cli_agent_orchestrator.providers.kiro_cli.tmux_client")
     def test_long_agent_id_name(self, mock_tmux):
-        """Test with very long agent profile name."""
+        """Test with very long agent id."""
         long_profile = "very_long_agent_id_name_that_exceeds_normal_length"
         mock_tmux.get_history.return_value = f"\x1b[36m[{long_profile}]\x1b[35m>\x1b[39m "
 

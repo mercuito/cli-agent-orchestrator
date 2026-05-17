@@ -2,7 +2,7 @@
 
 Hard-won lessons from building and maintaining 7 CAO providers. Read this before implementing a new provider.
 
-**Essential reading:** Review `docs/tool-restrictions.md` for the full tool restriction architecture (two-layer system, resolution hierarchy, per-provider enforcement, cross-provider inheritance, known limitations). That doc is the source of truth for how role, allowedTools, and enforcement work end-to-end.
+**Essential reading:** Review `docs/tool-restrictions.md` for the full tool restriction architecture (two-layer system, resolution hierarchy, per-provider enforcement, cross-provider inheritance, known limitations). That doc is the source of truth for how `runtime_capabilities`, `cao_tools`, and enforcement work end-to-end.
 
 ## 1. Stale Buffer Matching (Critical)
 
@@ -42,16 +42,16 @@ if not has_idle_prompt and not has_new_tui_idle:
     return TerminalStatus.PROCESSING
 ```
 
-## 4. Exception Wrapping in load_agent_profile()
+## 4. Exception Wrapping in Agent Loading
 
-**Problem:** `load_agent_profile()` was wrapping `FileNotFoundError` as `RuntimeError`. Callers like `resolve_provider()` only caught `FileNotFoundError`, so JSON-only agent profiles (AIM-installed) caused assign() to fail.
+**Problem:** Agent loading helpers that wrap `FileNotFoundError` as `RuntimeError` make callers treat a missing durable agent like an unexpected provider failure.
 
 **Fix:** Re-raise `FileNotFoundError` directly, don't wrap it:
 ```python
 except FileNotFoundError:
     raise  # Let callers handle this specifically
 except Exception as e:
-    raise RuntimeError(f"Failed to load profile: {e}")
+    raise RuntimeError(f"Failed to load agent: {e}")
 ```
 
 ## 5. ANSI Codes Everywhere
@@ -70,7 +70,7 @@ clean_output = re.sub(ANSI_CODE_PATTERN, "", output)
 
 **Fix:** Only add `TOOL_MAPPING` entries for providers whose native tool names differ from CAO's vocabulary:
 - **Need TOOL_MAPPING:** Claude Code (`execute_bash` → `Bash`), Copilot CLI (`execute_bash` → `shell`), Gemini CLI
-- **Don't need TOOL_MAPPING:** Kiro CLI, Q CLI (accept `allowedTools` in agent JSON), Kimi CLI, Codex (system prompt enforcement)
+- **Don't need TOOL_MAPPING:** Kiro CLI, Q CLI (accept provider-native policy config), Kimi CLI, Codex (system prompt enforcement)
 
 ## 7. Workspace Confirmation Belongs to Agent Runtime
 
@@ -113,20 +113,18 @@ unset_cmd = (
 )
 ```
 
-## 11. Role → allowedTools Resolution Chain
+## 11. Runtime Capability Resolution Chain
 
-**Problem:** New providers skip tool restriction wiring because the resolution path is non-obvious. The `role` field in agent profiles is not just a label — it drives the default `allowedTools` bundle, which in turn determines what native tools get blocked.
+**Problem:** New providers skip tool restriction wiring because the resolution path is non-obvious. Durable agents declare `runtime_capabilities`, which determine what native tools get blocked or allowed.
 
 **Resolution chain:**
-1. Explicit `allowedTools` in profile or `--allowed-tools` CLI flag (highest priority)
-2. Role-based defaults from `constants.py` (`supervisor` → `["@cao-mcp-server", "fs_read", "fs_list"]`, `developer` → `["@builtin", "fs_*", "execute_bash", "@cao-mcp-server"]`, `reviewer` → `["@builtin", "fs_read", "fs_list", "@cao-mcp-server"]`)
-3. Custom roles from `settings.json` (user-defined bundles)
-4. Fallback: unrestricted `["*"]` (backward compatible)
-5. MCP server names appended as `@server_name`
+1. Explicit `runtime_capabilities` in `agent.toml`
+2. Developer-like defaults from `constants.py` when no explicit list is set
+3. MCP server names appended as `@server_name`
 
 **Fix:** When building your provider's `_build_command()`, always check `self._allowed_tools` and apply restrictions. The resolution is already done by the time your provider receives the list — you just need to enforce it via CLI flags, agent JSON, or system prompt.
 
-## 12. Child allowedTools=["*"] Must Override Parent Restrictions
+## 12. Child Runtime Capabilities Must Override Parent Restrictions
 
 **Problem:** When a supervisor (restricted to `@cao-mcp-server,fs_read,fs_list`) assigns work to a developer (unrestricted `["*"]`), the developer was inheriting the supervisor's restrictions. This happened because `_resolve_child_allowed_tools()` treated `["*"]` the same as `None` (no opinion).
 
@@ -144,7 +142,7 @@ When writing handoff/assign logic, never flatten `["*"]` to `None` before passin
 
 **The three approaches:**
 - **Hard via CLI flags** (Claude Code `--disallowedTools`, Copilot CLI `--deny-tool`): Add provider to `TOOL_MAPPING` in `tool_mapping.py` to translate CAO vocabulary → native tool names. `get_disallowed_tools()` computes which native tools to block.
-- **Hard via agent JSON** (Kiro CLI, Q CLI): The CLI reads `allowedTools` from the agent profile at install time. No `TOOL_MAPPING` entry needed — pass CAO vocabulary directly.
+- **Hard via provider-native config** (Kiro CLI, Q CLI): CAO derives provider policy from durable `agent.toml` runtime capability settings. No legacy profile/install path should be introduced.
 - **Soft via system prompt** (Kimi CLI, Codex): No native restriction mechanism. CAO prepends `SECURITY_PROMPT` from `constants.py` to the system prompt. This is advisory only — the CLI can still use any tool.
 
 **Limitation:** Soft enforcement is not a security boundary. If a provider doesn't support native tool blocking, document this in the provider's docs under "Known Limitations".
@@ -242,8 +240,8 @@ Clean up the temp directory in `cleanup()`.
 
 | Test | What it validates | Why it matters |
 |------|-------------------|----------------|
-| `test_assign_data_analyst` | Worker terminal with `data_analyst` profile analyzes dataset [1,2,3,4,5] and produces statistical output (mean, median, stdev) | Validates that agent profiles with system prompts load correctly and the provider can handle domain-specific tasks. If `load_agent_profile()` fails or system prompt injection is broken, the worker produces generic output instead of statistical analysis. |
-| `test_assign_report_generator` | Worker terminal with `report_generator` profile creates a structured report template with sections (Executive Summary, Analysis, Conclusions) | Validates that a different agent profile produces structurally different output. Catches cases where profiles are silently ignored or swapped. |
+| `test_assign_data_analyst` | Worker terminal with durable `data_analyst` agent analyzes dataset [1,2,3,4,5] and produces statistical output (mean, median, stdev) | Validates that durable agent prompts load correctly and the provider can handle domain-specific tasks. If agent loading or prompt injection is broken, the worker produces generic output instead of statistical analysis. |
+| `test_assign_report_generator` | Worker terminal with durable `report_generator` agent creates a structured report template with sections (Executive Summary, Analysis, Conclusions) | Validates that a different durable agent prompt produces structurally different output. Catches cases where agent prompts are silently ignored or swapped. |
 | `test_assign_with_callback` | Full round-trip: create supervisor terminal → create worker terminal → worker completes task → worker calls `send_message()` back to supervisor → verify supervisor inbox receives the result | **The most critical assign test.** Validates the complete assign flow including MCP tool usage (`send_message`), inbox delivery, and cross-terminal communication. If this fails, the supervisor never receives worker results and falls back to doing everything itself. |
 
 ### Send Message test (1 test) — `test/e2e/test_send_message.py`
@@ -284,9 +282,12 @@ uv run pytest test/e2e/test_supervisor_orchestration.py -v -k "NewCli" -o "addop
 **All 11 tests must pass.** A provider that fails even one test has a gap that will surface in production — either as a supervisor doing workers' jobs, messages never delivering, tool restrictions not enforced, or handoffs silently timing out. The manual `examples/assign/` flow (supervisor → 3x data analyst + 1x report generator) is a good smoke test, but it does not replace the automated suite:
 
 ```bash
-cao install examples/assign/data_analyst.md
-cao install examples/assign/report_generator.md
-cao install examples/assign/analysis_supervisor.md
+cao agent create data_analyst --provider codex --workdir "$PWD"
+cp examples/assign/data_analyst.md ~/.aws/cli-agent-orchestrator/agents/data_analyst/prompt.md
+cao agent create report_generator --provider codex --workdir "$PWD"
+cp examples/assign/report_generator.md ~/.aws/cli-agent-orchestrator/agents/report_generator/prompt.md
+cao agent create analysis_supervisor --provider codex --workdir "$PWD"
+cp examples/assign/analysis_supervisor.md ~/.aws/cli-agent-orchestrator/agents/analysis_supervisor/prompt.md
 cao agent edit analysis_supervisor
 cao agent start analysis_supervisor
 ```

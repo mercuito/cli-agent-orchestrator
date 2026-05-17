@@ -291,7 +291,7 @@ When an agent calls an MCP tool, the server identifies the caller by their `CAO_
 
 When `handoff`/`assign` spawns a worker terminal, CAO determines which provider to use:
 
-1. If the agent frontmatter sets `provider: ...`, that provider is used.
+1. If the worker's `agent.toml` sets `cli_provider = "..."`, that provider is used.
 2. Otherwise, if `CAO_TERMINAL_ID` is set (tool called from inside a CAO terminal), the worker inherits the caller's provider.
 3. Otherwise, CAO uses `DEFAULT_PROVIDER`.
 

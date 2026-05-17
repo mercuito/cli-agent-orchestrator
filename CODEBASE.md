@@ -138,7 +138,7 @@ Update message status: DELIVERED
 
 ### Handoff Flow
 ```
-MCP: handoff(agent_profile, message)
+MCP: handoff(agent_id, message)
   ↓
 API: POST /sessions/{session}/terminals
   ↓
