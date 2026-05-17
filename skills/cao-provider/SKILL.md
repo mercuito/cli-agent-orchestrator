@@ -86,18 +86,12 @@ elif provider_type == ProviderType.NEW_CLI.value:
     )
 ```
 
-### Step 4: Add to PROVIDERS_REQUIRING_WORKSPACE_ACCESS
+### Step 4: Wire Workspace Access Through the Provider Runtime
 
-File: `src/cli_agent_orchestrator/cli/commands/launch.py`
-
-If the provider executes code or accesses the filesystem, add it:
-
-```python
-PROVIDERS_REQUIRING_WORKSPACE_ACCESS = {
-    # ... existing ...
-    "new_cli",
-}
-```
+If the provider executes code or accesses the filesystem, make sure its
+`prepare_runtime(...)` and command-building paths receive the durable
+`AgentRuntimeLaunchContext` and surface any provider approval requirements
+there.
 
 ### Step 5: Tool restriction enforcement
 
@@ -141,7 +135,8 @@ This is the canonical multi-agent e2e test. It exercises assign (non-blocking), 
 cao install examples/assign/data_analyst.md
 cao install examples/assign/report_generator.md
 cao install examples/assign/analysis_supervisor.md
-cao launch --agents analysis_supervisor --provider new_cli --auto-approve
+cao agent edit analysis_supervisor
+cao agent start analysis_supervisor
 ```
 
 **Test flow:** Supervisor assigns 3x data_analyst workers in parallel + handoff 1x report_generator (blocking) → analysts send_message results back to supervisor → supervisor combines template + results into final report.
@@ -165,7 +160,7 @@ When your provider is complete, verify you've touched all these files:
 - [ ] `src/cli_agent_orchestrator/models/provider.py` — ProviderType enum
 - [ ] `src/cli_agent_orchestrator/providers/new_cli.py` — Provider class
 - [ ] `src/cli_agent_orchestrator/providers/manager.py` — Import + elif branch
-- [ ] `src/cli_agent_orchestrator/cli/commands/launch.py` — PROVIDERS_REQUIRING_WORKSPACE_ACCESS
+- [ ] `src/cli_agent_orchestrator/runtime/agent.py` — Durable agent runtime integration
 - [ ] `src/cli_agent_orchestrator/utils/tool_mapping.py` — TOOL_MAPPING (only if CLI needs translation)
 - [ ] `test/providers/test_new_cli_unit.py` — Unit tests
 - [ ] `test/providers/fixtures/new_cli_*.txt` — Test fixtures

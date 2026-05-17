@@ -125,36 +125,26 @@ CAO translates `allowedTools` into each provider's native restriction mechanism:
 
 Tool permissions are resolved in this priority order:
 
-1. `--yolo` flag: Sets `allowedTools: ["*"]` (unrestricted) and skips confirmation
-2. `--allowed-tools` CLI flag: Explicit override per launch
-3. Profile `allowedTools`: Declared in agent profile frontmatter
-4. Role defaults: Based on profile's `role` field
-5. Developer defaults: Fallback if nothing else is set
+1. Agent `runtimeCapabilities`: Declared in durable `agent.toml`
+2. Agent `caoTools`: Named CAO MCP tools allowed for that agent
+3. Developer defaults: Fallback runtime capabilities when no explicit list is set
 
 ### Setting Up Tool Restrictions
 
-Add `role` and optionally `allowedTools` to your profile frontmatter:
+Configure runtime capabilities and CAO MCP tools in the durable agent config:
 
-```yaml
----
-name: my_agent
-description: My custom agent
-role: reviewer
-allowedTools: ["@builtin", "fs_read", "fs_list", "@cao-mcp-server"]
----
+```toml
+id = "my_agent"
+display_name = "My Agent"
+runtime_capabilities = ["@builtin", "fs_read", "fs_list"]
+cao_tools = ["send_message", "read_inbox_message"]
 ```
 
-Or override via CLI flags:
+Edit and start the agent through the durable agent CLI:
 
 ```bash
-# Use profile/role defaults
-cao launch --agents code_supervisor
-
-# Override with specific tools
-cao launch --agents developer --allowed-tools @cao-mcp-server --allowed-tools fs_read
-
-# Unrestricted access (dangerous)
-cao launch --agents developer --yolo
+cao agent edit my_agent
+cao agent start my_agent
 ```
 
 ### Agent Security Constraints

@@ -72,11 +72,15 @@ clean_output = re.sub(ANSI_CODE_PATTERN, "", output)
 - **Need TOOL_MAPPING:** Claude Code (`execute_bash` → `Bash`), Copilot CLI (`execute_bash` → `shell`), Gemini CLI
 - **Don't need TOOL_MAPPING:** Kiro CLI, Q CLI (accept `allowedTools` in agent JSON), Kimi CLI, Codex (system prompt enforcement)
 
-## 7. Confirmation Prompt Blocks Automation
+## 7. Workspace Confirmation Belongs to Agent Runtime
 
-**Problem:** The `cao launch` confirmation prompt (`Proceed? [Y/n]`) blocks automated flows, scripts, and agent-to-agent launches. `--yolo` skips it but also removes all restrictions.
+**Problem:** Providers that need workspace access can block unattended flows if
+their approval prompt is wired only to an interactive CLI path.
 
-**Fix:** `--auto-approve` flag skips the prompt while keeping restrictions enforced. When building a new provider, ensure your e2e tests work with the existing launch flow (they go through the API, not CLI, so this shouldn't affect them — but be aware of it).
+**Fix:** Keep approval handling inside the provider/runtime path used by durable
+agents and API-created terminals. When building a new provider, ensure the e2e
+tests work through the API and `cao agent start`, not through a separate
+compatibility command.
 
 ## 8. tmux Session Cleanup in Tests
 
@@ -283,6 +287,8 @@ uv run pytest test/e2e/test_supervisor_orchestration.py -v -k "NewCli" -o "addop
 cao install examples/assign/data_analyst.md
 cao install examples/assign/report_generator.md
 cao install examples/assign/analysis_supervisor.md
-cao launch --agents analysis_supervisor --provider new_cli --auto-approve
+cao agent edit analysis_supervisor
+cao agent start analysis_supervisor
 ```
-Use `--provider` to target your new provider (otherwise it defaults to `kiro_cli`). Use `--auto-approve` to skip the confirmation prompt while keeping tool restrictions enforced, or `--yolo` for unrestricted access during initial debugging.
+Set `cli_provider = "new_cli"` in the durable agent config to target your new
+provider before starting the agent.

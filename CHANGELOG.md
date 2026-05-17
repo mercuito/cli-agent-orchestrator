@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Agent model hard cutover** — Replace profile/identity-era launch surfaces with durable
   `~/.aws/cli-agent-orchestrator/agents/<id>/agent.toml` + `prompt.md` agents, remove
-  `cao launch`, remove legacy `agents.toml`, `workspace-providers/linear.toml`, and
+  the retired CLI startup verb, remove legacy `agents.toml`, `workspace-providers/linear.toml`, and
   `agent-store/` live config files, and remove Linear environment fallback configuration.
   This cutover intentionally has no automated migration script; the small live roster is
   manually migrated once and validated by the agent directory validator before runtime code
@@ -96,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - E2E assign callback round-trip test (`test_assign_with_callback`) for all providers: verifies full assign flow where worker completes task, result is sent to supervisor's inbox, inbox message delivered (status=DELIVERED), and supervisor processes the callback
 - E2E send_message test now verifies inbox message status = DELIVERED (not just stored), proving the inbox delivery pipeline works end-to-end for each provider
 - E2E supervisor orchestration test now verifies no inbox messages stuck as PENDING after supervisor completes, catching inbox delivery pipeline failures
-- Workspace trust confirmation prompt in `launch.py` before starting providers: asks "Do you trust all the actions in this folder?" since providers are granted full permissions (read, write, execute) in the working directory; supports `--yolo` flag to skip
+- Workspace trust confirmation prompt in the agent runtime before starting providers: asks "Do you trust all the actions in this folder?" since providers are granted full permissions (read, write, execute) in the working directory
 - Unit tests for `TmuxClient.send_keys` validating paste-buffer delivery (`test/clients/test_tmux_send_keys.py`)
 - Claude Code unit tests for `wait_for_shell` lifecycle, shell timeout, `❯` prompt detection, and ANSI-coded output
 - Trust prompt handling tests (6 tests) and workspace confirmation tests (4 tests)

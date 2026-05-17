@@ -7,7 +7,7 @@
 │                         Entry Points                                │
 ├─────────────────────────────┬───────────────────────────────────────┤
 │       CLI Commands          │         MCP Server                    │
-│       (cao launch)          │    (handoff, send_message)            │
+│       (cao agent start)     │    (handoff, send_message)            │
 └──────────────┬──────────────┴──────────────┬────────────────────────┘
                │                             │
                └─────────────┬───────────────┘
@@ -59,7 +59,7 @@
 ```
 src/cli_agent_orchestrator/
 ├── cli/commands/          # Entry Point: CLI commands
-│   ├── launch.py          # Creates terminals with agent profiles (workspace trust confirmation, --yolo flag)
+│   ├── agent.py           # Manage durable agents and start/stop agent terminals
 │   ├── info.py            # Show session info (cao info)
 │   ├── mcp_server.py      # Start MCP server (cao mcp-server)
 │   └── init.py            # Initializes database
@@ -105,9 +105,11 @@ src/cli_agent_orchestrator/
 
 ### Terminal Creation Flow
 ```
-cao launch --agents code_sup
+cao agent start code_sup
   ↓
-terminal_service.create_terminal()
+agent_runtime.ensure_started()
+  ↓
+terminal_service.create_terminal_for_agent()
   ↓
 tmux_client.create_session(terminal_id)  # Sets CAO_TERMINAL_ID
   ↓
