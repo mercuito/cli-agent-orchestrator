@@ -177,17 +177,17 @@ export function AgentConfigTab({
 
       {editing ? (
         <div className="space-y-3">
-          <div>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+          <details className="rounded-lg border border-gray-700/50 bg-gray-950">
+            <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200">
               Raw agent.toml (unstructured fields)
-            </h4>
+            </summary>
             <textarea
               aria-label={`${agent.agent_id} agent.toml`}
               value={tomlDraft}
               onChange={event => setTomlDraft(event.target.value)}
-              className="w-full min-h-[200px] resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
+              className="w-full min-h-[200px] resize-y rounded-b-lg border-t border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 focus:border-emerald-500 focus:outline-none"
             />
-          </div>
+          </details>
           <div>
             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
               prompt.md
@@ -210,14 +210,14 @@ export function AgentConfigTab({
         </div>
       ) : (
         <div className="space-y-3">
-          <div>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+          <details className="rounded-lg border border-gray-700/50 bg-gray-950">
+            <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200">
               Raw agent.toml (unstructured fields)
-            </h4>
-            <pre className="max-h-[300px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">
+            </summary>
+            <pre className="max-h-[300px] overflow-auto rounded-b-lg border-t border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">
               {formatAgentTomlExcluding(agent.config, STRUCTURED_FIELD_KEYS)}
             </pre>
-          </div>
+          </details>
           <div>
             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
               prompt.md

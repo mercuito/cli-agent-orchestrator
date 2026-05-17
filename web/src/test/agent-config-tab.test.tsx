@@ -346,6 +346,72 @@ describe('AgentConfigTab', () => {
   })
 })
 
+describe('AgentConfigTab raw TOML disclosure', () => {
+  it('renders the raw TOML inside a collapsible disclosure that defaults to collapsed', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    await screen.findByRole('button', { name: /edit aria/i })
+
+    const summary = screen.getByText(/raw agent.toml/i)
+    const disclosure = summary.closest('details')
+    expect(disclosure).not.toBeNull()
+    expect(disclosure?.open).toBe(false)
+  })
+
+  it('omits structured-form keys and id from the raw textarea in edit mode', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+
+    const textarea = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
+    const text = textarea.value
+    // ``id`` is owned by the directory name; structured-form keys are
+    // owned by the structured form. Editing them in raw would either
+    // corrupt the save (id) or double-edit them with the structured
+    // form (display_name, cli_provider, model, description,
+    // reasoning_effort), so the raw textarea hides those keys.
+    expect(text).not.toMatch(/^id\s*=/m)
+    expect(text).not.toMatch(/^display_name\s*=/m)
+    expect(text).not.toMatch(/^cli_provider\s*=/m)
+    expect(text).not.toMatch(/^description\s*=/m)
+    expect(text).not.toMatch(/^model\s*=/m)
+    expect(text).not.toMatch(/^reasoning_effort\s*=/m)
+    // ``workdir`` and ``session_name`` REMAIN as escape-hatch fields.
+    expect(text).toMatch(/workdir\s*=/)
+    expect(text).toMatch(/session_name\s*=/)
+  })
+
+  it('save merges structured + raw cleanly with no dropped or duplicated keys', async () => {
+    updateAgent.mockResolvedValueOnce(ariaStatus())
+    const { AgentConfigTab } = await loadConfigTab()
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+
+    // Edit a structured field (display_name) AND an unstructured field
+    // (a tools entry in raw TOML) at the same time.
+    fireEvent.change(screen.getByLabelText('aria display_name'), {
+      target: { value: 'Aria Renamed' },
+    })
+    const textarea = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
+    fireEvent.change(textarea, {
+      target: { value: textarea.value.replace('tools = ["bash"]', 'tools = ["bash", "edit"]') },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+    await waitFor(() => expect(updateAgent).toHaveBeenCalled())
+    const [, body] = updateAgent.mock.calls[0]
+    expect(body.display_name).toBe('Aria Renamed')
+    expect(body.tools).toEqual(['bash', 'edit'])
+    // ``id`` was excluded from the raw textarea, so the save body must
+    // not carry it either.
+    expect('id' in body).toBe(false)
+  })
+})
+
 describe('AgentDetailPanel header', () => {
   it('exposes id, workdir, and session_name in the read-only header area', async () => {
     const { AgentDetailPanel } = await loadDetailPanel()
