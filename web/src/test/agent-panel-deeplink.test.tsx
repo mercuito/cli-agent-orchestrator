@@ -24,15 +24,15 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     workdir: '/repo',
     session_name: `${agentId}-session`,
     prompt: '# Agent\n',
-    description: null,
-    model: null,
-    reasoning_effort: null,
-    mcp_servers: {},
-    tools: [],
+    description: 'Works Linear issues',
+    model: 'gpt-5.2',
+    reasoning_effort: 'medium',
+    mcp_servers: { cao: { command: 'cao-mcp-server' } },
+    tools: ['bash'],
     tool_aliases: {},
     tools_settings: {},
-    cao_tools: null,
-    skills: [],
+    cao_tools: ['send_message'],
+    skills: ['coding-discipline'],
     tags: [],
     resources: [],
     hooks: {},
@@ -40,7 +40,32 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     runtime_capabilities: null,
     codex_config: {},
     workspace_context: { enabled: false, resolver_id: null },
-    linear: null,
+    linear: {
+      app_key: agentId,
+      client_id: 'linear-client',
+      client_secret_configured: true,
+      webhook_secret_configured: false,
+      oauth_redirect_uri: 'https://cao.test/linear/oauth/callback',
+      access_token_configured: true,
+      refresh_token_configured: true,
+      token_expires_at: null,
+      app_user_id: 'linear-user',
+      app_user_name: 'Linear Bot',
+      oauth_state_configured: true,
+      tool_access: [
+        {
+          access_id: 'workflow',
+          tools: ['cao_linear.get_issue'],
+          issues: ['CAO-1'],
+          create_team_ids: ['TEAM'],
+          create_project_ids: [],
+          create_parent_issues: [],
+          allow_top_level_create: false,
+          update_fields: ['title'],
+          reason: 'assigned work',
+        },
+      ],
+    },
   },
   active: false,
   active_terminal_id: null,
@@ -54,7 +79,7 @@ const getTerminal = vi.hoisted(() =>
       name: 'developer-1234',
       provider: 'codex',
       session_name: 'cao-linear-discovery-partner',
-      agent_profile: 'developer',
+      agent_id: 'developer',
       status: 'idle',
       last_active: null,
     }),
@@ -68,7 +93,7 @@ const getAgentRuntimeTerminal = vi.hoisted(() =>
         name: 'developer-5678',
         provider: 'codex',
         session_name: 'cao-linear-discovery-partner',
-        agent_profile: 'developer',
+        agent_id: 'developer',
         status: 'idle',
         last_active: null,
       },
@@ -82,6 +107,20 @@ const listAgents = vi.hoisted(() =>
       agentStatus('aria', 'Aria'),
     ]),
   ),
+)
+const updateAgent = vi.hoisted(() =>
+  vi.fn((agentId: string, body: any) =>
+    Promise.resolve({
+      ...agentStatus(agentId, body.display_name || 'Aria'),
+      config: {
+        ...agentStatus(agentId, body.display_name || 'Aria').config,
+        ...body,
+      },
+    }),
+  ),
+)
+const createAgent = vi.hoisted(() =>
+  vi.fn((body: any) => Promise.resolve(agentStatus(body.id, body.display_name || body.id))),
 )
 const getAgentTimeline = vi.hoisted(() =>
   vi.fn(() =>
@@ -112,8 +151,9 @@ vi.mock('../components/TerminalView', () => ({
 vi.mock('../api', () => ({
   api: {
     listProviders: vi.fn(() => Promise.resolve([{ name: 'codex', binary: 'codex', installed: true }])),
-    listProfiles: vi.fn(() => Promise.resolve([{ name: 'developer', description: 'Developer', source: 'built-in' }])),
     listAgents,
+    updateAgent,
+    createAgent,
     getAgentTimeline,
     getAgentRelatedEvents: vi.fn(() => Promise.resolve({
       event: null,
@@ -160,15 +200,68 @@ describe('AgentPanel', () => {
     storeState.activeSessionDetail = null
   })
 
-  describe('identity timeline boundary', () => {
-    it('renders the identity timeline panel through the Agents panel boundary', async () => {
+  describe('agent timeline boundary', () => {
+    it('renders the agent timeline panel through the Agents panel boundary', async () => {
       render(<AgentPanel />)
 
-      expect(await screen.findByRole('button', { name: /aria/i })).toBeInTheDocument()
-      expect(await screen.findByTestId('identity-timeline')).toBeInTheDocument()
+      expect((await screen.findAllByRole('button', { name: /aria/i })).length).toBeGreaterThan(0)
+      expect(await screen.findByTestId('agent-timeline')).toBeInTheDocument()
       expect(screen.getByText('linear:agent_mentioned:mention')).toBeInTheDocument()
       expect(listAgents).toHaveBeenCalled()
       expect(getAgentTimeline).toHaveBeenCalledWith('aria')
+    })
+  })
+
+  describe('durable agent configuration', () => {
+    it('renders the selected agent status and full agent.toml fields inline', async () => {
+      render(<AgentPanel />)
+
+      expect(await screen.findByRole('heading', { name: /agent.toml/i })).toBeInTheDocument()
+      expect(screen.getByText('Stopped')).toBeInTheDocument()
+      expect(screen.getByText(/workdir = "\/repo"/)).toBeInTheDocument()
+      expect(screen.getByText(/session_name = "aria-session"/)).toBeInTheDocument()
+      expect(screen.getByText(/cli_provider = "codex"/)).toBeInTheDocument()
+      expect(screen.getByText(/model = "gpt-5.2"/)).toBeInTheDocument()
+      expect(screen.getByText(/\[mcp_servers.cao\]/)).toBeInTheDocument()
+      expect(screen.getByText(/tools = \["bash"\]/)).toBeInTheDocument()
+      expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
+      expect(screen.getByText(/\[linear.tool_access.workflow\]/)).toBeInTheDocument()
+    })
+
+    it('saves edits through the durable agent update API and re-renders the config', async () => {
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+      const editor = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
+      fireEvent.change(editor, {
+        target: { value: editor.value.replace('model = "gpt-5.2"', 'model = "gpt-5.4"') },
+      })
+      fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+      await waitFor(() => {
+        expect(updateAgent).toHaveBeenCalledWith('aria', expect.objectContaining({ model: 'gpt-5.4' }))
+      })
+      expect(await screen.findByText(/model = "gpt-5.4"/)).toBeInTheDocument()
+    })
+
+    it('offers a separate create-agent entry in the spawn modal', async () => {
+      render(<AgentPanel />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /spawn agent/i }))
+      fireEvent.click(screen.getByRole('button', { name: /create new agent/i }))
+      fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'new-agent' } })
+      fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New Agent' } })
+      fireEvent.change(screen.getByLabelText('Workdir'), { target: { value: '/tmp/new-agent' } })
+      fireEvent.click(screen.getByRole('button', { name: /create agent/i }))
+
+      await waitFor(() => {
+        expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({
+          id: 'new-agent',
+          display_name: 'New Agent',
+          cli_provider: 'codex',
+          workdir: '/tmp/new-agent',
+        }))
+      })
     })
   })
 
@@ -181,7 +274,7 @@ describe('AgentPanel', () => {
           expect.objectContaining({
             terminalId: 'term-1',
             provider: 'codex',
-            agentProfile: 'developer',
+            agentId: 'developer',
             terminalToken: 'signed-token',
           }),
           {},
@@ -200,7 +293,7 @@ describe('AgentPanel', () => {
           expect.objectContaining({
             terminalId: 'term-2',
             provider: 'codex',
-            agentProfile: 'developer',
+            agentId: 'developer',
             terminalToken: 'runtime-token',
           }),
           {},
@@ -238,8 +331,7 @@ describe('AgentPanel', () => {
             tmux_session: 'cao-linear-smoke-tester',
             tmux_window: '0',
             provider: 'codex',
-            agent_profile: 'linear_smoke_tester',
-            agent_identity_id: 'linear_smoke_tester',
+            agent_id: 'linear_smoke_tester',
             terminal_token: 'session-terminal-token',
             last_active: null,
           },
@@ -255,7 +347,7 @@ describe('AgentPanel', () => {
           expect.objectContaining({
             terminalId: 'term-3',
             provider: 'codex',
-            agentProfile: 'linear_smoke_tester',
+            agentId: 'linear_smoke_tester',
             terminalToken: 'session-terminal-token',
           }),
           {},
@@ -291,7 +383,7 @@ describe('AgentPanel', () => {
         name: 'developer-aria',
         provider: 'codex',
         session_name: 'cao-linear-discovery-partner',
-        agent_profile: 'developer',
+        agent_id: 'developer',
         status: 'idle',
         last_active: null,
       })
@@ -305,7 +397,7 @@ describe('AgentPanel', () => {
           expect.objectContaining({
             terminalId: 'term-aria-main',
             provider: 'codex',
-            agentProfile: 'developer',
+            agentId: 'developer',
           }),
           {},
         )
