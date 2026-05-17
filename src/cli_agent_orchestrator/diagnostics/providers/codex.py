@@ -24,7 +24,8 @@ from cli_agent_orchestrator.diagnostics.models import DiagnosticResult, Diagnost
 from cli_agent_orchestrator.diagnostics.runner import _PROVIDER_RUNNERS
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
-from cli_agent_orchestrator.services import session_service, terminal_service
+from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
+from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.codex_home import cleanup_codex_home, prepare_codex_home
 
@@ -122,7 +123,6 @@ def run_codex_diagnostics(
     )
 
     run_id = uuid.uuid4().hex[:8]
-    created_session: Optional[str] = None
     created_terminal_id: Optional[str] = None
     prepared_terminal_id: Optional[str] = None
 
@@ -246,20 +246,18 @@ def run_codex_diagnostics(
         if not step.ok:
             return result.finalize()
 
-        # Step: spawn a real CAO codex terminal and ensure wrapper can reach IDLE
-        step = _step("spawn codex terminal (idle)")
+        # Step: start a real configured CAO codex agent and ensure wrapper can reach IDLE
+        step = _step("start codex agent terminal (idle)")
         start = time.monotonic()
         try:
             init_db()
-            session_hint = f"diag-{run_id}"
-            terminal = terminal_service.create_terminal(
-                provider="codex",
-                agent_id=agent_id,
-                session_name=session_hint,
-                new_session=True,
-                working_directory=os.path.realpath(working_directory),
-            )
-            created_session = terminal.session_name
+            assert profile is not None
+            runtime = AgentRuntimeHandle(profile)
+            if runtime.current_terminal() is not None:
+                raise RuntimeError(
+                    f"Agent {agent_id!r} is already running; stop it before diagnostics"
+                )
+            terminal = runtime.ensure_started()
             created_terminal_id = terminal.id
 
             provider_inst = provider_manager.get_provider(terminal.id)
@@ -350,21 +348,14 @@ def run_codex_diagnostics(
                 pass
 
         # Cleanup: codex terminal (session cleanup also cleans per-terminal CODEX_HOME).
-        if created_session:
+        if created_terminal_id:
             try:
-                session_service.delete_session(created_session)
+                terminal_service.delete_terminal(created_terminal_id, require_window_killed=True)
             except Exception:
-                # Best-effort: attempt terminal cleanup and directory cleanup.
-                if created_terminal_id:
-                    try:
-                        terminal_service.delete_terminal(created_terminal_id)
-                    except Exception:
-                        pass
-                if created_terminal_id:
-                    try:
-                        cleanup_codex_home(created_terminal_id)
-                    except Exception:
-                        pass
+                try:
+                    cleanup_codex_home(created_terminal_id)
+                except Exception:
+                    pass
 
 
 _PROVIDER_RUNNERS["codex"] = run_codex_diagnostics

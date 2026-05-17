@@ -105,7 +105,6 @@ from cli_agent_orchestrator.utils.skills import (
     load_skill_content,
     validate_skill_name,
 )
-from cli_agent_orchestrator.utils.terminal import generate_session_name
 from cli_agent_orchestrator.workspace_providers import (
     initialize_enabled_workspace_providers,
 )

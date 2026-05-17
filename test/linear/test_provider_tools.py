@@ -1436,7 +1436,7 @@ allow_top_level_create = true
         )
 
 
-@pytest.mark.parametrize("terminal_id", ("terminal-discovery", "raw-terminal", "missing"))
+@pytest.mark.parametrize("terminal_id", ("terminal-discovery", "missing"))
 def test_linear_issue_mutation_tools_fail_closed_for_unmapped_or_unauthorized_terminals(
     tmp_path,
     terminal_id,
@@ -1460,6 +1460,32 @@ update_fields = ["title"]
     with pytest.raises(ProviderMediatedToolAccessDenied):
         _service(provider).invoke(
             terminal_id=terminal_id,
+            provider_name="linear",
+            tool_name=CREATE_ISSUE_TOOL,
+            arguments={"team_id": "team-cao", "title": "Denied"},
+        )
+
+
+def test_linear_issue_mutation_tools_reject_invalid_terminal_agent_metadata(tmp_path):
+    provider = _provider(
+        tmp_path,
+        f"""
+[tool_access.implementation_partner_issue_mutations]
+agent_id = "implementation_partner"
+tools = ["{CREATE_ISSUE_TOOL}", "{UPDATE_ISSUE_TOOL}"]
+issues = ["CAO-51"]
+create_team_ids = ["team-cao"]
+allow_top_level_create = true
+update_fields = ["title"]
+""",
+    )
+
+    _mcp, registered = _mcp_for_provider(provider, "raw-terminal")
+
+    assert registered == []
+    with pytest.raises(RuntimeError, match="invalid agent_id metadata"):
+        _service(provider).invoke(
+            terminal_id="raw-terminal",
             provider_name="linear",
             tool_name=CREATE_ISSUE_TOOL,
             arguments={"team_id": "team-cao", "title": "Denied"},
@@ -1863,7 +1889,7 @@ issues = ["CAO-50"]
         )
 
 
-@pytest.mark.parametrize("terminal_id", ("terminal-discovery", "raw-terminal", "missing"))
+@pytest.mark.parametrize("terminal_id", ("terminal-discovery", "missing"))
 def test_linear_comment_tool_fail_closed_for_unmapped_or_unauthorized_terminals(
     tmp_path,
     terminal_id,

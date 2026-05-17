@@ -11,7 +11,7 @@ Key Responsibilities:
 - Terminal output capture and message extraction
 
 Terminal Workflow:
-1. create_terminal() → Creates tmux window, initializes provider, starts logging
+1. create_terminal_for_agent() → Creates tmux window, initializes provider, starts logging
 2. send_input() → Sends user message to the agent via tmux
 3. get_output() → Retrieves agent response from terminal history
 4. delete_terminal() → Cleans up provider, database record, and logging

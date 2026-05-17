@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass as std_dataclass, replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import ClassVar, Literal
 
 from pydantic.dataclasses import dataclass
@@ -180,6 +181,93 @@ def test_get_agent_unknown_returns_404(client, monkeypatch):
 
     assert response.status_code == 404
     assert "Unknown CAO agent" in response.json()["detail"]
+
+
+def test_start_agent_starts_configured_agent(client, monkeypatch):
+    manager = _FakeAgentManager((_status(),))
+    resolve_calls = []
+
+    def _resolve_agent(agent_id: str):
+        resolve_calls.append(agent_id)
+        return _agent(agent_id)
+
+    manager.resolve_agent = _resolve_agent  # type: ignore[attr-defined]
+
+    handle_calls = []
+
+    class _Handle:
+        def __init__(self, agent, *, agent_manager):
+            handle_calls.append((agent.id, agent_manager))
+
+        def ensure_started(self):
+            return SimpleNamespace(id="terminal-new")
+
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.default_agent_manager", lambda: manager)
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.AgentRuntimeHandle", _Handle)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.create_terminal_dashboard_token",
+        lambda terminal_id: f"token-{terminal_id}",
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.terminal_service.get_terminal",
+        lambda terminal_id: {
+            "id": terminal_id,
+            "name": "implementation-partner-1234",
+            "provider": "codex",
+            "session_name": "cao-implementation-partner",
+            "agent_id": "implementation_partner",
+            "workspace_context_id": "wctx-default",
+            "allowed_tools": None,
+            "status": "idle",
+            "last_active": datetime(2026, 5, 13, 12, 0, 0),
+        },
+    )
+
+    response = client.post("/agents/implementation_partner/start")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["terminal"]["id"] == "terminal-new"
+    assert body["terminal_token"] == "token-terminal-new"
+    assert resolve_calls == ["implementation_partner"]
+    assert handle_calls == [("implementation_partner", manager)]
+
+
+def test_start_agent_rejects_existing_live_instance(client, monkeypatch):
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=True),)),
+    )
+
+    response = client.post("/agents/implementation_partner/start")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "message": "Agent 'implementation_partner' is already running",
+        "terminal_id": "abcd1234",
+    }
+
+
+def test_stop_agent_deletes_existing_live_instance(client, monkeypatch):
+    delete_calls = []
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=True),)),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.terminal_service.delete_terminal",
+        lambda terminal_id, *, require_window_killed: delete_calls.append(
+            (terminal_id, require_window_killed)
+        )
+        or True,
+    )
+
+    response = client.post("/agents/implementation_partner/stop")
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True}
+    assert delete_calls == [("abcd1234", True)]
 
 
 def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):

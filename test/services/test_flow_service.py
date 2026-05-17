@@ -354,16 +354,16 @@ class TestExecuteFlow:
     """Tests for execute_flow function."""
 
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
-    @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
-    @patch("cli_agent_orchestrator.services.flow_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.flow_service.AgentRuntimeHandle")
+    @patch("cli_agent_orchestrator.services.flow_service.load_agent")
     @patch("cli_agent_orchestrator.services.flow_service.db_update_flow_run_times")
     @patch("cli_agent_orchestrator.services.flow_service.db_get_flow")
     def test_execute_flow_without_script(
         self,
         mock_db_get,
         mock_update_times,
-        mock_gen_session,
-        mock_create_terminal,
+        mock_load_agent,
+        mock_runtime_handle,
         mock_send_input,
     ):
         """Test executing a flow without a script."""
@@ -391,30 +391,34 @@ Simple prompt without variables.
             next_run=datetime.now(),
         )
         mock_db_get.return_value = mock_flow
-        mock_gen_session.return_value = "cao-test-session"
+        agent = MagicMock()
+        agent.id = "developer"
+        mock_load_agent.return_value = agent
 
         mock_terminal = MagicMock()
         mock_terminal.id = "terminal-123"
-        mock_create_terminal.return_value = mock_terminal
+        mock_runtime_handle.return_value.ensure_started.return_value = mock_terminal
 
         result = execute_flow("simple-flow")
 
         assert result is True
-        mock_create_terminal.assert_called_once()
+        mock_load_agent.assert_called_once_with("developer")
+        mock_runtime_handle.assert_called_once_with(agent)
+        mock_runtime_handle.return_value.ensure_started.assert_called_once_with()
         mock_send_input.assert_called_once()
 
     @patch("cli_agent_orchestrator.services.flow_service.subprocess.run")
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
-    @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
-    @patch("cli_agent_orchestrator.services.flow_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.flow_service.AgentRuntimeHandle")
+    @patch("cli_agent_orchestrator.services.flow_service.load_agent")
     @patch("cli_agent_orchestrator.services.flow_service.db_update_flow_run_times")
     @patch("cli_agent_orchestrator.services.flow_service.db_get_flow")
     def test_execute_flow_with_script_execute_true(
         self,
         mock_db_get,
         mock_update_times,
-        mock_gen_session,
-        mock_create_terminal,
+        mock_load_agent,
+        mock_runtime_handle,
         mock_send_input,
         mock_subprocess,
     ):
@@ -447,7 +451,9 @@ Value is [[value]].
                 next_run=datetime.now(),
             )
             mock_db_get.return_value = mock_flow
-            mock_gen_session.return_value = "cao-test-session"
+            agent = MagicMock()
+            agent.id = "developer"
+            mock_load_agent.return_value = agent
 
             # Mock script output
             mock_subprocess.return_value = MagicMock(
@@ -458,7 +464,7 @@ Value is [[value]].
 
             mock_terminal = MagicMock()
             mock_terminal.id = "terminal-123"
-            mock_create_terminal.return_value = mock_terminal
+            mock_runtime_handle.return_value.ensure_started.return_value = mock_terminal
 
             result = execute_flow("scripted-flow")
 

@@ -14,8 +14,8 @@ Key Operations:
 - delete_session(): Clean up session, providers, database records, and tmux session
 
 Session Lifecycle:
-1. create_terminal() with new_session=True creates a new tmux session
-2. Additional terminals are added via create_terminal() with new_session=False
+1. create_terminal_for_agent() creates a configured agent's tmux session/window
+2. Agent runtime orchestration reuses the live terminal for subsequent work
 3. delete_session() removes the entire session and all contained terminals
 """
 

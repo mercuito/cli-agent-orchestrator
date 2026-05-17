@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from urllib.parse import quote
 
 import requests  # type: ignore[import-untyped]
 from fastmcp import FastMCP
@@ -18,7 +19,7 @@ from cli_agent_orchestrator.agent import (
     load_agent_registry,
 )
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.constants import API_BASE_URL, DEFAULT_PROVIDER
+from cli_agent_orchestrator.constants import API_BASE_URL
 from cli_agent_orchestrator.mcp_server.freshness import (
     build_agent_mcp_runtime_generation_descriptor,
     build_agent_mcp_surface_descriptor,
@@ -49,7 +50,7 @@ from cli_agent_orchestrator.provider_conversations.reply_service import (
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
-from cli_agent_orchestrator.utils.terminal import generate_session_name, wait_until_terminal_status
+from cli_agent_orchestrator.utils.terminal import wait_until_terminal_status
 from cli_agent_orchestrator.workspace_providers.registry import (
     WorkspaceProviderConfigError,
     load_enabled_provider_tool_access_policies,
@@ -288,55 +289,12 @@ def _built_in_mcp_runtime_generation_material() -> Dict[str, Any]:
     }
 
 
-def _resolve_child_allowed_tools(
-    parent_allowed_tools: Optional[list], child_agent_id: str
-) -> Optional[str]:
-    """Resolve runtime capabilities for a child terminal via intersection.
-
-    The child gets at most the union of: what the parent allows + what the
-    child profile specifies. If the parent is unrestricted ("*"), the child
-    profile's runtime capabilities are used as-is.
-
-    Returns:
-        Comma-separated runtime capabilities, or None for unrestricted.
-    """
-    from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
-
-    try:
-        child_agent = load_agent(child_agent_id)
-        mcp_server_names = list(child_agent.mcp_servers.keys()) if child_agent.mcp_servers else None
-        child_allowed = resolve_runtime_capabilities(
-            child_agent.runtime_capabilities, mcp_server_names
-        )
-    except AgentConfigError:
-        child_allowed = None
-
-    # If parent is unrestricted or has no restrictions, use child's runtime capabilities.
-    if parent_allowed_tools is None or "*" in parent_allowed_tools:
-        if child_allowed:
-            return ",".join(child_allowed)
-        return None
-
-    # If child has no opinion (None), inherit parent's restrictions
-    if child_allowed is None:
-        return ",".join(parent_allowed_tools)
-
-    # If child explicitly requests unrestricted ("*"), honor it
-    if "*" in child_allowed:
-        return None
-
-    # Both have restrictions: child gets its own profile runtime capabilities
-    # (the child profile defines what it needs; parent's restrictions
-    # are enforced by the parent not delegating unauthorized work)
-    return ",".join(child_allowed)
-
-
 def _create_terminal(agent_id: str, working_directory: Optional[str] = None) -> Tuple[str, str]:
     """Create a new terminal with the specified agent.
 
     Args:
         agent_id: Agent for the terminal
-        working_directory: Optional working directory for the terminal
+        working_directory: Unsupported override; agents start in their configured workdir
 
     Returns:
         Tuple of (terminal_id, provider)
@@ -344,69 +302,17 @@ def _create_terminal(agent_id: str, working_directory: Optional[str] = None) -> 
     Raises:
         Exception: If terminal creation fails
     """
-    provider = DEFAULT_PROVIDER
-    parent_allowed_tools = None
+    if working_directory is not None:
+        raise ValueError(
+            "working_directory overrides are not supported by durable agent start; "
+            "configure the agent workdir instead"
+        )
 
-    # Get current terminal ID from environment
-    current_terminal_id = os.environ.get("CAO_TERMINAL_ID")
-    if current_terminal_id:
-        # Get terminal metadata via API
-        response = requests.get(f"{API_BASE_URL}/terminals/{current_terminal_id}")
-        response.raise_for_status()
-        terminal_metadata = response.json()
+    response = requests.post(f"{API_BASE_URL}/agents/{quote(agent_id, safe='')}/start")
+    response.raise_for_status()
+    terminal = response.json()["terminal"]
 
-        provider = terminal_metadata["provider"]
-        session_name = terminal_metadata["session_name"]
-        parent_allowed_tools = terminal_metadata.get("allowed_tools")
-
-        # If no working_directory specified, get conductor's current directory
-        if working_directory is None:
-            try:
-                response = requests.get(
-                    f"{API_BASE_URL}/terminals/{current_terminal_id}/working-directory"
-                )
-                if response.status_code == 200:
-                    working_directory = response.json().get("working_directory")
-                    logger.info(f"Inherited working directory from conductor: {working_directory}")
-                else:
-                    logger.warning(
-                        f"Failed to get conductor's working directory (status {response.status_code}), "
-                        "will use server default"
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Error fetching conductor's working directory: {e}, will use server default"
-                )
-
-        # Resolve child's allowed_tools via inheritance
-        child_allowed_tools = _resolve_child_allowed_tools(parent_allowed_tools, agent_id)
-
-        # Create new terminal in existing session - always pass working_directory
-        params = {"provider": provider, "agent_id": agent_id}
-        if working_directory:
-            params["working_directory"] = working_directory
-        if child_allowed_tools:
-            params["allowed_tools"] = child_allowed_tools
-
-        response = requests.post(f"{API_BASE_URL}/sessions/{session_name}/terminals", params=params)
-        response.raise_for_status()
-        terminal = response.json()
-    else:
-        # Create new session with terminal
-        session_name = generate_session_name()
-        params = {
-            "provider": provider,
-            "agent_id": agent_id,
-            "session_name": session_name,
-        }
-        if working_directory:
-            params["working_directory"] = working_directory
-
-        response = requests.post(f"{API_BASE_URL}/sessions", params=params)
-        response.raise_for_status()
-        terminal = response.json()
-
-    return terminal["id"], provider
+    return terminal["id"], terminal["provider"]
 
 
 def _deliver_handoff_payload(terminal_id: str, provider: str, message: str) -> None:

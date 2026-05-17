@@ -19,11 +19,12 @@ from cli_agent_orchestrator.clients.database import update_flow_enabled as db_up
 from cli_agent_orchestrator.clients.database import (
     update_flow_run_times as db_update_flow_run_times,
 )
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.constants import DEFAULT_PROVIDER, PROVIDERS
 from cli_agent_orchestrator.models.flow import Flow
-from cli_agent_orchestrator.services.terminal_service import create_terminal, send_input
+from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
+from cli_agent_orchestrator.services.terminal_service import send_input
 from cli_agent_orchestrator.utils.template import render_template
-from cli_agent_orchestrator.utils.terminal import generate_session_name
 
 logger = logging.getLogger(__name__)
 
@@ -210,19 +211,14 @@ def execute_flow(name: str) -> bool:
         output_dict: Dict[str, Any] = output["output"]  # type: ignore[assignment]
         rendered_prompt = render_template(prompt_template, output_dict)
 
-        # Launch session
-        session_name = generate_session_name()
-        terminal = create_terminal(
-            session_name=session_name,
-            provider=flow.provider,
-            agent_id=flow.agent_id,
-            new_session=True,
-        )
+        # Start or reuse the configured durable agent runtime.
+        agent = load_agent(flow.agent_id)
+        terminal = AgentRuntimeHandle(agent).ensure_started()
 
         # Send rendered prompt to terminal
         send_input(terminal.id, rendered_prompt)
 
-        logger.info(f"Flow {name}: launched session {session_name}")
+        logger.info(f"Flow {name}: delivered prompt to agent {flow.agent_id}")
         return True
 
     except Exception as e:
