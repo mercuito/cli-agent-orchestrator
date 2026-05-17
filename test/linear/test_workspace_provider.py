@@ -79,7 +79,7 @@ def test_configured_linear_app_key_resolves_to_cao_agent():
     resolved = provider.resolve_event({"_cao_linear_app_key": "implementation_partner"})
 
     assert resolved.presence.agent_id == "implementation_partner"
-    assert resolved.identity.session_name == "implementation-partner"
+    assert resolved.agent.session_name == "implementation-partner"
 
 
 def test_linear_workspace_provider_declares_subscribable_cao_events():
@@ -120,7 +120,7 @@ def test_configured_linear_app_user_id_resolves_to_cao_agent():
     resolved = provider.resolve_event({"data": {"appUserId": "app-user-impl"}})
 
     assert resolved.presence.app_key == "implementation_partner"
-    assert resolved.identity.id == "implementation_partner"
+    assert resolved.agent.id == "implementation_partner"
 
 
 def test_configured_linear_app_key_tolerates_unstored_app_user_id():
@@ -138,7 +138,7 @@ def test_configured_linear_app_key_tolerates_unstored_app_user_id():
     )
 
     assert resolved.presence.app_key == "implementation_partner"
-    assert resolved.identity.id == "implementation_partner"
+    assert resolved.agent.id == "implementation_partner"
 
 
 def test_configured_linear_app_key_rejects_conflicting_app_user_id():
@@ -367,7 +367,6 @@ def test_agent_tool_access_is_loaded_per_agent_without_profile_targeting():
     assert loaded is not None
     access = loaded.tool_access["agents.implementation_partner.linear.tool_access.reads"]
     assert access.agent_id == "implementation_partner"
-    assert access.agent_profile is None
     assert access.tools == ("cao_linear.get_issue", "cao_linear.list_comments")
     assert access.issues == ("CAO-28", "issue-28")
 

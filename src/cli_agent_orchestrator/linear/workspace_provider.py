@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,7 +15,7 @@ from cli_agent_orchestrator.agent import (
     load_agent_registry,
     patch_agent_section,
 )
-from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER, SESSION_PREFIX
+from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_ISSUE_TOOL,
     CREATE_PROJECT_TOOL,
@@ -28,7 +27,6 @@ from cli_agent_orchestrator.linear.provider_tools import (
     UPDATE_ISSUE_TOOL,
 )
 from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
-from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.env import load_env_vars
 from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
 
@@ -42,7 +40,7 @@ class LinearWorkspaceProviderConfigError(ValueError):
 
 @dataclass(frozen=True)
 class LinearPresence:
-    """A Linear app-user presence mapped to a durable CAO agent identity."""
+    """A Linear app-user presence mapped to a durable CAO agent."""
 
     presence_id: str
     agent_id: str
@@ -115,12 +113,12 @@ class LinearResolvedPresence:
     """Resolved Linear presence plus the CAO runtime agent it maps to."""
 
     presence: LinearPresence
-    identity: Agent
+    agent: Agent
 
 
 def linear_env(name: str) -> Optional[str]:
-    """Read legacy Linear compatibility config from process env then CAO's env file."""
-    return os.environ.get(name) or load_env_vars().get(name)
+    """Read Linear process config from CAO's env file."""
+    return load_env_vars().get(name)
 
 
 def normalize_app_key(app_key: str) -> str:
@@ -134,7 +132,7 @@ def normalize_app_key(app_key: str) -> str:
 
 
 def app_env_prefix(app_key: str) -> str:
-    """Return the legacy env prefix for a configured Linear app key."""
+    """Return the env prefix for a configured Linear app key."""
     return f"LINEAR_APP_{APP_KEY_PATTERN.sub('_', normalize_app_key(app_key)).upper()}"
 
 
@@ -237,67 +235,6 @@ def _optional_str(table: Mapping[str, Any], key: str) -> Optional[str]:
     return value or None
 
 
-def _legacy_configured_app_keys(env_reader: Callable[[str], Optional[str]]) -> list[str]:
-    raw = env_reader("LINEAR_APP_KEYS")
-    if raw:
-        return [normalize_app_key(item) for item in raw.split(",") if item.strip()]
-    if (
-        env_reader("LINEAR_CLIENT_ID")
-        or env_reader("LINEAR_ACCESS_TOKEN")
-        or env_reader("LINEAR_WEBHOOK_SECRET")
-    ):
-        return ["discovery_partner"]
-    return []
-
-
-def _legacy_presence(
-    app_key: str,
-    *,
-    env_reader: Callable[[str], Optional[str]],
-) -> LinearPresence:
-    prefix = app_env_prefix(app_key)
-
-    def read(name: str) -> Optional[str]:
-        return env_reader(f"{prefix}_{name}") or env_reader(f"LINEAR_{name}")
-
-    agent_id = read("AGENT_ID") or app_key
-    if app_key == "discovery_partner":
-        agent_id = env_reader("LINEAR_DISCOVERY_AGENT_ID") or agent_id
-
-    return LinearPresence(
-        presence_id=app_key,
-        agent_id=agent_id,
-        app_key=app_key,
-        client_id=read("CLIENT_ID"),
-        client_secret=read("CLIENT_SECRET"),
-        webhook_secret=read("WEBHOOK_SECRET"),
-        oauth_redirect_uri=read("OAUTH_REDIRECT_URI"),
-        oauth_state=read("OAUTH_STATE"),
-        access_token=read("ACCESS_TOKEN"),
-        refresh_token=read("REFRESH_TOKEN"),
-        app_user_id=read("APP_USER_ID"),
-        app_user_name=read("APP_USER_NAME"),
-        token_expires_at=read("TOKEN_EXPIRES_AT"),
-    )
-
-
-def _load_legacy_linear_config(
-    env_reader: Callable[[str], Optional[str]],
-) -> Optional[LinearProviderConfig]:
-    keys = _legacy_configured_app_keys(env_reader)
-    if not keys:
-        return None
-    presences = {key: _legacy_presence(key, env_reader=env_reader) for key in keys}
-    public_url = env_reader("LINEAR_CAO_PUBLIC_URL")
-    return LinearProviderConfig(
-        public_url=public_url,
-        presences=presences,
-        tool_access={},
-        agent_policies_enabled=False,
-        source="legacy_env",
-    )
-
-
 def _linear_presence_from_agent(agent: Agent) -> Optional[LinearPresence]:
     linear = agent.linear
     if linear is None or linear.app_key is None:
@@ -329,7 +266,6 @@ def _linear_tool_access_from_agent(agent: Agent) -> tuple[LinearToolAccess, ...]
         LinearToolAccess(
             access_id=access.access_id,
             agent_id=agent.id,
-            agent_profile=None,
             tools=access.tools,
             issues=access.issues,
             create_team_ids=access.create_team_ids,
@@ -416,7 +352,7 @@ def validate_linear_provider_config(
     *,
     agent_registry: Optional[AgentRegistry] = None,
 ) -> None:
-    """Validate Linear presence uniqueness and optional CAO identity references."""
+    """Validate Linear presence uniqueness and optional CAO agent references."""
     app_keys: set[str] = set()
     app_user_ids: set[str] = set()
     app_user_names: set[str] = set()
@@ -643,45 +579,6 @@ def _extract_app_key(payload: Mapping[str, Any]) -> Optional[str]:
     return normalize_app_key(str(value)) if value else None
 
 
-def _legacy_identity_for_presence(
-    presence: LinearPresence,
-    env_reader: Callable[[str], Optional[str]],
-) -> AgentIdentity:
-    def read(name: str) -> Optional[str]:
-        return env_reader(f"{app_env_prefix(presence.app_key)}_{name}") or env_reader(
-            f"LINEAR_{name}"
-        )
-
-    fallback_slug = (
-        "linear-discovery-partner"
-        if presence.app_key == "discovery_partner"
-        else f"linear-{presence.app_key.replace('_', '-')}"
-    )
-    session_name = (
-        read("SESSION_NAME") or env_reader("LINEAR_DISCOVERY_SESSION_NAME") or fallback_slug
-    )
-    return AgentIdentity(
-        id=presence.agent_id,
-        display_name=presence.app_user_name or presence.agent_id.replace("_", " ").title(),
-        agent_profile=read("AGENT_PROFILE")
-        or env_reader("LINEAR_DISCOVERY_AGENT_PROFILE")
-        or "developer",
-        cli_provider=read("PROVIDER")
-        or env_reader("LINEAR_DISCOVERY_PROVIDER")
-        or DEFAULT_PROVIDER,
-        workdir=read("WORKDIR") or env_reader("LINEAR_DISCOVERY_WORKDIR") or os.getcwd(),
-        session_name=session_name,
-    )
-
-
-def _agent_profile_exists(profile: str) -> bool:
-    try:
-        load_agent_profile(profile)
-    except Exception:
-        return False
-    return True
-
-
 class LinearWorkspaceProvider:
     """Linear workspace-provider lifecycle and presence resolver."""
 
@@ -706,6 +603,11 @@ class LinearWorkspaceProvider:
     @property
     def config(self) -> Optional[LinearProviderConfig]:
         return self._config
+
+    @property
+    def agent_registry(self) -> AgentRegistry:
+        """Return the agent registry used to resolve this provider's presences."""
+        return self._agent_registry
 
     def has_provider_tool_access_config(self) -> bool:
         """Return whether Linear config declares CAO-mediated tool access."""
@@ -793,15 +695,6 @@ class LinearWorkspaceProvider:
                 )
             if presence is None:
                 presence = by_name
-        if (
-            presence is None
-            and config.source == "legacy_env"
-            and not app_key
-            and not app_user_id
-            and not app_user_name
-            and len(config.presences) == 1
-        ):
-            presence = next(iter(config.presences.values()))
         if presence is None:
             raise LinearWorkspaceProviderConfigError(
                 "Linear presence could not be resolved from app key or app user id"
@@ -815,10 +708,10 @@ class LinearWorkspaceProvider:
             app_user_name=_extract_app_user_name(payload),
         )
 
-    def resolve_identity_for_presence(self, presence: LinearPresence) -> Agent:
+    def resolve_agent_for_presence(self, presence: LinearPresence) -> Agent:
         return self._agent_registry.get(presence.agent_id)
 
-    def resolve_identity_for_agent_id(self, agent_id: str) -> Agent:
+    def resolve_agent_for_agent_id(self, agent_id: str) -> Agent:
         """Resolve a CAO agent through this provider's presence mapping."""
         config = self._load_config()
         presence = next(
@@ -833,22 +726,22 @@ class LinearWorkspaceProvider:
             raise LinearWorkspaceProviderConfigError(
                 f"Linear provider has no presence for CAO agent: {agent_id}"
             )
-        return self.resolve_identity_for_presence(presence)
+        return self.resolve_agent_for_presence(presence)
 
-    def list_agent_identities(self) -> tuple[Agent, ...]:
+    def list_agents(self) -> tuple[Agent, ...]:
         """Return provider-backed CAO agents from configured Linear presences."""
         config = self._load_config()
         identities: dict[str, Agent] = {}
         for presence in config.presences.values():
-            identity = self.resolve_identity_for_presence(presence)
-            identities[identity.id] = identity
+            agent = self.resolve_agent_for_presence(presence)
+            identities[agent.id] = agent
         return tuple(identities[key] for key in sorted(identities))
 
     def resolve_event(self, payload: Mapping[str, Any]) -> LinearResolvedPresence:
         presence = self.resolve_presence_from_payload(payload)
         return LinearResolvedPresence(
             presence=presence,
-            identity=self.resolve_identity_for_presence(presence),
+            agent=self.resolve_agent_for_presence(presence),
         )
 
 
@@ -893,13 +786,6 @@ def webhook_secret_presences(
     if config is None:
         return []
     return [presence for presence in config.presences.values() if presence.webhook_secret]
-
-
-def has_legacy_linear_provider_config(
-    *, env_reader: Callable[[str], Optional[str]] = linear_env
-) -> bool:
-    """Return whether legacy Linear env config is present for route compatibility."""
-    return _load_legacy_linear_config(env_reader) is not None
 
 
 def should_enable_linear_routes() -> bool:

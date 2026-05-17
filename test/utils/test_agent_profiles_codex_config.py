@@ -1,28 +1,28 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 
-def test_load_agent_profile_parses_codex_config(tmp_path: Path):
-    from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+def test_load_agent_parses_codex_config(tmp_path: Path):
+    from cli_agent_orchestrator.agent import load_agent
 
-    local_store = tmp_path / "agent-store"
-    local_store.mkdir(parents=True)
+    agent_dir = tmp_path / "developer"
+    agent_dir.mkdir(parents=True)
 
-    (local_store / "developer.md").write_text(
-        """---
-name: developer
-description: Test profile
-codexConfig:
-  model_reasoning_effort: high
----
+    (agent_dir / "agent.toml").write_text(
+        """
+display_name = "Test profile"
+id = "developer"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "developer"
 
-You are a test agent.
+[codex_config]
+model_reasoning_effort = "high"
 """
     )
+    (agent_dir / "prompt.md").write_text("You are a test agent.\n")
 
-    with patch("cli_agent_orchestrator.utils.agent_profiles.LOCAL_AGENT_STORE_DIR", local_store):
-        profile = load_agent_profile("developer")
+    profile = load_agent("developer", agents_root=tmp_path)
 
-    assert profile.codexConfig == {"model_reasoning_effort": "high"}
+    assert profile.codex_config == {"model_reasoning_effort": "high"}

@@ -77,13 +77,10 @@ INBOX_POLLING_INTERVAL = 5
 RETENTION_DAYS = 14
 
 # =============================================================================
-# Agent Profile Storage
+# Agent Context Storage
 # =============================================================================
 # Directory for agent context files (shared state between sessions)
 AGENT_CONTEXT_DIR = CAO_HOME_DIR / "agent-context"
-
-# Local agent store for custom agent profiles
-LOCAL_AGENT_STORE_DIR = CAO_HOME_DIR / "agent-store"
 
 # Local skill store for installed CAO skills
 SKILLS_DIR = CAO_HOME_DIR / "skills"
