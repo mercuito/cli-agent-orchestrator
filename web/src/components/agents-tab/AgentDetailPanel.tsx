@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Monitor, Play, Square } from 'lucide-react'
+import { Monitor, Play, Square, Wrench } from 'lucide-react'
 import { AgentStatus, WorkspaceSetupDiagnostic } from '../../api'
 
 export type AgentDetailTab = 'config' | 'timeline'
@@ -21,6 +21,16 @@ const TABS: { key: AgentDetailTab; label: string }[] = [
   { key: 'timeline', label: 'Timeline' },
 ]
 
+const PRUNED_PROVIDER_IDENTITY_DIAGNOSTIC_CODE = 'pruned_provider_identity'
+
+function isNoisyPruningDiagnostic(message: string) {
+  return /pruned .* for out-of-team agent /.test(message)
+}
+
+function sourceLabel(source: { kind: string; name: string }) {
+  return `${source.kind.replace(/_/g, ' ')} / ${source.name}`
+}
+
 export function AgentDetailPanel({
   agent,
   onStartAgent,
@@ -33,6 +43,7 @@ export function AgentDetailPanel({
   renderTimelineTab,
 }: AgentDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<AgentDetailTab>('config')
+  const [mcpToolsOpen, setMcpToolsOpen] = useState(false)
 
   if (!agent) {
     return (
@@ -47,9 +58,12 @@ export function AgentDetailPanel({
   const diagnostics = [
     ...(agent.workspace_team_diagnostics ?? []),
     ...workspaceSetupDiagnostics
+      .filter(diagnostic => diagnostic.code !== PRUNED_PROVIDER_IDENTITY_DIAGNOSTIC_CODE)
       .filter(diagnostic => !diagnostic.agent_id || diagnostic.agent_id === agent.agent_id)
       .map(diagnostic => diagnostic.message),
-  ]
+  ].filter(diagnostic => !isNoisyPruningDiagnostic(diagnostic))
+  const mcpToolSurfaceAvailable = !!agent.mcp_tool_surface
+  const mcpTools = agent.mcp_tool_surface?.tools ?? []
 
   return (
     <div className="rounded-lg border border-gray-700/50 bg-gray-800/60 min-w-0">
@@ -99,6 +113,52 @@ export function AgentDetailPanel({
               ))}
             </div>
           )}
+          <section className="mt-3 max-w-xl border-t border-gray-700/50 pt-3">
+            <button
+              type="button"
+              onClick={() => setMcpToolsOpen(open => !open)}
+              aria-expanded={mcpToolsOpen}
+              className="flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-gray-100"
+            >
+              <Wrench size={13} className="text-emerald-300" />
+              <span>Effective MCP tools</span>
+              <span className="rounded-full bg-gray-700/70 px-1.5 py-0.5 font-mono text-[10px] text-gray-400">
+                {mcpToolSurfaceAvailable ? mcpTools.length : 'unavailable'}
+              </span>
+            </button>
+            {mcpToolsOpen && (
+              <div className="mt-2 space-y-2">
+                {!mcpToolSurfaceAvailable ? (
+                  <p className="text-xs text-amber-300">
+                    Tool access is unavailable from this dashboard response. Refresh after restarting the CAO server with the latest backend.
+                  </p>
+                ) : agent.active ? (
+                  <p className="text-xs text-amber-300">
+                    Current config for new MCP sessions; this running terminal may need a restart to pick up tool changes.
+                  </p>
+                ) : null}
+                {!mcpToolSurfaceAvailable ? null : mcpTools.length ? (
+                  <ul className="space-y-2">
+                    {mcpTools.map(tool => (
+                      <li key={`${tool.source.kind}:${tool.source.name}:${tool.name}`} className="min-w-0">
+                        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          <span className="font-mono text-xs text-emerald-300">{tool.name}</span>
+                          <span className="font-mono text-[10px] uppercase text-gray-500">
+                            {sourceLabel(tool.source)}
+                          </span>
+                        </div>
+                        {tool.description && (
+                          <p className="mt-0.5 text-xs text-gray-500">{tool.description}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-gray-500">No MCP tools visible for this agent.</p>
+                )}
+              </div>
+            )}
+          </section>
         </div>
         <div className="flex items-center gap-2">
           {agent.active ? (

@@ -31,7 +31,10 @@ describe('WorkspaceTeamsPanel', () => {
         display_name: 'CAO Delivery',
         workspace_setup: 'linear_delivery_setup',
         members: ['aria'],
-        diagnostics: [],
+        diagnostics: [
+          'Workspace team cao_delivery pruned linear app_user_id U1 for out-of-team agent discovery',
+          'Workspace team cao_delivery setup linear_delivery_setup requires unavailable provider linear',
+        ],
       },
     ])
     listWorkspaceSetups.mockResolvedValue([
@@ -54,6 +57,8 @@ describe('WorkspaceTeamsPanel', () => {
 
     expect(await screen.findByText('CAO Delivery')).toBeInTheDocument()
     expect(screen.getByText('aria')).toBeInTheDocument()
+    expect(screen.queryByText(/pruned linear/)).not.toBeInTheDocument()
+    expect(screen.getByText(/requires unavailable provider linear/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('team id'), { target: { value: 'research' } })
     fireEvent.change(screen.getByLabelText('team display name'), {

@@ -40,6 +40,7 @@ function agentStatus(overrides: Partial<AgentStatus> = {}): AgentStatus {
     active: false,
     active_terminal_id: null,
     active_workspace_context_id: null,
+    mcp_tool_surface: { schema_version: 'cao-agent-mcp-surface.v1', tools: [] },
     last_active_at: null,
     ...overrides,
   }
@@ -118,7 +119,7 @@ describe('AgentDetailPanel', () => {
       expect(onOpenTerminal).toHaveBeenCalledWith('aria')
     })
 
-    it('renders workspace setup diagnostics from the setup manager endpoint', () => {
+    it('renders actionable workspace setup diagnostics and hides pruning diagnostics', () => {
       render(
         <AgentDetailPanel
           agent={agentStatus({ derived_workspace_setup_id: 'cao_delivery' })}
@@ -148,8 +149,80 @@ describe('AgentDetailPanel', () => {
         />,
       )
 
-      expect(screen.getByText(/pruned linear tool access/)).toBeInTheDocument()
+      expect(screen.queryByText(/pruned linear tool access/)).not.toBeInTheDocument()
       expect(screen.getByText(/requires unavailable provider linear/)).toBeInTheDocument()
+    })
+
+    it('renders current MCP tool access in a collapsed section', () => {
+      // Given
+      const agent = agentStatus({
+        active: true,
+        active_terminal_id: 'term-aria-main',
+        mcp_tool_surface: {
+          schema_version: 'cao-agent-mcp-surface.v1',
+          tools: [
+            {
+              source: { kind: 'cao_builtin', name: 'cao' },
+              name: 'send_message',
+              description: 'Send a message to another CAO agent.',
+            },
+            {
+              source: { kind: 'provider', name: 'linear' },
+              name: 'cao_linear.get_issue',
+              description: 'Read a Linear issue.',
+            },
+          ],
+        },
+      })
+
+      // When
+      render(
+        <AgentDetailPanel
+          agent={agent}
+          onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onStopAgent={vi.fn()}
+          renderConfigTab={renderConfigTab}
+          renderTimelineTab={renderTimelineTab}
+        />,
+      )
+
+      // Then
+      expect(screen.getByText('Effective MCP tools')).toBeInTheDocument()
+      expect(screen.queryByText('cao_linear.get_issue')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByText('Effective MCP tools'))
+
+      expect(screen.getByText('send_message')).toBeInTheDocument()
+      expect(screen.getByText('cao_linear.get_issue')).toBeInTheDocument()
+      expect(screen.getByText('cao builtin / cao')).toBeInTheDocument()
+      expect(screen.getByText('provider / linear')).toBeInTheDocument()
+      expect(screen.getByText(/running terminal may need a restart/i)).toBeInTheDocument()
+    })
+
+    it('does not treat a missing MCP tool surface as zero effective tools', () => {
+      // Given
+      const agent = agentStatus({
+        mcp_tool_surface: undefined,
+      })
+
+      // When
+      render(
+        <AgentDetailPanel
+          agent={agent}
+          onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onStopAgent={vi.fn()}
+          renderConfigTab={renderConfigTab}
+          renderTimelineTab={renderTimelineTab}
+        />,
+      )
+      fireEvent.click(screen.getByText('Effective MCP tools'))
+
+      // Then
+      expect(screen.getByText('unavailable')).toBeInTheDocument()
+      expect(screen.getByText(/tool access is unavailable/i)).toBeInTheDocument()
+      expect(screen.queryByText('No MCP tools visible for this agent.')).not.toBeInTheDocument()
     })
 
     it('renders stopped agent header with a Start button that fires the provided handler', () => {

@@ -11,6 +11,10 @@ const emptyDraft: WorkspaceTeam = {
   diagnostics: [],
 }
 
+function isNoisyPruningDiagnostic(message: string) {
+  return /pruned .* for out-of-team agent /.test(message)
+}
+
 export function WorkspaceTeamsPanel() {
   const { showSnackbar } = useStore()
   const [teams, setTeams] = useState<WorkspaceTeam[]>([])
@@ -78,9 +82,11 @@ export function WorkspaceTeamsPanel() {
                     <dt className="text-gray-600">members</dt>
                     <dd className="truncate text-gray-300">{team.members.length ? team.members.join(', ') : 'none'}</dd>
                   </dl>
-                  {team.diagnostics.map(diagnostic => (
-                    <p key={diagnostic} className="mt-2 text-xs text-amber-300">{diagnostic}</p>
-                  ))}
+                  {team.diagnostics
+                    .filter(diagnostic => !isNoisyPruningDiagnostic(diagnostic))
+                    .map(diagnostic => (
+                      <p key={diagnostic} className="mt-2 text-xs text-amber-300">{diagnostic}</p>
+                    ))}
                 </div>
                 <button
                   type="button"

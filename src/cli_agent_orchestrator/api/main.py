@@ -130,6 +130,8 @@ from cli_agent_orchestrator.workspace_setups import (
 
 logger = logging.getLogger(__name__)
 
+PRUNED_PROVIDER_IDENTITY_DIAGNOSTIC_CODE = "pruned_provider_identity"
+
 
 def _terminal_ws_authorized(websocket: WebSocket, terminal_id: str) -> bool:
     """Return whether a websocket may attach to a terminal."""
@@ -378,6 +380,47 @@ class AgentConfigResponse(BaseModel):
         )
 
 
+class McpToolSourceResponse(BaseModel):
+    kind: str
+    name: str
+
+
+class McpToolResponse(BaseModel):
+    source: McpToolSourceResponse
+    name: str
+    description: str
+
+
+class AgentMcpToolSurfaceResponse(BaseModel):
+    schema_version: str
+    tools: List[McpToolResponse]
+
+    @classmethod
+    def from_agent(cls, agent: Agent) -> "AgentMcpToolSurfaceResponse":
+        descriptor = _build_mcp_surface_descriptor_for_agent(agent)
+        return cls(
+            schema_version=str(descriptor.get("schema_version", "")),
+            tools=[
+                McpToolResponse(
+                    source=McpToolSourceResponse(
+                        kind=str(tool.get("source", {}).get("kind", "")),
+                        name=str(tool.get("source", {}).get("name", "")),
+                    ),
+                    name=str(tool.get("name", "")),
+                    description=str(tool.get("description", "")),
+                )
+                for tool in descriptor.get("tools", [])
+                if isinstance(tool, dict)
+            ],
+        )
+
+
+def _build_mcp_surface_descriptor_for_agent(agent: Agent) -> Dict[str, Any]:
+    from cli_agent_orchestrator.mcp_server.server import build_mcp_surface_descriptor_for_agent
+
+    return build_mcp_surface_descriptor_for_agent(agent)
+
+
 class AgentStatusResponse(BaseModel):
     """Current CAO agent config and runtime summary."""
 
@@ -394,6 +437,7 @@ class AgentStatusResponse(BaseModel):
     workspace_team_id: Optional[str] = None
     derived_workspace_setup_id: Optional[str] = None
     workspace_team_diagnostics: List[str] = []
+    mcp_tool_surface: AgentMcpToolSurfaceResponse
     last_active_at: Optional[datetime] = None
 
     @classmethod
@@ -412,6 +456,7 @@ class AgentStatusResponse(BaseModel):
             workspace_team_id=status.workspace_team_id,
             derived_workspace_setup_id=status.derived_workspace_setup_id,
             workspace_team_diagnostics=list(status.workspace_team_diagnostics),
+            mcp_tool_surface=AgentMcpToolSurfaceResponse.from_agent(status.agent),
             last_active_at=status.last_active_at,
         )
 
@@ -445,6 +490,7 @@ class WorkspaceTeamResponse(BaseModel):
             diagnostic.message
             for diagnostic in default_workspace_collaboration_manager().diagnostics()
             if diagnostic.team_id == team.id
+            and diagnostic.code != PRUNED_PROVIDER_IDENTITY_DIAGNOSTIC_CODE
         ]
         return cls(
             id=team.id,

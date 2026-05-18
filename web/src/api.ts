@@ -108,6 +108,15 @@ export interface AgentConfig {
   } | null
 }
 
+export interface McpToolSurface {
+  schema_version: string
+  tools: Array<{
+    source: { kind: string; name: string }
+    name: string
+    description: string
+  }>
+}
+
 export interface AgentStatus {
   agent_id: string
   display_name: string
@@ -122,6 +131,7 @@ export interface AgentStatus {
   workspace_team_id?: string | null
   derived_workspace_setup_id?: string | null
   workspace_team_diagnostics?: string[]
+  mcp_tool_surface?: McpToolSurface
   last_active_at: string | null
 }
 

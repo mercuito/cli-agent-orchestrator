@@ -141,6 +141,28 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
         "cli_agent_orchestrator.api.main.default_agent_manager",
         lambda: _FakeAgentManager((_status(active=True), _status("reviewer"))),
     )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main._build_mcp_surface_descriptor_for_agent",
+        lambda agent: {
+            "schema_version": "cao-agent-mcp-surface.v1",
+            "tools": [
+                {
+                    "source": {"kind": "cao_builtin", "name": "cao"},
+                    "name": "send_message",
+                    "description": "Send a message to another CAO agent.",
+                    "input_schema": {"type": "object"},
+                },
+                {
+                    "source": {"kind": "provider", "name": "linear"},
+                    "name": "cao_linear.get_issue",
+                    "description": "Read a Linear issue.",
+                    "input_schema": {"type": "object"},
+                    "pre_hooks": ["require_issue_access"],
+                    "post_hooks": [],
+                },
+            ],
+        },
+    )
 
     response = client.get("/agents")
 
@@ -161,6 +183,21 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
     assert body[0]["config"]["linear"]["client_secret_configured"] is True
     assert body[0]["config"]["linear"]["access_token_configured"] is True
     assert body[0]["config"]["linear"]["tool_access"][0]["tools"] == ["cao_linear.get_issue"]
+    assert body[0]["mcp_tool_surface"] == {
+        "schema_version": "cao-agent-mcp-surface.v1",
+        "tools": [
+            {
+                "source": {"kind": "cao_builtin", "name": "cao"},
+                "name": "send_message",
+                "description": "Send a message to another CAO agent.",
+            },
+            {
+                "source": {"kind": "provider", "name": "linear"},
+                "name": "cao_linear.get_issue",
+                "description": "Read a Linear issue.",
+            },
+        ],
+    }
     assert body[0]["agent_dashboard_token"]
     assert body[0]["active_terminal_id"] == "abcd1234"
     assert body[1]["agent_id"] == "reviewer"
@@ -267,6 +304,54 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
     assert setups_response.json()[0]["id"] == "linear_delivery_setup"
     assert save_response.status_code == 200
     assert saved == [("research", "Research", "linear_delivery_setup")]
+
+
+def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monkeypatch):
+    team = WorkspaceTeam(
+        id="cao_delivery",
+        display_name="CAO Delivery",
+        workspace_setup="linear_delivery_setup",
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: SimpleNamespace(list_teams=lambda: (team,)),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(list_agents=lambda: ()),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(
+            diagnostics=lambda: (
+                WorkspaceSetupDiagnostic(
+                    code="pruned_provider_identity",
+                    message="Workspace team cao_delivery pruned linear tool access for discovery",
+                    team_id="cao_delivery",
+                    setup_id="linear_delivery_setup",
+                    agent_id="discovery",
+                    provider_name="linear",
+                ),
+                WorkspaceSetupDiagnostic(
+                    code="unavailable_provider",
+                    message=(
+                        "Workspace team cao_delivery setup linear_delivery_setup "
+                        "requires unavailable provider linear"
+                    ),
+                    team_id="cao_delivery",
+                    setup_id="linear_delivery_setup",
+                    provider_name="linear",
+                ),
+            )
+        ),
+    )
+
+    response = client.get("/workspace-teams")
+
+    assert response.status_code == 200
+    assert response.json()[0]["diagnostics"] == [
+        "Workspace team cao_delivery setup linear_delivery_setup requires unavailable provider linear"
+    ]
 
 
 def test_list_agents_active_filter(client, monkeypatch):
