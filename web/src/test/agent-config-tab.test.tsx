@@ -5,6 +5,7 @@ import type { AgentStatus, ProviderCatalog, ProviderSchema } from '../api'
 const updateAgent = vi.hoisted(() => vi.fn())
 const listProviders = vi.hoisted(() => vi.fn())
 const getProviderCatalog = vi.hoisted(() => vi.fn())
+const listWorkspaceTeams = vi.hoisted(() => vi.fn())
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
@@ -14,6 +15,7 @@ vi.mock('../api', async () => {
       updateAgent: (...args: unknown[]) => updateAgent(...args),
       listProviders: (...args: unknown[]) => listProviders(...args),
       getProviderCatalog: (...args: unknown[]) => getProviderCatalog(...args),
+      listWorkspaceTeams: (...args: unknown[]) => listWorkspaceTeams(...args),
     },
   }
 })
@@ -92,7 +94,7 @@ function ariaStatus(overrides: Partial<AgentStatus['config']> = {}): AgentStatus
       use_legacy_mcp_json: null,
       runtime_capabilities: null,
       codex_config: {},
-      workspace: { setup: null, diagnostics: [] },
+      workspace: { team: null, derived_setup: null, diagnostics: [] },
       linear: {
         app_key: 'aria',
         client_id: 'linear-client',
@@ -143,8 +145,25 @@ beforeEach(() => {
   listProviders.mockReset()
   getProviderCatalog.mockReset()
   updateAgent.mockReset()
+  listWorkspaceTeams.mockReset()
   listProviders.mockResolvedValue(SCHEMAS)
   getProviderCatalog.mockResolvedValue(CLAUDE_CATALOG)
+  listWorkspaceTeams.mockResolvedValue([
+    {
+      id: 'cao_delivery',
+      display_name: 'CAO Delivery',
+      workspace_setup: 'linear_delivery_setup',
+      members: ['aria'],
+      diagnostics: [],
+    },
+    {
+      id: 'research',
+      display_name: 'Research',
+      workspace_setup: 'research_setup',
+      members: [],
+      diagnostics: [],
+    },
+  ])
 })
 
 afterEach(() => {
@@ -197,6 +216,30 @@ describe('AgentConfigTab', () => {
     expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
     expect(screen.getAllByText('••••••••').length).toBeGreaterThan(0)
     expect(screen.getByText(/Access token: Managed by OAuth callback/)).toBeInTheDocument()
+  })
+
+  it('updates the read-only derived setup field from the selected team while editing', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(
+      <AgentConfigTab
+        agent={ariaStatus({ workspace: { team: 'cao_delivery', derived_setup: 'linear_delivery_setup', diagnostics: [] } })}
+        onAgentUpdated={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    const setupInput = screen.getByLabelText('aria derived workspace setup') as HTMLInputElement
+
+    expect(setupInput.value).toBe('linear_delivery_setup')
+    expect(setupInput.disabled).toBe(true)
+
+    fireEvent.change(screen.getByLabelText('aria workspace team'), {
+      target: { value: 'research' },
+    })
+
+    expect(setupInput.value).toBe('research_setup')
+    expect(setupInput.disabled).toBe(true)
   })
 
   it('flips structured fields into inputs and dropdowns in edit mode', async () => {

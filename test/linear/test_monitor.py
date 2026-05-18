@@ -10,8 +10,9 @@ from typing import Any, Mapping, Optional
 import pytest
 from fastapi.testclient import TestClient
 
-from cli_agent_orchestrator.agent import AgentRegistry, LinearConfig
+from cli_agent_orchestrator.agent import AgentRegistry, AgentWorkspaceConfig, LinearConfig
 from cli_agent_orchestrator.api.main import app
+from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.events import CaoEventDispatcher
 from cli_agent_orchestrator.linear import app_client, monitor, monitor_store, runtime
@@ -23,8 +24,6 @@ from cli_agent_orchestrator.linear.workspace_events import (
     register_linear_cao_events,
 )
 from cli_agent_orchestrator.linear.workspace_provider import (
-    LinearPresence,
-    LinearResolvedPresence,
     LinearWorkspaceProvider,
 )
 from cli_agent_orchestrator.provider_conversations.persistence import (
@@ -54,8 +53,12 @@ class RecordingRuntimeHandle:
 
     notifications: list[RecordedNotification] = []
 
-    def __init__(self, _agent: Any, **_kwargs: Any) -> None:
-        self.inbox_receiver_id = "agent:implementation_partner"
+    def __init__(self, _agent: Any, **kwargs: Any) -> None:
+        resolution = kwargs.get("workspace_context_resolution")
+        workspace_context_id = kwargs.get("workspace_context_id")
+        if workspace_context_id is None and resolution is not None:
+            workspace_context_id = getattr(resolution, "workspace_context_id", None)
+        self.inbox_receiver_id = f"agent:implementation_partner:context:{workspace_context_id}"
 
     def accept_notification(self, notification: Any, *, causing_event: Any = None):
         delivery = notification.delivery
@@ -70,9 +73,12 @@ class RecordingRuntimeHandle:
 
 class RetryRecordingHandle:
     calls = 0
+    receiver_ids: list[str] = []
 
-    def __init__(self, _agent: Any, **_kwargs: Any) -> None:
-        self.inbox_receiver_id = "agent:implementation_partner"
+    def __init__(self, _agent: Any, **kwargs: Any) -> None:
+        workspace_context_id = kwargs.get("workspace_context_id")
+        self.inbox_receiver_id = f"agent:implementation_partner:context:{workspace_context_id}"
+        RetryRecordingHandle.receiver_ids.append(self.inbox_receiver_id)
 
     def try_deliver_pending(self, **_kwargs: Any):
         RetryRecordingHandle.calls += 1
@@ -117,6 +123,7 @@ def linear_monitor_world(
             app_user_id="app-user-1",
             app_user_name="Implementation Partner",
         ),
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
     )
     registry = AgentRegistry({agent.id: agent})
     provider = LinearWorkspaceProvider(
@@ -125,25 +132,11 @@ def linear_monitor_world(
     )
     provider.initialize()
     monkeypatch.setattr(linear_workspace_provider, "_default_linear_workspace_provider", provider)
-    monkeypatch.setattr(
-        runtime,
-        "_resolve_linear_event",
-        lambda _event: LinearResolvedPresence(
-            presence=LinearPresence(
-                presence_id="implementation_partner",
-                agent_id="implementation_partner",
-                app_key="implementation_partner",
-                app_user_id="app-user-1",
-                app_user_name="Implementation Partner",
-            ),
-            agent=agent,
-        ),
-    )
     RecordingRuntimeHandle.notifications = []
     monkeypatch.setattr(
         runtime,
         "_runtime_handle_for_resolved_presence",
-        lambda _resolved: RecordingRuntimeHandle(agent),
+        lambda _resolved, **kwargs: RecordingRuntimeHandle(agent, **kwargs),
     )
     yield provider
 
@@ -494,6 +487,63 @@ def test_linear_monitor_page_limit_recovery_does_not_advance_watermark(
     assert "page_limit_reached" in {diag.code for diag in result.diagnostics}
 
 
+def test_linear_monitor_policy_denial_does_not_advance_watermark(
+    linear_monitor_world,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _store_watermark("2026-05-09T11:59:58Z")
+    monkeypatch.setattr(
+        app_client,
+        "list_recent_agent_sessions",
+        lambda **_kwargs: _recent_result(_session(activity_id="activity-denied")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "notify_or_retry_agent_for_persisted_event",
+        lambda _persisted, _provider_event, **_kwargs: None,
+    )
+
+    result = monitor.run_linear_monitor(now=NOW)
+
+    assert result.events_recovered == 0
+    assert _watermark_value() == "2026-05-09T11:59:58Z"
+    assert "delivery_not_routed" in {diag.code for diag in result.diagnostics}
+    assert get_processed_event(
+        "linear",
+        "linear-monitor:implementation_partner:activity-denied",
+    ) is None
+
+
+def test_linear_monitor_skips_no_team_presences_before_query(
+    runtime_inbox_db_session,
+    implementation_partner_agent_factory,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    agent = replace(
+        implementation_partner_agent_factory(),
+        linear=LinearConfig(app_key="implementation_partner", access_token="test-token"),
+    )
+    provider = LinearWorkspaceProvider(
+        agent_registry=AgentRegistry({agent.id: agent}),
+        preflight_credentials=False,
+    )
+    provider.initialize()
+    monkeypatch.setattr(linear_workspace_provider, "_default_linear_workspace_provider", provider)
+    monkeypatch.setattr(
+        app_client,
+        "list_recent_agent_sessions",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("no-team presence queried")),
+    )
+
+    result = monitor.run_linear_monitor(now=NOW)
+
+    assert result.presences_checked == 0
+    assert monitor_store.get_watermark(
+        presence_id="implementation_partner",
+        app_key="implementation_partner",
+    ) is None
+
+
 def test_linear_monitor_credential_failure_is_bounded_and_sanitized(
     linear_monitor_world,
     monkeypatch: pytest.MonkeyPatch,
@@ -533,11 +583,15 @@ def test_linear_monitor_retries_pending_local_delivery_through_runtime_handle(
     linear_monitor_world,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    context_id = db_module.ensure_default_workspace_context("implementation_partner").id
     create_inbox_delivery(
-        "provider_conversation", "agent:implementation_partner", "Pending Linear prompt"
+        "provider_conversation",
+        f"agent:implementation_partner:context:{context_id}",
+        "Pending Linear prompt",
     )
     monkeypatch.setattr(monitor, "AgentRuntimeHandle", RetryRecordingHandle)
     RetryRecordingHandle.calls = 0
+    RetryRecordingHandle.receiver_ids = []
     monkeypatch.setattr(
         app_client, "list_recent_agent_sessions", lambda **_kwargs: _recent_result()
     )
@@ -549,6 +603,9 @@ def test_linear_monitor_retries_pending_local_delivery_through_runtime_handle(
 
     assert result.notifications_retried == 1
     assert RetryRecordingHandle.calls == 1
+    assert RetryRecordingHandle.receiver_ids == [
+        f"agent:implementation_partner:context:{context_id}"
+    ]
 
 
 def test_linear_monitor_unsupported_states_and_shapes_are_diagnosed(

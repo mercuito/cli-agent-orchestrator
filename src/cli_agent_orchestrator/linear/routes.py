@@ -163,11 +163,12 @@ async def agent_webhook(
         header_event=header_event,
     )
     provider_event = publication.event if publication is not None else None
-    persisted = (
-        runtime.persist_linear_provider_event(provider_event)
-        if isinstance(provider_event, LinearIssueContextEvent)
-        else None
-    )
+    resolved = None
+    persisted = None
+    if isinstance(provider_event, LinearIssueContextEvent):
+        resolved = runtime.resolve_linear_event_for_notification(provider_event)
+        if resolved is not None:
+            persisted = runtime.persist_linear_provider_event(provider_event)
     agent_session_id = (
         provider_event.thread_id
         if isinstance(provider_event, LinearIssueContextEvent)
@@ -186,7 +187,10 @@ async def agent_webhook(
     notification_result = runtime.notify_or_retry_agent_for_persisted_event(
         persisted,
         provider_event,
+        resolved=resolved,
     )
+    if notification_result is not None and isinstance(provider_event, LinearIssueContextEvent):
+        runtime.mark_linear_provider_event_processed(provider_event)
     duplicate_delivery = (
         persisted is not None
         and persisted.processed_event is not None

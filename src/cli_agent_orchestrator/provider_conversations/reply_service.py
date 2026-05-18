@@ -11,6 +11,10 @@ from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotification
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
 )
+from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+    require_provider_inbox_authorization,
+    require_inbox_notification_receiver,
+)
 from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessage,
     ConversationMessageRecord,
@@ -71,6 +75,7 @@ def reply_to_inbox_message(
     notification_id: int,
     body: str,
     *,
+    caller_terminal_id: Optional[str] = None,
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> ProviderConversationReplyResult:
     """Reply to a provider-thread inbox notification."""
@@ -95,6 +100,12 @@ def reply_to_inbox_message(
             f"{notification_id} not found"
         )
 
+    require_inbox_notification_receiver(
+        delivery,
+        caller_terminal_id=caller_terminal_id,
+        error=ProviderConversationReplyError,
+    )
+
     if message.route_kind != PROVIDER_CONVERSATION_INBOX_ROUTE_KIND:
         raise ProviderConversationReplyUnsupportedSourceError(
             f"inbox notification {notification_id} route_kind "
@@ -107,6 +118,14 @@ def reply_to_inbox_message(
         raise ProviderConversationReplyNotFoundError(
             f"provider conversation thread {thread_id} for inbox notification {notification_id} not found"
         )
+    require_provider_inbox_authorization(
+        delivery,
+        caller_terminal_id=caller_terminal_id,
+        provider=thread.provider,
+        thread_metadata=thread.metadata,
+        thread_raw_snapshot=thread.raw_snapshot,
+        error=ProviderConversationReplyError,
+    )
 
     try:
         provider_reply = _send_provider_thread_reply(

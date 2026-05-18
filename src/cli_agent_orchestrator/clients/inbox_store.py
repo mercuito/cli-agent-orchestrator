@@ -482,6 +482,23 @@ def get_oldest_pending_inbox_delivery(receiver_id: str) -> Optional[InboxDeliver
     return deliveries[0] if deliveries else None
 
 
+def list_pending_agent_inbox_receiver_ids(agent_id: str) -> List[str]:
+    """List pending agent/context receiver ids for an agent."""
+    context_prefix = f"agent:{agent_id}:context:"
+    with _session_local()() as db:
+        rows = (
+            db.query(InboxNotificationModel.receiver_id)
+            .filter(
+                InboxNotificationModel.status == MessageStatus.PENDING.value,
+                InboxNotificationModel.receiver_id.like(f"{context_prefix}%"),
+            )
+            .distinct()
+            .order_by(InboxNotificationModel.receiver_id.asc())
+            .all()
+        )
+        return [row[0] for row in rows]
+
+
 def list_pending_inbox_deliveries_for_effective_source(
     receiver_id: str, source_delivery: InboxDelivery
 ) -> List[InboxDelivery]:

@@ -50,7 +50,7 @@ def _agent(**overrides: object) -> Agent:
         "hooks": {"pre": {"command": "true"}},
         "use_legacy_mcp_json": False,
         "runtime_capabilities": ("@builtin",),
-        "workspace": AgentWorkspaceConfig(setup="cao_delivery"),
+        "workspace": AgentWorkspaceConfig(team="cao_delivery"),
         "linear": LinearConfig(
             app_key="implementation_partner",
             client_id="client-1",
@@ -94,8 +94,8 @@ def test_agents_root_honors_cao_agents_dir_env_at_import(tmp_path):
 
 
 def test_agent_model_rejects_invalid_workspace_setup():
-    with pytest.raises(AgentConfigError, match="workspace.setup"):
-        _agent(workspace=AgentWorkspaceConfig(setup=""))
+    with pytest.raises(AgentConfigError, match="workspace.team"):
+        _agent(workspace=AgentWorkspaceConfig(team=""))
 
 
 def test_agent_model_rejects_unsupported_cli_provider():
@@ -166,15 +166,15 @@ def test_write_then_load_agent_round_trips_and_sets_permissions(tmp_path):
 
 
 def test_agent_workspace_setup_round_trips_without_legacy_block(tmp_path):
-    given_agent = _agent(workspace=AgentWorkspaceConfig(setup="cao_delivery"))
+    given_agent = _agent(workspace=AgentWorkspaceConfig(team="cao_delivery"))
 
     write_agent(given_agent, agents_root=tmp_path)
     loaded = load_agent("implementation_partner", agents_root=tmp_path)
     config_text = (tmp_path / "implementation_partner" / "agent.toml").read_text()
 
-    assert loaded.workspace.setup == "cao_delivery"
+    assert loaded.workspace.team == "cao_delivery"
     assert "[workspace]" in config_text
-    assert 'setup = "cao_delivery"' in config_text
+    assert 'team = "cao_delivery"' in config_text
     assert "workspace_context" not in config_text
 
 
@@ -184,7 +184,7 @@ def test_agent_without_workspace_setup_round_trips(tmp_path):
     write_agent(given_agent, agents_root=tmp_path)
     loaded = load_agent("implementation_partner", agents_root=tmp_path)
 
-    assert loaded.workspace.setup is None
+    assert loaded.workspace.team is None
     assert "[workspace]" not in (tmp_path / "implementation_partner" / "agent.toml").read_text()
 
 
@@ -266,13 +266,15 @@ enabled = true
     message = str(exc_info.value)
     assert "implementation_partner" in message
     assert str(config_path) in message
-    assert "workspace_context.resolver_id" in message
+    assert "workspace_context is not supported" in message
+    assert "[workspace] team" in message
 
 
-def test_legacy_workspace_context_maps_through_explicit_migration_table(tmp_path):
+def test_legacy_workspace_context_without_team_is_rejected(tmp_path):
     agent_dir = tmp_path / "implementation_partner"
     agent_dir.mkdir()
-    (agent_dir / "agent.toml").write_text("""
+    config_path = agent_dir / "agent.toml"
+    config_path.write_text("""
 id = "implementation_partner"
 display_name = "Implementation Partner"
 cli_provider = "codex"
@@ -285,13 +287,14 @@ resolver_id = "linear_planning"
 """.lstrip())
     (agent_dir / "prompt.md").write_text("# Agent\n")
 
-    agent = load_agent("implementation_partner", agents_root=tmp_path)
+    with pytest.raises(AgentConfigError) as exc_info:
+        load_agent("implementation_partner", agents_root=tmp_path)
 
-    assert agent.workspace.setup == "cao_delivery"
-    assert agent.workspace.diagnostics == (
-        "agents.implementation_partner.workspace_context is legacy; "
-        "mapped resolver to workspace setup cao_delivery",
-    )
+    message = str(exc_info.value)
+    assert "implementation_partner" in message
+    assert str(config_path) in message
+    assert "workspace_context is not supported" in message
+    assert "[workspace] team" in message
 
 
 def test_workspace_setup_wins_over_legacy_workspace_context(tmp_path):
@@ -305,7 +308,7 @@ workdir = "/repo"
 session_name = "implementation-partner"
 
 [workspace]
-setup = "cao_delivery"
+team = "cao_delivery"
 
 [workspace_context]
 enabled = true
@@ -315,10 +318,10 @@ resolver_id = "linear_planning"
 
     agent = load_agent("implementation_partner", agents_root=tmp_path)
 
-    assert agent.workspace.setup == "cao_delivery"
+    assert agent.workspace.team == "cao_delivery"
     assert agent.workspace.diagnostics == (
         "agents.implementation_partner.workspace_context is legacy and ignored because "
-        "[workspace] setup is authoritative",
+        "[workspace] team is authoritative",
     )
 
 

@@ -65,6 +65,7 @@ def resolved_presence(implementation_partner_agent_factory):
         session_name: str = "implementation-partner",
         cli_provider: str = "codex",
         workdir: str = "/repo",
+        team: str | None = "cao_delivery",
     ) -> LinearResolvedPresence:
         return LinearResolvedPresence(
             presence=LinearPresence(
@@ -78,6 +79,7 @@ def resolved_presence(implementation_partner_agent_factory):
                 cli_provider=cli_provider,
                 workdir=workdir,
                 session_name=session_name,
+                workspace=AgentWorkspaceConfig(team=team),
             ),
         )
 
@@ -182,7 +184,11 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolve
     provider.resolve_presence.return_value = resolved.presence
     provider.resolve_agent_for_presence.return_value = resolved.agent
     monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: provider)
-    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
 
     assert runtime.ensure_discovery_terminal() == terminal
     handle.ensure_started.assert_called_once()
@@ -191,14 +197,18 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolve
 def test_terminal_config_comes_from_cao_agent_mapping(monkeypatch, resolved_presence):
     handle = Mock()
     handle.ensure_started.return_value = SimpleNamespace(id="terminal-1")
-    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
 
     assert runtime._terminal_for_resolved_presence(resolved_presence()).id == "terminal-1"
     handle.ensure_started.assert_called_once()
 
 
 def test_agent_without_workspace_setup_gets_default_runtime_context(test_db, resolved_presence):
-    resolved = resolved_presence()
+    resolved = resolved_presence(team=None)
 
     handle = AgentRuntimeHandle(
         resolved.agent,
@@ -213,6 +223,7 @@ def test_agent_without_workspace_setup_gets_default_runtime_context(test_db, res
 
 
 def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
+    test_db,
     monkeypatch,
     resolved_presence,
 ):
@@ -225,7 +236,11 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
         notification=Mock(created=True),
     )
     monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_presence())
-    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
     update_url = Mock(side_effect=lambda *args, **kwargs: calls.append("update_url"))
     create_activity = Mock(side_effect=lambda *args, **kwargs: calls.append("create_activity"))
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", update_url)
@@ -306,7 +321,7 @@ def test_context_enabled_linear_event_fails_closed_for_unknown_setup(
             presence=resolved.presence,
             agent=replace(
                 resolved.agent,
-                workspace=AgentWorkspaceConfig(setup="future_setup"),
+                workspace=AgentWorkspaceConfig(team="future_setup"),
             ),
         )
 
@@ -317,7 +332,7 @@ def test_context_enabled_linear_event_fails_closed_for_unknown_setup(
 
     with pytest.raises(
         runtime.LinearWorkspaceProviderConfigError,
-        match="Unknown workspace setup",
+        match="Unknown workspace team",
     ):
         runtime.handle_provider_event(event)
     assert calls == []
@@ -384,11 +399,13 @@ def test_context_enabled_linear_events_switch_only_across_distinct_boundaries(
 def implementation_partner_agent_factory_with_context(agent):
     return replace(
         agent,
-        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
     )
 
 
-def test_handle_linear_provider_event_uses_verified_linear_app_key(monkeypatch, resolved_presence):
+def test_handle_linear_provider_event_uses_verified_linear_app_key(
+    test_db, monkeypatch, resolved_presence
+):
     event = _linear_provider_event(prompt_context="<issue/>")
     handle = Mock()
     handle.notify.return_value = Mock(
@@ -401,7 +418,11 @@ def test_handle_linear_provider_event_uses_verified_linear_app_key(monkeypatch, 
         "_resolve_linear_event",
         lambda event: resolved_presence(app_key=event.app_key),
     )
-    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
     monkeypatch.setattr(runtime.app_client, "linear_app_env", lambda app_key, name: None)
     update_url = Mock()
     create_activity = Mock()
@@ -577,7 +598,11 @@ def test_notify_agent_for_persisted_event_hands_semantic_delivery_to_runtime(
     handle = Mock(inbox_receiver_id="agent:implementation_partner")
     handle.accept_notification.side_effect = accept_notification
     monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_presence())
-    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
     monkeypatch.setattr(
         runtime,
         "create_notification_for_persisted_event",
@@ -608,7 +633,7 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
             app_key="implementation_partner",
             app_user_name="Implementation Partner",
         ),
-        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
     )
     registry = AgentRegistry({agent.id: agent})
     agents_root = tmp_path / "agents"
@@ -700,7 +725,7 @@ def test_out_of_setup_linear_event_rejects_before_runtime_or_inbox_creation(
 ):
     agent_a = replace(
         implementation_partner_agent_factory(id="agent_a", session_name="agent-a"),
-        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
         linear=LinearConfig(app_key="agent-a", app_user_id="linear-user-a"),
     )
     agent_b = replace(
@@ -763,7 +788,7 @@ def test_out_of_setup_linear_event_rejects_before_runtime_or_inbox_creation(
 
 
 def test_handle_linear_provider_event_routes_through_agent_runtime_notify(
-    monkeypatch, resolved_presence
+    test_db, monkeypatch, resolved_presence
 ):
     event = _linear_provider_event(prompt_context="<issue/>")
     handle = Mock()
@@ -773,7 +798,11 @@ def test_handle_linear_provider_event_routes_through_agent_runtime_notify(
         notification=Mock(created=True),
     )
     monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_presence())
-    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
     monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
 
@@ -837,7 +866,11 @@ def test_notify_agent_for_persisted_event_routes_through_runtime_accept_notifica
         ),
     )
     monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_presence())
-    monkeypatch.setattr(runtime, "_runtime_handle_for_resolved_presence", lambda resolved: handle)
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
     monkeypatch.setattr(
         runtime,
         "create_notification_for_persisted_event",

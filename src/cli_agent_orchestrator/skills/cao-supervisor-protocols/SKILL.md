@@ -105,7 +105,7 @@ If you need multiple worker results, dispatch them all first, then end the turn.
 
 ## Callback Pattern
 
-When you use `assign`, include the callback terminal ID in the task message. Tell the worker exactly which terminal should receive the result and instruct the worker to use `send_message`.
+When you use `assign`, include the callback terminal ID in the task message. Tell the worker exactly which terminal should receive the result and instruct the worker to use `send_message`. The callback is still subject to CAO workspace team policy; terminal ID possession is not sufficient authority if the agents are not in the same team.
 
 Example pattern:
 
@@ -123,7 +123,7 @@ not transfer baton ownership.
 
 ## Direct Supervisor Communication
 
-Use `send_message` when you need to contact an existing terminal directly rather than spawning a new worker.
+Use `send_message` when you need to contact an existing same-team terminal directly rather than spawning a new worker.
 
 Examples:
 

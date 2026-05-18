@@ -50,15 +50,17 @@ The old profile prompt fields are flattened into the two-file agent shape:
   agent's own `agent.toml` fields, and the durable agent `id` is the runtime
   identity.
 
-## Workspace Setup
+## Workspace Team
 
 `[workspace]` is optional.
 
-- `setup`: named CAO workspace setup membership, such as `"cao_delivery"`.
+- `team`: named CAO workspace team membership, such as `"cao_delivery"`.
 
-Agents without a workspace setup are still valid and start in their default
-runtime workspace context. Provider event routing and setup-aware collaboration
-only apply to agents that share the same non-empty setup.
+Agents without a workspace team are still valid and start in their default
+runtime workspace context. Provider event routing and team-aware collaboration
+only apply to agents that share the same non-empty team. The team's selected
+workspace setup is derived from the persisted team definition, not from the
+agent config.
 
 ## Linear
 

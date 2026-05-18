@@ -24,6 +24,10 @@ from cli_agent_orchestrator.provider_conversations.persistence import (
     upsert_thread,
     upsert_work_item,
 )
+from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
+
+AUTHORIZED_AGENT_ID = "implementation_partner"
+AUTHORIZED_RECEIVER_ID = f"agent:{AUTHORIZED_AGENT_ID}:context:default"
 
 
 @pytest.fixture
@@ -85,7 +89,8 @@ def test_provider_conversation_notification_uses_thread_source_and_internal_thre
 
     result = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     assert result.created is True
@@ -94,7 +99,7 @@ def test_provider_conversation_notification_uses_thread_source_and_internal_thre
     assert result.delivery.message.source_id != thread.external_id
     assert result.delivery.message.route_kind == PROVIDER_CONVERSATION_INBOX_ROUTE_KIND
     assert result.delivery.message.route_id == str(thread.id)
-    assert result.delivery.notification.receiver_id == "terminal-a"
+    assert result.delivery.notification.receiver_id == AUTHORIZED_RECEIVER_ID
     assert result.delivery.notification.status == MessageStatus.PENDING
 
 
@@ -106,7 +111,8 @@ def test_message_backed_notification_body_is_compact_and_message_body_is_durable
 
     result = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     assert result.delivery.message is not None
@@ -132,7 +138,8 @@ def test_semantic_notification_body_is_bounded(test_session):
 
     result = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
         preview_chars=35,
         notification_chars=180,
     )
@@ -150,17 +157,19 @@ def test_duplicate_notification_for_same_receiver_and_provider_message_is_idempo
 
     first = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
     second = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     assert first.created is True
     assert second.created is False
     assert second.delivery.notification.id == first.delivery.notification.id
-    assert len(db_module.list_pending_inbox_notifications("terminal-a", limit=10)) == 1
+    assert len(db_module.list_pending_inbox_notifications(AUTHORIZED_RECEIVER_ID, limit=10)) == 1
     with db_module.SessionLocal() as session:
         assert session.query(db_module.InboxNotificationModel).count() == 1
 
@@ -172,7 +181,8 @@ def test_persisted_event_wrapper_bridges_its_message(test_session):
         PersistedProviderEventRecords(
             processed_event=None, work_item=None, thread=None, message=message
         ),
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     assert result.created is True
@@ -192,11 +202,13 @@ def test_different_provider_conversation_threads_do_not_coalesce_into_same_sourc
 
     first = create_notification_for_message(
         provider_message_id=first_message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
     second = create_notification_for_message(
         provider_message_id=second_message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     assert first.delivery.message.source_id == str(first_thread.id)
@@ -208,7 +220,8 @@ def test_missing_provider_conversation_thread_or_message_fails_clearly(test_sess
     with pytest.raises(ValueError, match="provider conversation message 999 not found"):
         create_notification_for_message(
             provider_message_id=999,
-            receiver_id="terminal-a",
+            receiver_id=AUTHORIZED_RECEIVER_ID,
+            authorized_agent_id=AUTHORIZED_AGENT_ID,
         )
 
     _, _, message = _persist_message()
@@ -222,7 +235,8 @@ def test_missing_provider_conversation_thread_or_message_fails_clearly(test_sess
     ):
         create_notification_for_message(
             provider_message_id=message.id,
-            receiver_id="terminal-a",
+            receiver_id=AUTHORIZED_RECEIVER_ID,
+            authorized_agent_id=AUTHORIZED_AGENT_ID,
         )
 
 
@@ -234,7 +248,8 @@ def test_attachment_metadata_does_not_block_semantic_message(test_session):
 
     result = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     assert result.created is True
@@ -243,6 +258,17 @@ def test_attachment_metadata_does_not_block_semantic_message(test_session):
     assert result.delivery.message.origin == {
         "attachments": [{"content_type": "image/png", "name": "trace.png"}]
     }
+
+
+def test_provider_conversation_notification_rejects_mismatched_receiver_agent(test_session):
+    _, _, message = _persist_message()
+
+    with pytest.raises(WorkspaceSetupConfigError, match="not owned"):
+        create_notification_for_message(
+            provider_message_id=message.id,
+            receiver_id="agent:other_agent:context:default",
+            authorized_agent_id=AUTHORIZED_AGENT_ID,
+        )
 
 
 def test_semantic_message_origin_does_not_copy_raw_snapshot(test_session):
@@ -254,7 +280,8 @@ def test_semantic_message_origin_does_not_copy_raw_snapshot(test_session):
 
     result = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     assert result.delivery.message.origin is None
@@ -275,15 +302,17 @@ def test_provider_conversation_sources_use_existing_inbox_batching_behavior(test
 
     first = create_notification_for_message(
         provider_message_id=first_message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
     create_notification_for_message(
         provider_message_id=second_message.id,
-        receiver_id="terminal-a",
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
     batch = db_module.list_pending_inbox_deliveries_for_effective_source(
-        "terminal-a", first.delivery
+        AUTHORIZED_RECEIVER_ID, first.delivery
     )
 
     assert [delivery.message.source_kind for delivery in batch] == [

@@ -11,6 +11,10 @@ from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotification
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
 )
+from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+    require_provider_inbox_authorization,
+    require_inbox_notification_receiver,
+)
 from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
@@ -48,7 +52,11 @@ MAX_CONTEXT_JSON_CHARS = 4000
 MAX_CONTEXT_VALUE_CHARS = 3500
 
 
-def read_inbox_message(notification_id: int) -> InboxReadResult:
+def read_inbox_message(
+    notification_id: int,
+    *,
+    caller_terminal_id: Optional[str] = None,
+) -> InboxReadResult:
     """Read one CAO inbox notification through the slim shared inbox surface."""
 
     with db_module.SessionLocal() as session:
@@ -66,6 +74,12 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
                 f"inbox message target {message_target.target_id} for inbox notification "
                 f"{notification_id} not found"
             )
+
+        require_inbox_notification_receiver(
+            delivery,
+            caller_terminal_id=caller_terminal_id,
+            error=InboxReadError,
+        )
 
         if message.route_kind != PROVIDER_CONVERSATION_INBOX_ROUTE_KIND:
             return InboxReadResult(
@@ -105,6 +119,16 @@ def read_inbox_message(notification_id: int) -> InboxReadResult:
         )
         message_metadata = _message_metadata(message_row)
         origin = message.origin if isinstance(message.origin, Mapping) else None
+        require_provider_inbox_authorization(
+            delivery,
+            caller_terminal_id=caller_terminal_id,
+            provider=thread_row.provider,
+            thread_metadata=_thread_metadata(thread_row),
+            thread_raw_snapshot=_thread_raw_snapshot(thread_row),
+            message_metadata=message_metadata,
+            message_raw_snapshot=_message_raw_snapshot(message_row),
+            error=InboxReadError,
+        )
 
         reply_error = None
         replyable = True
@@ -198,6 +222,26 @@ def _message_metadata(
     if message_row is None:
         return None
     return _load_bounded_json_object(cast(Optional[str], message_row.metadata_json))
+
+
+def _message_raw_snapshot(
+    message_row: Optional[db_module.ProviderConversationMessageModel],
+) -> Optional[Dict[str, Any]]:
+    if message_row is None:
+        return None
+    return _load_bounded_json_object(cast(Optional[str], message_row.raw_snapshot_json))
+
+
+def _thread_metadata(
+    thread_row: db_module.ProviderConversationThreadModel,
+) -> Optional[Dict[str, Any]]:
+    return _load_bounded_json_object(cast(Optional[str], thread_row.metadata_json))
+
+
+def _thread_raw_snapshot(
+    thread_row: db_module.ProviderConversationThreadModel,
+) -> Optional[Dict[str, Any]]:
+    return _load_bounded_json_object(cast(Optional[str], thread_row.raw_snapshot_json))
 
 
 def _provider_conversation_workspace(

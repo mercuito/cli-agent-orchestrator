@@ -9,11 +9,30 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base, BatonEventModel, BatonModel
 from cli_agent_orchestrator.models.baton import BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services import baton_service, baton_watchdog_service, inbox_service
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    default_workspace_setup_registry,
+)
+
+
+class _TeamStore:
+    def __init__(self, teams: tuple[WorkspaceTeam, ...]) -> None:
+        self._teams = {team.id: team for team in teams}
+
+    def get(self, team_id: str) -> WorkspaceTeam:
+        return self._teams[team_id]
+
+    def list(self) -> tuple[WorkspaceTeam, ...]:
+        return tuple(self._teams.values())
 
 
 @pytest.fixture
@@ -32,6 +51,56 @@ def patched_db(monkeypatch):
     return TestSession
 
 
+@pytest.fixture(autouse=True)
+def allow_baton_collaboration(monkeypatch):
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_same_team_collaboration",
+        lambda sender_id, receiver_id, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
+        _collaboration_manager,
+    )
+
+
+def _agent(agent_id: str, team: str | None = "delivery") -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/repo",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team=team),
+    )
+
+
+def _collaboration_manager() -> WorkspaceCollaborationManager:
+    return WorkspaceCollaborationManager(
+        setup_registry=default_workspace_setup_registry(),
+        team_registry=WorkspaceTeamRegistry(
+            _TeamStore(
+                (
+                    WorkspaceTeam(
+                        id="delivery",
+                        display_name="Delivery",
+                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                    ),
+                )
+            )
+        ),
+        agent_registry=AgentRegistry(
+            {
+                "originator_agent": _agent("originator_agent"),
+                "impl_agent": _agent("impl_agent"),
+                "detached_agent": _agent("detached_agent", None),
+            }
+        ),
+        provider_adapters={},
+    )
+
+
 def _config(*, grace_seconds=1, rate_limit_seconds=60):
     return baton_watchdog_service.BatonWatchdogConfig(
         interval_seconds=0.01,
@@ -42,6 +111,10 @@ def _config(*, grace_seconds=1, rate_limit_seconds=60):
 
 def _create_terminal(terminal_id: str):
     agent_id = f"{terminal_id}_agent"
+    _create_terminal_for_agent(terminal_id, agent_id)
+
+
+def _create_terminal_for_agent(terminal_id: str, agent_id: str):
     db_module.create_terminal(
         terminal_id=terminal_id,
         tmux_session="cao-test",
@@ -167,6 +240,37 @@ def test_nudges_are_rate_limited_by_last_nudged_at(patched_db, monkeypatch):
     assert len(_messages("impl")) == 2
 
 
+def test_teamless_holder_is_orphaned_before_watchdog_inbox_delivery(patched_db, monkeypatch):
+    _create_terminal("originator")
+    _create_terminal_for_agent("detached", "detached_agent")
+    provider = _provider(TerminalStatus.IDLE)
+    monkeypatch.setattr(
+        baton_watchdog_service.provider_manager,
+        "get_provider",
+        lambda terminal_id: provider,
+    )
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T05",
+        originator_id="originator",
+        holder_id="detached",
+    )
+
+    result = baton_watchdog_service.scan_active_batons(
+        config=_config(grace_seconds=0),
+        now=datetime.now() + timedelta(seconds=5),
+    )
+
+    baton = db_module.get_baton_record("baton-1")
+    assert result.nudged == 0
+    assert result.orphaned == 1
+    assert baton.status == BatonStatus.ORPHANED.value
+    assert [event.event_type for event in _events("baton-1")] == ["create", "orphan"]
+    assert len(_messages("detached")) == 1
+    assert _messages("detached")[0].message.sender_id == "originator"
+    assert len(_messages("originator")) == 1
+
+
 def test_watchdog_nudge_notification_delivers_through_semantic_inbox(
     patched_db,
     monkeypatch,
@@ -207,6 +311,7 @@ def test_watchdog_nudge_notification_delivers_through_semantic_inbox(
 def test_missing_holder_metadata_marks_baton_orphaned_and_notifies_originator(
     patched_db, monkeypatch
 ):
+    _create_terminal("originator")
     monkeypatch.setattr(
         baton_watchdog_service.provider_manager,
         "get_provider",
@@ -242,6 +347,7 @@ def test_missing_holder_metadata_marks_baton_orphaned_and_notifies_originator(
 def test_missing_holder_provider_marks_baton_orphaned_and_notifies_originator(
     patched_db, monkeypatch
 ):
+    _create_terminal("originator")
     _create_terminal("impl")
 
     def provider_missing(terminal_id: str):

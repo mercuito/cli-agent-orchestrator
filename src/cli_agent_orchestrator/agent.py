@@ -91,14 +91,14 @@ def configure_agents_root(agents_root: str | Path) -> Path:
 
 @dataclass(frozen=True)
 class AgentWorkspaceConfig:
-    """Workspace setup membership configured for one durable agent."""
+    """Workspace team membership configured for one durable agent."""
 
-    setup: Optional[str] = None
+    team: Optional[str] = None
     diagnostics: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.setup is not None:
-            _required_str(self.setup, "workspace.setup")
+        if self.team is not None:
+            _required_str(self.team, "workspace.team")
         if not isinstance(self.diagnostics, tuple) or not all(
             isinstance(item, str) for item in self.diagnostics
         ):
@@ -510,7 +510,7 @@ def patch_agent_config(
     if "codex_config" in changed_fields:
         table_replacements.append(("codex_config", dict(agent.codex_config)))
     if "workspace" in changed_fields:
-        workspace = {"setup": agent.workspace.setup} if agent.workspace.setup is not None else None
+        workspace = {"team": agent.workspace.team} if agent.workspace.team is not None else None
         table_replacements.append(("workspace", workspace))
         table_replacements.append(("workspace_context", None))
     if "linear" in changed_fields:
@@ -640,35 +640,40 @@ def _workspace_config(
     diagnostics: list[str] = []
     raw_workspace = data.get("workspace")
     raw_legacy = data.get("workspace_context")
-    setup: str | None = None
+    team: str | None = None
 
     if raw_workspace is not None:
         if not isinstance(raw_workspace, Mapping):
             raise AgentConfigError(f"{path}: agents.{agent_id}.workspace must be a table")
+        raw_team = raw_workspace.get("team")
+        if raw_team is not None:
+            if not isinstance(raw_team, str) or not raw_team.strip():
+                raise AgentConfigError(f"{path}: agents.{agent_id}.workspace.team must be a string")
+            team = raw_team.strip()
         raw_setup = raw_workspace.get("setup")
         if raw_setup is not None:
-            if not isinstance(raw_setup, str) or not raw_setup.strip():
-                raise AgentConfigError(f"{path}: agents.{agent_id}.workspace.setup must be a string")
-            setup = raw_setup.strip()
+            raise AgentConfigError(
+                f"{path}: agents.{agent_id}.workspace.setup is not supported; use "
+                "workspace.team"
+            )
 
     if raw_legacy is not None:
-        legacy_setup = _legacy_workspace_setup(raw_legacy, agent_id=agent_id, path=path)
-        if setup is not None:
+        if team is not None:
+            _validate_legacy_workspace_context(raw_legacy, agent_id=agent_id, path=path)
             diagnostics.append(
                 f"agents.{agent_id}.workspace_context is legacy and ignored because "
-                "[workspace] setup is authoritative"
+                "[workspace] team is authoritative"
             )
-        elif legacy_setup is not None:
-            setup = legacy_setup
-            diagnostics.append(
-                f"agents.{agent_id}.workspace_context is legacy; mapped resolver to "
-                f"workspace setup {legacy_setup}"
+        else:
+            raise AgentConfigError(
+                f"{path}: agents.{agent_id}.workspace_context is not supported; use "
+                "[workspace] team"
             )
 
-    return AgentWorkspaceConfig(setup=setup, diagnostics=tuple(diagnostics))
+    return AgentWorkspaceConfig(team=team, diagnostics=tuple(diagnostics))
 
 
-def _legacy_workspace_setup(raw: object, *, agent_id: str, path: Path) -> str | None:
+def _validate_legacy_workspace_context(raw: object, *, agent_id: str, path: Path) -> None:
     if not isinstance(raw, Mapping):
         raise AgentConfigError(f"{path}: agents.{agent_id}.workspace_context must be a table")
     enabled = raw.get("enabled", False)
@@ -681,21 +686,6 @@ def _legacy_workspace_setup(raw: object, *, agent_id: str, path: Path) -> str | 
         raise AgentConfigError(
             f"{path}: agents.{agent_id}.workspace_context.resolver_id must be a string"
         )
-    if not enabled:
-        return None
-    if resolver_id is None or not resolver_id.strip():
-        raise AgentConfigError(
-            f"{path}: agents.{agent_id}.workspace_context.resolver_id is required when enabled"
-        )
-    migration_table = {"linear_planning": "cao_delivery"}
-    normalized = resolver_id.strip()
-    try:
-        return migration_table[normalized]
-    except KeyError as exc:
-        raise AgentConfigError(
-            f"{path}: agents.{agent_id}.workspace_context.resolver_id has no workspace setup "
-            f"migration: {normalized}"
-        ) from exc
 
 
 def _linear_config(raw: object, *, path: Path) -> Optional[LinearConfig]:
@@ -865,8 +855,8 @@ def _agent_to_toml(agent: Agent) -> str:
         data["use_legacy_mcp_json"] = agent.use_legacy_mcp_json
     if agent.runtime_capabilities is not None:
         data["runtime_capabilities"] = list(agent.runtime_capabilities)
-    if agent.workspace.setup is not None:
-        data["workspace"] = {"setup": agent.workspace.setup}
+    if agent.workspace.team is not None:
+        data["workspace"] = {"team": agent.workspace.team}
     if agent.mcp_servers:
         data["mcp_servers"] = dict(agent.mcp_servers)
     if agent.codex_config:

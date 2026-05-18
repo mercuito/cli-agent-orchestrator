@@ -1,7 +1,50 @@
 """Tests for send_message MCP tool."""
 
+from contextlib import contextmanager
 import os
 from unittest.mock import patch
+
+import pytest
+
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
+
+
+def _team_agent(agent_id: str, team: str) -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/tmp",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team=team),
+    )
+
+
+@contextmanager
+def _terminal_team_guard(*, sender_team: str = "cao_delivery", receiver_team: str = "cao_delivery"):
+    registry = AgentRegistry(
+        {
+            "sender": _team_agent("sender", sender_team),
+            "receiver": _team_agent("receiver", receiver_team),
+        }
+    )
+
+    def _metadata(terminal_id: str):
+        if terminal_id == "sender-term":
+            return {"id": terminal_id, "agent_id": "sender"}
+        if terminal_id == "receiver-term":
+            return {"id": terminal_id, "agent_id": "receiver"}
+        return None
+
+    with (
+        patch("cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry),
+        patch(
+            "cli_agent_orchestrator.mcp_server.server.db_module.get_terminal_metadata",
+            side_effect=_metadata,
+        ),
+    ):
+        yield
 
 
 class TestSendMessageSenderIdInjection:
@@ -66,3 +109,36 @@ class TestSendMessageSenderIdInjection:
         sent_message = mock_inbox.call_args[0][1]
         assert sent_message.startswith(original)
         assert sent_message.index("[Message from terminal") > len(original)
+
+
+class TestSendMessageTeamPolicy:
+    def test_send_to_inbox_rejects_cross_team_before_http_post(self):
+        from cli_agent_orchestrator.mcp_server.server import _send_to_inbox
+
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-term"}),
+            _terminal_team_guard(receiver_team="other_team"),
+            patch("cli_agent_orchestrator.mcp_server.server.requests.post") as mock_post,
+        ):
+            with pytest.raises(Exception) as exc_info:
+                _send_to_inbox("receiver-term", "hello")
+
+        assert "Workspace team collaboration rejected" in str(exc_info.value)
+        mock_post.assert_not_called()
+
+    def test_send_to_inbox_allows_same_team_after_policy_check(self):
+        from cli_agent_orchestrator.mcp_server.server import _send_to_inbox
+
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-term"}),
+            _terminal_team_guard(),
+            patch("cli_agent_orchestrator.mcp_server.server.requests.post") as mock_post,
+        ):
+            response = mock_post.return_value
+            response.json.return_value = {"success": True}
+            response.raise_for_status.return_value = None
+
+            result = _send_to_inbox("receiver-term", "hello")
+
+        assert result == {"success": True}
+        mock_post.assert_called_once()

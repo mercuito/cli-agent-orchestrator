@@ -114,7 +114,7 @@ def _agents(
                 workdir="/repo",
                 session_name="implementation-partner",
                 prompt="# Implementation Partner\n",
-                workspace=AgentWorkspaceConfig(setup=workspace_setup),
+                workspace=AgentWorkspaceConfig(team=workspace_setup),
                 linear=LinearConfig(
                     app_key="implementation_partner",
                     access_token="access-token",

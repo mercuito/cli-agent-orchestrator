@@ -143,6 +143,7 @@ def _session_local():
 
 def workspace_context_id_for_boundary(
     *,
+    resolver_id: str = "default",
     provider_id: str,
     object_type: str,
     object_id: str,
@@ -151,6 +152,7 @@ def workspace_context_id_for_boundary(
 
     material = "\n".join(
         [
+            _required_token(resolver_id, "resolver_id"),
             _required_token(provider_id, "provider_id"),
             _required_token(object_type, "object_type"),
             _required_token(object_id, "object_id"),
@@ -163,6 +165,7 @@ def default_workspace_context_id(agent_id: str) -> str:
     """Return the stable default context id for an agent without resolved work."""
 
     return workspace_context_id_for_boundary(
+        resolver_id="default",
         provider_id="cao",
         object_type="agent_default",
         object_id=_required_token(agent_id, "agent_id"),
@@ -195,6 +198,7 @@ def ensure_workspace_context_for_boundary(
     object_type = _required_token(object_type, "object_type")
     object_id = _required_token(object_id, "object_id")
     context_id = workspace_context_id_for_boundary(
+        resolver_id=resolver_id,
         provider_id=provider_id,
         object_type=object_type,
         object_id=object_id,
@@ -281,6 +285,7 @@ def get_workspace_context_for_object(
     provider_id: str,
     object_type: str,
     object_id: str,
+    resolver_id: str | None = None,
 ) -> WorkspaceContextRecord | None:
     """Return the mapped workspace context for one provider object."""
 
@@ -300,6 +305,13 @@ def get_workspace_context_for_object(
         if mapping_row is None:
             return None
         context_row = session.get(WorkspaceContextModel, mapping_row.workspace_context_id)
+        if resolver_id is not None and context_row is not None:
+            normalized_resolver = _required_token(resolver_id, "resolver_id")
+            if context_row.resolver_id != normalized_resolver:
+                raise WorkspaceContextConflictError(
+                    f"provider object {provider_id}/{object_type}/{object_id} is mapped through "
+                    f"resolver {context_row.resolver_id}, not {normalized_resolver}"
+                )
         return _context_from_row(context_row) if context_row is not None else None
 
 

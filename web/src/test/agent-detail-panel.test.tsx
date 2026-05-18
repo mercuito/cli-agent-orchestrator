@@ -34,7 +34,7 @@ function agentStatus(overrides: Partial<AgentStatus> = {}): AgentStatus {
       use_legacy_mcp_json: null,
       runtime_capabilities: null,
       codex_config: {},
-      workspace: { setup: null, diagnostics: [] },
+      workspace: { team: null, derived_setup: null, diagnostics: [] },
       linear: null,
     },
     active: false,
@@ -121,19 +121,21 @@ describe('AgentDetailPanel', () => {
     it('renders workspace setup diagnostics from the setup manager endpoint', () => {
       render(
         <AgentDetailPanel
-          agent={agentStatus({ workspace_setup_id: 'cao_delivery' })}
+          agent={agentStatus({ derived_workspace_setup_id: 'cao_delivery' })}
           workspaceSetupDiagnostics={[
             {
               code: 'pruned_provider_identity',
-              message: 'Workspace setup cao_delivery pruned linear tool access for discovery',
-              setup_id: 'cao_delivery',
+              message: 'Workspace team cao_delivery pruned linear tool access for discovery',
+              team_id: 'cao_delivery',
+              setup_id: 'linear_delivery_setup',
               agent_id: 'aria',
               provider_name: 'linear',
             },
             {
               code: 'unavailable_provider',
-              message: 'Workspace setup cao_delivery requires unavailable provider linear',
-              setup_id: 'cao_delivery',
+              message: 'Workspace team cao_delivery setup linear_delivery_setup requires unavailable provider linear',
+              team_id: 'cao_delivery',
+              setup_id: 'linear_delivery_setup',
               agent_id: null,
               provider_name: 'linear',
             },

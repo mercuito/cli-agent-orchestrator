@@ -5,11 +5,22 @@ from unittest.mock import patch
 
 import pytest
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.models.inbox import (
     InboxDelivery,
     InboxMessageRecord,
     InboxNotification,
     MessageStatus,
+)
+from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceSetup,
+    WorkspaceSetupRegistry,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    WorkspaceTeamStore,
 )
 
 
@@ -166,16 +177,19 @@ class TestCreateInboxMessageEndpoint:
                 created_at=datetime(2026, 5, 7, 12, 0, 0),
             ),
         )
-        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
-            with patch(
+        with (
+            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
+            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
+            patch(
                 "cli_agent_orchestrator.api.main.inbox_service.check_and_send_pending_messages"
-            ) as mock_deliver:
-                mock_create.return_value = delivery
+            ) as mock_deliver,
+        ):
+            mock_create.return_value = delivery
 
-                response = client.post(
-                    "/terminals/abcdef12/inbox/messages",
-                    params={"sender_id": "sender1", "message": "Hello world"},
-                )
+            response = client.post(
+                "/terminals/abcdef12/inbox/messages",
+                params={"sender_id": "sender1", "message": "Hello world"},
+            )
 
         assert response.status_code == 200
         body = response.json()
@@ -184,3 +198,144 @@ class TestCreateInboxMessageEndpoint:
         assert "id" not in body
         mock_create.assert_called_once_with("sender1", "abcdef12", "Hello world")
         mock_deliver.assert_called_once_with("abcdef12")
+
+    def test_rejects_cross_team_message_before_inbox_persistence(
+        self, client, monkeypatch, tmp_path
+    ):
+        _patch_inbox_policy(
+            monkeypatch,
+            tmp_path,
+            sender_team="delivery",
+            receiver_team="research",
+        )
+
+        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
+            response = client.post(
+                "/terminals/bbbbbbbb/inbox/messages",
+                params={"sender_id": "aaaaaaaa", "message": "Hello world"},
+            )
+
+        assert response.status_code == 403
+        assert "Workspace team collaboration rejected" in response.json()["detail"]
+        mock_create.assert_not_called()
+
+    def test_allows_same_team_message_before_inbox_persistence(self, client, monkeypatch, tmp_path):
+        _patch_inbox_policy(
+            monkeypatch,
+            tmp_path,
+            sender_team="delivery",
+            receiver_team="delivery",
+        )
+        delivery = InboxDelivery(
+            message=InboxMessageRecord(
+                id=42,
+                sender_id="aaaaaaaa",
+                body="Hello world",
+                source_kind="terminal",
+                source_id="aaaaaaaa",
+                origin=None,
+                route_kind=None,
+                route_id=None,
+                created_at=datetime(2026, 5, 7, 12, 0, 0),
+            ),
+            notification=InboxNotification(
+                id=8,
+                receiver_id="bbbbbbbb",
+                body="Hello world",
+                source_kind="terminal",
+                source_id="aaaaaaaa",
+                metadata=None,
+                status=MessageStatus.PENDING,
+                created_at=datetime(2026, 5, 7, 12, 0, 0),
+            ),
+        )
+        with (
+            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
+            patch("cli_agent_orchestrator.api.main.inbox_service.check_and_send_pending_messages"),
+        ):
+            mock_create.return_value = delivery
+
+            response = client.post(
+                "/terminals/bbbbbbbb/inbox/messages",
+                params={"sender_id": "aaaaaaaa", "message": "Hello world"},
+            )
+
+        assert response.status_code == 200
+        mock_create.assert_called_once_with("aaaaaaaa", "bbbbbbbb", "Hello world")
+
+
+def _agent(agent_id: str, team: str) -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/tmp",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team=team),
+    )
+
+
+def _resolver(_event):
+    return WorkspaceContextResolution(
+        workspace_context_id="wctx",
+        resolver_id="test",
+        boundary_provider_id="test",
+        boundary_object_type="issue",
+        boundary_object_id="CAO-1",
+    )
+
+
+def _patch_inbox_policy(monkeypatch, tmp_path, *, sender_team: str, receiver_team: str) -> None:
+    from cli_agent_orchestrator.services import collaboration_policy
+
+    setup_registry = WorkspaceSetupRegistry(
+        (
+            WorkspaceSetup(
+                id=DEFAULT_WORKSPACE_SETUP_ID,
+                display_name="Linear Delivery Setup",
+                providers=("linear",),
+                resolver=_resolver,
+            ),
+        )
+    )
+    team_store = WorkspaceTeamStore(
+        tmp_path / "workspace-teams.json",
+        bootstrap_teams=(
+            WorkspaceTeam(
+                id="delivery",
+                display_name="Delivery",
+                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+            ),
+            WorkspaceTeam(
+                id="research",
+                display_name="Research",
+                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+            ),
+        ),
+    )
+    manager = WorkspaceCollaborationManager(
+        setup_registry=setup_registry,
+        team_registry=WorkspaceTeamRegistry(team_store),
+        agent_registry=AgentRegistry(
+            {
+                "sender": _agent("sender", sender_team),
+                "receiver": _agent("receiver", receiver_team),
+            }
+        ),
+        provider_adapters={},
+    )
+
+    def _metadata(terminal_id: str):
+        if terminal_id == "aaaaaaaa":
+            return {"id": terminal_id, "agent_id": "sender"}
+        if terminal_id == "bbbbbbbb":
+            return {"id": terminal_id, "agent_id": "receiver"}
+        return None
+
+    monkeypatch.setattr(collaboration_policy.db_module, "get_terminal_metadata", _metadata)
+    monkeypatch.setattr(
+        collaboration_policy,
+        "default_workspace_collaboration_manager",
+        lambda: manager,
+    )

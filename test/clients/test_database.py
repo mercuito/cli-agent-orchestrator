@@ -1356,6 +1356,7 @@ class TestInitDb:
         result = create_notification_for_message(
             provider_message_id=message_id,
             receiver_id="agent:implementation_partner",
+            authorized_agent_id="implementation_partner",
         )
 
         assert result.created is True

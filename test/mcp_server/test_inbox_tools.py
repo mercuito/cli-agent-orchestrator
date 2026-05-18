@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig, LinearConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
     Base,
@@ -38,6 +39,25 @@ from cli_agent_orchestrator.provider_conversations.persistence import (
     upsert_thread,
     upsert_work_item,
 )
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    default_workspace_setup_registry,
+)
+from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+
+
+class _TeamStore:
+    def __init__(self, teams: tuple[WorkspaceTeam, ...]) -> None:
+        self._teams = {team.id: team for team in teams}
+
+    def get(self, team_id: str) -> WorkspaceTeam:
+        return self._teams[team_id]
+
+    def list(self) -> tuple[WorkspaceTeam, ...]:
+        return tuple(self._teams.values())
 
 
 @pytest.fixture
@@ -56,10 +76,71 @@ def test_session(monkeypatch):
 
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_workspace_collaboration_manager",
+        _provider_inbox_collaboration_manager,
+    )
+    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-a")
     yield
 
 
+def _provider_inbox_collaboration_manager() -> WorkspaceCollaborationManager:
+    implementation = Agent(
+        id="implementation_partner",
+        display_name="Implementation Partner",
+        cli_provider="codex",
+        workdir="/repo",
+        session_name="implementation-partner",
+        prompt="",
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
+        linear=LinearConfig(app_key="implementation_partner", access_token="token"),
+    )
+    other = Agent(
+        id="other_partner",
+        display_name="Other Partner",
+        cli_provider="codex",
+        workdir="/repo",
+        session_name="other-partner",
+        prompt="",
+        workspace=AgentWorkspaceConfig(team="other_team"),
+        linear=LinearConfig(app_key="other_partner", access_token="token"),
+    )
+    return WorkspaceCollaborationManager(
+        setup_registry=default_workspace_setup_registry(),
+        agent_registry=AgentRegistry({agent.id: agent for agent in (implementation, other)}),
+        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        team_registry=WorkspaceTeamRegistry(
+            _TeamStore(
+                (
+                    WorkspaceTeam(
+                        id="cao_delivery",
+                        display_name="CAO Delivery",
+                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                    ),
+                    WorkspaceTeam(
+                        id="other_team",
+                        display_name="Other Team",
+                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                    ),
+                )
+            )
+        ),
+    )
+
+
+def _ensure_caller_agent_terminal(agent_id: str = "implementation_partner") -> None:
+    create_terminal(
+        "terminal-a",
+        "session",
+        "window",
+        "codex",
+        agent_id=agent_id,
+        workspace_context_id=db_module.ensure_default_workspace_context(agent_id).id,
+    )
+
+
 def _provider_conversation_notification() -> int:
+    _ensure_caller_agent_terminal()
     thread = upsert_thread(
         provider="example",
         external_id="thread-1",
@@ -78,11 +159,13 @@ def _provider_conversation_notification() -> int:
     )
     return create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="agent:example",
+        receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
 
 def _provider_conversation_notification_with_large_raw_snapshot() -> int:
+    _ensure_caller_agent_terminal()
     thread = upsert_thread(
         provider="example",
         external_id="thread-raw",
@@ -101,11 +184,13 @@ def _provider_conversation_notification_with_large_raw_snapshot() -> int:
     )
     return create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="agent:example",
+        receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
 
 def _linear_provider_conversation_notification() -> int:
+    _ensure_caller_agent_terminal()
     thread = upsert_thread(
         provider="linear",
         external_id="session-1",
@@ -123,10 +208,12 @@ def _linear_provider_conversation_notification() -> int:
     return create_notification_for_message(
         provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
 
 def _linear_provider_conversation_notification_with_work_item_and_metadata() -> int:
+    _ensure_caller_agent_terminal()
     work_item = upsert_work_item(
         provider="linear",
         external_id="issue-uuid-1",
@@ -139,6 +226,7 @@ def _linear_provider_conversation_notification_with_work_item_and_metadata() -> 
         external_id="session-123",
         kind="conversation",
         work_item_id=work_item.id,
+        metadata={"linear_app_key": "implementation_partner"},
         raw_snapshot={"large": "thread-raw-" * 5000},
     )
     message = upsert_message(
@@ -166,15 +254,18 @@ def _linear_provider_conversation_notification_with_work_item_and_metadata() -> 
     return create_notification_for_message(
         provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
 
 def _linear_provider_conversation_notification_with_prompt_context(prompt_context: str) -> int:
+    _ensure_caller_agent_terminal()
     thread = upsert_thread(
         provider="linear",
         external_id="session-context",
         kind="conversation",
         prompt_context=prompt_context,
+        metadata={"linear_app_key": "implementation_partner"},
         raw_snapshot={"data": {"promptContext": prompt_context, "token": "raw-secret"}},
     )
     message = upsert_message(
@@ -192,6 +283,7 @@ def _linear_provider_conversation_notification_with_prompt_context(prompt_contex
     return create_notification_for_message(
         provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
 
@@ -211,7 +303,7 @@ async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_work
     )
     delivery = create_inbox_delivery(
         "terminal-sender",
-        "terminal-receiver",
+        "terminal-a",
         "I finished the patch. Can you review it?",
     )
 
@@ -267,6 +359,25 @@ def test_linear_backed_read_returns_provider_owned_workspace_breadcrumb(test_ses
     }
 
 
+def test_read_inbox_message_rejects_non_receiver_terminal(test_session, monkeypatch):
+    notification_id = _linear_provider_conversation_notification()
+    create_terminal(
+        "terminal-other",
+        "session",
+        "window",
+        "codex",
+        agent_id="other_partner",
+        workspace_context_id=db_module.ensure_default_workspace_context("other_partner").id,
+    )
+    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-other")
+
+    result = _read_inbox_message_impl(notification_id)
+
+    assert result["success"] is False
+    assert result["error_type"] == "InboxReadError"
+    assert "not authorized" in result["error"]
+
+
 def test_linear_backed_read_does_not_expose_prompt_context(test_session):
     # Shape sources:
     # https://linear.app/developers/agent-interaction/
@@ -287,12 +398,14 @@ def test_linear_backed_read_does_not_expose_prompt_context(test_session):
 
 
 def test_linear_backed_read_never_uses_prompt_context_as_message_body(test_session):
+    _ensure_caller_agent_terminal()
     prompt_context = "<issue>Should stay out of message reads</issue>"
     thread = upsert_thread(
         provider="linear",
         external_id="session-empty-body",
         kind="conversation",
         prompt_context=prompt_context,
+        metadata={"linear_app_key": "implementation_partner"},
     )
     message = upsert_message(
         thread_id=thread.id,
@@ -306,6 +419,7 @@ def test_linear_backed_read_never_uses_prompt_context_as_message_body(test_sessi
     notification_id = create_notification_for_message(
         provider_message_id=message.id,
         receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
     result = _read_inbox_message_impl(notification_id)
@@ -360,7 +474,7 @@ def test_provider_backed_read_missing_backing_thread_fails_clearly(test_session)
 def test_read_inbox_message_uses_bounded_sender_fallback_without_internal_ids(test_session):
     delivery = create_inbox_delivery(
         "missing-terminal-id",
-        "terminal-receiver",
+        "terminal-a",
         "Plain terminal message",
     )
 
@@ -400,6 +514,7 @@ def test_large_linear_raw_snapshots_do_not_leak_through_breadcrumb_or_sender_lab
 
 
 def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(test_session):
+    _ensure_caller_agent_terminal()
     thread = upsert_thread(provider="example", external_id="thread-invalid-workspace")
     message = upsert_message(
         thread_id=thread.id,
@@ -414,7 +529,8 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
     )
     notification_id = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="agent:example",
+        receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
     result = _read_inbox_message_impl(notification_id)
@@ -425,6 +541,7 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
 
 
 def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_read(test_session):
+    _ensure_caller_agent_terminal()
     thread = upsert_thread(provider="example", external_id="thread-oversized-workspace")
     message = upsert_message(
         thread_id=thread.id,
@@ -442,7 +559,8 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
     )
     notification_id = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="agent:example",
+        receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
     result = _read_inbox_message_impl(notification_id)
@@ -454,6 +572,7 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
 
 
 def test_provider_backed_read_without_marker_fails_clearly(test_session):
+    _ensure_caller_agent_terminal()
     thread = upsert_thread(
         provider="example",
         external_id="thread-with-reply",
@@ -478,7 +597,7 @@ def test_provider_backed_read_without_marker_fails_clearly(test_session):
     )
     delivery = create_inbox_delivery(
         "provider_conversation",
-        "agent:example",
+        "agent:implementation_partner",
         "Provider conversation update",
         source_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
         source_id=str(thread.id),
@@ -518,6 +637,7 @@ def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(
     test_session,
     monkeypatch,
 ):
+    _ensure_caller_agent_terminal()
     work_item = upsert_work_item(
         provider="linear",
         external_id="work-breadcrumb",
@@ -552,7 +672,8 @@ def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(
     )
     notification_id = create_notification_for_message(
         provider_message_id=message.id,
-        receiver_id="agent:example",
+        receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
     create_activity = Mock(return_value={"id": "reply-1"})
     monkeypatch.setattr(
@@ -591,8 +712,27 @@ def test_reply_to_inbox_message_uses_linear_provider_directly(
     )
 
 
+def test_reply_to_inbox_message_rejects_non_receiver_terminal(test_session, monkeypatch):
+    notification_id = _linear_provider_conversation_notification()
+    create_terminal(
+        "terminal-other",
+        "session",
+        "window",
+        "codex",
+        agent_id="other_partner",
+        workspace_context_id=db_module.ensure_default_workspace_context("other_partner").id,
+    )
+    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-other")
+
+    result = _reply_to_inbox_message_impl(notification_id, "Should not route")
+
+    assert result["success"] is False
+    assert result["error_type"] == "ProviderConversationReplyError"
+    assert "not authorized" in result["error"]
+
+
 def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_session):
-    delivery = create_inbox_delivery("terminal-a", "terminal-b", "Plain terminal message")
+    delivery = create_inbox_delivery("terminal-sender", "terminal-a", "Plain terminal message")
 
     read_result = _read_inbox_message_impl(delivery.notification.id)
     reply_result = _reply_to_inbox_message_impl(delivery.notification.id, "No provider target")
@@ -611,6 +751,7 @@ def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_sessio
 
 
 def test_read_inbox_message_distinguishes_notification_without_backing_message(test_session):
+    _ensure_caller_agent_terminal()
     notification = create_inbox_notification_event(
         "agent:implementation_partner",
         "CAO-123 has new comments.",
@@ -626,6 +767,7 @@ def test_read_inbox_message_distinguishes_notification_without_backing_message(t
 
 
 def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):
+    _ensure_caller_agent_terminal()
     delivery = create_inbox_delivery(
         "linear-runtime",
         "agent:implementation_partner",

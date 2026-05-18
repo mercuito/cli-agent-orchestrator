@@ -1,12 +1,55 @@
 """Tests for MCP server handoff logic."""
 
 import asyncio
+from contextlib import contextmanager
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.mcp_server.server import _handoff_impl
+
+
+def _team_agent(agent_id: str) -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/tmp",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
+    )
+
+
+@contextmanager
+def _same_team_guard(
+    sender_terminal_id: str,
+    *,
+    sender_agent_id: str = "supervisor",
+    receiver_agent_id: str = "developer",
+):
+    registry = AgentRegistry(
+        {
+            sender_agent_id: _team_agent(sender_agent_id),
+            receiver_agent_id: _team_agent(receiver_agent_id),
+        }
+    )
+
+    def _metadata(terminal_id: str):
+        if terminal_id == sender_terminal_id:
+            return {"id": terminal_id, "agent_id": sender_agent_id}
+        return None
+
+    with (
+        patch("cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry),
+        patch(
+            "cli_agent_orchestrator.mcp_server.server.db_module.get_terminal_metadata",
+            side_effect=_metadata,
+        ),
+    ):
+        yield
 
 
 class TestHandoffMessageContext:
@@ -22,7 +65,10 @@ class TestHandoffMessageContext:
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}):
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
+            _same_team_guard("supervisor-abc123"),
+        ):
             with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
                 mock_response = MagicMock()
                 mock_response.json.return_value = {"output": "task done"}
@@ -51,7 +97,11 @@ class TestHandoffMessageContext:
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
 
-        with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
+            _same_team_guard("supervisor-abc123"),
+            patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests,
+        ):
             mock_response = MagicMock()
             mock_response.json.return_value = {"output": "task done"}
             mock_response.raise_for_status.return_value = None
@@ -76,7 +126,11 @@ class TestHandoffMessageContext:
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
 
-        with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
+            _same_team_guard("supervisor-abc123"),
+            patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests,
+        ):
             mock_response = MagicMock()
             mock_response.json.return_value = {"output": "task done"}
             mock_response.raise_for_status.return_value = None
@@ -102,7 +156,10 @@ class TestHandoffMessageContext:
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-xyz789"}):
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-xyz789"}),
+            _same_team_guard("sup-xyz789"),
+        ):
             with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
                 mock_response = MagicMock()
                 mock_response.json.return_value = {"output": "done"}
@@ -122,25 +179,18 @@ class TestHandoffMessageContext:
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_codex_handoff_context_fallback_when_no_env(self, mock_create, mock_wait, mock_send):
-        """When CAO_TERMINAL_ID is not set, supervisor ID should be 'unknown'."""
+        """When CAO_TERMINAL_ID is not set, team-aware handoff is rejected."""
         mock_create.return_value = ("dev-terminal-5", "codex")
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
 
         with patch.dict(os.environ, {}, clear=True):
-            with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
-                mock_response = MagicMock()
-                mock_response.json.return_value = {"output": "done"}
-                mock_response.raise_for_status.return_value = None
-                mock_requests.get.return_value = mock_response
-                mock_requests.post.return_value = mock_response
+            result = asyncio.get_event_loop().run_until_complete(_handoff_impl("developer", "Do task"))
 
-                asyncio.get_event_loop().run_until_complete(_handoff_impl("developer", "Do task"))
-
-        sent_message = mock_send.call_args[0][1]
-        assert "unknown" in sent_message
-        assert "[CAO Handoff]" in sent_message
-        assert "Do task" in sent_message
+        assert result.success is False
+        assert "sender terminal is unknown" in result.message
+        mock_create.assert_not_called()
+        mock_send.assert_not_called()
 
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
@@ -152,7 +202,10 @@ class TestHandoffMessageContext:
         mock_send.return_value = None
 
         original = "Implement the task described in /path/to/task.md. Write tests."
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-111"}):
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-111"}),
+            _same_team_guard("sup-111"),
+        ):
             with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
                 mock_response = MagicMock()
                 mock_response.json.return_value = {"output": "done"}

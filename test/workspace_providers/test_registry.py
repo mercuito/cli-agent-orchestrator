@@ -59,7 +59,7 @@ def _write_agent(
             workdir="/repo",
             session_name=agent_id.replace("_", "-"),
             prompt="",
-            workspace=AgentWorkspaceConfig(setup=workspace_setup),
+            workspace=AgentWorkspaceConfig(team=workspace_setup),
             linear=(
                 LinearConfig(
                     app_key=app_key,

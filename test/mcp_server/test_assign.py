@@ -1,11 +1,54 @@
 """Tests for assign MCP tool."""
 
+from contextlib import contextmanager
 import os
 from unittest.mock import patch
 
 import pytest
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.mcp_server.server import _build_assign_description
+
+
+def _team_agent(agent_id: str) -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/tmp",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
+    )
+
+
+@contextmanager
+def _same_team_guard(
+    sender_terminal_id: str,
+    *,
+    sender_agent_id: str = "supervisor",
+    receiver_agent_id: str = "developer",
+):
+    registry = AgentRegistry(
+        {
+            sender_agent_id: _team_agent(sender_agent_id),
+            receiver_agent_id: _team_agent(receiver_agent_id),
+        }
+    )
+
+    def _metadata(terminal_id: str):
+        if terminal_id == sender_terminal_id:
+            return {"id": terminal_id, "agent_id": sender_agent_id}
+        return None
+
+    with (
+        patch("cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry),
+        patch(
+            "cli_agent_orchestrator.mcp_server.server.db_module.get_terminal_metadata",
+            side_effect=_metadata,
+        ),
+    ):
+        yield
 
 
 class TestAssignSenderIdInjection:
@@ -21,7 +64,10 @@ class TestAssignSenderIdInjection:
         mock_create.return_value = ("worker-1", "claude_code")
         mock_send.return_value = None
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}):
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
+            _same_team_guard("supervisor-abc123"),
+        ):
             result = _assign_impl("developer", "Analyze the logs")
 
         assert result["success"] is True
@@ -40,7 +86,10 @@ class TestAssignSenderIdInjection:
         mock_create.return_value = ("worker-2", "claude_code")
         mock_send.return_value = None
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}):
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
+            _same_team_guard("supervisor-abc123"),
+        ):
             result = _assign_impl("developer", "Analyze the logs")
 
         assert result["success"] is True
@@ -51,7 +100,7 @@ class TestAssignSenderIdInjection:
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_assign_sender_id_fallback_unknown(self, mock_create, mock_send):
-        """When CAO_TERMINAL_ID is not set, suffix should use 'unknown'."""
+        """When CAO_TERMINAL_ID is not set, team-aware assignment is rejected."""
         from cli_agent_orchestrator.mcp_server.server import _assign_impl
 
         mock_create.return_value = ("worker-3", "codex")
@@ -60,8 +109,10 @@ class TestAssignSenderIdInjection:
         with patch.dict(os.environ, {}, clear=True):
             result = _assign_impl("developer", "Build feature X")
 
-        sent_message = mock_send.call_args[0][1]
-        assert "[Assigned by terminal unknown" in sent_message
+        assert result["success"] is False
+        assert "sender terminal is unknown" in result["message"]
+        mock_create.assert_not_called()
+        mock_send.assert_not_called()
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", True)
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
@@ -74,7 +125,10 @@ class TestAssignSenderIdInjection:
         mock_send.return_value = None
         original = "Do the task described in /path/to/task.md"
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-111"}):
+        with (
+            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-111"}),
+            _same_team_guard("sup-111"),
+        ):
             _assign_impl("developer", original)
 
         sent_message = mock_send.call_args[0][1]

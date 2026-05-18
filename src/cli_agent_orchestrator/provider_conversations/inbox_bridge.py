@@ -16,6 +16,7 @@ from cli_agent_orchestrator.provider_conversations.inbox_read_presentation impor
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
+from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 PROVIDER_CONVERSATION_INBOX_SOURCE_KIND = "provider_conversation_thread"
 PROVIDER_CONVERSATION_INBOX_ROUTE_KIND = "provider_conversation_thread"
@@ -37,13 +38,15 @@ def create_notification_for_persisted_event(
     persisted_event: PersistedProviderEventRecords,
     *,
     receiver_id: str,
+    authorized_agent_id: str,
     preview_chars: int = DEFAULT_PREVIEW_CHARS,
     notification_chars: int = DEFAULT_NOTIFICATION_CHARS,
 ) -> ProviderConversationInboxNotification:
     """Create a terminal inbox notification for a persisted provider event.
 
-    The persisted event must include a durable message record. Receiver selection
-    stays explicit and caller-owned; this bridge does not route by agent.
+    The persisted event must include a durable message record. The caller must
+    pass the team-authorized agent selected by provider event routing; this
+    bridge only accepts receiver ids that currently belong to that agent.
     """
 
     if persisted_event.message is None:
@@ -51,6 +54,7 @@ def create_notification_for_persisted_event(
     return create_notification_for_message(
         provider_message_id=persisted_event.message.id,
         receiver_id=receiver_id,
+        authorized_agent_id=authorized_agent_id,
         preview_chars=preview_chars,
         notification_chars=notification_chars,
     )
@@ -60,6 +64,7 @@ def create_notification_for_message(
     *,
     provider_message_id: int,
     receiver_id: str,
+    authorized_agent_id: str,
     preview_chars: int = DEFAULT_PREVIEW_CHARS,
     notification_chars: int = DEFAULT_NOTIFICATION_CHARS,
 ) -> ProviderConversationInboxNotification:
@@ -71,6 +76,7 @@ def create_notification_for_message(
         raise ValueError("provider_message_id must be positive")
 
     with db_module.SessionLocal() as session:
+        _require_receiver_authorized_for_agent(session, receiver_id, authorized_agent_id)
         existing = _get_existing_notification(session, receiver_id, provider_message_id)
         if existing is not None:
             return ProviderConversationInboxNotification(delivery=existing, created=False)
@@ -177,6 +183,37 @@ def create_notification_for_message(
             )
         session.commit()
         return ProviderConversationInboxNotification(delivery=existing, created=False)
+
+
+def _require_receiver_authorized_for_agent(
+    session: Session,
+    receiver_id: str,
+    authorized_agent_id: str,
+) -> None:
+    agent_id = authorized_agent_id.strip()
+    if not agent_id:
+        raise WorkspaceSetupConfigError("authorized_agent_id is required")
+
+    agent_receiver_prefix = f"agent:{agent_id}"
+    if receiver_id == agent_receiver_prefix or receiver_id.startswith(f"{agent_receiver_prefix}:"):
+        return
+
+    if receiver_id.startswith("agent:"):
+        raise WorkspaceSetupConfigError(
+            f"Provider conversation receiver {receiver_id!r} is not owned by "
+            f"team-authorized agent {agent_id!r}"
+        )
+
+    terminal = session.get(db_module.TerminalModel, receiver_id)
+    if terminal is None:
+        raise WorkspaceSetupConfigError(
+            f"Provider conversation receiver terminal {receiver_id!r} was not found"
+        )
+    if terminal.agent_id != agent_id:
+        raise WorkspaceSetupConfigError(
+            f"Provider conversation receiver terminal {receiver_id!r} is owned by "
+            f"agent {terminal.agent_id!r}, not team-authorized agent {agent_id!r}"
+        )
 
 
 def format_provider_conversation_notification(

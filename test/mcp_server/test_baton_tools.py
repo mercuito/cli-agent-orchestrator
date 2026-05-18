@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.mcp_server import server
@@ -28,12 +29,46 @@ def patched_db(monkeypatch):
     return TestSession
 
 
+@pytest.fixture(autouse=True)
+def allow_baton_service_collaboration(monkeypatch):
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_same_team_collaboration",
+        lambda sender_id, receiver_id, **kwargs: None,
+    )
+
+
 def _pending(receiver_id):
     return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
 
 
+def _team_agent(agent_id: str) -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/tmp",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
+    )
+
+
+def _patch_team_terminals(monkeypatch, *terminal_ids: str) -> None:
+    registry = AgentRegistry({terminal_id: _team_agent(terminal_id) for terminal_id in terminal_ids})
+
+    def _metadata(terminal_id: str):
+        if terminal_id in terminal_ids:
+            return {"id": terminal_id, "agent_id": terminal_id}
+        return None
+
+    monkeypatch.setattr(server, "load_agent_registry", lambda: registry)
+    monkeypatch.setattr(server.db_module, "get_terminal_metadata", _metadata)
+
+
 def test_create_baton_infers_originator_from_cao_terminal_id(patched_db, monkeypatch):
     monkeypatch.setenv("CAO_TERMINAL_ID", "originator")
+    _patch_team_terminals(monkeypatch, "originator", "impl")
 
     result = server._create_baton_impl(
         title="T03",
@@ -79,6 +114,7 @@ def test_pass_baton_non_holder_returns_actionable_error(patched_db, monkeypatch)
         holder_id="impl",
     )
     monkeypatch.setenv("CAO_TERMINAL_ID", "reviewer")
+    _patch_team_terminals(monkeypatch, "reviewer", "other")
 
     result = server._pass_baton_impl(
         baton_id="baton-1",
@@ -104,6 +140,7 @@ def test_pass_baton_waiting_receiver_returns_invalid_transition(patched_db, monk
         receiver_id="reviewer",
     )
     monkeypatch.setenv("CAO_TERMINAL_ID", "reviewer")
+    _patch_team_terminals(monkeypatch, "reviewer", "impl")
 
     result = server._pass_baton_impl(
         baton_id="baton-1",

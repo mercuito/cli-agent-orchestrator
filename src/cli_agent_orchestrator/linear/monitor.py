@@ -25,6 +25,10 @@ from cli_agent_orchestrator.linear.workspace_events import (
 )
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.workspace_setups import (
+    WorkspaceSetupConfigError,
+    default_workspace_collaboration_manager,
+)
 
 DEFAULT_PAGE_SIZE = 25
 DEFAULT_MAX_PAGES = 2
@@ -144,7 +148,7 @@ def run_linear_monitor(
         "notifications_retried": 0,
         "watermarks_advanced": 0,
     }
-    presences = sorted(config.presences.values(), key=lambda presence: presence.presence_id)
+    presences = _team_authorized_monitor_presences(provider, diagnostics)
     for presence in presences:
         _run_presence_monitor(
             provider,
@@ -179,6 +183,44 @@ def _monitor_workspace_provider() -> linear_workspace_provider.LinearWorkspacePr
     provider = linear_workspace_provider.LinearWorkspaceProvider(preflight_credentials=False)
     provider.initialize()
     return provider
+
+
+def _team_authorized_monitor_presences(
+    provider: linear_workspace_provider.LinearWorkspaceProvider,
+    diagnostics: list[LinearMonitorDiagnostic],
+) -> list[linear_workspace_provider.LinearPresence]:
+    manager = default_workspace_collaboration_manager(agent_registry=provider.agent_registry)
+    presences: dict[str, linear_workspace_provider.LinearPresence] = {}
+    seen_teams: set[str] = set()
+    for agent in sorted(provider.agent_registry.all().values(), key=lambda item: item.id):
+        try:
+            team = manager.team_for_agent(agent)
+            if team is None or team.id in seen_teams:
+                continue
+            seen_teams.add(team.id)
+            view = manager.provider_view(team.id, PROVIDER)
+        except WorkspaceSetupConfigError as exc:
+            diagnostics.append(
+                _diagnostic(
+                    "monitor_presence_not_team_authorized",
+                    "warning",
+                    _safe_error_message(exc),
+                )
+            )
+            continue
+        config = view.value
+        if not isinstance(config, linear_workspace_provider.LinearProviderConfig):
+            diagnostics.append(
+                _diagnostic(
+                    "monitor_presence_not_team_authorized",
+                    "warning",
+                    "Linear provider view has invalid config",
+                )
+            )
+            continue
+        for presence in config.presences.values():
+            presences[presence.presence_id] = presence
+    return sorted(presences.values(), key=lambda presence: presence.presence_id)
 
 
 def _run_presence_monitor(
@@ -448,15 +490,47 @@ def _synthesize_and_deliver(
     try:
         publication = publish_linear_provider_event(payload, delivery_id=delivery_id)
         provider_event = publication.event if publication is not None else None
+        resolved = (
+            linear_runtime.resolve_linear_event_for_notification(provider_event)
+            if isinstance(provider_event, LinearIssueContextEvent)
+            else None
+        )
+        if resolved is None:
+            diagnostics.append(
+                _diagnostic(
+                    "delivery_not_routed",
+                    "warning",
+                    "Linear monitor recovered an event but team policy or runtime routing did not accept it",
+                    presence=presence,
+                    session_id=_string_value(session.get("id")),
+                    object_id=object_id,
+                )
+            )
+            return 0, False
         persisted = (
             linear_runtime.persist_linear_provider_event(provider_event)
             if isinstance(provider_event, LinearIssueContextEvent)
             else None
         )
-        linear_runtime.notify_or_retry_agent_for_persisted_event(
+        notification_result = linear_runtime.notify_or_retry_agent_for_persisted_event(
             persisted,
             provider_event,
+            resolved=resolved,
         )
+        if notification_result is None:
+            diagnostics.append(
+                _diagnostic(
+                    "delivery_not_routed",
+                    "warning",
+                    "Linear monitor recovered an event but team policy or runtime routing did not accept it",
+                    presence=presence,
+                    session_id=_string_value(session.get("id")),
+                    object_id=object_id,
+                )
+            )
+            return 0, False
+        if notification_result is not None and isinstance(provider_event, LinearIssueContextEvent):
+            linear_runtime.mark_linear_provider_event_processed(provider_event)
     except Exception as exc:
         diagnostics.append(
             _diagnostic(
@@ -509,10 +583,6 @@ def _retry_pending_delivery(
     try:
         agent_manager = AgentManager(configured_agents=provider.agent_registry)
         agent = agent_manager.register_agent(provider.resolve_agent_for_presence(presence))
-        handle = AgentRuntimeHandle(agent, agent_manager=agent_manager)
-        if db_module.get_oldest_pending_inbox_delivery(handle.inbox_receiver_id) is None:
-            return 0
-        result = handle.try_deliver_pending()
     except Exception as exc:
         diagnostics.append(
             _diagnostic(
@@ -523,21 +593,56 @@ def _retry_pending_delivery(
             )
         )
         return 0
-    if result.error:
-        diagnostics.append(
-            _diagnostic(
-                "pending_delivery_retry_deferred",
-                "warning",
-                result.error,
-                presence=presence,
-                details={
-                    "status": result.status.value,
-                    "attempted": result.attempted,
-                    "delivered": result.delivered,
-                },
+
+    retried = 0
+    for receiver_id in db_module.list_pending_agent_inbox_receiver_ids(agent.id):
+        workspace_context_id = _workspace_context_id_from_receiver_id(agent.id, receiver_id)
+        if workspace_context_id is None:
+            continue
+        try:
+            handle = AgentRuntimeHandle(
+                agent,
+                workspace_context_id=workspace_context_id,
+                agent_manager=agent_manager,
             )
-        )
-    return 1 if result.attempted or result.delivered else 0
+            if db_module.get_oldest_pending_inbox_delivery(handle.inbox_receiver_id) is None:
+                continue
+            result = handle.try_deliver_pending()
+        except Exception as exc:
+            diagnostics.append(
+                _diagnostic(
+                    _failure_code(exc),
+                    "warning",
+                    _safe_error_message(exc),
+                    presence=presence,
+                )
+            )
+            continue
+        if result.error:
+            diagnostics.append(
+                _diagnostic(
+                    "pending_delivery_retry_deferred",
+                    "warning",
+                    result.error,
+                    presence=presence,
+                    details={
+                        "status": result.status.value,
+                        "attempted": result.attempted,
+                        "delivered": result.delivered,
+                    },
+                )
+            )
+        if result.attempted or result.delivered:
+            retried += 1
+    return retried
+
+
+def _workspace_context_id_from_receiver_id(agent_id: str, receiver_id: str) -> str | None:
+    prefix = f"agent:{agent_id}:context:"
+    if not receiver_id.startswith(prefix):
+        return None
+    workspace_context_id = receiver_id[len(prefix) :].strip()
+    return workspace_context_id or None
 
 
 def _diagnose_session_state(

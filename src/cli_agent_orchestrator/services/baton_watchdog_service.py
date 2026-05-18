@@ -16,6 +16,8 @@ from cli_agent_orchestrator.clients.database import BatonEventModel, BatonModel,
 from cli_agent_orchestrator.models.baton import BatonEventType, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.services.collaboration_policy import require_terminal_workspace_team
+from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +146,16 @@ def _orphan_message(row: BatonModel, previous_holder_id: str) -> str:
     )
 
 
+def _queue_watchdog_message(db, *, receiver_id: str, message: str) -> None:
+    require_terminal_workspace_team(receiver_id, db=db, role="Watchdog receiver")
+    db_module.create_inbox_delivery(
+        WATCHDOG_ACTOR_ID,
+        receiver_id,
+        message,
+        db=db,
+    )
+
+
 def _mark_orphaned(db, row: BatonModel, *, now: datetime) -> None:
     previous_holder_id = row.current_holder_id
     if previous_holder_id is None:
@@ -163,12 +175,15 @@ def _mark_orphaned(db, row: BatonModel, *, now: datetime) -> None:
         message=message,
         created_at=now,
     )
-    db_module.create_inbox_delivery(
-        WATCHDOG_ACTOR_ID,
-        row.originator_id,
-        message,
-        db=db,
-    )
+    try:
+        _queue_watchdog_message(db, receiver_id=row.originator_id, message=message)
+    except WorkspaceSetupConfigError as exc:
+        logger.warning(
+            "Baton watchdog marked baton %s orphaned but did not notify originator %s: %s",
+            row.id,
+            row.originator_id,
+            exc,
+        )
 
 
 def _nudge_holder(db, row: BatonModel, *, now: datetime) -> None:
@@ -188,12 +203,7 @@ def _nudge_holder(db, row: BatonModel, *, now: datetime) -> None:
         message=message,
         created_at=now,
     )
-    db_module.create_inbox_delivery(
-        WATCHDOG_ACTOR_ID,
-        holder_id,
-        message,
-        db=db,
-    )
+    _queue_watchdog_message(db, receiver_id=holder_id, message=message)
 
 
 def scan_active_batons(
@@ -237,6 +247,19 @@ def scan_active_batons(
                         exc,
                     )
             if metadata is None or provider is None:
+                _mark_orphaned(db, row, now=scan_now)
+                db.commit()
+                orphaned += 1
+                continue
+            try:
+                require_terminal_workspace_team(holder_id, db=db, role="Baton holder")
+            except WorkspaceSetupConfigError as exc:
+                logger.warning(
+                    "Marking baton %s orphaned because holder %s is outside workspace team policy: %s",
+                    row.id,
+                    holder_id,
+                    exc,
+                )
                 _mark_orphaned(db, row, now=scan_now)
                 db.commit()
                 orphaned += 1

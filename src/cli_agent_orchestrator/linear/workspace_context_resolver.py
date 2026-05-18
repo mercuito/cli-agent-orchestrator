@@ -49,6 +49,7 @@ def resolve_issue_context_event(
         provider_id=LINEAR_PROVIDER_ID,
         object_type=LINEAR_ISSUE_OBJECT_TYPE,
         object_id=canonical_issue_id,
+        resolver_id=LINEAR_PLANNING_RESOLVER_ID,
     )
     if existing_issue_context is not None:
         if event.agent_session_id:
@@ -133,6 +134,7 @@ def _created_issue_parent_context(issue: Mapping[str, Any]):
         provider_id=LINEAR_PROVIDER_ID,
         object_type=LINEAR_ISSUE_OBJECT_TYPE,
         object_id=parent_id,
+        resolver_id=LINEAR_PLANNING_RESOLVER_ID,
     )
 
 

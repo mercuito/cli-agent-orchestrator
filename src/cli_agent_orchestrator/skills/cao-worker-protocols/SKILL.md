@@ -48,6 +48,10 @@ When the task came through `assign`, the task message should include a callback 
 2. Format the result clearly and concisely.
 3. Call `send_message(receiver_id=..., message=...)` with the completed result.
 
+`send_message` is governed by workspace team policy. A callback terminal ID
+identifies the intended route, but CAO can still reject the message if the
+agents are no longer in the same workspace team.
+
 Do not stop after writing a normal response if the assignment explicitly requires a callback. The requesting terminal depends on `send_message` to receive the result.
 
 Assigned tasks may include callback instructions directly in the main message or in an appended suffix such as `[Assigned by terminal ...]`. Treat that callback terminal ID as authoritative.

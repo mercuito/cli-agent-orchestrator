@@ -6,11 +6,35 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.baton import BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.services.collaboration_policy import (
+    require_terminal_same_team_collaboration,
+    require_terminal_workspace_team,
+)
 from cli_agent_orchestrator.services import baton_service, inbox_service
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceSetupConfigError,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    default_workspace_setup_registry,
+)
+
+
+class _TeamStore:
+    def __init__(self, teams: tuple[WorkspaceTeam, ...]) -> None:
+        self._teams = {team.id: team for team in teams}
+
+    def get(self, team_id: str) -> WorkspaceTeam:
+        return self._teams[team_id]
+
+    def list(self) -> tuple[WorkspaceTeam, ...]:
+        return tuple(self._teams.values())
 
 
 @pytest.fixture
@@ -29,12 +53,249 @@ def patched_db(monkeypatch):
     return TestSession
 
 
+@pytest.fixture(autouse=True)
+def allow_baton_collaboration(monkeypatch):
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_same_team_collaboration",
+        lambda sender_id, receiver_id, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_workspace_team",
+        lambda terminal_id, **kwargs: None,
+    )
+
+
+def _agent(agent_id: str, team: str) -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/repo",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team=team),
+    )
+
+
+def _create_terminal(terminal_id: str, agent_id: str) -> None:
+    db_module.create_terminal(
+        terminal_id=terminal_id,
+        tmux_session="cao-test",
+        tmux_window=terminal_id,
+        provider="codex",
+        agent_id=agent_id,
+        workspace_context_id=db_module.ensure_default_workspace_context(agent_id).id,
+    )
+
+
+def _collaboration_manager() -> WorkspaceCollaborationManager:
+    return WorkspaceCollaborationManager(
+        setup_registry=default_workspace_setup_registry(),
+        team_registry=WorkspaceTeamRegistry(
+            _TeamStore(
+                (
+                    WorkspaceTeam(
+                        id="delivery",
+                        display_name="Delivery",
+                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                    ),
+                    WorkspaceTeam(
+                        id="research",
+                        display_name="Research",
+                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                    ),
+                )
+            )
+        ),
+        agent_registry=AgentRegistry(
+            {
+                "originator_agent": _agent("originator_agent", "delivery"),
+                "impl_agent": _agent("impl_agent", "delivery"),
+                "reviewer_agent": _agent("reviewer_agent", "delivery"),
+                "outsider_agent": _agent("outsider_agent", "research"),
+            }
+        ),
+        provider_adapters={},
+    )
+
+
 def _event_types(baton_id):
     return [event.event_type for event in db_module.list_baton_events(baton_id)]
 
 
 def _messages(receiver_id):
     return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
+
+
+def test_baton_inbox_delivery_requires_same_workspace_team_before_queue(
+    patched_db,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_same_team_collaboration",
+        require_terminal_same_team_collaboration,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
+        _collaboration_manager,
+    )
+    _create_terminal("originator", "originator_agent")
+    _create_terminal("impl", "impl_agent")
+    _create_terminal("outsider", "outsider_agent")
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T01",
+        originator_id="originator",
+        holder_id="impl",
+    )
+
+    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+        baton_service.pass_baton(
+            baton_id="baton-1",
+            actor_id="impl",
+            receiver_id="outsider",
+            message="please pick this up",
+        )
+
+    baton = db_module.get_baton_record("baton-1")
+    assert baton.current_holder_id == "impl"
+    assert baton.return_stack == []
+    assert _event_types("baton-1") == ["create"]
+    assert _messages("outsider") == []
+
+
+def test_baton_reassign_requires_same_workspace_team_before_state_change(
+    patched_db,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_same_team_collaboration",
+        require_terminal_same_team_collaboration,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
+        _collaboration_manager,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_workspace_team",
+        require_terminal_workspace_team,
+    )
+    _create_terminal("originator", "originator_agent")
+    _create_terminal("impl", "impl_agent")
+    _create_terminal("outsider", "outsider_agent")
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T01",
+        originator_id="originator",
+        holder_id="impl",
+    )
+
+    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+        baton_service.reassign_baton(
+            baton_id="baton-1",
+            actor_id="impl",
+            receiver_id="outsider",
+            message="operator should not see this state change",
+        )
+
+    baton = db_module.get_baton_record("baton-1")
+    assert baton.current_holder_id == "impl"
+    assert baton.return_stack == []
+    assert _event_types("baton-1") == ["create"]
+    assert _messages("outsider") == []
+
+
+def test_operator_reassign_rejects_out_of_team_durable_holder(
+    patched_db,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_same_team_collaboration",
+        require_terminal_same_team_collaboration,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_workspace_team",
+        require_terminal_workspace_team,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
+        _collaboration_manager,
+    )
+    _create_terminal("originator", "originator_agent")
+    _create_terminal("impl", "impl_agent")
+    _create_terminal("outsider", "outsider_agent")
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T01",
+        originator_id="originator",
+        holder_id="impl",
+    )
+
+    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+        baton_service.reassign_baton(
+            baton_id="baton-1",
+            actor_id="originator",
+            receiver_id="outsider",
+            operator_recovery=True,
+        )
+
+    baton = db_module.get_baton_record("baton-1")
+    assert baton.current_holder_id == "impl"
+    assert _event_types("baton-1") == ["create"]
+
+
+def test_operator_reassign_rejects_out_of_team_return_stack_participant(
+    patched_db,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_same_team_collaboration",
+        require_terminal_same_team_collaboration,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "require_terminal_workspace_team",
+        require_terminal_workspace_team,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
+        _collaboration_manager,
+    )
+    _create_terminal("originator", "originator_agent")
+    _create_terminal("impl", "impl_agent")
+    _create_terminal("reviewer", "reviewer_agent")
+    _create_terminal("outsider", "outsider_agent")
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T01",
+        originator_id="originator",
+        holder_id="impl",
+    )
+    with patched_db() as session:
+        row = session.query(db_module.BatonModel).filter(db_module.BatonModel.id == "baton-1").one()
+        row.return_stack_json = '["outsider"]'
+        session.commit()
+
+    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+        baton_service.reassign_baton(
+            baton_id="baton-1",
+            actor_id="originator",
+            receiver_id="reviewer",
+            operator_recovery=True,
+        )
+
+    baton = db_module.get_baton_record("baton-1")
+    assert baton.current_holder_id == "impl"
+    assert baton.return_stack == ["outsider"]
+    assert _event_types("baton-1") == ["create"]
 
 
 def test_create_baton_persists_active_holder_and_event(patched_db):

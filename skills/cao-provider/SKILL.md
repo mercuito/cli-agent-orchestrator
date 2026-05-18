@@ -129,7 +129,7 @@ Add test classes to existing e2e test files and a fixture in `test/e2e/conftest.
 
 ### Step 9: Validate with assign + handoff orchestration
 
-This is the canonical multi-agent e2e test. It exercises assign (non-blocking), handoff (blocking), send_message (async inbox), and status detection under concurrent load. Create durable agents from the `examples/assign/` prompts:
+This is the canonical multi-agent e2e test. It exercises assign (non-blocking), handoff (blocking), same-workspace-team send_message (async inbox), and status detection under concurrent load. Create durable agents from the `examples/assign/` prompts:
 
 ```bash
 cao agent create data_analyst --provider codex --workdir "$PWD"
@@ -142,7 +142,7 @@ cao agent edit analysis_supervisor
 cao agent start analysis_supervisor
 ```
 
-**Test flow:** Supervisor assigns 3x data_analyst workers in parallel + handoff 1x report_generator (blocking) → analysts send_message results back to supervisor → supervisor combines template + results into final report.
+**Test flow:** Supervisor assigns 3x data_analyst workers in parallel + handoff 1x report_generator (blocking) → same-team analysts send_message results back to supervisor → supervisor combines template + results into final report.
 
 If any step fails, investigate:
 - **Assign fails:** Status detection not recognizing IDLE after analyst finishes, or per-directory lock conflict (see lesson #19)

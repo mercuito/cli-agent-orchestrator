@@ -61,9 +61,9 @@ function renderAgentToml(config: AgentConfig, exclude: Set<string>): string {
   appendValue(lines, 'runtime_capabilities', config.runtime_capabilities)
   appendValue(lines, 'use_legacy_mcp_json', config.use_legacy_mcp_json)
 
-  if (config.workspace?.setup) {
+  if (config.workspace?.team) {
     lines.push('', '[workspace]')
-    appendValue(lines, 'setup', config.workspace.setup)
+    appendValue(lines, 'team', config.workspace.team)
   }
 
   Object.entries(config.mcp_servers || {}).forEach(([name, server]) => {
@@ -179,7 +179,7 @@ function unquoteTomlKey(value: string): string {
 }
 
 export function parseAgentTomlDraft(text: string): AgentWriteRequest {
-  const body: AgentWriteRequest = { workspace: { setup: null } }
+  const body: AgentWriteRequest = {}
   const stringFields = new Set(['id', 'display_name', 'cli_provider', 'workdir', 'session_name'])
   const nullableStringFields = new Set(['description', 'model', 'reasoning_effort'])
   const listFields = new Set(['tools', 'skills', 'tags', 'resources', 'runtime_capabilities', 'cao_tools'])
@@ -199,6 +199,7 @@ export function parseAgentTomlDraft(text: string): AgentWriteRequest {
     const [, key, rawValue] = match
     const value = parseTomlValue(rawValue)
     if (section === 'workspace') {
+      if (key === 'setup') return
       body.workspace = { ...(body.workspace || {}), [key]: value } as AgentWriteRequest['workspace']
       return
     }

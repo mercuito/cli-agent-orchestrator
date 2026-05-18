@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Edit3, Eye, EyeOff, RotateCcw, Save } from 'lucide-react'
-import { api, AgentStatus } from '../../api'
+import { api, AgentStatus, WorkspaceTeam } from '../../api'
 import { useProviderCatalog } from '../../hooks/useProviderCatalog'
 import { useProviderSchema } from '../../hooks/useProviderSchema'
 import {
@@ -47,6 +47,8 @@ export function AgentConfigTab({
   )
   const [promptDraft, setPromptDraft] = useState(() => (defaultEditing ? agent.config.prompt : ''))
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [teams, setTeams] = useState<WorkspaceTeam[]>([])
+  const [workspaceTeamDraft, setWorkspaceTeamDraft] = useState<string>(() => agent.config.workspace.team ?? '')
   const [revealedLinearFields, setRevealedLinearFields] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const isFirstRenderRef = useRef(true)
@@ -68,11 +70,17 @@ export function AgentConfigTab({
     setSaveError(null)
     setRevealedLinearFields({})
     setStructuredDraft(readStructuredFields(agent))
+    setWorkspaceTeamDraft(agent.config.workspace.team ?? '')
   }, [agent.agent_id])
+
+  useEffect(() => {
+    api.listWorkspaceTeams().then(setTeams).catch(() => setTeams([]))
+  }, [])
 
   const handleEdit = () => {
     setEditing(true)
     setStructuredDraft(readStructuredFields(agent))
+    setWorkspaceTeamDraft(agent.config.workspace.team ?? '')
     setTomlDraft(formatAgentTomlExcluding(agent.config, STRUCTURED_FIELD_KEYS))
     setPromptDraft(agent.config.prompt)
     setSaveError(null)
@@ -99,6 +107,7 @@ export function AgentConfigTab({
       const updated = await api.updateAgent(agent.agent_id, {
         ...rawPayload,
         ...structuredPayload,
+        workspace: { team: workspaceTeamDraft.trim() || null },
         prompt: promptDraft,
       })
       onAgentUpdated(updated)
@@ -132,6 +141,12 @@ export function AgentConfigTab({
   }
 
   const schemas = providerSchema.schemas
+  const selectedWorkspaceTeam = teams.find(team => team.id === workspaceTeamDraft)
+  const derivedWorkspaceSetup = editing
+    ? workspaceTeamDraft
+      ? selectedWorkspaceTeam?.workspace_setup ?? agent.config.workspace.derived_setup ?? 'unknown'
+      : 'default'
+    : agent.config.workspace.derived_setup ?? 'default'
 
   return (
     <div className="space-y-4">
@@ -184,6 +199,49 @@ export function AgentConfigTab({
         saveError={saveError}
         onChange={setStructuredDraft}
       />
+
+      <section
+        aria-label="Workspace team"
+        className="rounded-lg border border-gray-700/50 bg-gray-950 p-3"
+      >
+        <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+          Workspace team
+        </h4>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block text-xs text-gray-400">
+            Team
+            {editing ? (
+              <select
+                aria-label={`${agent.agent_id} workspace team`}
+                value={workspaceTeamDraft}
+                onChange={event => setWorkspaceTeamDraft(event.target.value)}
+                className="mt-1 w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="">Standalone</option>
+                {teams.map(team => (
+                  <option key={team.id} value={team.id}>
+                    {team.display_name} ({team.id})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="mt-1 block font-mono text-sm text-gray-300">
+                {agent.config.workspace.team ?? 'standalone'}
+              </span>
+            )}
+          </label>
+          <label className="block text-xs text-gray-400">
+            Workspace setup
+            <input
+              aria-label={`${agent.agent_id} derived workspace setup`}
+              value={derivedWorkspaceSetup}
+              readOnly
+              disabled={!!(editing && workspaceTeamDraft)}
+              className="mt-1 w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-400 disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </label>
+        </div>
+      </section>
 
       {editing ? (
         <div className="space-y-3">

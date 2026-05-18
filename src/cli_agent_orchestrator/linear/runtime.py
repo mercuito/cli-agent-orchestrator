@@ -32,8 +32,12 @@ from cli_agent_orchestrator.linear.workspace_provider import (
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     create_notification_for_persisted_event,
 )
-from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
+from cli_agent_orchestrator.provider_conversations.models import (
+    PersistedProviderEventRecords,
+    ProcessedProviderEventRecord,
+)
 from cli_agent_orchestrator.provider_conversations.persistence import (
+    get_processed_event,
     get_message,
     get_thread,
     mark_processed_event,
@@ -53,7 +57,7 @@ from cli_agent_orchestrator.workspace_contexts import (
 )
 from cli_agent_orchestrator.workspace_setups import (
     WorkspaceSetupConfigError,
-    default_workspace_setup_manager,
+    default_workspace_collaboration_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -322,7 +326,7 @@ def _persisted_external_url_was_published(thread_id: str) -> bool:
 
 def _resolve_linear_event(event: LinearIssueContextEvent) -> LinearResolvedPresence:
     provider = get_linear_workspace_provider()
-    manager = default_workspace_setup_manager(agent_registry=provider.agent_registry)
+    manager = default_workspace_collaboration_manager(agent_registry=provider.agent_registry)
     try:
         resolution = manager.resolve_provider_event("linear", event)
     except WorkspaceSetupConfigError as exc:
@@ -379,7 +383,7 @@ def _runtime_handle_for_resolved_presence(
         configured_agents=AgentRegistry({resolved.agent.id: resolved.agent})
     )
     agent = agent_manager.register_agent(resolved.agent)
-    if resolved.agent.workspace.setup is None:
+    if resolved.agent.workspace.team is None:
         return AgentRuntimeHandle(agent, agent_manager=agent_manager)
     if workspace_context_resolution is None:
         raise LinearWorkspaceProviderConfigError(
@@ -397,7 +401,7 @@ def _runtime_handle_for_resolved_event(
     event: CaoEvent,
 ) -> AgentRuntimeHandle:
     resolution = _resolve_workspace_context_for_event(resolved, event)
-    if resolved.agent.workspace.setup is None:
+    if resolved.agent.workspace.team is None:
         return _runtime_handle_for_resolved_presence(resolved)
     return _runtime_handle_for_resolved_presence(
         resolved,
@@ -409,7 +413,7 @@ def _resolve_workspace_context_for_event(
     resolved: LinearResolvedPresence,
     event: CaoEvent,
 ) -> WorkspaceContextResolution | None:
-    manager = default_workspace_setup_manager(
+    manager = default_workspace_collaboration_manager(
         agent_registry=AgentRegistry({resolved.agent.id: resolved.agent})
     )
     try:
@@ -552,14 +556,12 @@ def persist_linear_provider_event(event: LinearIssueContextEvent) -> PersistedPr
     with db_module.SessionLocal() as session:
         processed_event = None
         if event.delivery_id:
-            processed_event, created = mark_processed_event(
+            processed_event = get_processed_event(
                 provider=event.provider_name,
                 external_event_id=event.delivery_id,
-                event_type=event.event_name,
-                metadata=dict(event.metadata or {}),
                 db=session,
             )
-            if not created:
+            if processed_event is not None:
                 session.commit()
                 return PersistedProviderEventRecords(
                     processed_event=processed_event,
@@ -620,25 +622,38 @@ def persist_linear_provider_event(event: LinearIssueContextEvent) -> PersistedPr
         )
 
 
-def notify_agent_for_persisted_event(
-    persisted_event: Optional[PersistedProviderEventRecords],
-    provider_event: CaoEvent,
-) -> Optional[AgentRuntimeNotifyResult]:
-    """Deliver a compact replyable Linear AgentSession notification to its mapped agent."""
-    event = _require_linear_issue_context_event(provider_event)
-    if persisted_event is None:
-        return None
-    if persisted_event.thread is None or persisted_event.message is None:
-        return None
-    if not persisted_event.message.body:
-        return None
-    if not event.should_notify_agent:
-        return None
+def mark_linear_provider_event_processed(
+    event: LinearIssueContextEvent,
+) -> Optional[ProcessedProviderEventRecord]:
+    """Mark a Linear provider delivery processed after successful team routing."""
 
+    if not event.delivery_id:
+        return None
+    processed_event, _created = mark_processed_event(
+        provider=event.provider_name,
+        external_event_id=event.delivery_id,
+        event_type=event.event_name,
+        metadata=dict(event.metadata or {}),
+    )
+    return processed_event
+
+
+def resolve_linear_event_for_notification(
+    provider_event: CaoEvent,
+) -> Optional[LinearResolvedPresence]:
+    """Resolve and authorize the Linear team recipient before durable side effects."""
+
+    event = _require_linear_issue_context_event(provider_event)
     try:
         resolved = _resolve_linear_event(event)
     except LinearWorkspaceProviderConfigError as exc:
         logger.warning("Linear AgentSession notification was not routed: %s", exc)
+        return None
+    if resolved.agent.workspace.team is None:
+        logger.warning(
+            "Linear AgentSession notification was not routed: agent %s has no workspace team",
+            resolved.agent.id,
+        )
         return None
 
     decision = _incoming_policy_decision(event=event, resolved=resolved)
@@ -651,6 +666,30 @@ def notify_agent_for_persisted_event(
         )
         _post_policy_denial_comment(event=event, resolved=resolved, decision=decision)
         return None
+    return resolved
+
+
+def notify_agent_for_persisted_event(
+    persisted_event: Optional[PersistedProviderEventRecords],
+    provider_event: CaoEvent,
+    *,
+    resolved: Optional[LinearResolvedPresence] = None,
+) -> Optional[AgentRuntimeNotifyResult]:
+    """Deliver a compact replyable Linear AgentSession notification to its mapped agent."""
+    event = _require_linear_issue_context_event(provider_event)
+    if persisted_event is None:
+        return None
+    if persisted_event.thread is None or persisted_event.message is None:
+        return None
+    if not persisted_event.message.body:
+        return None
+    if not event.should_notify_agent:
+        return None
+
+    if resolved is None:
+        resolved = resolve_linear_event_for_notification(provider_event)
+        if resolved is None:
+            return None
 
     try:
         handle = _runtime_handle_for_resolved_event(resolved, provider_event)
@@ -660,6 +699,7 @@ def notify_agent_for_persisted_event(
     notification = create_notification_for_persisted_event(
         persisted_event,
         receiver_id=handle.inbox_receiver_id,
+        authorized_agent_id=resolved.agent.id,
     )
     thread_id = persisted_event.thread.external_id
     if notification.created:
@@ -699,6 +739,8 @@ def notify_agent_for_persisted_event(
 def notify_or_retry_agent_for_persisted_event(
     persisted_event: Optional[PersistedProviderEventRecords],
     provider_event: CaoEvent | None,
+    *,
+    resolved: Optional[LinearResolvedPresence] = None,
 ) -> Optional[AgentRuntimeNotifyResult]:
     """Deliver a persisted Linear event, retrying when idempotency found local state."""
 
@@ -707,6 +749,7 @@ def notify_or_retry_agent_for_persisted_event(
     notification_result = notify_agent_for_persisted_event(
         persisted_event,
         provider_event,
+        resolved=resolved,
     )
     if notification_result is not None:
         return notification_result
@@ -722,11 +765,13 @@ def notify_or_retry_agent_for_persisted_event(
         return None
     if not isinstance(provider_event, LinearIssueContextEvent):
         return None
-    return retry_agent_for_provider_event(provider_event)
+    return retry_agent_for_provider_event(provider_event, resolved=resolved)
 
 
 def retry_agent_for_provider_event(
     event: LinearIssueContextEvent,
+    *,
+    resolved: Optional[LinearResolvedPresence] = None,
 ) -> Optional[AgentRuntimeNotifyResult]:
     """Retry delivery/lifecycle for an already persisted Linear AgentSession event."""
     if event.thread_id is None or event.message_id is None:
@@ -746,6 +791,7 @@ def retry_agent_for_provider_event(
             message=message,
         ),
         event,
+        resolved=resolved,
     )
 
 

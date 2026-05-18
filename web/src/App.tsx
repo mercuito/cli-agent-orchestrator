@@ -4,12 +4,14 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { DashboardHome } from './components/DashboardHome'
 import { AgentPanel } from './components/AgentPanel'
 import { FlowsPanel } from './components/FlowsPanel'
+import { WorkspaceTeamsPanel } from './components/WorkspaceTeamsPanel'
 import { parseInitialDashboardView, type TabKey } from './dashboardLink'
-import { Bot, Home, Clock, CheckCircle, XCircle, Info, Wifi, WifiOff } from 'lucide-react'
+import { Bot, Home, Clock, CheckCircle, XCircle, Info, Wifi, WifiOff, Users } from 'lucide-react'
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'home', label: 'Home', icon: <Home size={16} /> },
   { key: 'agents', label: 'Agents', icon: <Bot size={16} /> },
+  { key: 'teams', label: 'Teams', icon: <Users size={16} /> },
   { key: 'flows', label: 'Flows', icon: <Clock size={16} /> },
 ]
 
@@ -156,6 +158,7 @@ export default function App() {
                 onInitialDeepLinkConsumed={consumeInitialDeepLink}
               />
             )}
+            {tab === 'teams' && <WorkspaceTeamsPanel />}
             {tab === 'flows' && <FlowsPanel />}
           </Suspense>
         </ErrorBoundary>

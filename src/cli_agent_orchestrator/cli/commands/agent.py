@@ -31,7 +31,9 @@ def list_agents() -> None:
     for status in default_agent_manager().list_statuses():
         state = "running" if status.active else "stopped"
         terminal = f" {status.active_terminal_id}" if status.active_terminal_id else ""
-        click.echo(f"{status.agent_id}\t{status.cli_provider}\t{state}{terminal}")
+        team = status.workspace_team_id or "none"
+        setup = status.derived_workspace_setup_id or "default"
+        click.echo(f"{status.agent_id}\t{status.cli_provider}\t{state}\tteam={team}\tsetup={setup}{terminal}")
 
 
 @agent_command.command("show")
@@ -42,6 +44,8 @@ def show_agent(agent_id: str) -> None:
     click.echo(f"status: {'running' if status.active else 'stopped'}")
     if status.active_terminal_id:
         click.echo(f"terminal_id: {status.active_terminal_id}")
+    click.echo(f"workspace_team: {status.workspace_team_id or 'none'}")
+    click.echo(f"workspace_setup: {status.derived_workspace_setup_id or 'default'}")
     config_path = agent_config.AGENTS_ROOT / agent.id / AGENT_CONFIG_FILENAME
     click.echo("\nagent.toml:")
     click.echo(config_path.read_text())
@@ -53,7 +57,8 @@ def show_agent(agent_id: str) -> None:
 @click.argument("agent_id")
 @click.option("--provider", default=ProviderType.CODEX.value, show_default=True)
 @click.option("--workdir", default=lambda: os.getcwd(), show_default="current directory")
-def create_agent(agent_id: str, provider: str, workdir: str) -> None:
+@click.option("--team", default=None, help="Workspace team membership; omit for standalone.")
+def create_agent(agent_id: str, provider: str, workdir: str, team: str | None) -> None:
     agent = Agent(
         id=agent_id,
         display_name=agent_id.replace("_", " ").title(),
@@ -61,6 +66,7 @@ def create_agent(agent_id: str, provider: str, workdir: str) -> None:
         workdir=workdir,
         session_name=agent_id,
         prompt="# Agent\n",
+        workspace=agent_config.AgentWorkspaceConfig(team=team) if team else agent_config.AgentWorkspaceConfig(),
     )
     write_agent(agent)
     click.echo(f"created {agent_id}")

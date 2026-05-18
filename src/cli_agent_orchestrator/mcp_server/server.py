@@ -61,7 +61,7 @@ from cli_agent_orchestrator.workspace_providers.tool_access import (
 )
 from cli_agent_orchestrator.workspace_setups import (
     WorkspaceSetupConfigError,
-    default_workspace_setup_manager,
+    default_workspace_collaboration_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -319,54 +319,54 @@ def _create_terminal(agent_id: str, working_directory: Optional[str] = None) -> 
     return terminal["id"], terminal["provider"]
 
 
-def _require_workspace_setup_collaboration(receiver_agent_id: str) -> None:
-    sender_agent_id = _sender_agent_id_for_workspace_setup_guard()
+def _require_workspace_team_collaboration(receiver_agent_id: str) -> None:
+    sender_agent_id = _sender_agent_id_for_workspace_team_guard()
     registry = load_agent_registry()
-    manager = default_workspace_setup_manager(agent_registry=registry)
-    manager.require_same_setup_collaboration(
+    manager = default_workspace_collaboration_manager(agent_registry=registry)
+    manager.require_same_team_collaboration(
         sender=registry.get(sender_agent_id),
         receiver=registry.get(receiver_agent_id.strip()),
     )
 
 
-def _sender_agent_id_for_workspace_setup_guard() -> str:
+def _sender_agent_id_for_workspace_team_guard() -> str:
     sender_terminal_id = os.getenv("CAO_TERMINAL_ID")
     if not sender_terminal_id:
         raise WorkspaceSetupConfigError(
-            "Workspace setup collaboration rejected: sender terminal is unknown"
+            "Workspace team collaboration rejected: sender terminal is unknown"
         )
     sender_metadata = db_module.get_terminal_metadata(sender_terminal_id)
     if sender_metadata is None:
         raise WorkspaceSetupConfigError(
-            f"Workspace setup collaboration rejected: sender terminal {sender_terminal_id} "
+            f"Workspace team collaboration rejected: sender terminal {sender_terminal_id} "
             "is unknown"
         )
     sender_agent_id = sender_metadata.get("agent_id")
     if not isinstance(sender_agent_id, str) or not sender_agent_id.strip():
         raise WorkspaceSetupConfigError(
-            f"Workspace setup collaboration rejected: sender terminal {sender_terminal_id} "
+            f"Workspace team collaboration rejected: sender terminal {sender_terminal_id} "
             "has no CAO agent"
         )
     return sender_agent_id.strip()
 
 
-def _require_workspace_setup_terminal_collaboration(receiver_terminal_id: str) -> None:
-    sender_agent_id = _sender_agent_id_for_workspace_setup_guard()
+def _require_workspace_team_terminal_collaboration(receiver_terminal_id: str) -> None:
+    sender_agent_id = _sender_agent_id_for_workspace_team_guard()
     receiver_metadata = db_module.get_terminal_metadata(receiver_terminal_id)
     if receiver_metadata is None:
         raise WorkspaceSetupConfigError(
-            f"Workspace setup collaboration rejected: receiver terminal {receiver_terminal_id} "
+            f"Workspace team collaboration rejected: receiver terminal {receiver_terminal_id} "
             "is unknown"
         )
     receiver_agent_id = receiver_metadata.get("agent_id")
     if not isinstance(receiver_agent_id, str) or not receiver_agent_id.strip():
         raise WorkspaceSetupConfigError(
-            f"Workspace setup collaboration rejected: receiver terminal {receiver_terminal_id} "
+            f"Workspace team collaboration rejected: receiver terminal {receiver_terminal_id} "
             "has no CAO agent"
         )
     registry = load_agent_registry()
-    manager = default_workspace_setup_manager(agent_registry=registry)
-    manager.require_same_setup_collaboration(
+    manager = default_workspace_collaboration_manager(agent_registry=registry)
+    manager.require_same_team_collaboration(
         sender=registry.get(sender_agent_id),
         receiver=registry.get(receiver_agent_id),
     )
@@ -436,6 +436,7 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
     sender_id = os.getenv("CAO_TERMINAL_ID")
     if not sender_id:
         raise ValueError("CAO_TERMINAL_ID not set - cannot determine sender")
+    _require_workspace_team_terminal_collaboration(receiver_id)
 
     response = requests.post(
         f"{API_BASE_URL}/terminals/{receiver_id}/inbox/messages",
@@ -466,7 +467,7 @@ async def _handoff_impl(
     start_time = time.time()
 
     try:
-        _require_workspace_setup_collaboration(agent_id)
+        _require_workspace_team_collaboration(agent_id)
         # Create terminal
         terminal_id, provider = _create_terminal(agent_id, working_directory)
 
@@ -650,7 +651,7 @@ def _assign_impl(
 ) -> Dict[str, Any]:
     """Implementation of assign logic."""
     try:
-        _require_workspace_setup_collaboration(agent_id)
+        _require_workspace_team_collaboration(agent_id)
         # Create terminal
         terminal_id, _ = _create_terminal(agent_id, working_directory)
 
@@ -674,14 +675,16 @@ def _build_assign_description(enable_sender_id: bool, enable_workdir: bool) -> s
         desc = """\
 Assigns a task to another agent without blocking.
 
-The sender's terminal ID and callback instructions will automatically be appended to the message."""
+The sender's terminal ID and callback instructions will automatically be appended to the message.
+The callback still goes through workspace team message policy and may be rejected if the agents
+are not in the same workspace team."""
     else:
         desc = """\
 Assigns a task to another agent without blocking.
 
 In the message to the worker agent include instruction to send results back via send_message tool.
 **IMPORTANT**: The terminal id of each agent is available in environment variable CAO_TERMINAL_ID.
-When assigning, first find out your own CAO_TERMINAL_ID value, then include the terminal_id value in the message to the worker agent to allow callback.
+When assigning, first find out your own CAO_TERMINAL_ID value, then include the terminal_id value in the message to the worker agent for callback routing. Terminal id possession is not authorization; send_message is subject to same-workspace-team policy and may be rejected.
 Example message: "Analyze the logs. When done, send results back to terminal ee3f93b3 using send_message tool.\""""
 
     if enable_workdir:
@@ -814,12 +817,13 @@ def _send_message_impl(receiver_id: str, message: str) -> Dict[str, Any]:
 
 @_deferred_tool()
 async def send_message(
-    receiver_id: str = Field(description="Target terminal ID to send message to"),
+    receiver_id: str = Field(description="Target terminal ID to send message to, subject to same-workspace-team policy"),
     message: str = Field(description="Message content to send"),
 ) -> Dict[str, Any]:
     """Send a message to another terminal's inbox.
 
-    The message will be delivered when the destination terminal is IDLE.
+    The message is accepted only when sender and receiver belong to the same workspace team.
+    It will be delivered when the destination terminal is IDLE.
     Messages are delivered in order (oldest first).
 
     Args:
@@ -835,7 +839,13 @@ async def send_message(
 def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:
     """Implementation of read_inbox_message logic."""
     try:
-        return read_result_to_dict(read_provider_inbox_message(notification_id))
+        caller_terminal_id = _require_cao_terminal_id()
+        return read_result_to_dict(
+            read_provider_inbox_message(
+                notification_id,
+                caller_terminal_id=caller_terminal_id,
+            )
+        )
     except InboxReadError as exc:
         return {"success": False, "error": str(exc), "error_type": type(exc).__name__}
     except Exception as exc:
@@ -859,7 +869,12 @@ async def read_inbox_message(
 def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, Any]:
     """Implementation of reply_to_inbox_message logic."""
     try:
-        result = route_provider_inbox_reply(notification_id, body)
+        caller_terminal_id = _require_cao_terminal_id()
+        result = route_provider_inbox_reply(
+            notification_id,
+            body,
+            caller_terminal_id=caller_terminal_id,
+        )
         return {
             "success": True,
             "notification_id": result.delivery.notification.id,
@@ -970,7 +985,7 @@ def _create_baton_impl(
 ) -> Dict[str, Any]:
     try:
         actor_id = _require_cao_terminal_id()
-        _require_workspace_setup_terminal_collaboration(holder_id)
+        _require_workspace_team_terminal_collaboration(holder_id)
         baton = baton_service.create_baton(
             title=title,
             originator_id=actor_id,
@@ -993,7 +1008,7 @@ def _pass_baton_impl(
 ) -> Dict[str, Any]:
     try:
         actor_id = _require_cao_terminal_id()
-        _require_workspace_setup_terminal_collaboration(receiver_id)
+        _require_workspace_team_terminal_collaboration(receiver_id)
         baton = baton_service.pass_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -1019,7 +1034,7 @@ def _return_baton_impl(
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
         receiver_id = existing.return_stack[-1] if existing.return_stack else existing.originator_id
-        _require_workspace_setup_terminal_collaboration(receiver_id)
+        _require_workspace_team_terminal_collaboration(receiver_id)
         baton = baton_service.return_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -1042,7 +1057,7 @@ def _complete_baton_impl(
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
-        _require_workspace_setup_terminal_collaboration(existing.originator_id)
+        _require_workspace_team_terminal_collaboration(existing.originator_id)
         baton = baton_service.complete_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -1064,7 +1079,7 @@ def _block_baton_impl(
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
-        _require_workspace_setup_terminal_collaboration(existing.originator_id)
+        _require_workspace_team_terminal_collaboration(existing.originator_id)
         baton = baton_service.block_baton(
             baton_id=baton_id,
             actor_id=actor_id,

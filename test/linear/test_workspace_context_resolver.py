@@ -26,7 +26,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueDelegatedToAgentEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.workspace_setups import default_workspace_setup_manager
+from cli_agent_orchestrator.workspace_setups import default_workspace_collaboration_manager
 
 
 def _agent_session_payload(issue: dict | None, *, session_id: str = "session-1") -> dict:
@@ -59,7 +59,7 @@ def _context_agent() -> Agent:
         workdir="/tmp/cao",
         session_name="implementation-partner",
         prompt="",
-        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
     )
 
 
@@ -178,7 +178,7 @@ def test_agent_resolver_explicitly_resolves_traced_linear_provider_event(
     runtime_inbox_db_session,
 ):
     agent = _context_agent()
-    manager = default_workspace_setup_manager(agent_registry=AgentRegistry({agent.id: agent}))
+    manager = default_workspace_collaboration_manager(agent_registry=AgentRegistry({agent.id: agent}))
     resolution = manager.resolve_event_context(
         agent,
         _published_event(_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"})),

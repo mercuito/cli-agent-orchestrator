@@ -397,31 +397,32 @@ higher.
 
 ## Migration Strategy
 
-This plan intentionally includes a short compatibility period because existing
-agents and tests may still contain `[workspace_context]`.
+This plan intentionally makes a hard cutover away from agent-owned workspace
+context configuration. Existing local agent files may still contain
+`[workspace_context]`, but that block is not a supported runtime, migration, or
+compatibility input under the team model.
 
-Phase 1 may read both shapes:
+Final behavior:
 
 - `[workspace] team = "..."` is the new authoritative shape.
-- `[workspace_context]` is treated as legacy input only.
-- If both are present, `[workspace] team` wins and a diagnostic should explain
-  that the legacy block is ignored.
-- Legacy resolver ids are mapped only through an explicit migration table, not
-  through fuzzy matching.
+- `[workspace_context]` must not be translated into a workspace team.
+- Legacy `resolver_id` values must not be mapped to teams during normal agent
+  loading, runtime routing, API updates, CLI writes, dashboard saves, provider
+  event resolution, or tests.
+- If an agent file contains `[workspace_context]`, production loading may only
+  detect it to produce an actionable diagnostic or error instructing the
+  operator to migrate to `[workspace] team`.
+- If both `[workspace] team` and `[workspace_context]` are present,
+  `[workspace] team` remains the only usable membership field and the legacy
+  block still produces a legacy-config diagnostic.
+- Repository examples/tests use `[workspace] team`.
+- No production call site has direct behavioral dependence on
+  `[workspace_context]`.
+- No new feature is built on the legacy shape.
 
-By the end of the implementation series:
-
-- all production call sites use workspace team/setup APIs,
-- repository examples/tests use `[workspace] team`,
-- direct behavioral dependence on `[workspace_context]` is removed,
-- legacy resolver-id dispatch paths that let agents bypass team membership are
-  removed,
-- no new feature is built on the legacy shape.
-
-The plan does not allow preserving legacy behavior indefinitely. Any retained
-legacy parser must be temporary migration support inside this implementation
-series and must be removed before the Definition of Done is satisfied unless the
-operator explicitly amends this plan.
+An explicit migration command or offline diagnostic may be introduced later, but
+normal CAO runtime/config loading must not provide backwards-compatible
+resolver-id-to-team behavior.
 
 ## Implementation Phases
 
@@ -445,7 +446,8 @@ operator explicitly amends this plan.
 ### Phase 2 - Add Agent Team Config
 
 - Add `[workspace] team` parsing/writing to the agent config model.
-- Keep legacy `[workspace_context]` parsing as temporary migration support.
+- Detect legacy `[workspace_context]` only to emit an unsupported-legacy
+  diagnostic/error; do not translate it into team membership.
 - Update config serialization so newly written agent files use `[workspace]`.
 - Update API responses and dashboard config views to show the team name, derived
   setup name, and workspace context state clearly.
@@ -488,8 +490,8 @@ operator explicitly amends this plan.
 
 ### Phase 6 - Legacy Cleanup
 
-- Remove old `[workspace_context]` behavioral entry points once live configs and
-  tests have moved.
+- Remove old `[workspace_context]` behavioral entry points. Normal production
+  loading must not accept legacy blocks as migration input.
 - Delete unused resolver-id plumbing that lets agents bypass team membership.
 - Delete old tests, fixtures, examples, and docs that encode the legacy
   `[workspace_context]` model except for explicit historical migration notes.
@@ -520,8 +522,9 @@ Required changes:
 - Update `cao agent create/show/list/edit/start` surfaces. `create` must either
   support explicit `--team` or intentionally create standalone no-team agents
   with documented behavior.
-- Keep legacy `[workspace_context]` only as temporary migration input mapped to
-  a team id, not a setup id.
+- Treat legacy `[workspace_context]` as unsupported current configuration:
+  detect it for diagnostics/errors only, and never map it to a team id, setup
+  id, resolver, recipient, or runtime context.
 - Ensure newly serialized configs do not emit `[workspace] setup`.
 
 ### Task 2 - Add Team Registry And Team-Aware Manager
@@ -841,8 +844,14 @@ Owned areas:
 
 Required changes:
 
-- Remove direct resolver-id dispatch and legacy behavior paths by the end of
-  the implementation series.
+- Remove direct resolver-id dispatch and legacy behavior paths.
+- Remove any production parser that successfully maps `[workspace_context]` or
+  `resolver_id` to workspace team membership.
+- Retain, at most, unsupported-legacy detection that emits an actionable
+  diagnostic/error and cannot authorize runtime behavior.
+- Replace legacy compatibility tests with tests proving legacy config is
+  rejected or diagnosed and cannot select a team, setup, resolver, recipient, or
+  runtime context.
 - Ensure examples and docs present `[workspace] team` as the only current
   membership path.
 - Static search must not find production behavior that treats
@@ -859,8 +868,10 @@ Required coverage:
   - agent with no team remains valid,
   - CLI agent create/show/list/edit/start behavior reflects team membership or
     intentionally documented standalone no-team behavior,
-  - legacy `[workspace_context]` maps only through the explicit migration table,
-  - both shapes present prefers `[workspace]` and emits a diagnostic.
+  - legacy `[workspace_context]` is rejected or diagnosed as unsupported and
+    does not map through any resolver-to-team compatibility table,
+  - both shapes present keeps `[workspace] team` as the only usable membership
+    field and still emits a legacy-config diagnostic.
 - Setup/team registry and manager:
   - unknown team is rejected or surfaced as a diagnostic,
   - unknown setup is rejected or surfaced as a diagnostic,
@@ -967,7 +978,7 @@ contract.
 
 | Claim | Required evidence |
 | --- | --- |
-| Agent config supports one team | Parse/write tests load real temporary agent directories with `[workspace] team`, no team, legacy `[workspace_context]`, and both shapes present. |
+| Agent config supports one team | Parse/write tests load real temporary agent directories with `[workspace] team`, no team, legacy `[workspace_context]`, and both shapes present. Legacy `[workspace_context]` must be rejected or diagnosed as unsupported and must not produce team membership. |
 | CLI agent management reflects team membership | CLI tests cover create/show/list/edit/start behavior for team membership, derived setup metadata, diagnostics, and intentionally standalone no-team creation where applicable. |
 | Team/setup definitions are localized | Code review verifies setup/team public types, registries, manager, and provider-view contracts live under the setup subsystem; consumers import the public surface. |
 | Dashboard-managed teams have one owner | Service/API/component tests prove team create/update/list/validation flows use the localized `WorkspaceTeamService` and persisted team store, bootstrap teams seed through the same owner surface, reloads preserve team definitions, and tests use isolated team storage rather than process-global mutable registries. |
@@ -1000,7 +1011,7 @@ contract.
 | Provider MCP surfaces refresh on team policy changes | Tests prove team membership or team provider-view changes invalidate stale provider-mediated tool exposure through MCP freshness/fingerprint logic. |
 | Agent-facing protocol text matches policy | MCP descriptions, injected callback text, bundled skills, repo-root skills, docs, diagrams/assets, and e2e prompts no longer present terminal id possession as sufficient authority for collaboration. |
 | Diagnostics are visible | Unknown team, team referencing unknown setup, unavailable provider, legacy config conflict, and pruned provider identity diagnostics are visible through the owning API/service surface. |
-| Legacy code paths are removed | Static search and focused tests verify production code no longer uses `[workspace_context]` for behavior, direct resolver-id dispatch is gone from agent-owned routing, and examples/docs no longer present the legacy model as valid configuration. |
+| Legacy code paths are removed | Static search and focused tests verify production code no longer uses `[workspace_context]` for behavior, direct resolver-id dispatch is gone from agent-owned routing, no resolver-to-team compatibility table participates in normal loading/runtime behavior, and examples/docs no longer present the legacy model as valid configuration. |
 | Dashboard team management prevents foot guns | API/component/browser tests prove the dashboard exposes a Teams tab for team creation/management, shows team setup and members, changes setup through the team owner surface, renders team-derived setup as read-only/disabled in agent configuration, and never saves an agent-level setup override for a teamed agent. |
 | Dashboard Teams tab works end to end in Safari | Safari verification against the backend-served dashboard creates or edits a team, selects a workspace setup through the Teams tab, confirms member agents render under that team, opens a teamed agent configuration, verifies the workspace setup control is read-only/disabled, changes team membership where applicable, saves, reloads the page, and confirms the persisted team/setup state still renders correctly. |
 | UI behavior works if touched | Component tests cover rendered fields/actions, `npm run build` passes, and Safari verifies the backend-served dashboard path that changed. |
@@ -1031,6 +1042,23 @@ Expected verification shape:
 If any command cannot be run, the implementation is not complete until the
 blocker is documented in the completion report and either resolved or accepted
 by the operator.
+
+Implementation evidence captured on May 17, 2026:
+
+- Backend-served Safari target: `http://127.0.0.1:9889/?tab=agents`, served by
+  `uv run cao-server --host 127.0.0.1 --port 9889`.
+- Safari rendered the Agents tab with three configured agents after the server
+  was restarted, confirming the earlier "No agents configured" view was a stale
+  offline tab state rather than persisted agent loss.
+- Safari Teams tab created `safari_review_team`, selected
+  `linear_delivery_setup`, saved it, rendered the created team, edited its
+  display name to `Safari Review Team Updated`, and rendered persisted setup
+  and member state.
+- Safari rendered `cao_delivery` members as `implementation_partner`.
+- Safari opened the teamed `implementation_partner` agent config, entered edit
+  mode, showed team `cao_delivery`, showed derived workspace setup
+  `linear_delivery_setup` in a disabled/read-only field, saved successfully,
+  reloaded, and confirmed the team/setup state still rendered correctly.
 
 ## Definition of Done
 
@@ -1160,10 +1188,11 @@ The work is done only when all of the following are true:
   contracted architecture or runtime behavior, not only to make tests easier.
   Tests exercise production owner surfaces and real seams rather than widening
   production code with test-only hooks.
-- Legacy `[workspace_context]` behavior paths, direct resolver-id dispatch, and
-  old examples/docs are removed by the end of the implementation series; any
-  temporary migration parser retained during intermediate phases is deleted
-  before this DoD is claimed unless this plan is explicitly amended.
+- Legacy `[workspace_context]` behavior paths, direct resolver-id dispatch,
+  resolver-to-team compatibility mappings, and old examples/docs are removed.
+  Production loading may only detect `[workspace_context]` to emit an
+  unsupported-legacy diagnostic/error; it must not accept it as migration input,
+  translate it into `[workspace] team`, or use it to authorize runtime behavior.
 - Every changed behavior in the verification matrix has passing automated
   coverage through owner surfaces and relevant seams.
 - Tests added or updated for this plan use Given/When/Then structure, keep

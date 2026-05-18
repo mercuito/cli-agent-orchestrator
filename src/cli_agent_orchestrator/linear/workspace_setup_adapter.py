@@ -19,13 +19,14 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceProviderCandidateMapping,
     WorkspaceProviderView,
     WorkspaceSetup,
-    WorkspaceSetupAuthorizedMapping,
     WorkspaceSetupConfigError,
+    WorkspaceTeam,
+    WorkspaceTeamAuthorizedMapping,
 )
 
 
 class LinearWorkspaceSetupAdapter:
-    """Build setup-bound Linear provider views from Linear agent config."""
+    """Build team-bound Linear provider views from Linear agent config."""
 
     provider_name = "linear"
 
@@ -84,8 +85,9 @@ class LinearWorkspaceSetupAdapter:
     def build_provider_view(
         self,
         *,
+        team: WorkspaceTeam,
         setup: WorkspaceSetup,
-        authorized_mappings: tuple[WorkspaceSetupAuthorizedMapping, ...],
+        authorized_mappings: tuple[WorkspaceTeamAuthorizedMapping, ...],
         agent_registry: AgentRegistry,
     ) -> WorkspaceProviderView:
         presences = {
@@ -103,13 +105,14 @@ class LinearWorkspaceSetupAdapter:
             presences=presences,
             tool_access=tool_access,
             agent_policies_enabled=False,
-            source=f"workspace_setup:{setup.id}",
+            source=f"workspace_team:{team.id}:setup:{setup.id}",
         )
         try:
             validate_linear_provider_config(config, agent_registry=agent_registry)
         except LinearWorkspaceProviderConfigError as exc:
             raise WorkspaceSetupConfigError(str(exc)) from exc
         return WorkspaceProviderView(
+            team_id=team.id,
             setup_id=setup.id,
             provider_name=self.provider_name,
             value=config,

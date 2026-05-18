@@ -30,7 +30,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
 from cli_agent_orchestrator import agent as agent_config
@@ -98,6 +98,9 @@ from cli_agent_orchestrator.services.agent_timeline import (
 )
 from cli_agent_orchestrator.services.baton_feature import is_baton_enabled
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
+from cli_agent_orchestrator.services.collaboration_policy import (
+    require_terminal_same_team_collaboration,
+)
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 from cli_agent_orchestrator.utils import monitoring_formatter
@@ -117,7 +120,13 @@ from cli_agent_orchestrator.workspace_providers import (
     WorkspaceProviderConfigError,
     initialize_enabled_workspace_providers,
 )
-from cli_agent_orchestrator.workspace_setups import default_workspace_setup_manager
+from cli_agent_orchestrator.workspace_setups import (
+    WorkspaceSetupConfigError,
+    WorkspaceTeam,
+    default_workspace_collaboration_manager,
+    default_workspace_setup_registry,
+    default_workspace_team_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +165,20 @@ def _agent_dashboard_request_authorized(
     return _client_is_loopback(request) or bool(
         agent_token and validate_agent_dashboard_token(agent_token, agent_id)
     )
+
+
+def _require_inbox_message_policy(sender_id: str, receiver_id: str) -> None:
+    """Enforce team collaboration policy before terminal inbox persistence."""
+    try:
+        require_terminal_same_team_collaboration(sender_id, receiver_id)
+    except WorkspaceSetupConfigError as exc:
+        detail = str(exc)
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if "terminal not found" in detail
+            else status.HTTP_403_FORBIDDEN
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 def _with_terminal_dashboard_tokens(session_data: Dict) -> Dict:
@@ -232,7 +255,8 @@ class AgentRuntimeTerminalResponse(BaseModel):
 
 
 class AgentWorkspaceResponse(BaseModel):
-    setup: Optional[str] = None
+    team: Optional[str] = None
+    derived_setup: Optional[str] = None
     diagnostics: List[str] = []
 
 
@@ -346,7 +370,8 @@ class AgentConfigResponse(BaseModel):
             ),
             codex_config=dict(agent.codex_config),
             workspace=AgentWorkspaceResponse(
-                setup=agent.workspace.setup,
+                team=agent.workspace.team,
+                derived_setup=_derived_setup_for_agent(agent),
                 diagnostics=list(agent.workspace.diagnostics),
             ),
             linear=linear,
@@ -366,8 +391,9 @@ class AgentStatusResponse(BaseModel):
     agent_dashboard_token: str
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
-    workspace_setup_id: Optional[str] = None
-    workspace_setup_diagnostics: List[str] = []
+    workspace_team_id: Optional[str] = None
+    derived_workspace_setup_id: Optional[str] = None
+    workspace_team_diagnostics: List[str] = []
     last_active_at: Optional[datetime] = None
 
     @classmethod
@@ -383,8 +409,9 @@ class AgentStatusResponse(BaseModel):
             agent_dashboard_token=create_agent_dashboard_token(status.agent_id),
             active_terminal_id=status.active_terminal_id,
             active_workspace_context_id=status.active_workspace_context_id,
-            workspace_setup_id=status.workspace_setup_id,
-            workspace_setup_diagnostics=list(status.workspace_setup_diagnostics),
+            workspace_team_id=status.workspace_team_id,
+            derived_workspace_setup_id=status.derived_workspace_setup_id,
+            workspace_team_diagnostics=list(status.workspace_team_diagnostics),
             last_active_at=status.last_active_at,
         )
 
@@ -392,21 +419,69 @@ class AgentStatusResponse(BaseModel):
 class WorkspaceSetupDiagnosticResponse(BaseModel):
     code: str
     message: str
+    team_id: Optional[str] = None
     setup_id: Optional[str] = None
     agent_id: Optional[str] = None
     provider_name: Optional[str] = None
 
 
+class WorkspaceSetupResponse(BaseModel):
+    id: str
+    display_name: str
+    providers: List[str]
+
+
+class WorkspaceTeamResponse(BaseModel):
+    id: str
+    display_name: str
+    workspace_setup: str
+    members: List[str] = []
+    diagnostics: List[str] = []
+
+    @classmethod
+    def from_team(cls, team: WorkspaceTeam) -> "WorkspaceTeamResponse":
+        agents = default_agent_manager().list_agents()
+        diagnostics = [
+            diagnostic.message
+            for diagnostic in default_workspace_collaboration_manager().diagnostics()
+            if diagnostic.team_id == team.id
+        ]
+        return cls(
+            id=team.id,
+            display_name=team.display_name,
+            workspace_setup=team.workspace_setup,
+            members=sorted(agent.id for agent in agents if agent.workspace.team == team.id),
+            diagnostics=diagnostics,
+        )
+
+
+class WorkspaceTeamWriteRequest(BaseModel):
+    id: str
+    display_name: str
+    workspace_setup: str
+
+
+def _derived_setup_for_agent(agent: Agent) -> Optional[str]:
+    if agent.workspace.team is None:
+        return None
+    try:
+        return default_workspace_team_service().setup_for_team(agent.workspace.team).id
+    except Exception:
+        return None
+
+
 class AgentWorkspaceWriteRequest(BaseModel):
-    setup: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+
+    team: Optional[str] = None
 
     def to_config(
         self,
         existing: AgentWorkspaceConfig | None = None,
     ) -> AgentWorkspaceConfig:
         base = existing or AgentWorkspaceConfig()
-        if "setup" in self.model_fields_set:
-            return AgentWorkspaceConfig(setup=self.setup)
+        if "team" in self.model_fields_set:
+            return AgentWorkspaceConfig(team=self.team)
         return base
 
 
@@ -1052,19 +1127,63 @@ async def get_provider_catalog_endpoint(provider_type: str) -> ProviderCatalogRe
 
 @app.get("/workspace-setups/diagnostics", response_model=List[WorkspaceSetupDiagnosticResponse])
 async def list_workspace_setup_diagnostics_endpoint() -> List[WorkspaceSetupDiagnosticResponse]:
-    """Return workspace setup validation and pruning diagnostics."""
+    """Return workspace team/setup validation and pruning diagnostics."""
     try:
         return [
             WorkspaceSetupDiagnosticResponse(
                 code=diagnostic.code,
                 message=diagnostic.message,
+                team_id=diagnostic.team_id,
                 setup_id=diagnostic.setup_id,
                 agent_id=diagnostic.agent_id,
                 provider_name=diagnostic.provider_name,
             )
-            for diagnostic in default_workspace_setup_manager().diagnostics()
+            for diagnostic in default_workspace_collaboration_manager().diagnostics()
         ]
     except (AgentConfigError, AgentPathError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/workspace-setups", response_model=List[WorkspaceSetupResponse])
+async def list_workspace_setups_endpoint() -> List[WorkspaceSetupResponse]:
+    """Return code-owned workspace setups available to teams."""
+    return [
+        WorkspaceSetupResponse(
+            id=setup.id,
+            display_name=setup.display_name,
+            providers=list(setup.providers),
+        )
+        for setup in default_workspace_setup_registry().all()
+    ]
+
+
+@app.get("/workspace-teams", response_model=List[WorkspaceTeamResponse])
+async def list_workspace_teams_endpoint() -> List[WorkspaceTeamResponse]:
+    """Return persisted workspace teams and their current members."""
+    try:
+        return [
+            WorkspaceTeamResponse.from_team(team)
+            for team in default_workspace_team_service().list_teams()
+        ]
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.put("/workspace-teams/{team_id}", response_model=WorkspaceTeamResponse)
+async def upsert_workspace_team_endpoint(
+    team_id: str, body: WorkspaceTeamWriteRequest
+) -> WorkspaceTeamResponse:
+    """Create or update one persisted workspace team through the owner service."""
+    if body.id != team_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="team id mismatch")
+    try:
+        team = default_workspace_team_service().create_or_update_team(
+            team_id=body.id,
+            display_name=body.display_name,
+            workspace_setup=body.workspace_setup,
+        )
+        return WorkspaceTeamResponse.from_team(team)
+    except (AgentConfigError, AgentPathError, ValueError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
@@ -1478,6 +1597,7 @@ async def create_inbox_message_endpoint(
     receiver_id: TerminalId, sender_id: str, message: str
 ) -> Dict:
     """Create inbox message and attempt immediate delivery."""
+    _require_inbox_message_policy(sender_id, receiver_id)
     try:
         delivery = create_inbox_delivery(sender_id, receiver_id, message)
     except ValueError as e:

@@ -81,7 +81,7 @@ export interface AgentConfig {
   use_legacy_mcp_json: boolean | null
   runtime_capabilities: string[] | null
   codex_config: Record<string, unknown>
-  workspace: { setup: string | null; diagnostics: string[] }
+  workspace: { team: string | null; derived_setup: string | null; diagnostics: string[] }
   linear: {
     app_key: string | null
     client_id: string | null
@@ -119,17 +119,33 @@ export interface AgentStatus {
   agent_dashboard_token?: string | null
   active_terminal_id: string | null
   active_workspace_context_id: string | null
-  workspace_setup_id?: string | null
-  workspace_setup_diagnostics?: string[]
+  workspace_team_id?: string | null
+  derived_workspace_setup_id?: string | null
+  workspace_team_diagnostics?: string[]
   last_active_at: string | null
 }
 
 export interface WorkspaceSetupDiagnostic {
   code: string
   message: string
+  team_id: string | null
   setup_id: string | null
   agent_id: string | null
   provider_name: string | null
+}
+
+export interface WorkspaceSetup {
+  id: string
+  display_name: string
+  providers: string[]
+}
+
+export interface WorkspaceTeam {
+  id: string
+  display_name: string
+  workspace_setup: string
+  members: string[]
+  diagnostics: string[]
 }
 
 export interface AgentWriteRequest {
@@ -154,7 +170,7 @@ export interface AgentWriteRequest {
   use_legacy_mcp_json?: boolean | null
   runtime_capabilities?: string[] | null
   codex_config?: Record<string, unknown>
-  workspace?: { setup?: string | null }
+  workspace?: { team?: string | null }
   linear?: {
     app_key?: string | null
     client_id?: string | null
@@ -325,6 +341,18 @@ export const api = {
   },
   listAgents: () => fetchJSON<AgentStatus[]>('/agents'),
   listWorkspaceSetupDiagnostics: () => fetchJSON<WorkspaceSetupDiagnostic[]>('/workspace-setups/diagnostics'),
+  listWorkspaceSetups: () => fetchJSON<WorkspaceSetup[]>('/workspace-setups'),
+  listWorkspaceTeams: () => fetchJSON<WorkspaceTeam[]>('/workspace-teams'),
+  upsertWorkspaceTeam: (team: WorkspaceTeam) =>
+    fetchJSON<WorkspaceTeam>(`/workspace-teams/${encodeURIComponent(team.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: team.id,
+        display_name: team.display_name,
+        workspace_setup: team.workspace_setup,
+      }),
+    }),
   createAgent: (agent: AgentWriteRequest) =>
     fetchJSON<AgentStatus>('/agents', {
       method: 'POST',

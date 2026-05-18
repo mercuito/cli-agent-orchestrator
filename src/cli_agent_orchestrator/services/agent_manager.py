@@ -33,8 +33,9 @@ class AgentStatus:
     active: bool
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
-    workspace_setup_id: Optional[str] = None
-    workspace_setup_diagnostics: tuple[str, ...] = ()
+    workspace_team_id: Optional[str] = None
+    derived_workspace_setup_id: Optional[str] = None
+    workspace_team_diagnostics: tuple[str, ...] = ()
     last_active_at: Optional[datetime] = None
 
     @classmethod
@@ -47,8 +48,9 @@ class AgentStatus:
             session_name=agent.session_name,
             agent=agent,
             active=False,
-            workspace_setup_id=agent.workspace.setup,
-            workspace_setup_diagnostics=agent.workspace.diagnostics,
+            workspace_team_id=agent.workspace.team,
+            derived_workspace_setup_id=_derived_workspace_setup_id(agent),
+            workspace_team_diagnostics=agent.workspace.diagnostics,
         )
 
 
@@ -173,8 +175,9 @@ class AgentManager:
             active=True,
             active_terminal_id=_optional_str(terminal.get("id")),
             active_workspace_context_id=_optional_str(terminal.get("workspace_context_id")),
-            workspace_setup_id=agent.workspace.setup,
-            workspace_setup_diagnostics=agent.workspace.diagnostics,
+            workspace_team_id=agent.workspace.team,
+            derived_workspace_setup_id=_derived_workspace_setup_id(agent),
+            workspace_team_diagnostics=agent.workspace.diagnostics,
             last_active_at=_optional_datetime(terminal.get("last_active")),
         )
 
@@ -199,6 +202,17 @@ def create_default_agent_manager(
 def default_agent_manager() -> AgentManager:
     """Return a fresh default manager for current config/runtime reads."""
     return create_default_agent_manager()
+
+
+def _derived_workspace_setup_id(agent: Agent) -> Optional[str]:
+    if agent.workspace.team is None:
+        return None
+    try:
+        from cli_agent_orchestrator.workspace_setups import default_workspace_team_service
+
+        return default_workspace_team_service().setup_for_team(agent.workspace.team).id
+    except Exception:
+        return None
 
 
 def _terminal_agent_id(metadata: Mapping[str, object]) -> str:

@@ -10,8 +10,9 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig, LinearConfig
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, create_inbox_delivery
+from cli_agent_orchestrator.clients.database import Base, create_inbox_delivery, create_terminal
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
@@ -27,6 +28,25 @@ from cli_agent_orchestrator.provider_conversations.reply_service import (
     ProviderConversationReplyUnsupportedSourceError,
     reply_to_inbox_message,
 )
+from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    default_workspace_setup_registry,
+)
+
+
+class _TeamStore:
+    def __init__(self, teams: tuple[WorkspaceTeam, ...]) -> None:
+        self._teams = {team.id: team for team in teams}
+
+    def get(self, team_id: str) -> WorkspaceTeam:
+        return self._teams[team_id]
+
+    def list(self) -> tuple[WorkspaceTeam, ...]:
+        return tuple(self._teams.values())
 
 
 @pytest.fixture
@@ -46,10 +66,57 @@ def test_session(monkeypatch):
     Base.metadata.create_all(bind=engine)
     TestSession = sessionmaker(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", TestSession)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_workspace_collaboration_manager",
+        _provider_inbox_collaboration_manager,
+    )
     return TestSession
 
 
+def _provider_inbox_collaboration_manager() -> WorkspaceCollaborationManager:
+    agent = Agent(
+        id="implementation_partner",
+        display_name="Implementation Partner",
+        cli_provider="codex",
+        workdir="/repo",
+        session_name="implementation-partner",
+        prompt="",
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
+        linear=LinearConfig(app_key="implementation_partner", access_token="token"),
+    )
+    return WorkspaceCollaborationManager(
+        setup_registry=default_workspace_setup_registry(),
+        agent_registry=AgentRegistry({agent.id: agent}),
+        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        team_registry=WorkspaceTeamRegistry(
+            _TeamStore(
+                (
+                    WorkspaceTeam(
+                        id="cao_delivery",
+                        display_name="CAO Delivery",
+                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                    ),
+                )
+            )
+        ),
+    )
+
+
+def _ensure_reply_terminal() -> None:
+    if db_module.get_terminal_metadata("terminal-a") is not None:
+        return
+    create_terminal(
+        "terminal-a",
+        "session",
+        "window",
+        "codex",
+        agent_id="implementation_partner",
+        workspace_context_id=db_module.ensure_default_workspace_context("implementation_partner").id,
+    )
+
+
 def _provider_conversation_inbox_message() -> tuple[int, int]:
+    _ensure_reply_terminal()
     thread = upsert_thread(
         provider="linear",
         external_id="thread-1",
@@ -68,8 +135,19 @@ def _provider_conversation_inbox_message() -> tuple[int, int]:
     notification = create_notification_for_message(
         provider_message_id=inbound.id,
         receiver_id="terminal-a",
+        authorized_agent_id="implementation_partner",
     )
     return notification.delivery.notification.id, inbound.id
+
+
+def _reply(notification_id: int, body: str, **kwargs):
+    _ensure_reply_terminal()
+    return reply_to_inbox_message(
+        notification_id,
+        body,
+        caller_terminal_id="terminal-a",
+        **kwargs,
+    )
 
 
 def test_successful_reply_resolves_inbox_thread_and_linear_provider(test_session, monkeypatch):
@@ -80,7 +158,7 @@ def test_successful_reply_resolves_inbox_thread_and_linear_provider(test_session
         create_activity,
     )
 
-    result = reply_to_inbox_message(notification_id, "I am on it")
+    result = _reply(notification_id, "I am on it")
 
     assert result.delivery.notification.id == notification_id
     assert result.thread.external_id == "thread-1"
@@ -111,7 +189,7 @@ def test_provider_reply_uses_thread_external_id_not_message_ref(test_session, mo
         create_activity,
     )
 
-    reply_to_inbox_message(notification_id, "Thread-level reply")
+    _reply(notification_id, "Thread-level reply")
 
     inbound = list_messages(1)[0]
     assert inbound.id == inbound_id
@@ -126,7 +204,7 @@ def test_successful_provider_response_is_recorded_durably(test_session, monkeypa
         Mock(return_value={"id": "reply-1"}),
     )
 
-    result = reply_to_inbox_message(notification_id, "Persist me")
+    result = _reply(notification_id, "Persist me")
 
     messages = list_messages(result.thread.id)
     assert [message.direction for message in messages] == ["inbound", "outbound"]
@@ -143,7 +221,7 @@ def test_provider_error_records_visible_failed_state(test_session, monkeypatch):
     )
 
     with pytest.raises(ProviderConversationReplyDeliveryError, match="provider reply failed"):
-        reply_to_inbox_message(notification_id, "This will fail")
+        _reply(notification_id, "This will fail")
 
     failed = list_messages(1)[-1]
     assert failed.direction == "outbound"
@@ -158,6 +236,7 @@ def test_provider_error_records_visible_failed_state(test_session, monkeypatch):
 
 
 def test_unsupported_provider_records_visible_failed_state(test_session):
+    _ensure_reply_terminal()
     thread = upsert_thread(
         provider="example",
         external_id="thread-unsupported",
@@ -174,12 +253,13 @@ def test_unsupported_provider_records_visible_failed_state(test_session):
     notification_id = create_notification_for_message(
         provider_message_id=inbound.id,
         receiver_id="terminal-a",
+        authorized_agent_id="implementation_partner",
     ).delivery.notification.id
 
     with pytest.raises(
         ProviderConversationReplyDeliveryError, match="not supported for inbox replies"
     ):
-        reply_to_inbox_message(notification_id, "No supported provider")
+        _reply(notification_id, "No supported provider")
 
     failed = list_messages(thread.id)[-1]
     assert failed.direction == "outbound"
@@ -192,7 +272,7 @@ def test_missing_notification_id_fails_clearly(test_session):
     with pytest.raises(
         ProviderConversationReplyNotFoundError, match="inbox notification 999 not found"
     ):
-        reply_to_inbox_message(999, "No inbox")
+        _reply(999, "No inbox")
 
 
 def test_non_provider_conversation_source_fails_as_unsupported(test_session):
@@ -208,7 +288,7 @@ def test_non_provider_conversation_source_fails_as_unsupported(test_session):
         ProviderConversationReplyUnsupportedSourceError,
         match="route_kind None is not supported",
     ):
-        reply_to_inbox_message(delivery.notification.id, "No provider conversation target")
+        _reply(delivery.notification.id, "No provider conversation target")
 
 
 def test_missing_provider_conversation_thread_source_fails_clearly(test_session):
@@ -226,4 +306,4 @@ def test_missing_provider_conversation_thread_source_fails_clearly(test_session)
         ProviderConversationReplyNotFoundError,
         match=f"provider conversation thread 999 for inbox notification {delivery.notification.id} not found",
     ):
-        reply_to_inbox_message(delivery.notification.id, "No durable thread")
+        _reply(delivery.notification.id, "No durable thread")

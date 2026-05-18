@@ -464,6 +464,7 @@ class TestCreateInboxMessageEndpoint:
         mock_delivery.message.source_id = "sender1"
 
         with (
+            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
             patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
             patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
         ):
@@ -497,6 +498,7 @@ class TestCreateInboxMessageEndpoint:
         mock_delivery.message.source_id = "sender1"
 
         with (
+            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
             patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
             patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
         ):
@@ -513,7 +515,10 @@ class TestCreateInboxMessageEndpoint:
 
     def test_create_inbox_message_not_found(self, client):
         """POST returns 404 when terminal not found."""
-        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
+        with (
+            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
+            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
+        ):
             mock_create.side_effect = ValueError("Terminal not found")
 
             response = client.post(
@@ -525,7 +530,10 @@ class TestCreateInboxMessageEndpoint:
 
     def test_create_inbox_message_server_error(self, client):
         """POST returns 500 on internal error."""
-        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
+        with (
+            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
+            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
+        ):
             mock_create.side_effect = Exception("DB error")
 
             response = client.post(

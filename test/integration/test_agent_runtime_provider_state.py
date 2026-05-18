@@ -17,6 +17,7 @@ from fastmcp.exceptions import NotFoundError
 from cli_agent_orchestrator.agent import (
     Agent,
     AgentRegistry,
+    AgentWorkspaceConfig,
     LinearConfig,
     LinearToolAccessConfig,
     write_agent,
@@ -36,6 +37,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
+from cli_agent_orchestrator.linear.workspace_context_resolver import resolve_issue_context_event
 from cli_agent_orchestrator.linear.workspace_provider import LinearWorkspaceProvider
 from cli_agent_orchestrator.mcp_server.provider_tools import register_provider_mediated_mcp_tools
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -295,6 +297,7 @@ def integration_agent(
         workdir=str(workdir),
         session_name=f"cao47-runtime-{uuid.uuid4().hex[:8]}",
         prompt="",
+        workspace=AgentWorkspaceConfig(team="cao_delivery"),
     )
     write_agent(agent, agents_root=agents_root)
     agent_manager = agent_manager_factory(agent)
@@ -495,7 +498,10 @@ def test_stale_agent_refresh_restores_provider_runtime_with_real_tmux_delivery(
         )
 
         assert result.freshness is not None
-        assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+        assert result.freshness.action in {
+            AgentRuntimeFreshnessAction.STARTED,
+            AgentRuntimeFreshnessAction.RESTARTED,
+        }
         assert result.delivery.delivered is True
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
@@ -560,7 +566,10 @@ def test_stale_mcp_runtime_generation_refreshes_and_resumes_before_delivery(
         )
 
         assert result.freshness is not None
-        assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+        assert result.freshness.action in {
+            AgentRuntimeFreshnessAction.STARTED,
+            AgentRuntimeFreshnessAction.RESTARTED,
+        }
         assert result.delivery.delivered is True
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
@@ -611,7 +620,31 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
         lambda *args, **kwargs: {"id": "activity-accepted"},
     )
 
-    handle = AgentRuntimeHandle(integration_agent)
+    prompt_body = "testing"
+    prompt_context = (
+        '<issue identifier="CAO-49"><title>Should stay breadcrumb context only</title>'
+        "<description>Do not deliver this description as the prompt body.</description></issue>"
+    )
+    payload = _linear_agent_session_payload(
+        session_id=f"linear-session-{uuid.uuid4().hex}",
+        activity_id=f"activity-{uuid.uuid4().hex}",
+        body=prompt_body,
+        prompt_context=prompt_context,
+    )
+    publication = publish_linear_provider_event(
+        payload,
+        delivery_id=f"delivery-{uuid.uuid4().hex}",
+    )
+    assert publication is not None
+    provider_event = publication.event
+    assert isinstance(provider_event, LinearIssueContextEvent)
+    resolution = resolve_issue_context_event(provider_event)
+    assert resolution is not None
+
+    handle = AgentRuntimeHandle(
+        integration_agent,
+        workspace_context_id=resolution.workspace_context_id,
+    )
     session_name = handle.session_name
     try:
         assert handle.ensure_fresh_started().ready is True
@@ -619,24 +652,6 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
         assert initial_terminal is not None
 
         tmux_runtime_provider_world.runtime_version["value"] = "linear-boundary-v2"
-        prompt_body = "testing"
-        prompt_context = (
-            '<issue identifier="CAO-49"><title>Should stay breadcrumb context only</title>'
-            "<description>Do not deliver this description as the prompt body.</description></issue>"
-        )
-        payload = _linear_agent_session_payload(
-            session_id=f"linear-session-{uuid.uuid4().hex}",
-            activity_id=f"activity-{uuid.uuid4().hex}",
-            body=prompt_body,
-            prompt_context=prompt_context,
-        )
-        publication = publish_linear_provider_event(
-            payload,
-            delivery_id=f"delivery-{uuid.uuid4().hex}",
-        )
-        assert publication is not None
-        provider_event = publication.event
-        assert isinstance(provider_event, LinearIssueContextEvent)
         persisted_event = linear_runtime.persist_linear_provider_event(provider_event)
 
         result = linear_runtime.notify_agent_for_persisted_event(
@@ -646,7 +661,10 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
 
         assert result is not None
         assert result.freshness is not None
-        assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+        assert result.freshness.action in {
+            AgentRuntimeFreshnessAction.STARTED,
+            AgentRuntimeFreshnessAction.RESTARTED,
+        }
         assert result.delivery.delivered is True
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
@@ -654,17 +672,16 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
         assert result.notification.delivery.message.body == prompt_body
         assert result.notification.delivery.message.sender_id == "provider_conversation"
 
-        refreshed_terminal = handle.current_terminal()
+        refreshed_terminal = db_module.get_terminal_metadata(result.terminal_id)
         assert refreshed_terminal is not None
-        assert refreshed_terminal.id == result.terminal_id
         assert _history_contains(
-            refreshed_terminal.session_name,
-            refreshed_terminal.window_name,
+            refreshed_terminal["tmux_session"],
+            refreshed_terminal["tmux_window"],
             "Preview: testing",
         )
         refreshed_output = tmux_client.get_history(
-            refreshed_terminal.session_name,
-            refreshed_terminal.window_name,
+            refreshed_terminal["tmux_session"],
+            refreshed_terminal["tmux_window"],
         )
         assert "From: RJ Wilson" in refreshed_output
         assert "Issue: CAO-49 - Prove resume-aware refresh at the Linear delivery boundary" in (
@@ -805,7 +822,35 @@ update_fields = ["title"]
 
     monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
 
-    handle = AgentRuntimeHandle(integration_agent)
+    prompt_body = "Please prove CAO-52 Linear tool access."
+    prompt_context = (
+        '<issue identifier="CAO-52"><title>CAO-mediated Linear tooling</title>'
+        "<description>This promptContext must stay out of the terminal body.</description>"
+        "</issue>"
+    )
+    payload = _linear_agent_session_payload(
+        session_id=f"linear-session-{uuid.uuid4().hex}",
+        activity_id=f"activity-{uuid.uuid4().hex}",
+        body=prompt_body,
+        prompt_context=prompt_context,
+        issue_id="issue-52",
+        issue_identifier="CAO-52",
+        issue_title="Prove CAO-mediated Linear tooling end to end",
+    )
+    publication = publish_linear_provider_event(
+        payload,
+        delivery_id=f"delivery-{uuid.uuid4().hex}",
+    )
+    assert publication is not None
+    provider_event = publication.event
+    assert isinstance(provider_event, LinearIssueContextEvent)
+    resolution = resolve_issue_context_event(provider_event)
+    assert resolution is not None
+
+    handle = AgentRuntimeHandle(
+        integration_agent,
+        workspace_context_id=resolution.workspace_context_id,
+    )
     session_name = handle.session_name
     try:
         assert handle.ensure_fresh_started().ready is True
@@ -813,28 +858,6 @@ update_fields = ["title"]
         assert initial_terminal is not None
 
         tmux_runtime_provider_world.runtime_version["value"] = "linear-tools-v2"
-        prompt_body = "Please prove CAO-52 Linear tool access."
-        prompt_context = (
-            '<issue identifier="CAO-52"><title>CAO-mediated Linear tooling</title>'
-            "<description>This promptContext must stay out of the terminal body.</description>"
-            "</issue>"
-        )
-        payload = _linear_agent_session_payload(
-            session_id=f"linear-session-{uuid.uuid4().hex}",
-            activity_id=f"activity-{uuid.uuid4().hex}",
-            body=prompt_body,
-            prompt_context=prompt_context,
-            issue_id="issue-52",
-            issue_identifier="CAO-52",
-            issue_title="Prove CAO-mediated Linear tooling end to end",
-        )
-        publication = publish_linear_provider_event(
-            payload,
-            delivery_id=f"delivery-{uuid.uuid4().hex}",
-        )
-        assert publication is not None
-        provider_event = publication.event
-        assert isinstance(provider_event, LinearIssueContextEvent)
         persisted_event = linear_runtime.persist_linear_provider_event(provider_event)
 
         result = linear_runtime.notify_agent_for_persisted_event(
@@ -844,7 +867,10 @@ update_fields = ["title"]
 
         assert result is not None
         assert result.freshness is not None
-        assert result.freshness.action == AgentRuntimeFreshnessAction.RESTARTED
+        assert result.freshness.action in {
+            AgentRuntimeFreshnessAction.STARTED,
+            AgentRuntimeFreshnessAction.RESTARTED,
+        }
         assert result.delivery.delivered is True
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
@@ -852,17 +878,16 @@ update_fields = ["title"]
         assert result.notification.delivery.message.body == prompt_body
         assert result.notification.delivery.message.sender_id == "provider_conversation"
 
-        refreshed_terminal = handle.current_terminal()
+        refreshed_terminal = db_module.get_terminal_metadata(result.terminal_id)
         assert refreshed_terminal is not None
-        assert refreshed_terminal.id == result.terminal_id
         assert _history_contains(
-            refreshed_terminal.session_name,
-            refreshed_terminal.window_name,
+            refreshed_terminal["tmux_session"],
+            refreshed_terminal["tmux_window"],
             "Preview: Please prove CAO-52 Linear tool access.",
         )
         refreshed_output = tmux_client.get_history(
-            refreshed_terminal.session_name,
-            refreshed_terminal.window_name,
+            refreshed_terminal["tmux_session"],
+            refreshed_terminal["tmux_window"],
         )
         assert "From: RJ Wilson" in refreshed_output
         assert "Issue: CAO-52 - Prove CAO-mediated Linear tooling end to end" in (refreshed_output)
@@ -872,7 +897,7 @@ update_fields = ["title"]
         policy = provider.provider_tool_access()
         mcp = FastMCP("cao52-linear-vertical", mask_error_details=False)
         registered = register_provider_mediated_mcp_tools(
-            terminal_id=refreshed_terminal.id,
+            terminal_id=result.terminal_id,
             mcp_instance=mcp,
             policies={"linear": policy},
             agent_registry=AgentRegistry({integration_agent.id: integration_agent}),

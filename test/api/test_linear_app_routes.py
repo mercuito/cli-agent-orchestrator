@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator import constants
-from cli_agent_orchestrator.agent import Agent
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig, LinearConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.events import CaoEventDispatcher
@@ -24,6 +24,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearPresence,
     LinearResolvedPresence,
+    LinearWorkspaceProvider,
     LinearWorkspaceProviderConfigError,
 )
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
@@ -60,6 +61,21 @@ def _test_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+
+
+def _attach_reply_terminal() -> str:
+    terminal_id = "terminal-a"
+    db_module.create_terminal(
+        terminal_id,
+        "session",
+        "window",
+        "codex",
+        agent_id="implementation_partner",
+        workspace_context_id=db_module.ensure_default_workspace_context(
+            "implementation_partner"
+        ).id,
+    )
+    return terminal_id
 
 
 def _test_file_session(monkeypatch: pytest.MonkeyPatch, tmp_path):
@@ -131,28 +147,6 @@ def _notification_fk_targets(connection, table_name: str) -> list[str]:
 
 def _pending_linear_notifications():
     return db_module.list_pending_inbox_notifications("agent:implementation_partner", limit=10)
-
-
-def _disable_linear_inbox_receiver(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.inbox_bridge.app_client.linear_env",
-        lambda name: None,
-    )
-
-
-def _enable_linear_inbox_receiver(monkeypatch: pytest.MonkeyPatch, receiver_id: str) -> Mock:
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.inbox_bridge.app_client.linear_env",
-        lambda name: (
-            receiver_id if name == "LINEAR_PROVIDER_CONVERSATION_INBOX_RECEIVER_ID" else None
-        ),
-    )
-    delivery = Mock()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.inbox_bridge.inbox_service.check_and_send_pending_messages",
-        delivery,
-    )
-    return delivery
 
 
 def _linear_agent_payload(
@@ -266,6 +260,7 @@ def _resolved_presence() -> LinearResolvedPresence:
             workdir="/repo",
             session_name="implementation-partner",
             prompt="Implement the requested CAO task.",
+            workspace=AgentWorkspaceConfig(team="cao_delivery"),
         ),
     )
 
@@ -286,8 +281,25 @@ def _resolved_discovery_presence() -> LinearResolvedPresence:
             workdir="/repo",
             session_name="discovery-partner",
             prompt="Discover the requested CAO context.",
+            workspace=AgentWorkspaceConfig(team="cao_delivery"),
         ),
     )
+
+
+def _install_linear_provider_for_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    agent: Agent,
+) -> LinearWorkspaceProvider:
+    provider = LinearWorkspaceProvider(
+        agent_registry=AgentRegistry({agent.id: agent}),
+        preflight_credentials=False,
+    )
+    provider.initialize()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider._default_linear_workspace_provider",
+        provider,
+    )
+    return provider
 
 
 def _use_mapped_linear_runtime(
@@ -304,7 +316,7 @@ def _use_mapped_linear_runtime(
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
-        lambda resolved: handle,
+        lambda resolved, **_kwargs: handle,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime.should_enable_linear_agent_policies",
@@ -650,7 +662,47 @@ def test_linear_agent_webhook_unknown_mapping_is_not_routed(client, monkeypatch)
 
     assert response.status_code == 200
     assert response.json()["routed"] is False
-    assert get_thread("linear", "session-1") is not None
+    assert get_thread("linear", "session-1") is None
+    assert _pending_linear_notifications() == []
+    handle_factory.assert_not_called()
+
+
+def test_linear_agent_webhook_no_team_agent_is_not_persisted_before_authorization(
+    client,
+    monkeypatch,
+):
+    _test_session(monkeypatch)
+    agent = Agent(
+        id="implementation_partner",
+        display_name="Implementation Partner",
+        cli_provider="codex",
+        workdir="/repo",
+        session_name="implementation-partner",
+        prompt="Implement the requested CAO task.",
+        linear=LinearConfig(app_key="implementation_partner"),
+        workspace=AgentWorkspaceConfig(),
+    )
+    _install_linear_provider_for_agent(monkeypatch, agent)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.app_client.verify_webhook_source",
+        lambda raw, signature, payload: _verified_linear_app(),
+    )
+    handle_factory = Mock()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
+        handle_factory,
+    )
+
+    response = client.post(
+        "/linear/webhooks/agent",
+        json=_linear_agent_payload(),
+        headers=_linear_headers("delivery-no-team"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["routed"] is False
+    assert get_processed_event("linear", "delivery-no-team") is None
+    assert get_thread("linear", "session-1") is None
     assert _pending_linear_notifications() == []
     handle_factory.assert_not_called()
 
@@ -926,7 +978,7 @@ def test_linear_agent_webhook_policy_denial_suppresses_discovery_runtime_and_com
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
-        lambda resolved: handle,
+        lambda resolved, **_kwargs: handle,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime.should_enable_linear_agent_policies",
@@ -993,6 +1045,8 @@ def test_linear_agent_webhook_policy_denial_suppresses_discovery_runtime_and_com
             ),
         }
     ]
+    assert get_processed_event("linear", "delivery-discovery-denied") is None
+    assert get_thread("linear", "session-discovery-denied") is None
 
 
 def test_linear_agent_webhook_policy_disabled_routes_discovery_runtime_without_comment(
@@ -1007,7 +1061,7 @@ def test_linear_agent_webhook_policy_disabled_routes_discovery_runtime_without_c
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime._runtime_handle_for_resolved_presence",
-        lambda resolved: handle,
+        lambda resolved, **_kwargs: handle,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime.should_enable_linear_agent_policies",
@@ -1373,7 +1427,11 @@ def test_linear_reply_from_inbox_notification_routes_through_linear_provider(
     )
     notification = _pending_linear_notifications()[0].notification
 
-    result = reply_to_inbox_message(notification.id, "Reply through Linear")
+    result = reply_to_inbox_message(
+        notification.id,
+        "Reply through Linear",
+        caller_terminal_id=_attach_reply_terminal(),
+    )
 
     create_activity.assert_called_with(
         "session-1",
@@ -1404,7 +1462,11 @@ def test_linear_reply_failure_from_inbox_notification_is_visible(client, monkeyp
     notification = _pending_linear_notifications()[0].notification
 
     with pytest.raises(ProviderConversationReplyDeliveryError, match="provider reply failed"):
-        reply_to_inbox_message(notification.id, "This should surface failure")
+        reply_to_inbox_message(
+            notification.id,
+            "This should surface failure",
+            caller_terminal_id=_attach_reply_terminal(),
+        )
 
     thread = get_thread("linear", "session-1")
     failed = list_messages(thread.id)[-1]

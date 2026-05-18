@@ -4,7 +4,7 @@ from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceCon
 from cli_agent_orchestrator.mcp_server import server
 
 
-def _agent(agent_id: str, setup: str | None) -> Agent:
+def _agent(agent_id: str, team: str | None) -> Agent:
     return Agent(
         id=agent_id,
         display_name=agent_id,
@@ -12,11 +12,11 @@ def _agent(agent_id: str, setup: str | None) -> Agent:
         workdir="/repo",
         session_name=agent_id,
         prompt="",
-        workspace=AgentWorkspaceConfig(setup=setup),
+        workspace=AgentWorkspaceConfig(team=team),
     )
 
 
-def test_assign_allows_same_setup_collaboration(monkeypatch):
+def test_assign_allows_same_team_collaboration(monkeypatch):
     sender = _agent("sender", "cao_delivery")
     receiver = _agent("receiver", "cao_delivery")
     sent = {}
@@ -45,9 +45,9 @@ def test_assign_allows_same_setup_collaboration(monkeypatch):
     assert sent == {"terminal_id": "t1", "message": "please help"}
 
 
-def test_assign_rejects_different_or_missing_setup_before_terminal_creation(monkeypatch):
+def test_assign_rejects_different_or_missing_team_before_terminal_creation(monkeypatch):
     sender = _agent("sender", "cao_delivery")
-    receiver = _agent("receiver", "other_setup")
+    receiver = _agent("receiver", "other_team")
     create_terminal_calls = []
 
     monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
@@ -70,27 +70,27 @@ def test_assign_rejects_different_or_missing_setup_before_terminal_creation(monk
     result = server._assign_impl("receiver", "please help")
 
     assert result["success"] is False
-    assert "sender sender setup cao_delivery" in result["message"]
-    assert "receiver receiver setup other_setup" in result["message"]
+    assert "sender sender team cao_delivery" in result["message"]
+    assert "receiver receiver team other_team" in result["message"]
     assert create_terminal_calls == []
 
-    missing_setup = _agent("missing_setup", None)
+    missing_team = _agent("missing_team", None)
     monkeypatch.setattr(
         server,
         "load_agent_registry",
-        lambda: AgentRegistry({sender.id: sender, missing_setup.id: missing_setup}),
+        lambda: AgentRegistry({sender.id: sender, missing_team.id: missing_team}),
     )
 
-    result = server._assign_impl("missing_setup", "please help")
+    result = server._assign_impl("missing_team", "please help")
 
     assert result["success"] is False
-    assert "receiver missing_setup setup none" in result["message"]
+    assert "receiver missing_team team none" in result["message"]
     assert create_terminal_calls == []
 
 
-def test_baton_create_rejects_different_setup_before_service_call(monkeypatch):
+def test_baton_create_rejects_different_team_before_service_call(monkeypatch):
     sender = _agent("sender", "cao_delivery")
-    receiver = _agent("receiver", "other_setup")
+    receiver = _agent("receiver", "other_team")
     service_calls = []
 
     monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
@@ -116,12 +116,12 @@ def test_baton_create_rejects_different_setup_before_service_call(monkeypatch):
     result = server._create_baton_impl("T01", "terminal-receiver", "please help")
 
     assert result["success"] is False
-    assert "sender sender setup cao_delivery" in result["error"]
-    assert "receiver receiver setup other_setup" in result["error"]
+    assert "sender sender team cao_delivery" in result["error"]
+    assert "receiver receiver team other_team" in result["error"]
     assert service_calls == []
 
 
-def test_baton_pass_rejects_missing_setup_before_service_call(monkeypatch):
+def test_baton_pass_rejects_missing_team_before_service_call(monkeypatch):
     sender = _agent("sender", "cao_delivery")
     receiver = _agent("receiver", None)
     service_calls = []
@@ -149,5 +149,5 @@ def test_baton_pass_rejects_missing_setup_before_service_call(monkeypatch):
     result = server._pass_baton_impl("baton-1", "terminal-receiver", "please help")
 
     assert result["success"] is False
-    assert "receiver receiver setup none" in result["error"]
+    assert "receiver receiver team none" in result["error"]
     assert service_calls == []

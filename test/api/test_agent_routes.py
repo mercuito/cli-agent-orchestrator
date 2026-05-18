@@ -37,7 +37,7 @@ from cli_agent_orchestrator.runtime.events import (
 )
 from cli_agent_orchestrator.services.agent_manager import AgentStatus
 from cli_agent_orchestrator.utils.dashboard_links import create_agent_dashboard_token
-from cli_agent_orchestrator.workspace_setups import WorkspaceSetupDiagnostic
+from cli_agent_orchestrator.workspace_setups import WorkspaceSetup, WorkspaceSetupDiagnostic, WorkspaceTeam
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
 
@@ -170,15 +170,15 @@ def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(clien
     manager = SimpleNamespace(
         diagnostics=lambda: (
             WorkspaceSetupDiagnostic(
-                code="unknown_setup",
-                message="Unknown workspace setup: future",
-                setup_id="future",
+                code="unknown_team",
+                message="Unknown workspace team: future",
+                team_id="future",
                 agent_id="implementation_partner",
             ),
         )
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_workspace_setup_manager",
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
         lambda: manager,
     )
 
@@ -187,13 +187,86 @@ def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(clien
     assert response.status_code == 200
     assert response.json() == [
         {
-            "code": "unknown_setup",
-            "message": "Unknown workspace setup: future",
-            "setup_id": "future",
+            "code": "unknown_team",
+            "message": "Unknown workspace team: future",
+            "team_id": "future",
+            "setup_id": None,
             "agent_id": "implementation_partner",
             "provider_name": None,
         }
     ]
+
+
+def test_workspace_team_endpoints_use_team_service_and_render_members(client, monkeypatch):
+    saved: list[tuple[str, str, str]] = []
+    team = WorkspaceTeam(
+        id="cao_delivery",
+        display_name="CAO Delivery",
+        workspace_setup="linear_delivery_setup",
+    )
+
+    class _TeamService:
+        def list_teams(self):
+            return (team,)
+
+        def create_or_update_team(self, *, team_id: str, display_name: str, workspace_setup: str):
+            saved.append((team_id, display_name, workspace_setup))
+            return WorkspaceTeam(
+                id=team_id,
+                display_name=display_name,
+                workspace_setup=workspace_setup,
+            )
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: _TeamService(),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(
+            list_agents=lambda: (
+                replace(
+                    _agent("implementation_partner"),
+                    workspace=AgentWorkspaceConfig(team="cao_delivery"),
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(diagnostics=lambda: ()),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_setup_registry",
+        lambda: SimpleNamespace(
+            all=lambda: (
+                WorkspaceSetup(
+                    id="linear_delivery_setup",
+                    display_name="Linear Delivery Setup",
+                    providers=("linear",),
+                    resolver=lambda event: None,
+                ),
+            )
+        ),
+    )
+
+    list_response = client.get("/workspace-teams")
+    setups_response = client.get("/workspace-setups")
+    save_response = client.put(
+        "/workspace-teams/research",
+        json={
+            "id": "research",
+            "display_name": "Research",
+            "workspace_setup": "linear_delivery_setup",
+        },
+    )
+
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["members"] == ["implementation_partner"]
+    assert setups_response.status_code == 200
+    assert setups_response.json()[0]["id"] == "linear_delivery_setup"
+    assert save_response.status_code == 200
+    assert saved == [("research", "Research", "linear_delivery_setup")]
 
 
 def test_list_agents_active_filter(client, monkeypatch):
@@ -633,8 +706,8 @@ def test_update_agent_rejects_empty_required_field_and_clears_nullable_model(
     assert patched_fields == {"model"}
 
 
-def test_update_agent_can_clear_workspace_setup(client, monkeypatch):
-    existing_agent = replace(_agent(), workspace=AgentWorkspaceConfig(setup="cao_delivery"))
+def test_update_agent_can_clear_workspace_team(client, monkeypatch):
+    existing_agent = replace(_agent(), workspace=AgentWorkspaceConfig(team="cao_delivery"))
     patched_agent = None
     patched_fields = None
 
@@ -668,13 +741,29 @@ def test_update_agent_can_clear_workspace_setup(client, monkeypatch):
 
     response = client.put(
         "/agents/implementation_partner",
-        json={"workspace": {"setup": None}},
+        json={"workspace": {"team": None}},
     )
 
     assert response.status_code == 200
     assert patched_agent is not None
-    assert patched_agent.workspace.setup is None
+    assert patched_agent.workspace.team is None
     assert patched_fields == {"workspace"}
+
+
+def test_update_agent_rejects_legacy_workspace_setup(client, monkeypatch):
+    existing_agent = replace(_agent(), workspace=AgentWorkspaceConfig(team="cao_delivery"))
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.load_agent",
+        lambda agent_id: existing_agent,
+    )
+
+    response = client.put(
+        "/agents/implementation_partner",
+        json={"workspace": {"setup": "linear_delivery_setup"}},
+    )
+
+    assert response.status_code == 400
+    assert "setup" in response.text
 
 
 def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch):

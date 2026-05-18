@@ -16,6 +16,11 @@ from sqlalchemy.orm import Session
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import BatonEventModel, BatonModel
 from cli_agent_orchestrator.models.baton import Baton, BatonEventType, BatonStatus
+from cli_agent_orchestrator.services.collaboration_policy import (
+    require_terminal_same_team_collaboration,
+    require_terminal_workspace_team,
+)
+from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 
 class BatonError(Exception):
@@ -59,6 +64,22 @@ def _require_not_final(row: BatonModel) -> None:
 def _require_current_holder(row: BatonModel, actor_id: str) -> None:
     if row.current_holder_id != actor_id:
         raise BatonAuthorizationError(f"actor {actor_id} is not current holder for baton {row.id}")
+
+
+def _require_operator_reassign_receiver(db: Session, row: BatonModel, receiver_id: str) -> None:
+    require_terminal_workspace_team(receiver_id, db=db, role="Baton recovery receiver")
+    require_terminal_workspace_team(row.originator_id, db=db, role="Baton originator")
+    require_terminal_same_team_collaboration(row.originator_id, receiver_id, db=db)
+    for waiting_holder_id in _decode_stack(row):
+        require_terminal_workspace_team(waiting_holder_id, db=db, role="Baton return-stack holder")
+        require_terminal_same_team_collaboration(waiting_holder_id, receiver_id, db=db)
+    if not row.current_holder_id:
+        return
+    try:
+        require_terminal_workspace_team(row.current_holder_id, db=db, role="Current baton holder")
+    except WorkspaceSetupConfigError:
+        return
+    require_terminal_same_team_collaboration(row.current_holder_id, receiver_id, db=db)
 
 
 def _require_valid_pass_receiver(row: BatonModel, actor_id: str, receiver_id: str) -> None:
@@ -180,6 +201,7 @@ def _queue_baton_message(
     guidance: str,
     artifact_paths: Optional[Sequence[str]] = None,
 ) -> None:
+    require_terminal_same_team_collaboration(sender_id, receiver_id, db=db)
     db_module.create_inbox_delivery(
         sender_id,
         receiver_id,
@@ -501,6 +523,9 @@ def reassign_baton(
         _require_not_final(row)
         if not operator_recovery:
             _require_current_holder(row, actor_id)
+            require_terminal_same_team_collaboration(actor_id, receiver_id, db=db)
+        else:
+            _require_operator_reassign_receiver(db, row, receiver_id)
 
         previous_holder = row.current_holder_id
         row.status = BatonStatus.ACTIVE.value

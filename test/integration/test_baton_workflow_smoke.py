@@ -11,11 +11,30 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.services import baton_service
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    default_workspace_setup_registry,
+)
 
 pytestmark = pytest.mark.integration
+
+
+class _TeamStore:
+    def __init__(self, teams: tuple[WorkspaceTeam, ...]) -> None:
+        self._teams = {team.id: team for team in teams}
+
+    def get(self, team_id: str) -> WorkspaceTeam:
+        return self._teams[team_id]
+
+    def list(self) -> tuple[WorkspaceTeam, ...]:
+        return tuple(self._teams.values())
 
 
 @pytest.fixture
@@ -38,9 +57,61 @@ def live_db(monkeypatch):
     return TestSession
 
 
+def _agent(agent_id: str) -> Agent:
+    return Agent(
+        id=agent_id,
+        display_name=agent_id,
+        cli_provider="codex",
+        workdir="/repo",
+        session_name=agent_id,
+        prompt="",
+        workspace=AgentWorkspaceConfig(team="delivery"),
+    )
+
+
+def _collaboration_manager() -> WorkspaceCollaborationManager:
+    return WorkspaceCollaborationManager(
+        setup_registry=default_workspace_setup_registry(),
+        team_registry=WorkspaceTeamRegistry(
+            _TeamStore(
+                (
+                    WorkspaceTeam(
+                        id="delivery",
+                        display_name="Delivery",
+                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                    ),
+                )
+            )
+        ),
+        agent_registry=AgentRegistry(
+            {
+                "originator_agent": _agent("originator_agent"),
+                "implementer_agent": _agent("implementer_agent"),
+                "reviewer_agent": _agent("reviewer_agent"),
+            }
+        ),
+        provider_adapters={},
+    )
+
+
+def _create_terminal(terminal_id: str, agent_id: str) -> None:
+    db_module.create_terminal(
+        terminal_id=terminal_id,
+        tmux_session="cao-smoke",
+        tmux_window=terminal_id,
+        provider="codex",
+        agent_id=agent_id,
+        workspace_context_id=db_module.ensure_default_workspace_context(agent_id).id,
+    )
+
+
 @pytest.fixture
 def client(live_db, monkeypatch):
     monkeypatch.setenv("CAO_BATON_ENABLED", "true")
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
+        _collaboration_manager,
+    )
     from test.api.conftest import TestClientWithHost
 
     from cli_agent_orchestrator.api.main import app
@@ -75,6 +146,9 @@ def _active_baton_ids(client, *, holder_id: str | None = None):
 
 def test_baton_review_loop_is_observable_over_http(client, live_db):
     baton_id = "smoke-baton-1"
+    _create_terminal("originator", "originator_agent")
+    _create_terminal("implementer", "implementer_agent")
+    _create_terminal("reviewer", "reviewer_agent")
 
     baton_service.create_baton(
         baton_id=baton_id,

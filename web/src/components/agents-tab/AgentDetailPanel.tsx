@@ -45,7 +45,7 @@ export function AgentDetailPanel({
   const isStarting = startingAgentId === agent.agent_id
   const isStopping = stoppingAgentId === agent.agent_id
   const diagnostics = [
-    ...(agent.workspace_setup_diagnostics ?? []),
+    ...(agent.workspace_team_diagnostics ?? []),
     ...workspaceSetupDiagnostics
       .filter(diagnostic => !diagnostic.agent_id || diagnostic.agent_id === agent.agent_id)
       .map(diagnostic => diagnostic.message),
@@ -73,8 +73,10 @@ export function AgentDetailPanel({
             <dd className="truncate text-gray-400">{agent.agent_id}</dd>
             <dt className="text-gray-600">workdir</dt>
             <dd className="truncate text-gray-400">{agent.workdir}</dd>
+            <dt className="text-gray-600">team</dt>
+            <dd className="truncate text-emerald-300">{agent.workspace_team_id ?? 'none'}</dd>
             <dt className="text-gray-600">setup</dt>
-            <dd className="truncate text-violet-300">{agent.workspace_setup_id ?? 'none'}</dd>
+            <dd className="truncate text-violet-300">{agent.derived_workspace_setup_id ?? 'default'}</dd>
             {agent.active && agent.active_terminal_id && (
               <>
                 <dt className="text-gray-600">terminal</dt>
