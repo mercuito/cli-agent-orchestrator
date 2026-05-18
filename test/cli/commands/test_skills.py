@@ -2,13 +2,14 @@
 
 import json
 from pathlib import Path
+from test.support.agent_factory import Agent
 
 import pytest
 from click.testing import CliRunner
 
-from cli_agent_orchestrator.agent import Agent as CaoAgent, write_agent
+from cli_agent_orchestrator.agent import Agent as CaoAgent
+from cli_agent_orchestrator.agent import write_agent
 from cli_agent_orchestrator.cli.commands.skills import skills
-from test.support.agent_factory import Agent
 from cli_agent_orchestrator.utils.skill_injection import refresh_agent_json_prompt
 
 

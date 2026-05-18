@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.database import init_db
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.diagnostics.models import DiagnosticResult, DiagnosticStepResult
@@ -26,7 +27,6 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 from cli_agent_orchestrator.services import terminal_service
-from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.codex_home import cleanup_codex_home, prepare_codex_home
 
 
@@ -60,9 +60,12 @@ def _codex_mcp_list_json(*, codex_home: Path) -> Dict[str, Any]:
     if rc != 0:
         raise RuntimeError(out.strip() or f"codex mcp list failed (exit {rc})")
     try:
-        return json.loads(out)
+        payload = json.loads(out)
     except Exception as e:
         raise RuntimeError(f"Failed to parse codex mcp list JSON: {e}\n{out}")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"codex mcp list returned non-object JSON: {out}")
+    return payload
 
 
 def _extract_mcp_server_names(payload: Any) -> List[str]:
@@ -182,8 +185,8 @@ def run_codex_diagnostics(
             workdir = os.path.realpath(working_directory)
             prepared_home = prepare_codex_home(prepared_terminal_id, agent_id, workdir)
 
-            expected = ["auth.json", "config.toml", "AGENTS.md"]
-            missing = [name for name in expected if not (prepared_home / name).exists()]
+            expected_files = ["auth.json", "config.toml", "AGENTS.md"]
+            missing = [name for name in expected_files if not (prepared_home / name).exists()]
             if missing:
                 raise RuntimeError(f"Missing files in CODEX_HOME: {', '.join(missing)}")
 
@@ -226,7 +229,7 @@ def run_codex_diagnostics(
 
             server_names = _extract_mcp_server_names(payload)
 
-            expected = {"cao-mcp-server"}
+            expected: set[str] = {"cao-mcp-server"}
             if isinstance(profile.mcp_servers, dict):
                 expected |= set(profile.mcp_servers.keys())
 

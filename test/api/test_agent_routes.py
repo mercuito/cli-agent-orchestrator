@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass as std_dataclass, replace
+from dataclasses import dataclass as std_dataclass
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import ClassVar, Literal
@@ -13,8 +14,8 @@ from cli_agent_orchestrator.agent import (
     LinearConfig,
     LinearToolAccessConfig,
 )
-from cli_agent_orchestrator.clients.database import TerminalAgentAlreadyRunningError
 from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.clients.database import TerminalAgentAlreadyRunningError
 from cli_agent_orchestrator.events import (
     AgentParticipant,
     CaoCausationId,
@@ -34,6 +35,7 @@ from cli_agent_orchestrator.runtime.events import (
     workspace_runtime_event,
 )
 from cli_agent_orchestrator.services.agent_manager import AgentStatus
+from cli_agent_orchestrator.utils.dashboard_links import create_agent_dashboard_token
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
 
@@ -75,9 +77,6 @@ def _agent(agent_id: str = "implementation_partner") -> Agent:
     return Agent(
         id=agent_id,
         display_name="Implementation Partner",
-        # ``claude_code`` declares ``supported_reasoning_efforts``; the
-        # fixture's ``reasoning_effort`` below requires a provider that
-        # accepts it.
         cli_provider="claude_code",
         workdir="/repo",
         session_name=agent_id.replace("_", "-"),
@@ -159,6 +158,7 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
     assert body[0]["config"]["linear"]["client_secret_configured"] is True
     assert body[0]["config"]["linear"]["access_token_configured"] is True
     assert body[0]["config"]["linear"]["tool_access"][0]["tools"] == ["cao_linear.get_issue"]
+    assert body[0]["agent_dashboard_token"]
     assert body[0]["active_terminal_id"] == "abcd1234"
     assert body[1]["agent_id"] == "reviewer"
 
@@ -323,23 +323,19 @@ def test_update_agent_rejects_unsupported_cli_provider(client, monkeypatch):
     assert "bogus" in response.json()["detail"]
 
 
-def test_update_agent_rejects_reasoning_effort_for_non_supporting_provider(client, monkeypatch):
-    """Setting ``reasoning_effort`` on a provider that returns None for
-    ``supported_reasoning_efforts`` returns 400 naming both the value and
-    the provider.
-
-    ``q_cli`` is used here because its launch path does not consume
-    ``reasoning_effort`` (per the provider capability audit), so it
-    correctly declares no supported set.
-    """
+def test_update_agent_accepts_reasoning_effort_without_static_provider_declarations(
+    client, monkeypatch
+):
+    """Agent writes no longer validate effort against removed static declarations."""
     existing_agent = _agent()
+    patched_agents = []
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.load_agent",
         lambda agent_id: existing_agent,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.patch_agent_config",
-        lambda agent, *, changed_fields: None,
+        lambda agent, *, changed_fields: patched_agents.append(agent),
     )
 
     response = client.put(
@@ -347,35 +343,9 @@ def test_update_agent_rejects_reasoning_effort_for_non_supporting_provider(clien
         json={"cli_provider": "q_cli", "model": None, "reasoning_effort": "low"},
     )
 
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "reasoning_effort" in detail
-    assert "q_cli" in detail
-
-
-def test_update_agent_rejects_reasoning_effort_outside_supported_set(client, monkeypatch):
-    """``reasoning_effort`` outside the provider's supported set returns
-    400 with the offending value and the accepted set in the error."""
-    existing_agent = _agent()
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.load_agent",
-        lambda agent_id: existing_agent,
-    )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.patch_agent_config",
-        lambda agent, *, changed_fields: None,
-    )
-
-    response = client.put(
-        "/agents/implementation_partner",
-        json={"reasoning_effort": "ultra"},
-    )
-
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "reasoning_effort" in detail
-    assert "ultra" in detail
-    assert "only supports" in detail
+    assert response.status_code == 200
+    assert patched_agents[0].cli_provider == "q_cli"
+    assert patched_agents[0].reasoning_effort == "low"
 
 
 def test_update_agent_allows_empty_mcp_tools_and_skills(client, monkeypatch):
@@ -435,7 +405,6 @@ def test_agent_crud_lifecycle_allows_running_update_and_confirmed_delete(
 ):
     agents_root = tmp_path / "agents"
     monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
-    monkeypatch.setattr("cli_agent_orchestrator.api.main.AGENTS_ROOT", agents_root)
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.create_terminal_dashboard_token",
         lambda terminal_id: f"token-{terminal_id}",
@@ -509,13 +478,23 @@ def test_agent_crud_lifecycle_allows_running_update_and_confirmed_delete(
 
     updated = client.put(
         "/agents/crud_agent",
-        json={"display_name": "CRUD Agent Renamed", "prompt": "# Updated\n", "tools": []},
+        json={
+            "display_name": "CRUD Agent Renamed",
+            "model": "gpt-5.4",
+            "reasoning_effort": "high",
+            "prompt": "# Updated\n",
+            "tools": [],
+        },
     )
     assert updated.status_code == 200
     assert updated.json()["active"] is True
     assert updated.json()["active_terminal_id"] == "terminal-crud"
     assert updated.json()["display_name"] == "CRUD Agent Renamed"
     assert updated.json()["config"]["prompt"] == "# Updated\n"
+    assert updated.json()["config"]["model"] == "gpt-5.4"
+    assert updated.json()["config"]["reasoning_effort"] == "high"
+    assert 'model = "gpt-5.4"' in (agents_root / "crud_agent" / "agent.toml").read_text()
+    assert 'reasoning_effort = "high"' in (agents_root / "crud_agent" / "agent.toml").read_text()
     assert (agents_root / "crud_agent" / "prompt.md").read_text() == "# Updated\n"
 
     live_delete = client.delete("/agents/crud_agent?confirm=true")
@@ -543,7 +522,6 @@ def test_agent_crud_lifecycle_allows_running_update_and_confirmed_delete(
 def test_create_agent_validation_returns_400_with_field_detail(client, monkeypatch, tmp_path):
     agents_root = tmp_path / "agents"
     monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
-    monkeypatch.setattr("cli_agent_orchestrator.api.main.AGENTS_ROOT", agents_root)
 
     response = client.post(
         "/agents",
@@ -650,6 +628,42 @@ def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch
     )
 
     response = client.get("/agents/runtime/implementation_partner/terminal")
+
+    assert response.status_code == 200
+    assert response.json()["terminal"]["id"] == "abcd1234"
+    assert response.json()["terminal_token"] == "token-abcd1234"
+
+
+def test_runtime_terminal_endpoint_accepts_agent_dashboard_token(client, monkeypatch):
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=True),)),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.terminal_service.get_terminal",
+        lambda terminal_id: {
+            "id": terminal_id,
+            "name": "developer-0000",
+            "provider": "codex",
+            "session_name": "cao-implementation-partner",
+            "agent_id": "implementation_partner",
+            "workspace_context_id": "wctx_abc",
+            "status": "idle",
+            "last_active": datetime(2026, 5, 13, 12, 0, 0),
+        },
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.create_terminal_dashboard_token",
+        lambda terminal_id: f"token-{terminal_id}",
+    )
+
+    response_without_token = client.get("/agents/runtime/implementation_partner/terminal")
+    assert response_without_token.status_code == 403
+
+    response = client.get(
+        "/agents/runtime/implementation_partner/terminal",
+        params={"agent_token": create_agent_dashboard_token("implementation_partner")},
+    )
 
     assert response.status_code == 200
     assert response.json()["terminal"]["id"] == "abcd1234"

@@ -40,11 +40,11 @@ from cli_agent_orchestrator.linear.workspace_events import (
     register_linear_cao_events,
 )
 from cli_agent_orchestrator.runtime.events import (
+    RUNTIME_CAO_EVENTS,
     AgentRuntimeLifecycleEvent,
     AgentRuntimeNotificationAcceptedEvent,
     AgentRuntimeNotificationDeliveryEvent,
     AgentRuntimeWorkspaceContextSwitchEvent,
-    RUNTIME_CAO_EVENTS,
     RuntimeWorkspaceEvent,
     lifecycle_event,
     notification_accepted_event,
@@ -430,8 +430,7 @@ def test_agent_history_orders_linear_mention_and_runtime_delivery_by_occurrence(
         AgentParticipant(agent_id="implementation_partner", role="delivery_target"),
     )
     assert [
-        record.event_id
-        for record in db_module.list_cao_events_by_agent("implementation_partner")
+        record.event_id for record in db_module.list_cao_events_by_agent("implementation_partner")
     ] == [
         str(mention.event_id),
         str(delivery.event_id),
@@ -533,9 +532,7 @@ def test_agent_participant_queries_support_broadcasts_without_duplicate_payload_
     assert [record.event_id for record in partner_records] == [str(event.event_id)]
     assert [record.event_id for record in reviewer_records] == [str(event.event_id)]
     assert canonical_event_count == 1
-    assert [
-        (row.event_id, row.agent_id, row.participant_role) for row in participant_rows
-    ] == [
+    assert [(row.event_id, row.agent_id, row.participant_role) for row in participant_rows] == [
         (str(event.event_id), "implementation_partner", "mentioned"),
         (str(event.event_id), "reviewer", "mentioned"),
     ]
@@ -554,9 +551,9 @@ def test_agent_history_uses_participant_index_not_typed_body_mentions(
 
     assert event.agent_id == "implementation_partner"
     assert db_module.list_cao_events_by_agent("implementation_partner") == ()
-    assert [
-        record.event_id for record in db_module.list_cao_events_by_agent("reviewer")
-    ] == [str(event.event_id)]
+    assert [record.event_id for record in db_module.list_cao_events_by_agent("reviewer")] == [
+        str(event.event_id)
+    ]
 
 
 def test_agent_timeline_read_exposes_selected_participant_role_from_index(
@@ -573,9 +570,7 @@ def test_agent_timeline_read_exposes_selected_participant_role_from_index(
 
     dispatcher.publish(event)
 
-    partner_records = db_module.list_cao_event_participants_by_agent(
-        "implementation_partner"
-    )
+    partner_records = db_module.list_cao_event_participants_by_agent("implementation_partner")
     reviewer_records = db_module.list_cao_event_participants_by_agent("reviewer")
     assert [(record.record.event_id, record.participant_role) for record in partner_records] == [
         (str(event.event_id), "mentioned")
@@ -589,9 +584,7 @@ def test_duplicate_event_id_does_not_add_participants_from_conflicting_replay(
     runtime_inbox_db_session,
 ) -> None:
     original = _linear_mentioned_event(
-        participants=(
-            AgentParticipant(agent_id="implementation_partner", role="mentioned"),
-        )
+        participants=(AgentParticipant(agent_id="implementation_partner", role="mentioned"),)
     )
     conflicting_replay = _linear_mentioned_event(
         participants=(AgentParticipant(agent_id="reviewer", role="mentioned"),)

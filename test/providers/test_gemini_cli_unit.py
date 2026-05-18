@@ -125,9 +125,7 @@ class TestGeminiCliProviderInitialization:
         settings_file = settings_dir / "settings.json"
 
         with patch("cli_agent_orchestrator.providers.gemini_cli.Path.home", return_value=tmp_path):
-            provider = GeminiCliProvider(
-                "term-1", "session-1", "window-1", agent_id="developer"
-            )
+            provider = GeminiCliProvider("term-1", "session-1", "window-1", agent_id="developer")
             result = provider.initialize()
 
         assert result is True
@@ -1131,19 +1129,3 @@ class TestGeminiCliProviderPatterns:
         """Test tail lines constant is reasonable for Gemini's TUI layout."""
         assert IDLE_PROMPT_TAIL_LINES >= 40  # Must cover tall terminals
         assert IDLE_PROMPT_TAIL_LINES <= 100  # Not unreasonably large
-
-
-def test_supported_reasoning_efforts_is_none():
-    """Gemini CLI's launch path does not consume ``reasoning_effort``.
-
-    ``GeminiCliProvider._build_gemini_command`` only constructs flags from
-    ``--yolo``, ``--sandbox false``, and an optional ``-i`` role acknowledgement;
-    the agent's ``reasoning_effort`` is never read. Inherits ``None`` from
-    ``BaseProvider``.
-    """
-    assert GeminiCliProvider.supported_reasoning_efforts() is None
-
-
-def test_suggested_models_is_none():
-    """Gemini CLI does not curate model suggestions — model is not consumed."""
-    assert GeminiCliProvider.suggested_models() is None

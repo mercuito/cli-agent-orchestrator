@@ -1,24 +1,5 @@
 """Workspace-provider lifecycle and registry support."""
 
-from cli_agent_orchestrator.workspace_providers.registry import (
-    EventPublishingWorkspaceProvider,
-    AgentListingWorkspaceProvider,
-    AgentWorkspaceProvider,
-    ProviderToolAccessWorkspaceProvider,
-    UnknownWorkspaceProviderError,
-    WorkspaceProvider,
-    WorkspaceProviderConfigError,
-    WorkspaceProviderRegistry,
-    default_workspace_provider_registry,
-    candidate_agent_workspace_providers,
-    initialize_enabled_workspace_providers,
-    is_workspace_provider_enabled,
-    load_enabled_provider_tool_access_policies,
-    load_enabled_workspace_providers,
-    load_provider_tool_access_policies,
-    resolve_agent_for_runtime,
-    workspace_provider_config_exists,
-)
 from cli_agent_orchestrator.workspace_providers.events import (
     UnknownWorkspaceProviderEventError,
     WorkspaceProviderEvent,
@@ -28,6 +9,25 @@ from cli_agent_orchestrator.workspace_providers.events import (
     WorkspaceProviderEventHandlerResult,
     WorkspaceProviderEventPublication,
     default_workspace_provider_event_dispatcher,
+)
+from cli_agent_orchestrator.workspace_providers.registry import (
+    AgentListingWorkspaceProvider,
+    AgentWorkspaceProvider,
+    EventPublishingWorkspaceProvider,
+    ProviderToolAccessWorkspaceProvider,
+    UnknownWorkspaceProviderError,
+    WorkspaceProvider,
+    WorkspaceProviderConfigError,
+    WorkspaceProviderRegistry,
+    candidate_agent_workspace_providers,
+    default_workspace_provider_registry,
+    initialize_enabled_workspace_providers,
+    is_workspace_provider_enabled,
+    load_enabled_provider_tool_access_policies,
+    load_enabled_workspace_providers,
+    load_provider_tool_access_policies,
+    resolve_agent_for_runtime,
+    workspace_provider_config_exists,
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,

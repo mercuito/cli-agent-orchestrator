@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 
 class LinearProviderQueryError(RuntimeError):
@@ -759,7 +759,7 @@ def _required_node(
     compact: Any,
 ) -> dict[str, Any]:
     node = _required_mapping(payload, ("data", field), object_id, reason)
-    return compact(node)
+    return cast(dict[str, Any], compact(node))
 
 
 def _required_mapping(
@@ -973,7 +973,8 @@ def _compact_nested_nodes(value: Any, fields: tuple[str, ...]) -> list[dict[str,
     nodes = value.get("nodes") if isinstance(value, Mapping) else None
     if not isinstance(nodes, list):
         return []
-    return [_named_object(node, fields) for node in nodes if isinstance(node, Mapping)]
+    compacted = [_named_object(node, fields) for node in nodes if isinstance(node, Mapping)]
+    return [item for item in compacted if item is not None]
 
 
 def _named_object(value: Any, fields: tuple[str, ...]) -> dict[str, Any] | None:

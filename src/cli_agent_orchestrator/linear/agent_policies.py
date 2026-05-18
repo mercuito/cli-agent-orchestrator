@@ -98,9 +98,7 @@ class LinearIssueFacts:
         return tuple(label for label in self.labels if _normalized_text(label) in wanted)
 
     def contains_any_marker(self, markers: Iterable[str]) -> Optional[str]:
-        haystack = "\n".join(
-            part for part in (self.title or "", self.description or "") if part
-        )
+        haystack = "\n".join(part for part in (self.title or "", self.description or "") if part)
         haystack_lower = haystack.lower()
         for marker in markers:
             if marker.lower() in haystack_lower:

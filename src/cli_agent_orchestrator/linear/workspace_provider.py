@@ -21,20 +21,21 @@ from cli_agent_orchestrator.linear.provider_tools import (
     CREATE_PROJECT_TOOL,
     ISSUE_TARGETING_TOOLS,
     LINEAR_PROVIDER_TOOLS,
-    LinearToolAccess,
-    LinearToolProvider,
     UPDATE_ISSUE_FIELDS,
     UPDATE_ISSUE_TOOL,
+    LinearToolAccess,
+    LinearToolProvider,
 )
 from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
 from cli_agent_orchestrator.utils.env import load_env_vars
+from cli_agent_orchestrator.workspace_providers.registry import WorkspaceProviderConfigError
 from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
 
 APP_KEY_PATTERN = re.compile(r"[^A-Za-z0-9]+")
 _default_linear_workspace_provider: Optional["LinearWorkspaceProvider"] = None
 
 
-class LinearWorkspaceProviderConfigError(ValueError):
+class LinearWorkspaceProviderConfigError(WorkspaceProviderConfigError):
     """Raised when Linear workspace-provider configuration is invalid."""
 
 

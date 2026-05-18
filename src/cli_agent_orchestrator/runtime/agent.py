@@ -28,11 +28,11 @@ from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.services import inbox_service, terminal_service
 from cli_agent_orchestrator.services.agent_manager import (
     AgentManager,
     default_agent_manager,
 )
-from cli_agent_orchestrator.services import inbox_service, terminal_service
 
 logger = logging.getLogger(__name__)
 

@@ -9,10 +9,10 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients.database import (
-    AgentRuntimeNotificationModel,
-    Base,
     INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
+    AgentRuntimeNotificationModel,
+    Base,
     InboxMessageModel,
     InboxNotificationModel,
     InboxNotificationTargetModel,

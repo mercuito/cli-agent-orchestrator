@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { AgentStatus, ProviderSchema } from '../api'
+import type { AgentStatus, ProviderCatalog, ProviderSchema } from '../api'
 
 const updateAgent = vi.hoisted(() => vi.fn())
 const listProviders = vi.hoisted(() => vi.fn())
+const getProviderCatalog = vi.hoisted(() => vi.fn())
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
@@ -12,38 +13,55 @@ vi.mock('../api', async () => {
     api: {
       updateAgent: (...args: unknown[]) => updateAgent(...args),
       listProviders: (...args: unknown[]) => listProviders(...args),
+      getProviderCatalog: (...args: unknown[]) => getProviderCatalog(...args),
     },
   }
 })
 
-// Test schemas mirror the real backend provider declarations: ``claude_code``
-// and ``codex`` both declare ``supported_reasoning_efforts``; ``q_cli`` does
-// not (its launch path does not consume reasoning_effort). Keep this fixture
-// in sync with each provider's ``supported_reasoning_efforts`` classmethod
-// so the dashboard tests exercise the same shape ``/providers`` returns.
 const SCHEMAS: ProviderSchema[] = [
   {
     name: 'claude_code',
     binary: 'claude',
     installed: true,
-    supported_reasoning_efforts: ['low', 'medium', 'high'],
-    suggested_models: ['claude-opus-4-7', 'claude-sonnet-4-6'],
+    model_catalog_available: true,
   },
   {
     name: 'codex',
     binary: 'codex',
     installed: true,
-    supported_reasoning_efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
-    suggested_models: null,
+    model_catalog_available: true,
   },
   {
     name: 'q_cli',
     binary: 'q',
     installed: true,
-    supported_reasoning_efforts: null,
-    suggested_models: null,
+    model_catalog_available: false,
   },
 ]
+
+const CLAUDE_CATALOG: ProviderCatalog = {
+  provider_type: 'claude_code',
+  discovered_at: '2026-05-17T10:00:00Z',
+  source: 'anthropic-api',
+  models: [
+    {
+      id: 'claude-opus-4-7',
+      display_name: 'Claude Opus 4.7',
+      reasoning_efforts: ['low', 'medium', 'high', 'max'],
+      thinking_supported: true,
+      max_input_tokens: 200000,
+      max_output_tokens: 64000,
+    },
+    {
+      id: 'claude-sonnet-4-6',
+      display_name: 'Claude Sonnet 4.6',
+      reasoning_efforts: ['low', 'medium', 'high'],
+      thinking_supported: true,
+      max_input_tokens: 200000,
+      max_output_tokens: 64000,
+    },
+  ],
+}
 
 function ariaStatus(overrides: Partial<AgentStatus['config']> = {}): AgentStatus {
   return {
@@ -123,8 +141,10 @@ async function loadDetailPanel() {
 beforeEach(() => {
   vi.resetModules()
   listProviders.mockReset()
+  getProviderCatalog.mockReset()
   updateAgent.mockReset()
   listProviders.mockResolvedValue(SCHEMAS)
+  getProviderCatalog.mockResolvedValue(CLAUDE_CATALOG)
 })
 
 afterEach(() => {
@@ -195,7 +215,15 @@ describe('AgentConfigTab', () => {
       'codex',
       'q_cli',
     ])
-    expect(screen.getByLabelText('aria model')).toHaveValue('claude-opus-4-7')
+    const modelSelect = screen.getByLabelText('aria model') as HTMLSelectElement
+    expect(modelSelect.tagName).toBe('SELECT')
+    expect(modelSelect).toHaveValue('claude-opus-4-7')
+    await waitFor(() => expect(getProviderCatalog).toHaveBeenCalledWith('claude_code'))
+    expect(Array.from(modelSelect.options).map(option => option.value)).toEqual([
+      '',
+      'claude-opus-4-7',
+      'claude-sonnet-4-6',
+    ])
     const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
     expect(effortSelect.value).toBe('medium')
     expect(Array.from(effortSelect.options).map(option => option.value)).toEqual([
@@ -203,14 +231,12 @@ describe('AgentConfigTab', () => {
       'low',
       'medium',
       'high',
+      'max',
     ])
     expect(effortSelect.disabled).toBe(false)
   })
 
-  it('disables reasoning_effort with a tooltip when the selected provider returns null', async () => {
-    // ``q_cli`` is used because its launch path does not consume
-    // ``reasoning_effort`` (per the provider capability audit), so it
-    // correctly declares no supported set.
+  it('disables model and reasoning_effort with tooltips when the selected provider has no catalog', async () => {
     const { AgentConfigTab } = await loadConfigTab()
 
     render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
@@ -220,12 +246,128 @@ describe('AgentConfigTab', () => {
       target: { value: 'q_cli' },
     })
 
+    const modelSelect = screen.getByLabelText('aria model') as HTMLSelectElement
+    expect(modelSelect.disabled).toBe(true)
+    expect(modelSelect).toHaveAttribute(
+      'title',
+      'q_cli has no loaded model catalog with model options',
+    )
+
     const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
     expect(effortSelect.disabled).toBe(true)
     expect(effortSelect).toHaveAttribute(
       'title',
-      'q_cli does not support reasoning_effort',
+      'q_cli has no loaded model catalog with reasoning_effort options',
     )
+  })
+
+  it('refreshes reasoning_effort options when the selected model changes', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    await waitFor(() => expect(getProviderCatalog).toHaveBeenCalledWith('claude_code'))
+
+    fireEvent.change(screen.getByLabelText('aria model'), {
+      target: { value: 'claude-sonnet-4-6' },
+    })
+
+    const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
+    expect(effortSelect.value).toBe('medium')
+    expect(Array.from(effortSelect.options).map(option => option.value)).toEqual([
+      '',
+      'low',
+      'medium',
+      'high',
+    ])
+  })
+
+  it('clears reasoning_effort when the selected model does not support the current value', async () => {
+    const updated: AgentStatus = ariaStatus({
+      model: 'claude-sonnet-4-6',
+      reasoning_effort: null,
+    })
+    updateAgent.mockResolvedValueOnce(updated)
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(
+      <AgentConfigTab
+        agent={ariaStatus({ reasoning_effort: 'max' })}
+        onAgentUpdated={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    await waitFor(() => expect(getProviderCatalog).toHaveBeenCalledWith('claude_code'))
+
+    fireEvent.change(screen.getByLabelText('aria model'), {
+      target: { value: 'claude-sonnet-4-6' },
+    })
+
+    const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
+    expect(effortSelect.value).toBe('')
+    expect(Array.from(effortSelect.options).map(option => option.value)).toEqual([
+      '',
+      'low',
+      'medium',
+      'high',
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+    await waitFor(() => {
+      expect(updateAgent).toHaveBeenCalledWith(
+        'aria',
+        expect.objectContaining({
+          model: 'claude-sonnet-4-6',
+          reasoning_effort: null,
+        }),
+      )
+    })
+  })
+
+  it('does not keep an unsupported saved reasoning_effort for the selected model', async () => {
+    const updated: AgentStatus = ariaStatus({
+      model: 'claude-sonnet-4-6',
+      reasoning_effort: null,
+    })
+    updateAgent.mockResolvedValueOnce(updated)
+    const { AgentConfigTab } = await loadConfigTab()
+
+    render(
+      <AgentConfigTab
+        agent={ariaStatus({
+          model: 'claude-sonnet-4-6',
+          reasoning_effort: 'max',
+        })}
+        onAgentUpdated={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+    await waitFor(() => expect(getProviderCatalog).toHaveBeenCalledWith('claude_code'))
+
+    const effortSelect = screen.getByLabelText('aria reasoning_effort') as HTMLSelectElement
+    await waitFor(() => expect(effortSelect.value).toBe(''))
+    expect(Array.from(effortSelect.options).map(option => option.value)).toEqual([
+      '',
+      'low',
+      'medium',
+      'high',
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+    await waitFor(() => {
+      expect(updateAgent).toHaveBeenCalledWith(
+        'aria',
+        expect.objectContaining({
+          model: 'claude-sonnet-4-6',
+          reasoning_effort: null,
+        }),
+      )
+    })
   })
 
   it('saves the structured form values merged with the raw TOML and prompt', async () => {
@@ -277,13 +419,6 @@ describe('AgentConfigTab', () => {
     fireEvent.change(screen.getByLabelText('aria cli_provider'), {
       target: { value: 'q_cli' },
     })
-    // The disabled select still shows the prior value visually; the user
-    // must explicitly clear it to ship a valid save payload. Simulate
-    // the user clearing the dropdown to (unset).
-    fireEvent.change(screen.getByLabelText('aria reasoning_effort'), {
-      target: { value: '' },
-    })
-
     fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
 
     await waitFor(() => {
@@ -354,6 +489,7 @@ describe('AgentConfigTab', () => {
       <AgentDetailPanel
         agent={ariaStatus()}
         onStartAgent={vi.fn()}
+        onOpenTerminal={vi.fn()}
         onStopAgent={vi.fn()}
         renderConfigTab={a => <AgentConfigTab agent={a} onAgentUpdated={vi.fn()} />}
         renderTimelineTab={() => <div data-testid="timeline-tab" />}
@@ -431,13 +567,14 @@ describe('AgentConfigTab raw TOML disclosure', () => {
 })
 
 describe('AgentDetailPanel header', () => {
-  it('exposes id, workdir, and session_name in the read-only header area', async () => {
+  it('exposes id and workdir in the read-only header area', async () => {
     const { AgentDetailPanel } = await loadDetailPanel()
 
     render(
       <AgentDetailPanel
         agent={ariaStatus()}
         onStartAgent={vi.fn()}
+        onOpenTerminal={vi.fn()}
         onStopAgent={vi.fn()}
         renderConfigTab={() => <div />}
         renderTimelineTab={() => <div />}
@@ -449,6 +586,6 @@ describe('AgentDetailPanel header', () => {
     // and project they're configuring.
     expect(screen.getByText('aria')).toBeInTheDocument()
     expect(screen.getByText('/repo')).toBeInTheDocument()
-    expect(screen.getByText('aria-session')).toBeInTheDocument()
+    expect(screen.queryByText('aria-session')).not.toBeInTheDocument()
   })
 })

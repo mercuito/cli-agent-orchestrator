@@ -4,14 +4,16 @@ import json
 import logging
 import os
 import re
-import shutil
 import shlex
+import shutil
 import subprocess
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional, cast
 
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.database import get_terminal_metadata
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
@@ -19,19 +21,22 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import (
     AgentRuntimeLaunchContext,
     BaseProvider,
+    CatalogDiscoveryError,
+    ModelDiscoveryCapability,
+    ProviderCatalog,
+    ProviderModel,
     ProviderRuntimeDescriptor,
     ProviderRuntimePreparation,
     ProviderRuntimeState,
     ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
-from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.codex_home import (
     CODEX_HOME_MATERIALIZATION_SCHEMA_VERSION,
     build_codex_home_materialization,
     cleanup_codex_home,
-    prepare_codex_home,
     prepare_agent_codex_home,
+    prepare_codex_home,
 )
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
@@ -106,6 +111,8 @@ SHELL_COMMAND_NOT_FOUND_PATTERN = (
 CODEX_TERM_DUMB_PATTERN = r'TERM is set to "dumb"\. Refusing to start'
 CODEX_RUNTIME_STATE_SCHEMA_VERSION = "codex-runtime-state.v1"
 CODEX_THREAD_ID_PROBE_PREFIX = "CAOCT_"
+CODEX_DEBUG_MODELS_TIMEOUT_SECONDS = 10.0
+CODEX_DEBUG_MODELS_SOURCE = "codex-debug-models"
 
 
 def _compute_tui_footer_cutoff(all_lines: list) -> int:
@@ -182,6 +189,44 @@ def parse_codex_thread_id_probe_output(output: str, *, nonce: str) -> str | None
         return None
     thread_id = matches[-1].strip()
     return thread_id or None
+
+
+def _build_codex_provider_model(raw: Mapping[str, Any]) -> ProviderModel | None:
+    """Map one ``codex debug models`` entry to a picker-visible model."""
+    model_id = raw.get("slug")
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    model_id = model_id.strip()
+    if raw.get("visibility") != "list":
+        return None
+
+    raw_efforts = raw.get("supported_reasoning_levels")
+    reasoning_efforts: list[str] = []
+    if isinstance(raw_efforts, list):
+        for item in raw_efforts:
+            if not isinstance(item, Mapping):
+                continue
+            effort = item.get("effort")
+            if isinstance(effort, str) and effort:
+                reasoning_efforts.append(effort)
+
+    display_name = raw.get("display_name")
+    context_window = raw.get("context_window")
+    max_context_window = raw.get("max_context_window")
+    max_input_tokens = (
+        context_window
+        if isinstance(context_window, int)
+        else max_context_window if isinstance(max_context_window, int) else None
+    )
+
+    return ProviderModel(
+        id=model_id,
+        display_name=display_name if isinstance(display_name, str) else model_id,
+        reasoning_efforts=tuple(reasoning_efforts),
+        thinking_supported=bool(reasoning_efforts),
+        max_input_tokens=max_input_tokens,
+        max_output_tokens=None,
+    )
 
 
 class CodexRuntimeStateCapability(ProviderRuntimeStateCapability):
@@ -316,6 +361,69 @@ class CodexRuntimeStateCapability(ProviderRuntimeStateCapability):
             pass
 
 
+class CodexModelDiscoveryCapability(ModelDiscoveryCapability):
+    """Discover Codex's currently-available models through the Codex CLI."""
+
+    def discover_catalog(self) -> ProviderCatalog:
+        codex_bin = shutil.which(CodexProvider.binary)
+        if not codex_bin:
+            raise CatalogDiscoveryError(
+                "Codex CLI is not installed or not on PATH, so its model catalog "
+                "cannot be discovered."
+            )
+
+        try:
+            proc = subprocess.run(
+                [codex_bin, "debug", "models"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=CODEX_DEBUG_MODELS_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CatalogDiscoveryError("Codex `debug models` timed out") from exc
+        except OSError as exc:
+            raise CatalogDiscoveryError(f"Codex `debug models` failed to start: {exc}") from exc
+
+        if proc.returncode != 0:
+            output = (proc.stderr or proc.stdout or "").strip()
+            raise CatalogDiscoveryError(
+                "Codex `debug models` failed "
+                f"(exit {proc.returncode}): {output[:200] or '<no output>'}"
+            )
+
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise CatalogDiscoveryError(f"Codex `debug models` returned non-JSON: {exc}") from exc
+
+        if not isinstance(payload, Mapping):
+            raise CatalogDiscoveryError("Codex `debug models` response is not an object")
+        raw_models = payload.get("models")
+        if not isinstance(raw_models, list):
+            raise CatalogDiscoveryError("Codex `debug models` response is missing 'models' list")
+
+        models = tuple(
+            model
+            for model in (
+                _build_codex_provider_model(raw) for raw in raw_models if isinstance(raw, Mapping)
+            )
+            if model is not None
+        )
+        if not models:
+            raise CatalogDiscoveryError(
+                "Codex `debug models` did not return any picker-visible models"
+            )
+
+        return ProviderCatalog(
+            provider_type=ProviderType.CODEX.value,
+            models=models,
+            discovered_at=datetime.now(tz=timezone.utc),
+            source=CODEX_DEBUG_MODELS_SOURCE,
+        )
+
+
 class CodexProvider(BaseProvider):
     """Provider for Codex CLI tool integration."""
 
@@ -329,19 +437,9 @@ class CodexProvider(BaseProvider):
         return CodexRuntimeStateCapability()
 
     @classmethod
-    def supported_reasoning_efforts(cls) -> tuple[str, ...]:
-        """Return the ``model_reasoning_effort`` values Codex accepts.
-
-        Codex's launch path consumes ``agent.reasoning_effort`` via
-        ``utils/codex_home.py``, which writes it to ``model_reasoning_effort``
-        in the per-terminal ``config.toml``. The codex CLI parses this field
-        with a fixed enum — invalid values raise
-        ``unknown variant ... expected one of `none`, `minimal`, `low`,
-        `medium`, `high`, `xhigh``` at startup. This list mirrors that enum
-        as observed from codex 0.130.0; keep it in sync if codex extends the
-        enum.
-        """
-        return ("none", "minimal", "low", "medium", "high", "xhigh")
+    def model_discovery_capability(cls) -> CodexModelDiscoveryCapability:
+        """Expose Codex's runtime model catalog discovery capability."""
+        return CodexModelDiscoveryCapability()
 
     @staticmethod
     def prepare_terminal_runtime(
@@ -536,7 +634,7 @@ class CodexProvider(BaseProvider):
                         if isinstance(server_config, dict):
                             cfg = server_config
                         else:
-                            cfg = server_config.model_dump(exclude_none=True)
+                            cfg = cast(Any, server_config).model_dump(exclude_none=True)
                         if "command" in cfg:
                             command_parts.extend(["-c", f'{prefix}.command="{cfg["command"]}"'])
                         if "args" in cfg:

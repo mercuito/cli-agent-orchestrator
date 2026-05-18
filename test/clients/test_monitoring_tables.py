@@ -86,14 +86,10 @@ class TestSessionInsert:
 
     def test_session_id_is_primary_key(self, db_session):
         now = datetime.now()
-        db_session.add(
-            MonitoringSessionModel(id="dup", terminal_id="T", started_at=now)
-        )
+        db_session.add(MonitoringSessionModel(id="dup", terminal_id="T", started_at=now))
         db_session.commit()
 
-        db_session.add(
-            MonitoringSessionModel(id="dup", terminal_id="T2", started_at=now)
-        )
+        db_session.add(MonitoringSessionModel(id="dup", terminal_id="T2", started_at=now))
         with pytest.raises(IntegrityError):
             db_session.commit()
         db_session.rollback()
@@ -134,9 +130,7 @@ class TestMigrationDropsObsoletePeerTable:
         conn.close()
 
         # Point the migration at the legacy file
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_path
-        )
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
         db_module._migrate_drop_monitoring_session_peers()
 
         conn = sqlite3.connect(str(db_path))
@@ -156,8 +150,6 @@ class TestMigrationDropsObsoletePeerTable:
 
         sqlite3.connect(str(db_path)).close()
 
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_path
-        )
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
         # Should not raise
         db_module._migrate_drop_monitoring_session_peers()

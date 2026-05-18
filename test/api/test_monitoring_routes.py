@@ -43,9 +43,7 @@ class TestCreateSession:
         with patch.object(
             monitoring_service, "create_session", return_value=_session_dict()
         ) as mock_fn:
-            resp = client.post(
-                "/monitoring/sessions", json={"terminal_id": "term-A"}
-            )
+            resp = client.post("/monitoring/sessions", json={"terminal_id": "term-A"})
 
         assert resp.status_code == 201
         body = resp.json()
@@ -139,9 +137,7 @@ class TestListSessions:
         )
 
     def test_supported_filters_forwarded(self, client):
-        with patch.object(
-            monitoring_service, "list_sessions", return_value=[]
-        ) as mock_fn:
+        with patch.object(monitoring_service, "list_sessions", return_value=[]) as mock_fn:
             resp = client.get(
                 "/monitoring/sessions",
                 params={
@@ -169,9 +165,7 @@ class TestListSessions:
         """These query params used to exist and are now gone. FastAPI
         silently ignores unknown query params, so we can't assert 422 —
         we can assert the service is NOT called with them."""
-        with patch.object(
-            monitoring_service, "list_sessions", return_value=[]
-        ) as mock_fn:
+        with patch.object(monitoring_service, "list_sessions", return_value=[]) as mock_fn:
             client.get(
                 "/monitoring/sessions",
                 params={"peer_terminal_id": "P", "involves": "X"},
@@ -202,9 +196,7 @@ class TestListSessions:
 class TestEndSession:
     def test_end_active_returns_200(self, client):
         ended = _session_dict(ended_at=datetime(2026, 4, 18, 11))
-        with patch.object(
-            monitoring_service, "end_session", return_value=ended
-        ):
+        with patch.object(monitoring_service, "end_session", return_value=ended):
             resp = client.post("/monitoring/sessions/sess-1/end")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ended"
@@ -270,21 +262,15 @@ class TestGetMessages:
 
     def test_returns_ordered_list(self, client):
         msgs = [self._msg(id=1, message="hi"), self._msg(id=2, message="back")]
-        with patch.object(
-            monitoring_service, "get_session_messages", return_value=msgs
-        ) as mock_fn:
+        with patch.object(monitoring_service, "get_session_messages", return_value=msgs) as mock_fn:
             resp = client.get("/monitoring/sessions/sess-1/messages")
 
         assert resp.status_code == 200
         assert [m["message"] for m in resp.json()] == ["hi", "back"]
-        mock_fn.assert_called_once_with(
-            "sess-1", peers=[], started_after=None, started_before=None
-        )
+        mock_fn.assert_called_once_with("sess-1", peers=[], started_after=None, started_before=None)
 
     def test_peer_filter_forwarded_as_list(self, client):
-        with patch.object(
-            monitoring_service, "get_session_messages", return_value=[]
-        ) as mock_fn:
+        with patch.object(monitoring_service, "get_session_messages", return_value=[]) as mock_fn:
             resp = client.get(
                 "/monitoring/sessions/sess-1/messages",
                 params=[("peer", "R1"), ("peer", "R2")],
@@ -296,9 +282,7 @@ class TestGetMessages:
         )
 
     def test_time_window_filter_forwarded(self, client):
-        with patch.object(
-            monitoring_service, "get_session_messages", return_value=[]
-        ) as mock_fn:
+        with patch.object(monitoring_service, "get_session_messages", return_value=[]) as mock_fn:
             resp = client.get(
                 "/monitoring/sessions/sess-1/messages",
                 params={
@@ -348,10 +332,11 @@ class TestGetLog:
         ]
 
     def test_default_format_is_markdown(self, client):
-        with patch.object(
-            monitoring_service, "get_session", return_value=self._session_ended()
-        ), patch.object(
-            monitoring_service, "get_session_messages", return_value=self._one_message()
+        with (
+            patch.object(monitoring_service, "get_session", return_value=self._session_ended()),
+            patch.object(
+                monitoring_service, "get_session_messages", return_value=self._one_message()
+            ),
         ):
             resp = client.get("/monitoring/sessions/sess-1/log")
 
@@ -363,27 +348,27 @@ class TestGetLog:
         assert "Filter:" not in body
 
     def test_json_format_without_filter_omits_filter_key(self, client):
-        with patch.object(
-            monitoring_service, "get_session", return_value=self._session_ended()
-        ), patch.object(
-            monitoring_service, "get_session_messages", return_value=self._one_message()
+        with (
+            patch.object(monitoring_service, "get_session", return_value=self._session_ended()),
+            patch.object(
+                monitoring_service, "get_session_messages", return_value=self._one_message()
+            ),
         ):
-            resp = client.get(
-                "/monitoring/sessions/sess-1/log", params={"format": "json"}
-            )
+            resp = client.get("/monitoring/sessions/sess-1/log", params={"format": "json"})
 
         assert resp.status_code == 200
         body = resp.json()
         assert set(body.keys()) == {"session", "messages"}
 
     def test_peer_filter_forwarded_and_reflected_in_artifact(self, client):
-        with patch.object(
-            monitoring_service, "get_session", return_value=self._session_ended()
-        ), patch.object(
-            monitoring_service,
-            "get_session_messages",
-            return_value=self._one_message(),
-        ) as mock_msgs:
+        with (
+            patch.object(monitoring_service, "get_session", return_value=self._session_ended()),
+            patch.object(
+                monitoring_service,
+                "get_session_messages",
+                return_value=self._one_message(),
+            ) as mock_msgs,
+        ):
             resp = client.get(
                 "/monitoring/sessions/sess-1/log",
                 params=[("peer", "R1"), ("peer", "R2")],
@@ -398,10 +383,9 @@ class TestGetLog:
         assert "**Filter:** peers = R1, R2" in resp.text
 
     def test_json_format_with_filter_includes_filter_key(self, client):
-        with patch.object(
-            monitoring_service, "get_session", return_value=self._session_ended()
-        ), patch.object(
-            monitoring_service, "get_session_messages", return_value=[]
+        with (
+            patch.object(monitoring_service, "get_session", return_value=self._session_ended()),
+            patch.object(monitoring_service, "get_session_messages", return_value=[]),
         ):
             resp = client.get(
                 "/monitoring/sessions/sess-1/log",
@@ -419,9 +403,7 @@ class TestGetLog:
         assert resp.status_code == 404
 
     def test_invalid_format_returns_422(self, client):
-        resp = client.get(
-            "/monitoring/sessions/sess-1/log", params={"format": "xml"}
-        )
+        resp = client.get("/monitoring/sessions/sess-1/log", params={"format": "xml"})
         assert resp.status_code == 422
 
 
@@ -432,9 +414,7 @@ class TestGetLog:
 
 class TestDeleteSession:
     def test_delete_returns_204(self, client):
-        with patch.object(
-            monitoring_service, "delete_session", return_value=None
-        ) as mock_fn:
+        with patch.object(monitoring_service, "delete_session", return_value=None) as mock_fn:
             resp = client.delete("/monitoring/sessions/sess-1")
         assert resp.status_code == 204
         mock_fn.assert_called_once_with("sess-1")

@@ -64,9 +64,7 @@ def _get_text(path: str, *, params: Optional[Dict[str, Any]] = None) -> str:
         raise _connection_error(e)
 
 
-def _post_json(
-    path: str, *, body: Optional[Dict[str, Any]] = None
-) -> Optional[Any]:
+def _post_json(path: str, *, body: Optional[Dict[str, Any]] = None) -> Optional[Any]:
     try:
         response = requests.post(f"{API_BASE_URL}{path}", json=body)
         response.raise_for_status()
@@ -77,6 +75,12 @@ def _post_json(
         raise _handle_http_error(e)
     except requests.RequestException as e:
         raise _connection_error(e)
+
+
+def _required_json_object(value: Optional[Any]) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise click.ClickException("cao-server returned an empty or invalid response")
+    return value
 
 
 def _delete(path: str) -> Optional[Any]:
@@ -107,10 +111,10 @@ def monitor() -> None:
 @monitor.command("start")
 @click.option("--terminal", "terminal_id", required=True, help="Monitored terminal id")
 @click.option("--label", default=None, help="Human-readable label for the session")
-@click.option("--json", "json_output", is_flag=True, help="Print full session JSON instead of just the id")
-def start_session(
-    terminal_id: str, label: Optional[str], json_output: bool
-) -> None:
+@click.option(
+    "--json", "json_output", is_flag=True, help="Print full session JSON instead of just the id"
+)
+def start_session(terminal_id: str, label: Optional[str], json_output: bool) -> None:
     """Start monitoring a terminal, or echo the existing session if already
     recording. Idempotent on the active state — calling this twice is safe
     and does not create duplicate sessions."""
@@ -118,7 +122,7 @@ def start_session(
         "terminal_id": terminal_id,
         "label": label,
     }
-    session = _post_json("/monitoring/sessions", body=body)
+    session = _required_json_object(_post_json("/monitoring/sessions", body=body))
 
     if json_output:
         click.echo(json.dumps(session, indent=2, sort_keys=True))
@@ -131,7 +135,7 @@ def start_session(
 @click.option("--json", "json_output", is_flag=True)
 def end_session(session_id: str, json_output: bool) -> None:
     """End an active monitoring session."""
-    session = _post_json(f"/monitoring/sessions/{session_id}/end")
+    session = _required_json_object(_post_json(f"/monitoring/sessions/{session_id}/end"))
     if json_output:
         click.echo(json.dumps(session, indent=2, sort_keys=True))
     else:
@@ -240,14 +244,10 @@ def log_cmd(
         params["started_before"] = until
 
     if format_choice == "json":
-        payload = _get_json(
-            f"/monitoring/sessions/{session_id}/log", params=params
-        )
+        payload = _get_json(f"/monitoring/sessions/{session_id}/log", params=params)
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        body = _get_text(
-            f"/monitoring/sessions/{session_id}/log", params=params
-        )
+        body = _get_text(f"/monitoring/sessions/{session_id}/log", params=params)
         click.echo(body, nl=False)
 
 

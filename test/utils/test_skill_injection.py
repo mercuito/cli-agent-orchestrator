@@ -4,12 +4,12 @@ import json
 import logging
 import os
 from pathlib import Path
+from test.support.agent_factory import Agent
 from unittest.mock import patch
 
 import frontmatter
 import pytest
 
-from test.support.agent_factory import Agent
 from cli_agent_orchestrator.utils import skill_injection
 
 
@@ -52,9 +52,7 @@ class TestComposeAgentPrompt:
         assert skill_injection.compose_agent_prompt(profile) == "Profile prompt"
 
     def test_uses_base_prompt_when_provided(self):
-        profile = Agent(
-            name="developer", description="Developer", prompt="Should be ignored"
-        )
+        profile = Agent(name="developer", description="Developer", prompt="Should be ignored")
 
         result = skill_injection.compose_agent_prompt(profile, base_prompt="Custom base")
         assert result == "Custom base"
@@ -528,9 +526,7 @@ class TestRefreshAllCaoManagedAgents:
         )
 
         def load_profile(name: str) -> Agent:
-            return Agent(
-                name=name, description=f"{name} description", prompt=f"{name} prompt"
-            )
+            return Agent(name=name, description=f"{name} description", prompt=f"{name} prompt")
 
         monkeypatch.setattr(skill_injection, "AGENT_CONTEXT_DIR", context_dir)
         monkeypatch.setattr(skill_injection, "Q_AGENTS_DIR", q_dir)

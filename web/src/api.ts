@@ -116,6 +116,7 @@ export interface AgentStatus {
   session_name: string
   config: AgentConfig
   active: boolean
+  agent_dashboard_token?: string | null
   active_terminal_id: string | null
   active_workspace_context_id: string | null
   last_active_at: string | null
@@ -242,8 +243,23 @@ export interface ProviderSchema {
   name: string
   binary: string
   installed: boolean
-  supported_reasoning_efforts: string[] | null
-  suggested_models: string[] | null
+  model_catalog_available: boolean
+}
+
+export interface ProviderModel {
+  id: string
+  display_name: string
+  reasoning_efforts: string[]
+  thinking_supported: boolean
+  max_input_tokens: number | null
+  max_output_tokens: number | null
+}
+
+export interface ProviderCatalog {
+  provider_type: string
+  models: ProviderModel[]
+  discovered_at: string
+  source: string
 }
 
 export interface Baton {
@@ -272,6 +288,7 @@ export interface BatonEvent {
 export const api = {
   // Providers (capability schema for dashboard forms)
   listProviders: () => fetchJSON<ProviderSchema[]>('/providers'),
+  getProviderCatalog: (provider: string) => fetchJSON<ProviderCatalog>(`/providers/${encodeURIComponent(provider)}/catalog`),
 
   // Sessions
   listSessions: () => fetchJSON<Session[]>('/sessions'),

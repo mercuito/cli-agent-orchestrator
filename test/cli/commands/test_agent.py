@@ -56,7 +56,6 @@ def _status(agent: Agent, *, active: bool = False) -> AgentStatus:
 
 def _patch_agents_root(monkeypatch, agents_root):
     monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
-    monkeypatch.setattr("cli_agent_orchestrator.cli.commands.agent.AGENTS_ROOT", agents_root)
 
 
 def test_agent_list_prints_current_instance_status(tmp_path, monkeypatch):

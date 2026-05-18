@@ -217,7 +217,9 @@ def test_missing_provider_conversation_thread_or_message_fails_clearly(test_sess
         session.query(db_module.ProviderConversationThreadModel).delete()
         session.commit()
 
-    with pytest.raises(ValueError, match=f"provider conversation thread .* for message {message.id} not found"):
+    with pytest.raises(
+        ValueError, match=f"provider conversation thread .* for message {message.id} not found"
+    ):
         create_notification_for_message(
             provider_message_id=message.id,
             receiver_id="terminal-a",

@@ -6,11 +6,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.providers.base import CatalogDiscoveryError, ModelDiscoveryCapability
 from cli_agent_orchestrator.providers.codex import (
+    CODEX_DEBUG_MODELS_SOURCE,
     CODEX_RUNTIME_STATE_SCHEMA_VERSION,
     CODEX_THREAD_ID_PROBE_PREFIX,
+    CodexModelDiscoveryCapability,
     CodexProvider,
     ProviderError,
+    _build_codex_provider_model,
     parse_codex_thread_id_probe_output,
 )
 
@@ -20,6 +24,10 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 def load_fixture(filename: str) -> str:
     with open(FIXTURES_DIR / filename, "r") as f:
         return f.read()
+
+
+def load_json_fixture(filename: str) -> str:
+    return load_fixture(filename)
 
 
 class TestCodexProviderInitialization:
@@ -155,6 +163,117 @@ class TestCodexUpdatePreflight:
     def test_update_preflight_missing_binary_is_provider_error(self, mock_which):
         with pytest.raises(ProviderError, match="codex binary not found"):
             CodexProvider.run_update_preflight(timeout=3.0)
+
+
+class TestCodexModelDiscovery:
+    def test_build_provider_model_filters_hidden_catalog_entries(self):
+        # Given
+        raw = {
+            "slug": "test-hidden",
+            "display_name": "Test Hidden",
+            "visibility": "hide",
+            "supported_reasoning_levels": [{"effort": "medium"}],
+        }
+
+        # When
+        result = _build_codex_provider_model(raw)
+
+        # Then
+        assert result is None
+
+    def test_build_provider_model_extracts_visible_model_metadata(self):
+        # Given
+        raw = {
+            "slug": "test-visible",
+            "display_name": "Test Visible",
+            "visibility": "list",
+            "supported_in_api": False,
+            "context_window": 258400,
+            "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}],
+        }
+
+        # When
+        result = _build_codex_provider_model(raw)
+
+        # Then
+        assert result is not None
+        assert result.id == "test-visible"
+        assert result.display_name == "Test Visible"
+        assert result.reasoning_efforts == ("low", "high")
+        assert result.thinking_supported is True
+        assert result.max_input_tokens == 258400
+        assert result.max_output_tokens is None
+
+    def test_codex_provider_exposes_model_discovery_capability(self):
+        # When
+        capability = CodexProvider.model_discovery_capability()
+
+        # Then
+        typed: ModelDiscoveryCapability = capability
+        assert isinstance(capability, CodexModelDiscoveryCapability)
+        assert typed is capability
+
+    @patch("cli_agent_orchestrator.providers.codex.subprocess.run")
+    @patch("cli_agent_orchestrator.providers.codex.shutil.which", return_value="/bin/codex")
+    def test_discover_catalog_runs_codex_debug_models(self, mock_which, mock_run):
+        # Given
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=load_json_fixture("codex_debug_models_response.json"),
+            stderr="",
+        )
+        capability = CodexModelDiscoveryCapability()
+
+        # When
+        catalog = capability.discover_catalog()
+
+        # Then
+        mock_which.assert_called_once_with("codex")
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        assert args[0] == ["/bin/codex", "debug", "models"]
+        assert kwargs["timeout"] == 10.0
+        assert catalog.provider_type == "codex"
+        assert catalog.source == CODEX_DEBUG_MODELS_SOURCE
+        assert [model.id for model in catalog.models] == ["test-frontier", "test-cli-only"]
+        assert catalog.models[1].reasoning_efforts == ("high",)
+        assert catalog.models[1].max_input_tokens == 128000
+
+    @patch("cli_agent_orchestrator.providers.codex.shutil.which", return_value=None)
+    def test_discover_catalog_missing_binary_raises_catalog_discovery_error(self, mock_which):
+        # Given
+        capability = CodexModelDiscoveryCapability()
+
+        # When / Then
+        with pytest.raises(CatalogDiscoveryError, match="not installed"):
+            capability.discover_catalog()
+        mock_which.assert_called_once_with("codex")
+
+    @patch("cli_agent_orchestrator.providers.codex.subprocess.run")
+    @patch("cli_agent_orchestrator.providers.codex.shutil.which", return_value="/bin/codex")
+    def test_discover_catalog_nonzero_exit_raises_catalog_discovery_error(
+        self, mock_which, mock_run
+    ):
+        # Given
+        mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="nope")
+        capability = CodexModelDiscoveryCapability()
+
+        # When / Then
+        with pytest.raises(CatalogDiscoveryError) as exc_info:
+            capability.discover_catalog()
+        assert "exit 2" in str(exc_info.value)
+        assert "nope" in str(exc_info.value)
+
+    @patch("cli_agent_orchestrator.providers.codex.subprocess.run")
+    @patch("cli_agent_orchestrator.providers.codex.shutil.which", return_value="/bin/codex")
+    def test_discover_catalog_non_json_raises_catalog_discovery_error(self, mock_which, mock_run):
+        # Given
+        mock_run.return_value = MagicMock(returncode=0, stdout="not-json", stderr="")
+        capability = CodexModelDiscoveryCapability()
+
+        # When / Then
+        with pytest.raises(CatalogDiscoveryError, match="non-JSON"):
+            capability.discover_catalog()
 
 
 class TestCodexBuildCommand:
@@ -1074,28 +1193,6 @@ class TestCodexProviderMisc:
         provider = CodexProvider("test1234", "test-session", "window-0")
         message = provider.extract_last_message_from_script(output)
         assert message == "Hello\nSecond line"
-
-    def test_supported_reasoning_efforts_matches_codex_model_reasoning_effort_enum(self):
-        """Codex's declared efforts mirror the CLI's ``model_reasoning_effort`` enum.
-
-        The codex CLI rejects invalid values with
-        ``unknown variant ... expected one of `none`, `minimal`, `low`,
-        `medium`, `high`, `xhigh```. The declaration here must stay aligned
-        with that enum so the dashboard offers exactly the set codex will
-        accept at launch.
-        """
-        assert CodexProvider.supported_reasoning_efforts() == (
-            "none",
-            "minimal",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-        )
-
-    def test_suggested_models_is_none(self):
-        """Codex does not curate model suggestions in v1."""
-        assert CodexProvider.suggested_models() is None
 
 
 class TestCodexRuntimeStateCapability:

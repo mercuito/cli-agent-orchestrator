@@ -8,7 +8,9 @@ from typing import Any, Dict, Mapping, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import PROVIDER_CONVERSATION_INBOX_ROUTE_KIND
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
+)
 from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
@@ -167,7 +169,8 @@ def _selected_provider_message_row(
     marker = (
         session.query(db_module.ProviderConversationInboxNotificationModel)
         .filter(
-            db_module.ProviderConversationInboxNotificationModel.inbox_notification_id == inbox_notification_id
+            db_module.ProviderConversationInboxNotificationModel.inbox_notification_id
+            == inbox_notification_id
         )
         .first()
     )

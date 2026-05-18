@@ -2,27 +2,35 @@
 
 import json
 import logging
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional, cast
 
+import requests  # type: ignore[import-untyped]
+
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import (
     AgentRuntimeLaunchContext,
     BaseProvider,
+    CatalogDiscoveryError,
+    ModelDiscoveryCapability,
+    ProviderCatalog,
+    ProviderModel,
     ProviderRuntimeDescriptor,
     ProviderRuntimePreparation,
     ProviderRuntimeState,
     ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
-from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.claude_runtime import (
     CLAUDE_RUNTIME_MATERIALIZATION_SCHEMA_VERSION,
     CLAUDE_RUNTIME_STATE_SCHEMA_VERSION,
@@ -206,6 +214,171 @@ class ClaudeRuntimeStateCapability(ProviderRuntimeStateCapability):
             pass
 
 
+ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_MODELS_TIMEOUT_SECONDS = 10.0
+ANTHROPIC_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
+CLAUDE_ROUTED_AUTH_ENV_VARS = (
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+)
+
+
+def _routed_auth_var(environ: Mapping[str, str]) -> str | None:
+    """Return the routed-auth env var that is enabled, if any."""
+    for name in CLAUDE_ROUTED_AUTH_ENV_VARS:
+        value = environ.get(name, "").strip().lower()
+        if value and value not in {"0", "false", "no", "off"}:
+            return name
+    return None
+
+
+def _read_claude_oauth_token() -> Optional[str]:
+    """Return the Claude Code OAuth access token from the macOS keychain.
+
+    Phase 1 supports macOS only. Other platforms get None and the caller
+    raises a "not logged in" error.
+    """
+    import sys
+
+    user = os.environ.get("USER", "").strip()
+    return _read_claude_oauth_token_for_user(platform=sys.platform, user=user)
+
+
+def _read_claude_oauth_token_for_user(*, platform: str, user: str) -> Optional[str]:
+    """Return the Claude Code OAuth access token for one OS user."""
+    if platform != "darwin":
+        return None
+    if not user:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "security",
+                "find-generic-password",
+                "-s",
+                CLAUDE_KEYCHAIN_SERVICE,
+                "-a",
+                user,
+                "-w",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        blob = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    oauth = blob.get("claudeAiOauth") if isinstance(blob, dict) else None
+    if not isinstance(oauth, dict):
+        return None
+    token = oauth.get("accessToken")
+    return token if isinstance(token, str) and token else None
+
+
+def _build_provider_model(raw: Mapping[str, Any]) -> Optional[ProviderModel]:
+    """Map one raw ``/v1/models`` entry to a ``ProviderModel``, or filter it out.
+
+    Filter rule: keep models whose ``id`` is a ``claude-*`` string AND whose
+    ``capabilities.thinking.supported`` is ``True``. Everything else (legacy
+    Claude 2 family, embedding models, models that don't support extended
+    thinking) is dropped — Claude Code cannot drive them.
+    """
+    model_id = raw.get("id")
+    if not isinstance(model_id, str) or not model_id.startswith("claude-"):
+        return None
+    capabilities = raw.get("capabilities") or {}
+    if not isinstance(capabilities, Mapping):
+        return None
+    thinking = capabilities.get("thinking") or {}
+    if not (isinstance(thinking, Mapping) and thinking.get("supported") is True):
+        return None
+    effort = capabilities.get("effort") or {}
+    if not isinstance(effort, Mapping):
+        effort = {}
+    reasoning_efforts = tuple(
+        level
+        for level in ANTHROPIC_EFFORT_LEVELS
+        if isinstance(effort.get(level), Mapping) and effort[level].get("supported") is True
+    )
+    display_name = raw.get("display_name")
+    max_input_tokens = raw.get("max_input_tokens")
+    max_output_tokens = raw.get("max_tokens")
+    return ProviderModel(
+        id=model_id,
+        display_name=str(display_name) if isinstance(display_name, str) else model_id,
+        reasoning_efforts=reasoning_efforts,
+        thinking_supported=True,
+        max_input_tokens=max_input_tokens if isinstance(max_input_tokens, int) else None,
+        max_output_tokens=max_output_tokens if isinstance(max_output_tokens, int) else None,
+    )
+
+
+class ClaudeModelDiscoveryCapability(ModelDiscoveryCapability):
+    """Discover Claude Code's currently-available models via Anthropic's API.
+
+    Reads the OAuth access token from the macOS keychain (Claude Code's
+    auth store) and calls ``GET /v1/models``, keeping only ``claude-*``
+    models with extended-thinking support.
+    """
+
+    def discover_catalog(self) -> ProviderCatalog:
+        routed_auth_var = _routed_auth_var(os.environ)
+        if routed_auth_var is not None:
+            raise CatalogDiscoveryError(
+                f"Claude Code routed auth via {routed_auth_var} is not supported "
+                "for model discovery yet."
+            )
+        token = _read_claude_oauth_token()
+        if token is None:
+            raise CatalogDiscoveryError(
+                "Claude Code credentials not found. Run `claude` and complete the login flow."
+            )
+        try:
+            response = requests.get(
+                ANTHROPIC_MODELS_URL,
+                headers={
+                    "anthropic-version": ANTHROPIC_API_VERSION,
+                    "Authorization": f"Bearer {token}",
+                },
+                timeout=ANTHROPIC_MODELS_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            raise CatalogDiscoveryError(f"Anthropic /v1/models call failed: {exc}") from exc
+        if response.status_code != 200:
+            raise CatalogDiscoveryError(
+                f"Anthropic /v1/models returned HTTP {response.status_code}: "
+                f"{response.text[:200]}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CatalogDiscoveryError(f"Anthropic /v1/models returned non-JSON: {exc}") from exc
+        data = payload.get("data")
+        if not isinstance(data, list):
+            raise CatalogDiscoveryError("Anthropic /v1/models response is missing 'data' list")
+        models = tuple(
+            model
+            for model in (_build_provider_model(raw) for raw in data if isinstance(raw, dict))
+            if model is not None
+        )
+        return ProviderCatalog(
+            provider_type=ProviderType.CLAUDE_CODE.value,
+            models=models,
+            discovered_at=datetime.now(tz=timezone.utc),
+            source="anthropic-api",
+        )
+
+
 class ClaudeCodeProvider(BaseProvider):
     """Provider for Claude Code CLI tool integration."""
 
@@ -219,29 +392,9 @@ class ClaudeCodeProvider(BaseProvider):
         return ClaudeRuntimeStateCapability()
 
     @classmethod
-    def supported_reasoning_efforts(cls) -> tuple[str, ...]:
-        """Return the ``--effort`` values Claude Code accepts.
-
-        Claude Code's launch path in ``_build_claude_command`` passes
-        ``--effort <value>`` when an agent declares a ``reasoning_effort``.
-        These three values are the accepted set — keep this list and the
-        launch path in sync.
-        """
-        return ("low", "medium", "high")
-
-    @classmethod
-    def suggested_models(cls) -> tuple[str, ...]:
-        """Return curated Claude model suggestions for the ``model`` field.
-
-        These are not enforced at save time — Claude's model namespace shifts
-        too fast for CAO to maintain a hard registry. They surface as
-        dropdown options that a user can still override with free text.
-        """
-        return (
-            "claude-opus-4-7",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5",
-        )
+    def model_discovery_capability(cls) -> ClaudeModelDiscoveryCapability:
+        """Expose Claude's runtime model catalog discovery capability."""
+        return ClaudeModelDiscoveryCapability()
 
     @staticmethod
     def prepare_terminal_runtime(
@@ -403,7 +556,9 @@ class ClaudeCodeProvider(BaseProvider):
                         if isinstance(server_config, dict):
                             mcp_config[server_name] = dict(server_config)
                         else:
-                            mcp_config[server_name] = server_config.model_dump(exclude_none=True)
+                            mcp_config[server_name] = cast(Any, server_config).model_dump(
+                                exclude_none=True
+                            )
 
                         env = mcp_config[server_name].get("env", {})
                         if "CAO_TERMINAL_ID" not in env:

@@ -1118,18 +1118,3 @@ class TestKiroCliTuiMode:
         # Should extract second turn only
         assert "Second answer" in message
         assert "First answer" not in message
-
-
-def test_supported_reasoning_efforts_is_none():
-    """Kiro CLI's launch path does not consume ``reasoning_effort``.
-
-    ``KiroCliProvider.initialize`` invokes ``kiro-cli chat --agent <id>``
-    (optionally with ``--legacy-ui``); no model or reasoning flag is
-    forwarded. Inherits ``None`` from ``BaseProvider``.
-    """
-    assert KiroCliProvider.supported_reasoning_efforts() is None
-
-
-def test_suggested_models_is_none():
-    """Kiro CLI does not curate model suggestions — model is not consumed."""
-    assert KiroCliProvider.suggested_models() is None

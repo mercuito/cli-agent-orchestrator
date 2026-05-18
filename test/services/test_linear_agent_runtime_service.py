@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from test.support.agent_factory import Agent
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -27,7 +28,6 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     LinearResolvedPresence,
     LinearWorkspaceProvider,
 )
-from test.support.agent_factory import Agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessageRecord,

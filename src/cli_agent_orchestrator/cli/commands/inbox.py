@@ -87,4 +87,3 @@ def list_inbox_messages(
         sender = msg.get("sender_id") or ""
         body = msg.get("message") or ""
         click.echo(f"{created_at} [{status}] from={sender} {body}")
-

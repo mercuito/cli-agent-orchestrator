@@ -75,9 +75,7 @@ class TestMarkdownHeader:
     def test_window_shows_ended_at_when_ended(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        out = format_markdown(
-            _session(ended_at=datetime(2026, 4, 18, 11, 0, 0)), []
-        )
+        out = format_markdown(_session(ended_at=datetime(2026, 4, 18, 11, 0, 0)), [])
         assert "2026-04-18T11:00:00" in out
         assert "ongoing" not in out
 
@@ -102,9 +100,7 @@ class TestMarkdownFilterLine:
     def test_peer_filter_renders(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        out = format_markdown(
-            _session(), [], applied_filter={"peers": ["R1", "R2"]}
-        )
+        out = format_markdown(_session(), [], applied_filter={"peers": ["R1", "R2"]})
         assert "**Filter:** peers = R1, R2" in out
 
     def test_time_window_filter_renders(self):
@@ -242,9 +238,7 @@ class TestMarkdownGolden:
 
         session = _session(label="review", terminal_id="IMP", ended_at=None)
         messages = [_msg(sender_id="IMP", receiver_id="R1", message="hi")]
-        out = format_markdown(
-            session, messages, applied_filter={"peers": ["R1"]}
-        )
+        out = format_markdown(session, messages, applied_filter={"peers": ["R1"]})
         assert "**Filter:** peers = R1" in out
         assert "> hi" in out
 
@@ -325,9 +319,7 @@ class TestJsonFormat:
     def test_filter_block_included_when_filter_applied(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_json
 
-        out = format_json(
-            _session(), [], applied_filter={"peers": ["R1"]}
-        )
+        out = format_json(_session(), [], applied_filter={"peers": ["R1"]})
         assert out["filter"] == {"peers": ["R1"]}
 
     def test_all_none_filter_treated_as_no_filter(self):

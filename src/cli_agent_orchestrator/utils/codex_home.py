@@ -17,8 +17,8 @@ from typing import Any, Dict, Iterable, Optional
 
 import tomli
 
-from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.agent import load_agent
+from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.utils.config_inheritance import (
     InheritPolicy,
     apply_inherit_policy,
@@ -286,11 +286,10 @@ def build_codex_home_materialization(
     # Agent-level ``reasoning_effort`` flows into Codex's
     # ``model_reasoning_effort`` field when the agent did not set an
     # explicit ``codex_config.model_reasoning_effort``. The codex CLI's
-    # accepted enum is the authoritative source — see
-    # ``CodexProvider.supported_reasoning_efforts`` and the codex CLI
-    # config validation. The explicit ``codex_config`` value (applied by
-    # ``deep_merge`` above) wins when both are set so per-agent codex
-    # config remains the lowest-level override.
+    # accepted enum is the authoritative source. The explicit
+    # ``codex_config`` value (applied by ``deep_merge`` above) wins when
+    # both are set so per-agent codex config remains the lowest-level
+    # override.
     reasoning_effort = agent.reasoning_effort
     if reasoning_effort and "model_reasoning_effort" not in (
         codex_config if isinstance(codex_config, dict) else {}

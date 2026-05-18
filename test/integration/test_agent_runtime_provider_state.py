@@ -483,10 +483,9 @@ def test_stale_agent_refresh_restores_provider_runtime_with_real_tmux_delivery(
         initial_state = json.loads(handle._runtime_state_path().read_text())
         assert "provider_runtime" not in initial_state
         provider_data_dir = handle._runtime_paths().provider_data_dir
-        assert (
-            tmux_runtime_provider_world.capability.saved_states[provider_data_dir].payload
-            == _payload("session-a")
-        )
+        assert tmux_runtime_provider_world.capability.saved_states[
+            provider_data_dir
+        ].payload == _payload("session-a")
 
         tmux_runtime_provider_world.runtime_version["value"] = "v2"
         result = handle.notify(
@@ -500,9 +499,7 @@ def test_stale_agent_refresh_restores_provider_runtime_with_real_tmux_delivery(
         assert result.delivery.delivered is True
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
-        assert tmux_runtime_provider_world.capability.loaded_payloads == [
-            _payload("session-a")
-        ]
+        assert tmux_runtime_provider_world.capability.loaded_payloads == [_payload("session-a")]
         assert tmux_runtime_provider_world.capability.resume_args == [
             ["--resume-thread", "session-a"]
         ]
@@ -519,10 +516,9 @@ def test_stale_agent_refresh_restores_provider_runtime_with_real_tmux_delivery(
         final_state = json.loads(handle._runtime_state_path().read_text())
         assert final_state["terminal_id"] == refreshed_terminal.id
         assert "provider_runtime" not in final_state
-        assert (
-            tmux_runtime_provider_world.capability.saved_states[provider_data_dir].payload
-            == _payload("session-a")
-        )
+        assert tmux_runtime_provider_world.capability.saved_states[
+            provider_data_dir
+        ].payload == _payload("session-a")
     finally:
         tmux_client.kill_session(session_name)
 

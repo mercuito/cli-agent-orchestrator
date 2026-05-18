@@ -340,8 +340,7 @@ def ensure_context_workspace(
             raise RuntimeError("context workspace insert did not create or find a row")
         if row.root_path != str(root_path):
             raise WorkspaceContextConflictError(
-                "context workspace root path differs for "
-                f"{agent_id!r}/{workspace_context_id!r}"
+                "context workspace root path differs for " f"{agent_id!r}/{workspace_context_id!r}"
             )
         session.commit()
         return _context_workspace_from_row(row)
@@ -358,8 +357,7 @@ def get_context_workspace(
         row = (
             session.query(ContextWorkspaceModel)
             .filter(
-                ContextWorkspaceModel.agent_id
-                == _required_token(agent_id, "agent_id"),
+                ContextWorkspaceModel.agent_id == _required_token(agent_id, "agent_id"),
                 ContextWorkspaceModel.workspace_context_id
                 == _required_token(workspace_context_id, "workspace_context_id"),
             )
@@ -380,8 +378,7 @@ def set_context_workspace_active_terminal(
         row = (
             session.query(ContextWorkspaceModel)
             .filter(
-                ContextWorkspaceModel.agent_id
-                == _required_token(agent_id, "agent_id"),
+                ContextWorkspaceModel.agent_id == _required_token(agent_id, "agent_id"),
                 ContextWorkspaceModel.workspace_context_id
                 == _required_token(workspace_context_id, "workspace_context_id"),
             )

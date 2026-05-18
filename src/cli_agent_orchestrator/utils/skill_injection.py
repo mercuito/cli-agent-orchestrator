@@ -9,12 +9,12 @@ from urllib.parse import unquote, urlparse
 
 import frontmatter
 
+from cli_agent_orchestrator.agent import Agent, load_agent
 from cli_agent_orchestrator.constants import (
     AGENT_CONTEXT_DIR,
     COPILOT_AGENTS_DIR,
     Q_AGENTS_DIR,
 )
-from cli_agent_orchestrator.agent import Agent, load_agent
 
 logger = logging.getLogger(__name__)
 

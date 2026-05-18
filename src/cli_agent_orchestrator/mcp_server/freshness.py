@@ -394,9 +394,7 @@ def _visible_provider_runtime_generation_entries(
     seen_provider_tool_names: set[str] = set()
     descriptors: list[ProviderMediatedToolRuntimeGenerationDescriptor] = []
     for provider_name in sorted(policies):
-        descriptors.extend(
-            policies[provider_name].runtime_generation_descriptors_for_agent(agent)
-        )
+        descriptors.extend(policies[provider_name].runtime_generation_descriptors_for_agent(agent))
 
     for descriptor in sorted(descriptors, key=lambda item: (item.provider_name, item.name)):
         if descriptor.name in reserved_tool_names:

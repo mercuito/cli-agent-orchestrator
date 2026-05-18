@@ -1,5 +1,7 @@
 """Tests for base provider."""
 
+import dataclasses
+from datetime import datetime, timezone
 from typing import Optional
 from unittest.mock import patch
 
@@ -7,7 +9,14 @@ import pytest
 
 from cli_agent_orchestrator.agent import Agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext, BaseProvider
+from cli_agent_orchestrator.providers.base import (
+    AgentRuntimeLaunchContext,
+    BaseProvider,
+    CatalogDiscoveryError,
+    ModelDiscoveryCapability,
+    ProviderCatalog,
+    ProviderModel,
+)
 
 
 class ConcreteProvider(BaseProvider):
@@ -122,10 +131,80 @@ class TestBaseProvider:
         assert provider.interrupt() is True
         mock_tmux.send_special_key.assert_called_once_with("session-1", "window-0", "C-c")
 
-    def test_supported_reasoning_efforts_default_is_none(self):
-        """Providers without a reasoning_effort concept return None by default."""
-        assert ConcreteProvider.supported_reasoning_efforts() is None
 
-    def test_suggested_models_default_is_none(self):
-        """Providers without curated model suggestions return None by default."""
-        assert ConcreteProvider.suggested_models() is None
+class TestProviderCatalogContract:
+    """Tests for the dynamic model discovery contract on BaseProvider."""
+
+    def _make_model(self) -> ProviderModel:
+        return ProviderModel(
+            id="example-model-1",
+            display_name="Example Model 1",
+            reasoning_efforts=("low", "medium", "high"),
+            thinking_supported=True,
+            max_input_tokens=200_000,
+            max_output_tokens=64_000,
+        )
+
+    def test_provider_model_is_frozen(self):
+        # Given
+        model = self._make_model()
+
+        # When / Then
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            model.id = "different-model"  # type: ignore[misc]
+
+    def test_provider_model_is_hashable(self):
+        # Given
+        model_a = self._make_model()
+        model_b = self._make_model()
+
+        # When / Then — equal-valued frozen dataclasses share a hash
+        assert hash(model_a) == hash(model_b)
+        assert {model_a, model_b} == {model_a}
+
+    def test_provider_catalog_is_frozen(self):
+        # Given
+        catalog = ProviderCatalog(
+            provider_type="example",
+            models=(self._make_model(),),
+            discovered_at=datetime.now(tz=timezone.utc),
+            source="unit-test",
+        )
+
+        # When / Then
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            catalog.source = "other"  # type: ignore[misc]
+
+    def test_model_discovery_capability_accepts_conforming_class(self):
+        # Given — a stub that implements the protocol's single method
+        catalog = ProviderCatalog(
+            provider_type="stub",
+            models=(self._make_model(),),
+            discovered_at=datetime.now(tz=timezone.utc),
+            source="unit-test",
+        )
+
+        class StubCapability:
+            def discover_catalog(self) -> ProviderCatalog:
+                return catalog
+
+        # When — assigning to the Protocol-typed slot type-checks structurally
+        capability: ModelDiscoveryCapability = StubCapability()
+
+        # Then
+        assert capability.discover_catalog() is catalog
+
+    def test_base_provider_does_not_expose_model_discovery(self):
+        # When / Then — providers opt in via a separate classmethod;
+        # the base must not carry a default that pretends discovery exists
+        assert not hasattr(BaseProvider, "discover_catalog")
+        assert not hasattr(ConcreteProvider, "discover_catalog")
+        assert not hasattr(BaseProvider, "model_discovery_capability")
+        assert not hasattr(ConcreteProvider, "model_discovery_capability")
+
+    def test_catalog_discovery_error_carries_message(self):
+        # Given / When
+        err = CatalogDiscoveryError("claude_code is not logged in")
+
+        # Then
+        assert "logged in" in str(err)

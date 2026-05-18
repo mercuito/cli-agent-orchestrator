@@ -59,13 +59,15 @@ afterEach(() => {
 
 describe('AgentDetailPanel', () => {
   describe('status header', () => {
-    it('renders running agent header with terminal id and a Stop button', () => {
+    it('renders running agent header with terminal id, Open Terminal, and Stop buttons', () => {
       // Given
       const agent = agentStatus({
         active: true,
         active_terminal_id: 'term-aria-main',
+        active_workspace_context_id: 'wctx_aria_default',
       })
       const onStart = vi.fn()
+      const onOpenTerminal = vi.fn()
       const onStop = vi.fn()
 
       // When
@@ -73,6 +75,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={agent}
           onStartAgent={onStart}
+          onOpenTerminal={onOpenTerminal}
           onStopAgent={onStop}
           renderConfigTab={renderConfigTab}
           renderTimelineTab={renderTimelineTab}
@@ -83,9 +86,36 @@ describe('AgentDetailPanel', () => {
       expect(screen.getByRole('heading', { name: 'Aria' })).toBeInTheDocument()
       expect(screen.getByText('aria')).toBeInTheDocument()
       expect(screen.getByText('Running')).toBeInTheDocument()
-      expect(screen.getByText(/Terminal term-aria-main/)).toBeInTheDocument()
+      expect(screen.getByText('term-aria-main')).toBeInTheDocument()
+      expect(screen.getByText('wctx_aria_default')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /open terminal for aria/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /stop aria/i })).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /start aria/i })).not.toBeInTheDocument()
+    })
+
+    it('opens the running agent terminal through the provided handler', () => {
+      // Given
+      const agent = agentStatus({
+        active: true,
+        active_terminal_id: 'term-aria-main',
+      })
+      const onOpenTerminal = vi.fn()
+
+      // When
+      render(
+        <AgentDetailPanel
+          agent={agent}
+          onStartAgent={vi.fn()}
+          onOpenTerminal={onOpenTerminal}
+          onStopAgent={vi.fn()}
+          renderConfigTab={renderConfigTab}
+          renderTimelineTab={renderTimelineTab}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: /open terminal for aria/i }))
+
+      // Then
+      expect(onOpenTerminal).toHaveBeenCalledWith('aria')
     })
 
     it('renders stopped agent header with a Start button that fires the provided handler', () => {
@@ -99,6 +129,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={agent}
           onStartAgent={onStart}
+          onOpenTerminal={vi.fn()}
           onStopAgent={onStop}
           renderConfigTab={renderConfigTab}
           renderTimelineTab={renderTimelineTab}
@@ -121,6 +152,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={agent}
           onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
           onStopAgent={vi.fn()}
           startingAgentId="aria"
           renderConfigTab={renderConfigTab}
@@ -140,6 +172,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={null}
           onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
           onStopAgent={vi.fn()}
           renderConfigTab={renderConfigTab}
           renderTimelineTab={renderTimelineTab}
@@ -163,6 +196,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={agent}
           onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
           onStopAgent={vi.fn()}
           renderConfigTab={renderConfigTab}
           renderTimelineTab={renderTimelineTab}
@@ -184,6 +218,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={agent}
           onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
           onStopAgent={vi.fn()}
           renderConfigTab={renderConfigTab}
           renderTimelineTab={renderTimelineTab}
@@ -205,6 +240,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={aria}
           onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
           onStopAgent={vi.fn()}
           renderConfigTab={renderConfigTab}
           renderTimelineTab={renderTimelineTab}
@@ -217,6 +253,7 @@ describe('AgentDetailPanel', () => {
         <AgentDetailPanel
           agent={cael}
           onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
           onStopAgent={vi.fn()}
           renderConfigTab={renderConfigTab}
           renderTimelineTab={renderTimelineTab}

@@ -10,11 +10,11 @@ from pydantic import BaseModel
 
 from cli_agent_orchestrator.linear import app_client, runtime
 from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
+from cli_agent_orchestrator.linear.webhook_ingestion import parse_linear_webhook_packet
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.linear.webhook_ingestion import parse_linear_webhook_packet
 from cli_agent_orchestrator.workspace_providers import WorkspaceProviderConfigError
 
 logger = logging.getLogger(__name__)

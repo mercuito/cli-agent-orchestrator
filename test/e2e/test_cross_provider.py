@@ -78,9 +78,7 @@ def _create_session(provider: str, agent_id: str, session_name: str):
     return data["id"], data["session_name"]
 
 
-def _add_terminal_in_session(
-    session_name: str, provider: str, agent_id: str, retries: int = 1
-):
+def _add_terminal_in_session(session_name: str, provider: str, agent_id: str, retries: int = 1):
     """Add a terminal to an existing session via the API.
 
     The ``provider`` param is the *fallback* — if the agent declares

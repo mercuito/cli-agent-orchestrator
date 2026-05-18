@@ -700,18 +700,3 @@ class TestQCliProviderEdgeCases:
             mock_tmux.get_history.return_value = test_output
             status = provider.get_status()
             assert status == TerminalStatus.IDLE
-
-
-def test_supported_reasoning_efforts_is_none():
-    """Q CLI's launch path does not consume ``reasoning_effort``.
-
-    ``QCliProvider.initialize`` invokes ``q chat --agent <id>`` with no
-    model or reasoning flags; the agent's ``reasoning_effort`` is never
-    read. Inherits ``None`` from ``BaseProvider`` to make that explicit.
-    """
-    assert QCliProvider.supported_reasoning_efforts() is None
-
-
-def test_suggested_models_is_none():
-    """Q CLI does not curate model suggestions — model is not consumed."""
-    assert QCliProvider.suggested_models() is None

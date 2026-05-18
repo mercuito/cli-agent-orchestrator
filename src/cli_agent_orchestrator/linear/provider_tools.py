@@ -188,7 +188,6 @@ class LinearToolAccess:
 
     access_id: str
     agent_id: str | None
-    agent_id: str | None
     tools: tuple[str, ...]
     issues: tuple[str, ...]
     create_team_ids: tuple[str, ...] = ()

@@ -8,7 +8,9 @@ from typing import Any, Dict, Mapping, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import PROVIDER_CONVERSATION_INBOX_ROUTE_KIND
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
+)
 from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessage,
     ConversationMessageRecord,
@@ -78,7 +80,9 @@ def reply_to_inbox_message(
 
     delivery = _read_delivery(notification_id)
     if delivery is None:
-        raise ProviderConversationReplyNotFoundError(f"inbox notification {notification_id} not found")
+        raise ProviderConversationReplyNotFoundError(
+            f"inbox notification {notification_id} not found"
+        )
     message_target = _primary_inbox_message_target(delivery)
     if message_target is None:
         raise ProviderConversationReplyUnsupportedSourceError(

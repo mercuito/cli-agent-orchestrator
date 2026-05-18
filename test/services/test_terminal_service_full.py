@@ -2,11 +2,11 @@
 
 from dataclasses import replace
 from datetime import datetime
+from test.support.agent_factory import Agent
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from test.support.agent_factory import Agent
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
 from cli_agent_orchestrator.services.terminal_service import (

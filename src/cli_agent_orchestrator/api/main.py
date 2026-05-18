@@ -33,14 +33,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from watchdog.observers.polling import PollingObserver
 
+from cli_agent_orchestrator import agent as agent_config
 from cli_agent_orchestrator.agent import (
+    CAO_AGENTS_DIR_ENV,
     Agent,
-    AGENTS_ROOT,
     AgentConfigError,
     AgentPathError,
+    AgentWorkspaceContextConfig,
     LinearConfig,
     LinearToolAccessConfig,
-    AgentWorkspaceContextConfig,
+    configure_agents_root,
     load_agent,
     patch_agent_config,
     write_agent,
@@ -70,8 +72,18 @@ from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId
+from cli_agent_orchestrator.providers.base import CatalogDiscoveryError
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
+from cli_agent_orchestrator.services import (
+    baton_service,
+    baton_watchdog_service,
+    flow_service,
+    inbox_service,
+    monitoring_service,
+    session_service,
+    terminal_service,
+)
 from cli_agent_orchestrator.services.agent_manager import (
     AgentStatus,
     default_agent_manager,
@@ -84,21 +96,13 @@ from cli_agent_orchestrator.services.agent_timeline import (
     TimelineEventRead,
     UnknownTimelineEventError,
 )
-from cli_agent_orchestrator.services import (
-    baton_service,
-    baton_watchdog_service,
-    flow_service,
-    inbox_service,
-    monitoring_service,
-    session_service,
-    terminal_service,
-)
 from cli_agent_orchestrator.services.baton_feature import is_baton_enabled
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 from cli_agent_orchestrator.utils import monitoring_formatter
 from cli_agent_orchestrator.utils.dashboard_links import (
+    create_agent_dashboard_token,
     create_terminal_dashboard_token,
     validate_agent_dashboard_token,
     validate_terminal_dashboard_token,
@@ -110,6 +114,7 @@ from cli_agent_orchestrator.utils.skills import (
     validate_skill_name,
 )
 from cli_agent_orchestrator.workspace_providers import (
+    WorkspaceProviderConfigError,
     initialize_enabled_workspace_providers,
 )
 
@@ -357,6 +362,7 @@ class AgentStatusResponse(BaseModel):
     session_name: str
     config: AgentConfigResponse
     active: bool
+    agent_dashboard_token: str
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
     last_active_at: Optional[datetime] = None
@@ -371,6 +377,7 @@ class AgentStatusResponse(BaseModel):
             session_name=status.session_name,
             config=AgentConfigResponse.from_agent(status.agent),
             active=status.active,
+            agent_dashboard_token=create_agent_dashboard_token(status.agent_id),
             active_terminal_id=status.active_terminal_id,
             active_workspace_context_id=status.active_workspace_context_id,
             last_active_at=status.last_active_at,
@@ -388,11 +395,7 @@ class AgentWorkspaceContextWriteRequest(BaseModel):
         base = existing or AgentWorkspaceContextConfig()
         return AgentWorkspaceContextConfig(
             enabled=self.enabled if self.enabled is not None else base.enabled,
-            resolver_id=(
-                self.resolver_id
-                if self.resolver_id is not None
-                else base.resolver_id
-            ),
+            resolver_id=(self.resolver_id if self.resolver_id is not None else base.resolver_id),
         )
 
 
@@ -413,7 +416,9 @@ class LinearToolAccessWriteRequest(BaseModel):
     ) -> LinearToolAccessConfig:
         return LinearToolAccessConfig(
             access_id=self.access_id,
-            tools=tuple(self.tools if self.tools is not None else (existing.tools if existing else ())),
+            tools=tuple(
+                self.tools if self.tools is not None else (existing.tools if existing else ())
+            ),
             issues=tuple(
                 self.issues if self.issues is not None else (existing.issues if existing else ())
             ),
@@ -442,7 +447,9 @@ class LinearToolAccessWriteRequest(BaseModel):
                 if self.update_fields is not None
                 else (existing.update_fields if existing else ())
             ),
-            reason=self.reason if self.reason is not None else (existing.reason if existing else None),
+            reason=(
+                self.reason if self.reason is not None else (existing.reason if existing else None)
+            ),
         )
 
 
@@ -461,9 +468,9 @@ class LinearWriteRequest(BaseModel):
     tool_access: Optional[List[LinearToolAccessWriteRequest]] = None
 
     def to_config(self, existing: LinearConfig | None = None) -> LinearConfig:
-        existing_access = {
-            access.access_id: access for access in existing.tool_access
-        } if existing else {}
+        existing_access = (
+            {access.access_id: access for access in existing.tool_access} if existing else {}
+        )
         if self.tool_access is None:
             tool_access = tuple(existing.tool_access) if existing else ()
         else:
@@ -472,9 +479,15 @@ class LinearWriteRequest(BaseModel):
                 for access in self.tool_access
             )
         return LinearConfig(
-            app_key=self.app_key if self.app_key is not None else (existing.app_key if existing else None),
+            app_key=(
+                self.app_key
+                if self.app_key is not None
+                else (existing.app_key if existing else None)
+            ),
             client_id=(
-                self.client_id if self.client_id is not None else (existing.client_id if existing else None)
+                self.client_id
+                if self.client_id is not None
+                else (existing.client_id if existing else None)
             ),
             client_secret=(
                 self.client_secret
@@ -733,14 +746,33 @@ class ProviderSchemaResponse(BaseModel):
     schema is composed from authoritative sources only: the provider type
     comes from ``ProviderType``, the binary name comes from the provider
     class, install status is resolved at request time via ``shutil.which``,
-    and the capability sets come from each provider's classmethods.
+    and catalog availability comes from the provider's opt-in discovery capability.
     """
 
     name: str
     binary: str
     installed: bool
-    supported_reasoning_efforts: Optional[List[str]] = None
-    suggested_models: Optional[List[str]] = None
+    model_catalog_available: bool
+
+
+class ProviderModelResponse(BaseModel):
+    """One provider-discovered model exposed over HTTP."""
+
+    id: str
+    display_name: str
+    reasoning_efforts: List[str]
+    thinking_supported: bool
+    max_input_tokens: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+
+
+class ProviderCatalogResponse(BaseModel):
+    """Provider-discovered model catalog exposed over HTTP."""
+
+    provider_type: str
+    models: List[ProviderModelResponse]
+    discovered_at: datetime
+    source: str
 
 
 class WorkingDirectoryResponse(BaseModel):
@@ -849,7 +881,11 @@ async def lifespan(app: FastAPI):
     logger.info("Starting CLI Agent Orchestrator server...")
     setup_logging()
     init_db()
-    app.state.workspace_providers = initialize_enabled_workspace_providers()
+    try:
+        app.state.workspace_providers = initialize_enabled_workspace_providers()
+    except WorkspaceProviderConfigError as exc:
+        logger.error("Workspace providers disabled after startup failure: %s", exc)
+        app.state.workspace_providers = []
 
     # Run cleanup in background
     asyncio.create_task(asyncio.to_thread(cleanup_old_data))
@@ -958,19 +994,51 @@ async def list_providers_endpoint() -> List[ProviderSchemaResponse]:
             name=schema.name,
             binary=schema.binary,
             installed=schema.installed,
-            supported_reasoning_efforts=(
-                list(schema.supported_reasoning_efforts)
-                if schema.supported_reasoning_efforts is not None
-                else None
-            ),
-            suggested_models=(
-                list(schema.suggested_models)
-                if schema.suggested_models is not None
-                else None
-            ),
+            model_catalog_available=schema.model_catalog_available,
         )
         for schema in provider_manager.list_provider_schemas()
     ]
+
+
+@app.get("/providers/{provider_type}/catalog", response_model=ProviderCatalogResponse)
+async def get_provider_catalog_endpoint(provider_type: str) -> ProviderCatalogResponse:
+    """Return a fresh runtime-discovered model catalog for one provider."""
+    try:
+        provider_cls = provider_manager.provider_class(provider_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    capability = provider_manager.model_discovery_capability(provider_type)
+    if capability is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Provider {provider_type} has no model-discovery capability",
+        )
+
+    try:
+        catalog = capability.discover_catalog()
+    except CatalogDiscoveryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+    return ProviderCatalogResponse(
+        provider_type=catalog.provider_type,
+        models=[
+            ProviderModelResponse(
+                id=model.id,
+                display_name=model.display_name,
+                reasoning_efforts=list(model.reasoning_efforts),
+                thinking_supported=model.thinking_supported,
+                max_input_tokens=model.max_input_tokens,
+                max_output_tokens=model.max_output_tokens,
+            )
+            for model in catalog.models
+        ],
+        discovered_at=catalog.discovered_at,
+        source=catalog.source,
+    )
 
 
 @app.get("/agents", response_model=List[AgentStatusResponse])
@@ -1048,7 +1116,7 @@ async def delete_agent_endpoint(
                     "terminal_id": status_read.active_terminal_id,
                 },
             )
-        target = AGENTS_ROOT / load_agent(agent_id).id
+        target = agent_config.AGENTS_ROOT / load_agent(agent_id).id
         if target.is_dir():
             import shutil
 
@@ -2154,11 +2222,12 @@ def main():
     args = parser.parse_args()
 
     if args.agents_dir:
-        os.environ["CAO_AGENTS_DIR"] = args.agents_dir
+        configured_agents_root = configure_agents_root(args.agents_dir)
+        os.environ[CAO_AGENTS_DIR_ENV] = str(configured_agents_root)
         import cli_agent_orchestrator.constants as constants
 
-        constants.KIRO_AGENTS_DIR = Path(args.agents_dir)
-        logger.info(f"Using agents directory: {args.agents_dir}")
+        constants.KIRO_AGENTS_DIR = configured_agents_root
+        logger.info("Using agents directory: %s", configured_agents_root)
 
     host = args.host or SERVER_HOST
     port = args.port or SERVER_PORT

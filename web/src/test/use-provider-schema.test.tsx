@@ -7,15 +7,13 @@ const SAMPLE_SCHEMAS: ProviderSchema[] = [
     name: 'claude_code',
     binary: 'claude',
     installed: true,
-    supported_reasoning_efforts: ['low', 'medium', 'high'],
-    suggested_models: ['claude-opus-4-7', 'claude-sonnet-4-6'],
+    model_catalog_available: true,
   },
   {
     name: 'codex',
     binary: 'codex',
     installed: true,
-    supported_reasoning_efforts: null,
-    suggested_models: null,
+    model_catalog_available: true,
   },
 ]
 

@@ -7,9 +7,9 @@ import subprocess
 
 import click
 
+from cli_agent_orchestrator import agent as agent_config
 from cli_agent_orchestrator.agent import (
     AGENT_CONFIG_FILENAME,
-    AGENTS_ROOT,
     Agent,
     load_agent,
     validate_agent_dir,
@@ -17,8 +17,8 @@ from cli_agent_orchestrator.agent import (
 )
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
-from cli_agent_orchestrator.services.agent_manager import default_agent_manager
 from cli_agent_orchestrator.services import terminal_service
+from cli_agent_orchestrator.services.agent_manager import default_agent_manager
 
 
 @click.group(name="agent")
@@ -42,7 +42,7 @@ def show_agent(agent_id: str) -> None:
     click.echo(f"status: {'running' if status.active else 'stopped'}")
     if status.active_terminal_id:
         click.echo(f"terminal_id: {status.active_terminal_id}")
-    config_path = AGENTS_ROOT / agent.id / AGENT_CONFIG_FILENAME
+    config_path = agent_config.AGENTS_ROOT / agent.id / AGENT_CONFIG_FILENAME
     click.echo("\nagent.toml:")
     click.echo(config_path.read_text())
     click.echo("prompt.md:")
@@ -70,7 +70,7 @@ def create_agent(agent_id: str, provider: str, workdir: str) -> None:
 @click.argument("agent_id")
 def edit_agent(agent_id: str) -> None:
     agent = load_agent(agent_id)
-    path = AGENTS_ROOT / agent.id / AGENT_CONFIG_FILENAME
+    path = agent_config.AGENTS_ROOT / agent.id / AGENT_CONFIG_FILENAME
     original_config = path.read_text()
     editor = os.environ.get("EDITOR", "vi")
     subprocess.run([editor, str(path)], check=True)
@@ -91,7 +91,7 @@ def delete_agent(agent_id: str, confirm: bool) -> None:
     if status.active_terminal_id:
         raise click.ClickException(f"agent is running in terminal {status.active_terminal_id}")
 
-    target = AGENTS_ROOT / load_agent(agent_id).id
+    target = agent_config.AGENTS_ROOT / load_agent(agent_id).id
     import shutil
 
     shutil.rmtree(target)

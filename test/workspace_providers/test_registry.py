@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import ClassVar
 
 import pytest
 
+from cli_agent_orchestrator.agent import Agent, LinearConfig, write_agent
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
     get_linear_workspace_provider,
 )
-from cli_agent_orchestrator.agent import Agent, LinearConfig, write_agent
 from cli_agent_orchestrator.workspace_providers import (
     UnknownWorkspaceProviderError,
     WorkspaceProviderEvent,
@@ -109,6 +109,35 @@ def test_initialize_enabled_workspace_providers_loads_linear_provider(tmp_path, 
     )
     assert resolved.presence.app_user_id == "app-user-impl"
     assert resolved.agent.session_name == "implementation-partner"
+
+
+def test_initialize_enabled_workspace_providers_defers_linear_credential_preflight(
+    tmp_path, monkeypatch
+):
+    enabled = tmp_path / "workspace-providers.toml"
+    enabled.write_text('enabled = ["linear"]\n')
+    agents = _agents_root(tmp_path)
+    _write_agent(
+        agents,
+        "implementation_partner",
+        app_key="implementation_partner",
+        app_user_id="app-user-impl",
+        app_user_name="Implementation Partner",
+        access_token="expired-access-token",
+        token_expires_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        lambda presence: (_ for _ in ()).throw(AssertionError("credential preflight called")),
+    )
+
+    providers = initialize_enabled_workspace_providers(
+        enabled_config_path=enabled,
+        agents_config_path=agents,
+    )
+
+    assert len(providers) == 1
+    assert isinstance(providers[0], LinearWorkspaceProvider)
 
 
 def test_initialize_enabled_workspace_providers_registers_declared_provider_events(

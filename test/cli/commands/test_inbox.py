@@ -106,4 +106,3 @@ def test_inbox_http_error_includes_status_code():
     assert result.exit_code != 0
     assert "cao-server error" in result.output.lower()
     assert "404" in result.output
-

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Edit3, Eye, EyeOff, RotateCcw, Save } from 'lucide-react'
 import { api, AgentStatus } from '../../api'
+import { useProviderCatalog } from '../../hooks/useProviderCatalog'
 import { useProviderSchema } from '../../hooks/useProviderSchema'
 import {
   formatAgentTomlExcluding,
@@ -49,6 +50,14 @@ export function AgentConfigTab({
   const [revealedLinearFields, setRevealedLinearFields] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const isFirstRenderRef = useRef(true)
+  const visibleStructuredFields = editing ? structuredDraft : readStructuredFields(agent)
+  const selectedProviderSchema =
+    providerSchema.schemas?.find(schema => schema.name === visibleStructuredFields.cli_provider) ??
+    null
+  const providerCatalog = useProviderCatalog(
+    selectedProviderSchema?.name ?? null,
+    providerSchema.status === 'ready' && selectedProviderSchema?.model_catalog_available === true,
+  )
 
   useEffect(() => {
     if (isFirstRenderRef.current) {
@@ -167,8 +176,10 @@ export function AgentConfigTab({
 
       <AgentStructuredForm
         agentId={agent.agent_id}
-        values={editing ? structuredDraft : readStructuredFields(agent)}
+        values={visibleStructuredFields}
         schemas={schemas}
+        catalog={providerCatalog.catalog}
+        catalogStatus={providerCatalog.status}
         editing={editing}
         saveError={saveError}
         onChange={setStructuredDraft}

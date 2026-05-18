@@ -22,6 +22,7 @@ and output format to reliably detect status changes.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Protocol
 
@@ -135,6 +136,73 @@ class ProviderRuntimePreparation:
     agent_scoped: bool = False
 
 
+@dataclass(frozen=True)
+class ProviderModel:
+    """One model returned by a provider's runtime discovery.
+
+    Carries the metadata the dashboard needs to render a model picker
+    that's aware of per-model effort levels. Fields beyond id and
+    reasoning_efforts are best-effort: providers populate them when
+    the upstream API exposes them and leave them None otherwise.
+    """
+
+    id: str
+    display_name: str
+    reasoning_efforts: tuple[str, ...]
+    thinking_supported: bool
+    max_input_tokens: int | None
+    max_output_tokens: int | None
+
+
+@dataclass(frozen=True)
+class ProviderCatalog:
+    """The set of models a provider can currently launch.
+
+    Returned by a provider's opt-in ``ModelDiscoveryCapability``. ``source``
+    is a free-form traceability tag (e.g. ``"anthropic-api"``) so logs and
+    tests can confirm where the data came from.
+    """
+
+    provider_type: str
+    models: tuple[ProviderModel, ...]
+    discovered_at: datetime
+    source: str
+
+
+class CatalogDiscoveryError(Exception):
+    """Raised when a provider cannot produce its model catalog."""
+
+
+class ModelDiscoveryCapability(Protocol):
+    """Optional provider capability for dynamic model catalog discovery.
+
+    Providers expose this capability only when their underlying CLI lets
+    CAO discover the currently-available models at runtime (typically by
+    calling the CLI's upstream API with the same credentials the CLI
+    uses). Providers that don't offer model selection at all, or that
+    have no way to enumerate their models, simply do not expose this
+    capability and ``ProviderManager`` reports ``None`` for them.
+
+    Per-model reasoning effort levels are part of the returned catalog.
+    A provider that supports model selection but not effort levels
+    reports an empty ``reasoning_efforts`` tuple per model.
+    """
+
+    def discover_catalog(self) -> "ProviderCatalog":
+        """Return the current ``ProviderCatalog`` by querying upstream.
+
+        Implementations read whatever credentials the CLI uses, call the
+        upstream API, filter to models the CLI actually supports, and
+        return a fresh catalog. They must not cache; callers that need
+        caching own that policy outside the provider capability.
+
+        Raises:
+            CatalogDiscoveryError: discovery cannot complete (not logged
+                in, network failure, routed auth unsupported, etc.).
+        """
+        ...
+
+
 class BaseProvider(ABC):
     """Abstract base class for CLI tool providers.
 
@@ -210,27 +278,6 @@ class BaseProvider(ABC):
                 "provider_runtime_config": get_provider_runtime_config(cls.provider_type),
             },
         )
-
-    @classmethod
-    def supported_reasoning_efforts(cls) -> tuple[str, ...] | None:
-        """Return the ``reasoning_effort`` values this provider accepts.
-
-        Returns ``None`` when ``reasoning_effort`` is not a meaningful concept
-        for this provider. Override on subclasses that surface a reasoning
-        effort flag to their underlying CLI.
-        """
-        return None
-
-    @classmethod
-    def suggested_models(cls) -> tuple[str, ...] | None:
-        """Return suggested model names for the ``model`` field.
-
-        Returns ``None`` when the provider has no curated suggestions; the UI
-        leaves ``model`` as a free-text input in that case. These are
-        suggestions only — they are not enforced at save time, since model
-        namespaces shift faster than CAO releases.
-        """
-        return None
 
     @abstractmethod
     def initialize(self) -> bool:

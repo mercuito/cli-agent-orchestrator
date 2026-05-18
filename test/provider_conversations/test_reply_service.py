@@ -16,7 +16,11 @@ from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
 )
-from cli_agent_orchestrator.provider_conversations.persistence import list_messages, upsert_message, upsert_thread
+from cli_agent_orchestrator.provider_conversations.persistence import (
+    list_messages,
+    upsert_message,
+    upsert_thread,
+)
 from cli_agent_orchestrator.provider_conversations.reply_service import (
     ProviderConversationReplyDeliveryError,
     ProviderConversationReplyNotFoundError,
@@ -172,7 +176,9 @@ def test_unsupported_provider_records_visible_failed_state(test_session):
         receiver_id="terminal-a",
     ).delivery.notification.id
 
-    with pytest.raises(ProviderConversationReplyDeliveryError, match="not supported for inbox replies"):
+    with pytest.raises(
+        ProviderConversationReplyDeliveryError, match="not supported for inbox replies"
+    ):
         reply_to_inbox_message(notification_id, "No supported provider")
 
     failed = list_messages(thread.id)[-1]
@@ -183,7 +189,9 @@ def test_unsupported_provider_records_visible_failed_state(test_session):
 
 
 def test_missing_notification_id_fails_clearly(test_session):
-    with pytest.raises(ProviderConversationReplyNotFoundError, match="inbox notification 999 not found"):
+    with pytest.raises(
+        ProviderConversationReplyNotFoundError, match="inbox notification 999 not found"
+    ):
         reply_to_inbox_message(999, "No inbox")
 
 

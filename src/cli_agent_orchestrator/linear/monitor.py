@@ -508,9 +508,7 @@ def _retry_pending_delivery(
 ) -> int:
     try:
         agent_manager = AgentManager(configured_agents=provider.agent_registry)
-        agent = agent_manager.register_agent(
-            provider.resolve_agent_for_presence(presence)
-        )
+        agent = agent_manager.register_agent(provider.resolve_agent_for_presence(presence))
         handle = AgentRuntimeHandle(agent, agent_manager=agent_manager)
         if db_module.get_oldest_pending_inbox_delivery(handle.inbox_receiver_id) is None:
             return 0

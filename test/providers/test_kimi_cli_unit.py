@@ -1038,18 +1038,3 @@ class TestKimiCliProviderPatterns:
         """Test tail lines constant is reasonable for Kimi's TUI layout."""
         assert IDLE_PROMPT_TAIL_LINES >= 40  # Must cover tall terminals (46+ rows)
         assert IDLE_PROMPT_TAIL_LINES <= 100  # Not unreasonably large
-
-
-def test_supported_reasoning_efforts_is_none():
-    """Kimi CLI's launch path does not consume ``reasoning_effort``.
-
-    ``KimiCliProvider._build_kimi_command`` never reads ``agent.reasoning_effort``;
-    the Kimi CLI exposes no reasoning_effort flag. Inherits ``None`` from
-    ``BaseProvider``.
-    """
-    assert KimiCliProvider.supported_reasoning_efforts() is None
-
-
-def test_suggested_models_is_none():
-    """Kimi CLI does not curate model suggestions — model is not consumed."""
-    assert KimiCliProvider.suggested_models() is None

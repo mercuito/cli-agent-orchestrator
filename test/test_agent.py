@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
@@ -30,9 +32,6 @@ def _agent(**overrides: object) -> Agent:
     values = {
         "id": "implementation_partner",
         "display_name": "Implementation Partner",
-        # ``claude_code`` is the only provider that declares
-        # ``supported_reasoning_efforts``; the fixture's ``reasoning_effort``
-        # below requires a provider that accepts it.
         "cli_provider": "claude_code",
         "workdir": "/repo",
         "session_name": "implementation-partner",
@@ -74,6 +73,29 @@ def _agent(**overrides: object) -> Agent:
     return Agent(**values)
 
 
+def test_agents_root_honors_cao_agents_dir_env_at_import(tmp_path):
+    """CAO_AGENTS_DIR configures durable agent storage at process startup."""
+    agents_root = tmp_path / "env-agents"
+    env = {
+        **os.environ,
+        "CAO_AGENTS_DIR": str(agents_root),
+    }
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from cli_agent_orchestrator.agent import AGENTS_ROOT; print(AGENTS_ROOT)",
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+
+    assert result.stdout.strip() == str(agents_root)
+
+
 def test_agent_model_rejects_invalid_workspace_context_combination():
     with pytest.raises(AgentConfigError, match="resolver_id is required"):
         _agent(workspace_context=AgentWorkspaceContextConfig(enabled=True))
@@ -84,25 +106,11 @@ def test_agent_model_rejects_unsupported_cli_provider():
         _agent(cli_provider="bogus", reasoning_effort=None)
 
 
-def test_agent_model_rejects_reasoning_effort_on_non_supporting_provider():
-    """A provider that returns None for ``supported_reasoning_efforts``
-    cannot have ``reasoning_effort`` set on the agent.
+def test_agent_model_accepts_reasoning_effort_without_static_provider_declarations():
+    """Model and effort options are catalog-discovered, not Agent-level statics."""
+    agent = _agent(cli_provider="q_cli", model=None, reasoning_effort="ultra")
 
-    ``q_cli`` is used as the example because its launch path does not
-    consume ``reasoning_effort`` (per the provider capability audit),
-    so it correctly declares no supported set.
-    """
-    with pytest.raises(
-        AgentConfigError,
-        match="does not support reasoning_effort",
-    ):
-        _agent(cli_provider="q_cli", model=None, reasoning_effort="low")
-
-
-def test_agent_model_rejects_reasoning_effort_outside_supported_set():
-    """``reasoning_effort`` must be in the provider's declared supported set."""
-    with pytest.raises(AgentConfigError, match="only supports"):
-        _agent(reasoning_effort="ultra")
+    assert agent.reasoning_effort == "ultra"
 
 
 def test_agent_model_rejects_invalid_linear_tool_access_at_construction():

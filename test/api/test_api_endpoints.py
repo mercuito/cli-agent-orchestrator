@@ -642,6 +642,45 @@ class TestLifespan:
             mock_observer.stop.assert_called_once()
             mock_observer.join.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_lifespan_keeps_api_running_when_workspace_provider_startup_fails(self):
+        """lifespan disables workspace providers instead of taking down the API."""
+        from cli_agent_orchestrator.api.main import lifespan
+        from cli_agent_orchestrator.workspace_providers import WorkspaceProviderConfigError
+
+        async def stub_background_loop():
+            await asyncio.Event().wait()
+
+        mock_observer = MagicMock()
+
+        with (
+            patch("cli_agent_orchestrator.api.main.setup_logging"),
+            patch("cli_agent_orchestrator.api.main.init_db"),
+            patch("cli_agent_orchestrator.api.main.cleanup_old_data"),
+            patch(
+                "cli_agent_orchestrator.api.main.initialize_enabled_workspace_providers",
+                side_effect=WorkspaceProviderConfigError("bad Linear credentials"),
+            ),
+            patch(
+                "cli_agent_orchestrator.api.main.PollingObserver",
+                return_value=mock_observer,
+            ),
+            patch(
+                "cli_agent_orchestrator.api.main.flow_daemon",
+                side_effect=stub_background_loop,
+            ),
+            patch(
+                "cli_agent_orchestrator.api.main.baton_watchdog_service.baton_watchdog_loop",
+                side_effect=stub_background_loop,
+            ),
+        ):
+            async with lifespan(app):
+                assert app.state.workspace_providers == []
+                mock_observer.start.assert_called_once()
+
+            mock_observer.stop.assert_called_once()
+            mock_observer.join.assert_called_once()
+
 
 # ── main() entry point ───────────────────────────────────────────────
 
@@ -680,16 +719,20 @@ class TestMainEntryPoint:
 
             mock_uvicorn.assert_called_once_with(app, host="0.0.0.0", port=9999)
 
-    def test_main_with_agents_dir(self):
-        """main() sets KIRO_AGENTS_DIR when --agents-dir is provided."""
+    def test_main_with_agents_dir_configures_cao_agent_root(self, monkeypatch, tmp_path):
+        """main() routes durable CAO agent storage to --agents-dir."""
+        from cli_agent_orchestrator import agent as agent_module
+
+        agents_root = tmp_path / "agents"
+        monkeypatch.setattr(agent_module, "AGENTS_ROOT", agent_module.CAO_HOME_DIR / "agents")
         with (
             patch("argparse.ArgumentParser.parse_args") as mock_args,
             patch("uvicorn.run"),
-            patch("cli_agent_orchestrator.constants.KIRO_AGENTS_DIR") as _,
         ):
-            mock_args.return_value = MagicMock(agents_dir="/custom/agents", host=None, port=None)
+            mock_args.return_value = MagicMock(agents_dir=str(agents_root), host=None, port=None)
 
             from cli_agent_orchestrator.api.main import main
 
             main()
-            # No assertion needed beyond no exception — the code path is covered
+
+        assert agent_module.AGENTS_ROOT == agents_root

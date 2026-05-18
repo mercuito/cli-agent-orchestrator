@@ -11,17 +11,17 @@ def test_create_terminal_codex_sets_codex_home_env(
     implementation_partner_agent_factory,
     runtime_inbox_db_session,
 ):
+    from cli_agent_orchestrator.clients import database as db_module
     from cli_agent_orchestrator.models.terminal import TerminalStatus
     from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
-    from cli_agent_orchestrator.clients import database as db_module
     from cli_agent_orchestrator.services import terminal_service
 
     codex_home = tmp_path / "codex-home" / ".codex"
     codex_home.mkdir(parents=True)
     workspace_context_id = db_module.default_workspace_context_id("implementation_partner")
-    agent = implementation_partner_agent_factory(
-        workdir=str(tmp_path)
-    ).for_workspace_context(workspace_context_id)
+    agent = implementation_partner_agent_factory(workdir=str(tmp_path)).for_workspace_context(
+        workspace_context_id
+    )
 
     provider = MagicMock()
     provider.initialize.return_value = True
@@ -219,6 +219,7 @@ def test_create_terminal_agent_launch_context_uses_resolved_launch_values(
     runtime_inbox_db_session,
 ):
     from test.support.agent_factory import Agent
+
     from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
     from cli_agent_orchestrator.services import terminal_service
 
@@ -322,9 +323,7 @@ def test_create_terminal_context_launch_context_uses_context_provider_data_dir(
     ):
         mock_tmux.session_exists.return_value = False
 
-        terminal_service.create_terminal_for_agent(
-            agent.for_workspace_context("wctx_123")
-        )
+        terminal_service.create_terminal_for_agent(agent.for_workspace_context("wctx_123"))
 
     launch_context = prepare_runtime.call_args.kwargs["launch_context"]
     expected_provider_dir = (
@@ -346,12 +345,12 @@ def test_create_terminal_deserializes_provider_runtime_and_passes_resume_args(
     implementation_partner_agent_factory,
     runtime_inbox_db_session,
 ):
+    from cli_agent_orchestrator.clients import database as db_module
     from cli_agent_orchestrator.providers.base import (
         ProviderRuntimePreparation,
         ProviderRuntimeState,
     )
     from cli_agent_orchestrator.services import terminal_service
-    from cli_agent_orchestrator.clients import database as db_module
 
     monkeypatch.setattr(
         "cli_agent_orchestrator.agent.AGENTS_ROOT",

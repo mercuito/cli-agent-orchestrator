@@ -268,8 +268,8 @@ def test_list_provider_schemas_resolves_install_status_per_binary(monkeypatch):
     assert schemas[ProviderType.CODEX.value].installed is False
 
 
-def test_list_provider_schemas_carries_provider_capability_declarations(monkeypatch):
-    """Capability fields surface what each provider class declares."""
+def test_list_provider_schemas_carries_catalog_availability(monkeypatch):
+    """Catalog availability follows the provider's opt-in discovery capability."""
     monkeypatch.setattr(
         "cli_agent_orchestrator.providers.manager.shutil.which",
         lambda _binary: None,
@@ -279,15 +279,9 @@ def test_list_provider_schemas_carries_provider_capability_declarations(monkeypa
     schemas = {schema.name: schema for schema in manager.list_provider_schemas()}
 
     claude_schema = schemas[ProviderType.CLAUDE_CODE.value]
-    assert (
-        claude_schema.supported_reasoning_efforts
-        == ClaudeCodeProvider.supported_reasoning_efforts()
-    )
-    assert claude_schema.suggested_models == ClaudeCodeProvider.suggested_models()
+    assert claude_schema.model_catalog_available is True
     assert claude_schema.binary == ClaudeCodeProvider.binary
 
     codex_schema = schemas[ProviderType.CODEX.value]
-    assert (
-        codex_schema.supported_reasoning_efforts == CodexProvider.supported_reasoning_efforts()
-    )
-    assert codex_schema.suggested_models is None
+    assert codex_schema.model_catalog_available is True
+    assert codex_schema.binary == CodexProvider.binary

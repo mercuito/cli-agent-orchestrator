@@ -77,9 +77,7 @@ def register_provider_mediated_mcp_tools_for_terminal(
     """
     try:
         agent_manager = default_agent_manager()
-        agent_registry = AgentRegistry(
-            {agent.id: agent for agent in agent_manager.list_agents()}
-        )
+        agent_registry = AgentRegistry({agent.id: agent for agent in agent_manager.list_agents()})
         policies = load_enabled_provider_tool_access_policies(agent_registry=agent_registry)
     except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
         logger.exception("Provider-mediated MCP tool configuration is invalid")

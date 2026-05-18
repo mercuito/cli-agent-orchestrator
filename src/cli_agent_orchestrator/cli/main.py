@@ -2,8 +2,8 @@
 
 import click
 
-from cli_agent_orchestrator.cli.commands.baton import baton
 from cli_agent_orchestrator.cli.commands.agent import agent_command
+from cli_agent_orchestrator.cli.commands.baton import baton
 from cli_agent_orchestrator.cli.commands.diagnostics import diagnostics
 from cli_agent_orchestrator.cli.commands.env import env
 from cli_agent_orchestrator.cli.commands.flow import flow

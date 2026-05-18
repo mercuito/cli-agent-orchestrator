@@ -90,7 +90,11 @@ def test_terminals_output_mode_last_json():
         result = runner.invoke(terminals, ["output", "abcd1234", "--mode", "last", "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.output) == {"terminal_id": "abcd1234", "mode": "last", "output": "DONE"}
+    assert json.loads(result.output) == {
+        "terminal_id": "abcd1234",
+        "mode": "last",
+        "output": "DONE",
+    }
 
 
 def test_terminals_exit_human_output():
@@ -196,4 +200,3 @@ def test_terminals_output_invalid_mode_rejected_by_click_without_http_call():
 
     assert result.exit_code != 0
     assert mock_get.call_count == 0
-

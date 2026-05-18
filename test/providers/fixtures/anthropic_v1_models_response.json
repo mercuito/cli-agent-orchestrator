@@ -1,0 +1,601 @@
+{
+    "data": [
+        {
+            "type": "model",
+            "id": "claude-capable-alpha",
+            "display_name": "Claude Capable Alpha",
+            "created_at": "2026-04-14T00:00:00Z",
+            "max_input_tokens": 1000000,
+            "max_tokens": 128000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": true
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": true
+                    }
+                },
+                "effort": {
+                    "supported": true,
+                    "low": {
+                        "supported": true
+                    },
+                    "medium": {
+                        "supported": true
+                    },
+                    "high": {
+                        "supported": true
+                    },
+                    "max": {
+                        "supported": true
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": true
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": false
+                        },
+                        "adaptive": {
+                            "supported": true
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-capable-beta",
+            "display_name": "Claude Capable Beta",
+            "created_at": "2026-02-17T00:00:00Z",
+            "max_input_tokens": 1000000,
+            "max_tokens": 128000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": true
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": true
+                    }
+                },
+                "effort": {
+                    "supported": true,
+                    "low": {
+                        "supported": true
+                    },
+                    "medium": {
+                        "supported": true
+                    },
+                    "high": {
+                        "supported": true
+                    },
+                    "max": {
+                        "supported": true
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": true
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": true
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-capable-gamma",
+            "display_name": "Claude Capable Gamma",
+            "created_at": "2026-02-04T00:00:00Z",
+            "max_input_tokens": 1000000,
+            "max_tokens": 128000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": true
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": true
+                    }
+                },
+                "effort": {
+                    "supported": true,
+                    "low": {
+                        "supported": true
+                    },
+                    "medium": {
+                        "supported": true
+                    },
+                    "high": {
+                        "supported": true
+                    },
+                    "max": {
+                        "supported": true
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": true
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": true
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-empty-effort-alpha",
+            "display_name": "Claude Empty Effort Alpha",
+            "created_at": "2025-11-24T00:00:00Z",
+            "max_input_tokens": 200000,
+            "max_tokens": 64000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": true
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": false
+                    }
+                },
+                "effort": {
+                    "supported": true,
+                    "low": {
+                        "supported": true
+                    },
+                    "medium": {
+                        "supported": true
+                    },
+                    "high": {
+                        "supported": true
+                    },
+                    "max": {
+                        "supported": false
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": true
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": false
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-empty-effort-beta",
+            "display_name": "Claude Empty Effort Beta",
+            "created_at": "2025-10-15T00:00:00Z",
+            "max_input_tokens": 200000,
+            "max_tokens": 64000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": false
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": false
+                    }
+                },
+                "effort": {
+                    "supported": false,
+                    "low": {
+                        "supported": false
+                    },
+                    "medium": {
+                        "supported": false
+                    },
+                    "high": {
+                        "supported": false
+                    },
+                    "max": {
+                        "supported": false
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": true
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": false
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-empty-effort-gamma",
+            "display_name": "Claude Empty Effort Gamma",
+            "created_at": "2025-09-29T00:00:00Z",
+            "max_input_tokens": 1000000,
+            "max_tokens": 64000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": true
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": false
+                    }
+                },
+                "effort": {
+                    "supported": false,
+                    "low": {
+                        "supported": false
+                    },
+                    "medium": {
+                        "supported": false
+                    },
+                    "high": {
+                        "supported": false
+                    },
+                    "max": {
+                        "supported": false
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": true
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": false
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-empty-effort-delta",
+            "display_name": "Claude Empty Effort Delta",
+            "created_at": "2025-08-05T00:00:00Z",
+            "max_input_tokens": 200000,
+            "max_tokens": 32000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": false
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": false
+                    }
+                },
+                "effort": {
+                    "supported": false,
+                    "low": {
+                        "supported": false
+                    },
+                    "medium": {
+                        "supported": false
+                    },
+                    "high": {
+                        "supported": false
+                    },
+                    "max": {
+                        "supported": false
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": true
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": false
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-empty-effort-epsilon",
+            "display_name": "Claude Empty Effort Epsilon",
+            "created_at": "2025-05-22T00:00:00Z",
+            "max_input_tokens": 200000,
+            "max_tokens": 32000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": false
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": false
+                    }
+                },
+                "effort": {
+                    "supported": false,
+                    "low": {
+                        "supported": false
+                    },
+                    "medium": {
+                        "supported": false
+                    },
+                    "high": {
+                        "supported": false
+                    },
+                    "max": {
+                        "supported": false
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": false
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": false
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "model",
+            "id": "claude-empty-effort-zeta",
+            "display_name": "Claude Empty Effort Zeta",
+            "created_at": "2025-05-22T00:00:00Z",
+            "max_input_tokens": 1000000,
+            "max_tokens": 64000,
+            "capabilities": {
+                "batch": {
+                    "supported": true
+                },
+                "citations": {
+                    "supported": true
+                },
+                "code_execution": {
+                    "supported": false
+                },
+                "context_management": {
+                    "supported": true,
+                    "clear_tool_uses_20250919": {
+                        "supported": true
+                    },
+                    "clear_thinking_20251015": {
+                        "supported": true
+                    },
+                    "compact_20260112": {
+                        "supported": false
+                    }
+                },
+                "effort": {
+                    "supported": false,
+                    "low": {
+                        "supported": false
+                    },
+                    "medium": {
+                        "supported": false
+                    },
+                    "high": {
+                        "supported": false
+                    },
+                    "max": {
+                        "supported": false
+                    }
+                },
+                "image_input": {
+                    "supported": true
+                },
+                "pdf_input": {
+                    "supported": true
+                },
+                "structured_outputs": {
+                    "supported": false
+                },
+                "thinking": {
+                    "supported": true,
+                    "types": {
+                        "enabled": {
+                            "supported": true
+                        },
+                        "adaptive": {
+                            "supported": false
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "has_more": false,
+    "first_id": "claude-capable-alpha",
+    "last_id": "claude-empty-effort-zeta"
+}

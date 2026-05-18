@@ -306,8 +306,7 @@ def event_involves_agent(
 
     normalized_agent_id = _normalize_token(agent_id, "agent_id")
     return any(
-        participant.agent_id == normalized_agent_id
-        for participant in agent_participants_for(event)
+        participant.agent_id == normalized_agent_id for participant in agent_participants_for(event)
     )
 
 

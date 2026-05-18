@@ -76,9 +76,7 @@ class TestAgentRuntimeTerminalEndpoint:
         from cli_agent_orchestrator.api import main
 
         agent_manager = MagicMock()
-        agent_manager.status_for_agent.return_value = SimpleNamespace(
-            active_terminal_id="abcd1234"
-        )
+        agent_manager.status_for_agent.return_value = SimpleNamespace(active_terminal_id="abcd1234")
 
         monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
         monkeypatch.setattr(
@@ -115,9 +113,7 @@ class TestAgentRuntimeTerminalEndpoint:
         from cli_agent_orchestrator.api import main
 
         agent_manager = MagicMock()
-        agent_manager.status_for_agent.return_value = SimpleNamespace(
-            active_terminal_id=None
-        )
+        agent_manager.status_for_agent.return_value = SimpleNamespace(active_terminal_id=None)
 
         monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
         monkeypatch.setattr(
@@ -138,9 +134,7 @@ class TestAgentRuntimeTerminalEndpoint:
             lambda token, agent_id: token == "agent-token",
         )
         agent_manager = MagicMock()
-        agent_manager.status_for_agent.side_effect = AgentConfigError(
-            "Unknown CAO agent"
-        )
+        agent_manager.status_for_agent.side_effect = AgentConfigError("Unknown CAO agent")
         monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
 
         response = client.get("/agents/runtime/missing/terminal?agent_token=agent-token")
@@ -166,9 +160,7 @@ class TestAgentRuntimeTerminalEndpoint:
         from cli_agent_orchestrator.api import main
 
         agent_manager = MagicMock()
-        agent_manager.status_for_agent.return_value = SimpleNamespace(
-            active_terminal_id="abcd1234"
-        )
+        agent_manager.status_for_agent.return_value = SimpleNamespace(active_terminal_id="abcd1234")
 
         monkeypatch.setattr(main, "default_agent_manager", lambda: agent_manager)
         monkeypatch.setattr(

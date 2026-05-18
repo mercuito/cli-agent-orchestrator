@@ -140,6 +140,7 @@ describe('API wrapper', () => {
           session_name: 'aria-session',
         },
         active: false,
+        agent_dashboard_token: 'aria-dashboard-token',
         active_terminal_id: null,
         active_workspace_context_id: null,
         last_active_at: null,
@@ -162,6 +163,7 @@ describe('API wrapper', () => {
       session_name: 'new-agent',
       config: {},
       active: false,
+      agent_dashboard_token: 'new-agent-dashboard-token',
       active_terminal_id: null,
       active_workspace_context_id: null,
       last_active_at: null,
@@ -466,15 +468,13 @@ describe('API wrapper', () => {
         name: 'claude_code',
         binary: 'claude',
         installed: true,
-        supported_reasoning_efforts: ['low', 'medium', 'high'],
-        suggested_models: ['claude-opus-4-7'],
+        model_catalog_available: true,
       },
       {
         name: 'codex',
         binary: 'codex',
         installed: false,
-        supported_reasoning_efforts: null,
-        suggested_models: null,
+        model_catalog_available: true,
       },
     ]
     mockResponse(schemas)
@@ -483,5 +483,23 @@ describe('API wrapper', () => {
 
     expect(result).toEqual(schemas)
     expect(mockFetch).toHaveBeenCalledWith('/providers', expect.any(Object))
+  })
+
+  it('getProviderCatalog fetches the encoded provider catalog endpoint', async () => {
+    const catalog = {
+      provider_type: 'claude_code',
+      models: [],
+      discovered_at: '2026-05-17T10:00:00Z',
+      source: 'anthropic-api',
+    }
+    mockResponse(catalog)
+
+    const result = await api.getProviderCatalog('claude_code')
+
+    expect(result).toEqual(catalog)
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/providers/claude_code/catalog',
+      expect.any(Object),
+    )
   })
 })

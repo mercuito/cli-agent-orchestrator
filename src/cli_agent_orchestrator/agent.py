@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -18,7 +19,9 @@ except ModuleNotFoundError:  # pragma: no cover
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.models.provider import ProviderType
 
-AGENTS_ROOT = CAO_HOME_DIR / "agents"
+CAO_AGENTS_DIR_ENV = "CAO_AGENTS_DIR"
+DEFAULT_AGENTS_ROOT = CAO_HOME_DIR / "agents"
+AGENTS_ROOT = Path(os.environ.get(CAO_AGENTS_DIR_ENV, str(DEFAULT_AGENTS_ROOT))).expanduser()
 AGENT_CONFIG_FILENAME = "agent.toml"
 AGENT_PROMPT_FILENAME = "prompt.md"
 AGENT_CONFIG_MODE = 0o600
@@ -77,6 +80,13 @@ class AgentValidationError(ValueError):
     def __init__(self, errors: list[str]) -> None:
         self.errors = tuple(errors)
         super().__init__("\n".join(errors))
+
+
+def configure_agents_root(agents_root: str | Path) -> Path:
+    """Configure the process-wide durable CAO agent root."""
+    global AGENTS_ROOT
+    AGENTS_ROOT = Path(agents_root).expanduser()
+    return AGENTS_ROOT
 
 
 @dataclass(frozen=True)
@@ -215,28 +225,6 @@ class Agent:
             _required_str(self.model, f"agents.{self.id}.model")
         if self.reasoning_effort is not None:
             _required_str(self.reasoning_effort, f"agents.{self.id}.reasoning_effort")
-            # Validate against the provider's declared supported_reasoning_efforts
-            # so direct dataclass construction (CLI, tests, internal callers)
-            # gets the same protection as the HTTP write path. Local import
-            # avoids a module-import cycle: providers import ``Agent`` at top
-            # level, and the manager only needs to be resolved at validation
-            # time.
-            from cli_agent_orchestrator.providers.manager import provider_manager
-
-            supported = provider_manager.supported_reasoning_efforts(self.cli_provider)
-            if supported is None:
-                raise AgentConfigError(
-                    f"agents.{self.id}.reasoning_effort is set to "
-                    f"{self.reasoning_effort!r} but provider "
-                    f"{self.cli_provider!r} does not support reasoning_effort"
-                )
-            if self.reasoning_effort not in supported:
-                raise AgentConfigError(
-                    f"agents.{self.id}.reasoning_effort is "
-                    f"{self.reasoning_effort!r} but provider "
-                    f"{self.cli_provider!r} only supports "
-                    f"{list(supported)!r}"
-                )
         object.__setattr__(
             self,
             "mcp_servers",
@@ -782,6 +770,7 @@ def _linear_tool_access_errors(agent: Agent, config_path: Path) -> list[str]:
 
 def _validate_linear_uniqueness(root: Path, errors: list[str]) -> None:
     seen: dict[tuple[str, str], str] = {}
+    agents: Iterable[Agent]
     try:
         agents = load_all_agents(agents_root=root).all().values()
     except AgentConfigError:
@@ -857,7 +846,7 @@ def _agent_to_toml(agent: Agent) -> str:
     if agent.codex_config:
         data["codex_config"] = dict(agent.codex_config)
     if agent.linear is not None:
-        linear = {
+        linear: dict[str, Any] = {
             key: value
             for key, value in {
                 "app_key": agent.linear.app_key,

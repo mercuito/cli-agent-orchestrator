@@ -11,6 +11,7 @@ from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.providers.base import (
     AgentRuntimeLaunchContext,
     BaseProvider,
+    ModelDiscoveryCapability,
     ProviderRuntimeDescriptor,
     ProviderRuntimePreparation,
     ProviderRuntimeStateCapability,
@@ -30,18 +31,17 @@ logger = logging.getLogger(__name__)
 class ProviderSchema:
     """Capability schema for one registered provider.
 
-    Composes the authoritative declarations the dashboard form needs:
+    Composes the authoritative provider metadata the dashboard form needs:
     the provider type string (from ``ProviderType``), the binary name
     (from the provider class), the runtime install status (resolved via
-    ``shutil.which``), and the provider's declared
-    ``supported_reasoning_efforts`` / ``suggested_models`` capability sets.
+    ``shutil.which``), and whether the provider exposes a runtime
+    model-catalog capability.
     """
 
     name: str
     binary: str
     installed: bool
-    supported_reasoning_efforts: tuple[str, ...] | None
-    suggested_models: tuple[str, ...] | None
+    model_catalog_available: bool
 
 
 class ProviderManager:
@@ -68,6 +68,10 @@ class ProviderManager:
             return KimiCliProvider
         raise ValueError(f"Unknown provider type: {provider_type}")
 
+    def provider_class(self, provider_type: str) -> Type[BaseProvider]:
+        """Return the registered provider class for a provider type string."""
+        return self._provider_class(provider_type)
+
     def list_provider_schemas(self) -> list[ProviderSchema]:
         """Return the capability schema for every registered provider.
 
@@ -89,23 +93,24 @@ class ProviderManager:
                     name=provider_type.value,
                     binary=binary,
                     installed=shutil.which(binary) is not None,
-                    supported_reasoning_efforts=provider_cls.supported_reasoning_efforts(),
-                    suggested_models=provider_cls.suggested_models(),
+                    model_catalog_available=(
+                        getattr(provider_cls, "model_discovery_capability", None) is not None
+                    ),
                 )
             )
         return schemas
 
-    def supported_reasoning_efforts(
+    def model_discovery_capability(
         self,
         provider_type: str,
-    ) -> tuple[str, ...] | None:
-        """Return the ``reasoning_effort`` values a provider class accepts.
-
-        Public wrapper over the provider class's declaration so consumers
-        like ``Agent.__post_init__`` can validate without reaching past the
-        manager API into a private provider lookup.
-        """
-        return self._provider_class(provider_type).supported_reasoning_efforts()
+    ) -> Optional[ModelDiscoveryCapability]:
+        """Return a provider's optional model catalog capability, if supported."""
+        provider_cls = self._provider_class(provider_type)
+        capability_factory = getattr(provider_cls, "model_discovery_capability", None)
+        if capability_factory is None:
+            return None
+        capability = capability_factory()
+        return cast(ModelDiscoveryCapability, capability)
 
     def provider_supports_resume(self, provider_type: str) -> bool:
         """Return whether a provider supports agent runtime context preservation."""

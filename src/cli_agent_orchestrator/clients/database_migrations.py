@@ -327,14 +327,12 @@ def _migrate_ensure_workspace_context_tables() -> None:
                 return
             if old_agent_column not in columns:
                 return
-            offenders = conn.execute(
-                f"""
+            offenders = conn.execute(f"""
                 SELECT id
                 FROM context_workspaces
                 WHERE {old_agent_column} IS NULL
                    OR TRIM({old_agent_column}) = ''
-                """
-            ).fetchall()
+                """).fetchall()
             if offenders:
                 ids = ", ".join(str(row[0]) for row in offenders)
                 raise RuntimeError(
@@ -900,14 +898,12 @@ def _migrate_add_terminal_agent_id() -> None:
             if "agent_id" not in columns and old_agent_column not in columns:
                 return
             source_agent_column = "agent_id" if "agent_id" in columns else old_agent_column
-            offenders = conn.execute(
-                f"""
+            offenders = conn.execute(f"""
                 SELECT id
                 FROM terminals
                 WHERE {source_agent_column} IS NULL
                    OR TRIM({source_agent_column}) = ''
-                """
-            ).fetchall()
+                """).fetchall()
             if offenders:
                 ids = ", ".join(str(row[0]) for row in offenders)
                 raise RuntimeError(
@@ -925,8 +921,7 @@ def _migrate_add_terminal_agent_id() -> None:
             ):
                 return
 
-            rows = conn.execute(
-                f"""
+            rows = conn.execute(f"""
                 SELECT
                     id,
                     tmux_session,
@@ -937,11 +932,9 @@ def _migrate_add_terminal_agent_id() -> None:
                     {allowed_tools_expr} AS allowed_tools,
                     last_active
                 FROM terminals
-                """
-            ).fetchall()
+                """).fetchall()
             conn.execute("ALTER TABLE terminals RENAME TO terminals_old")
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE terminals (
                     id TEXT PRIMARY KEY,
                     tmux_session TEXT NOT NULL,
@@ -952,8 +945,7 @@ def _migrate_add_terminal_agent_id() -> None:
                     allowed_tools TEXT,
                     last_active DATETIME
                 )
-                """
-            )
+                """)
             conn.executemany(
                 """
                 INSERT INTO terminals (
@@ -975,8 +967,7 @@ def _migrate_add_terminal_agent_id() -> None:
                         row[2],
                         row[3],
                         row[4],
-                        _nonempty_text(row[5])
-                        or _default_agent_workspace_context_id(str(row[4])),
+                        _nonempty_text(row[5]) or _default_agent_workspace_context_id(str(row[4])),
                         row[6],
                         row[7],
                     )

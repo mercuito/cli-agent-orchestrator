@@ -352,7 +352,9 @@ def upsert_message(
             )
         if row is None:
             if external_id is not None:
-                raise RuntimeError("provider conversation message insert did not create or find a row")
+                raise RuntimeError(
+                    "provider conversation message insert did not create or find a row"
+                )
             row = db_module.ProviderConversationMessageModel(
                 thread_id=thread_id,
                 provider=provider,

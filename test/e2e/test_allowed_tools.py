@@ -349,8 +349,7 @@ class TestKiroCliAllowedTools:
         )
 
     def test_restricted_supervisor_cannot_bash(self, require_kiro):
-        """Supervisor with durable runtime capability restrictions should not execute bash.
-        """
+        """Supervisor with durable runtime capability restrictions should not execute bash."""
         _run_restricted_tool_test(
             provider="kiro_cli",
             agent_id="code_supervisor",

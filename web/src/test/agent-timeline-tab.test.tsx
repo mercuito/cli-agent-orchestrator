@@ -322,6 +322,7 @@ describe('AgentTimelineTab', () => {
       <AgentDetailPanel
         agent={agentForPanel}
         onStartAgent={vi.fn()}
+        onOpenTerminal={vi.fn()}
         onStopAgent={vi.fn()}
         renderConfigTab={() => <div data-testid="config-tab" />}
         renderTimelineTab={a => <AgentTimelineTab agentId={a.agent_id} />}

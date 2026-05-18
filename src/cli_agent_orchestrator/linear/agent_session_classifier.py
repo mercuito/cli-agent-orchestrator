@@ -7,8 +7,8 @@ and inbox delivery paths see them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Optional
 
 from cli_agent_orchestrator.linear import app_client

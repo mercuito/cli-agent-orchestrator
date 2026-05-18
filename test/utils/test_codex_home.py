@@ -107,9 +107,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
                 return_value=True,
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -153,9 +151,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -185,9 +181,7 @@ class TestPrepareCodexHome:
 
         agent = _agent(prompt="Use your role skills.", skills=("discovery-intake",))
 
-        with patch(
-            "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-        ):
+        with patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent):
             first = build_codex_home_materialization(
                 "codex_developer",
                 str(tmp_path / "work"),
@@ -232,9 +226,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
                 return_value=True,
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -267,9 +259,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_agent_codex_home(
                 provider_data_dir,
@@ -296,12 +286,12 @@ class TestPrepareCodexHome:
 
         agent = _agent(
             mcp_servers={
-                    "example": {
-                        "command": "echo",
-                        "args": ["hello"],
-                        "enabled": True,
-                    }
-                },
+                "example": {
+                    "command": "echo",
+                    "args": ["hello"],
+                    "enabled": True,
+                }
+            },
             model="gpt-5.2",
             codex_config={"model_reasoning_effort": "high"},
         )
@@ -314,9 +304,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
                 return_value=True,
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -341,10 +329,8 @@ class TestPrepareCodexHome:
     def test_prepare_codex_home_applies_reasoning_effort_when_not_overridden(self, tmp_path: Path):
         """``agent.reasoning_effort`` flows into ``model_reasoning_effort``.
 
-        Restored after the codex provider regained its
-        ``supported_reasoning_efforts`` declaration. Pairs with
-        ``test_profile_codex_config_model_reasoning_effort_wins`` below,
-        which covers the explicit-codex_config-wins case.
+        Pairs with ``test_profile_codex_config_model_reasoning_effort_wins``
+        below, which covers the explicit-codex_config-wins case.
         """
         from cli_agent_orchestrator.utils.codex_home import prepare_codex_home
 
@@ -366,9 +352,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
                 return_value=True,
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -381,9 +365,7 @@ class TestPrepareCodexHome:
         data = _read_toml(codex_home / "config.toml")
         assert data["model_reasoning_effort"] == "high"
 
-    def test_prepare_codex_home_codex_config_wins_over_agent_reasoning_effort(
-        self, tmp_path: Path
-    ):
+    def test_prepare_codex_home_codex_config_wins_over_agent_reasoning_effort(self, tmp_path: Path):
         """Explicit ``codex_config.model_reasoning_effort`` overrides the agent-level value.
 
         The fallback only fires when the agent did not set
@@ -414,9 +396,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
                 return_value=True,
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -439,12 +419,12 @@ class TestPrepareCodexHome:
 
         agent = _agent(
             mcp_servers={
-                    "cao-mcp-server": {
-                        "command": "uvx",
-                        "args": ["--from", "somewhere", "cao-mcp-server"],
-                        "enabled": True,
-                    }
-                },
+                "cao-mcp-server": {
+                    "command": "uvx",
+                    "args": ["--from", "somewhere", "cao-mcp-server"],
+                    "enabled": True,
+                }
+            },
         )
 
         with (
@@ -455,9 +435,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
                 return_value=True,
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -488,9 +466,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home._codex_login_ok",
                 return_value=False,
             ),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             with pytest.raises(ValueError, match="login"):
                 prepare_codex_home(
@@ -543,9 +519,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -602,9 +576,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -638,9 +610,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",
@@ -670,9 +640,7 @@ class TestPrepareCodexHome:
                 "cli_agent_orchestrator.utils.codex_home.shutil.which", return_value="/bin/codex"
             ),
             patch("cli_agent_orchestrator.utils.codex_home._codex_login_ok", return_value=True),
-            patch(
-                "cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent
-            ),
+            patch("cli_agent_orchestrator.utils.codex_home.load_agent", return_value=agent),
         ):
             codex_home = prepare_codex_home(
                 terminal_id="abcd1234",

@@ -33,13 +33,13 @@ import shlex
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
+from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
-from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -243,7 +243,9 @@ class KimiCliProvider(BaseProvider):
                         if isinstance(server_config, dict):
                             mcp_config[server_name] = dict(server_config)
                         else:
-                            mcp_config[server_name] = server_config.model_dump(exclude_none=True)
+                            mcp_config[server_name] = cast(Any, server_config).model_dump(
+                                exclude_none=True
+                            )
 
                         # Forward CAO_TERMINAL_ID so MCP servers (e.g. cao-mcp-server)
                         # can identify the current terminal for handoff/assign operations.

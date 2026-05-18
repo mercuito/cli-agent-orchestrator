@@ -68,6 +68,7 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     },
   },
   active: false,
+  agent_dashboard_token: `${agentId}-dashboard-token`,
   active_terminal_id: null,
   active_workspace_context_id: null,
   last_active_at: null,
@@ -122,7 +123,22 @@ const updateAgent = vi.hoisted(() =>
 const createAgent = vi.hoisted(() =>
   vi.fn((body: any) => Promise.resolve(agentStatus(body.id, body.display_name || body.id))),
 )
-const startAgent = vi.hoisted(() => vi.fn())
+const startAgent = vi.hoisted(() =>
+  vi.fn(() =>
+    Promise.resolve({
+      terminal: {
+        id: 'term-started',
+        name: 'aria-started',
+        provider: 'codex',
+        session_name: 'aria-session',
+        agent_id: 'aria',
+        status: 'idle',
+        last_active: null,
+      },
+      terminal_token: 'started-token',
+    }),
+  ),
+)
 const stopAgent = vi.hoisted(() => vi.fn(() => Promise.resolve({ success: true })))
 const getAgentTimeline = vi.hoisted(() =>
   vi.fn(() =>
@@ -152,7 +168,36 @@ vi.mock('../components/TerminalView', () => ({
 
 vi.mock('../api', () => ({
   api: {
-    listProviders: vi.fn(() => Promise.resolve([{ name: 'codex', binary: 'codex', installed: true }])),
+    listProviders: vi.fn(() =>
+      Promise.resolve([
+        { name: 'codex', binary: 'codex', installed: true, model_catalog_available: true },
+      ]),
+    ),
+    getProviderCatalog: vi.fn(() =>
+      Promise.resolve({
+        provider_type: 'codex',
+        discovered_at: '2026-05-17T10:00:00Z',
+        source: 'codex-debug-models',
+        models: [
+          {
+            id: 'gpt-5.5',
+            display_name: 'GPT-5.5',
+            reasoning_efforts: ['low', 'medium', 'high', 'xhigh'],
+            thinking_supported: true,
+            max_input_tokens: null,
+            max_output_tokens: null,
+          },
+          {
+            id: 'gpt-5.4',
+            display_name: 'gpt-5.4',
+            reasoning_efforts: ['low', 'medium', 'high', 'xhigh'],
+            thinking_supported: true,
+            max_input_tokens: null,
+            max_output_tokens: null,
+          },
+        ],
+      }),
+    ),
     listAgents,
     updateAgent,
     createAgent,
@@ -200,6 +245,20 @@ describe('AgentPanel', () => {
     cleanup()
     vi.clearAllMocks()
     listAgents.mockImplementation(() => Promise.resolve([agentStatus('aria', 'Aria')]))
+    startAgent.mockImplementation(() =>
+      Promise.resolve({
+        terminal: {
+          id: 'term-started',
+          name: 'aria-started',
+          provider: 'codex',
+          session_name: 'aria-session',
+          agent_id: 'aria',
+          status: 'idle',
+          last_active: null,
+        },
+        terminal_token: 'started-token',
+      }),
+    )
     storeState.sessions = []
     storeState.activeSession = null
     storeState.activeSessionDetail = null
@@ -230,7 +289,7 @@ describe('AgentPanel', () => {
       await screen.findByRole('heading', { name: 'Aria' })
 
       // When
-      fireEvent.click(screen.getByRole('button', { name: /cael/i }))
+      fireEvent.click(screen.getByRole('button', { name: /select cael/i }))
 
       // Then
       expect(await screen.findByRole('heading', { name: 'Cael' })).toBeInTheDocument()
@@ -261,7 +320,7 @@ describe('AgentPanel', () => {
       await screen.findByTestId('agent-timeline')
 
       // When
-      fireEvent.click(screen.getByRole('button', { name: /cael/i }))
+      fireEvent.click(screen.getByRole('button', { name: /select cael/i }))
 
       // Then
       await waitFor(() => {
@@ -296,6 +355,88 @@ describe('AgentPanel', () => {
       await waitFor(() => {
         expect(stopAgent).toHaveBeenCalledWith('aria')
       })
+    })
+
+    it('starts a stopped agent from the agent row and opens the returned terminal token', async () => {
+      // Given
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+
+      // When
+      fireEvent.click(screen.getByRole('button', { name: /start agent aria/i }))
+
+      // Then
+      await waitFor(() => {
+        expect(startAgent).toHaveBeenCalledWith('aria')
+      })
+      await waitFor(() => {
+        expect(terminalViewMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            terminalId: 'term-started',
+            provider: 'codex',
+            agentId: 'aria',
+            terminalToken: 'started-token',
+          }),
+          {},
+        )
+      })
+      expect(selectSession).not.toHaveBeenCalled()
+      expect(listAgents).toHaveBeenCalledTimes(2)
+    })
+
+    it('opens a running agent terminal from the agent row through the runtime endpoint', async () => {
+      // Given
+      listAgents.mockResolvedValue([
+        { ...agentStatus('aria', 'Aria'), active: true, active_terminal_id: 'term-live' },
+      ] as any)
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+
+      // When
+      fireEvent.click(screen.getAllByRole('button', { name: /open terminal for aria/i })[0])
+
+      // Then
+      await waitFor(() => {
+        expect(getAgentRuntimeTerminal).toHaveBeenCalledWith('aria', 'aria-dashboard-token')
+      })
+      expect(terminalViewMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminalId: 'term-2',
+          provider: 'codex',
+          agentId: 'developer',
+          terminalToken: 'runtime-token',
+        }),
+        {},
+      )
+    })
+
+    it('does not render Sessions or Terminals-in-session cards in the Agents tab', async () => {
+      // Given
+      storeState.sessions = [{ id: 'session-1', name: 'session-1', status: 'active' }]
+      storeState.activeSession = 'session-1'
+      storeState.activeSessionDetail = {
+        session: { id: 'session-1', name: 'session-1', status: 'active' },
+        terminals: [
+          {
+            id: 'term-3',
+            tmux_session: 'session-1',
+            tmux_window: '0',
+            provider: 'codex',
+            agent_id: 'aria',
+            terminal_token: 'session-terminal-token',
+            last_active: null,
+          },
+        ],
+      }
+
+      // When
+      render(<AgentPanel />)
+      await screen.findByRole('heading', { name: 'Aria' })
+
+      // Then
+      expect(screen.queryByRole('heading', { name: /Sessions \(/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: /Terminals in/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /open terminal term-3/i })).not.toBeInTheDocument()
     })
   })
 
@@ -425,11 +566,10 @@ describe('AgentPanel', () => {
       }))
     })
 
-    it('offers a separate create-agent entry in the spawn modal', async () => {
+    it('offers New Agent from the Agents list area', async () => {
       render(<AgentPanel />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /spawn agent/i }))
-      fireEvent.click(screen.getByRole('button', { name: /create new agent/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /new agent/i }))
       fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'new-agent' } })
       fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New Agent' } })
       // The CLI provider dropdown is sourced from ``GET /providers``;
@@ -455,7 +595,7 @@ describe('AgentPanel', () => {
       expect(await screen.findByLabelText('new-agent display_name')).toBeInTheDocument()
     })
 
-    it('disables already-running agents in the spawn modal with the running terminal in the tooltip', async () => {
+    it('shows Open Terminal and Stop instead of Start for running agent rows', async () => {
       listAgents.mockResolvedValue([
         {
           ...agentStatus('aria', 'Aria'),
@@ -465,12 +605,11 @@ describe('AgentPanel', () => {
       ] as any)
       render(<AgentPanel />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /spawn agent/i }))
-      const runningAgent = await screen.findByTitle('Already running: term-live')
-      fireEvent.click(runningAgent)
+      await screen.findByRole('heading', { name: 'Aria' })
 
-      expect(runningAgent).toBeDisabled()
-      expect(startAgent).not.toHaveBeenCalled()
+      expect(screen.getAllByRole('button', { name: /open terminal for aria/i }).length).toBeGreaterThan(0)
+      expect(screen.getByRole('button', { name: /stop agent aria/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /start agent aria/i })).not.toBeInTheDocument()
     })
   })
 
@@ -528,40 +667,6 @@ describe('AgentPanel', () => {
         expect(onConsumed).toHaveBeenCalledTimes(1)
       })
       expect(getTerminal).toHaveBeenCalledWith('term-1')
-    })
-
-    it('passes the session terminal token through when opening a listed terminal', async () => {
-      storeState.activeSession = 'cao-linear-smoke-tester'
-      storeState.activeSessionDetail = {
-        session: { id: 'cao-linear-smoke-tester', name: 'cao-linear-smoke-tester', status: 'active' },
-        terminals: [
-          {
-            id: 'term-3',
-            tmux_session: 'cao-linear-smoke-tester',
-            tmux_window: '0',
-            provider: 'codex',
-            agent_id: 'linear_smoke_tester',
-            terminal_token: 'session-terminal-token',
-            last_active: null,
-          },
-        ],
-      }
-
-      render(<AgentPanel />)
-
-      fireEvent.click(await screen.findByRole('button', { name: /open terminal/i }))
-
-      await waitFor(() => {
-        expect(terminalViewMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            terminalId: 'term-3',
-            provider: 'codex',
-            agentId: 'linear_smoke_tester',
-            terminalToken: 'session-terminal-token',
-          }),
-          {},
-        )
-      })
     })
 
     it('focuses a runtime delivery terminal reference through the existing terminal open flow', async () => {

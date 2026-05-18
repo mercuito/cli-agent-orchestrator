@@ -22,9 +22,9 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
-    Base,
     INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
     INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
+    Base,
     InboxMessageModel,
     InboxNotificationModel,
     InboxNotificationTargetModel,

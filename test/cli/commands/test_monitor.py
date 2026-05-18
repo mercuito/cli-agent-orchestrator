@@ -61,9 +61,7 @@ class TestStart:
     def test_minimal_prints_session_id(self):
         runner = CliRunner()
         with patch(f"{MODULE}.requests.post") as mock_post:
-            mock_post.return_value = _FakeResponse(
-                status_code=201, payload=_session_payload()
-            )
+            mock_post.return_value = _FakeResponse(status_code=201, payload=_session_payload())
             result = runner.invoke(monitor, ["start", "--terminal", "term-A"])
 
         assert result.exit_code == 0
@@ -79,9 +77,7 @@ class TestStart:
             mock_post.return_value = _FakeResponse(
                 status_code=201, payload=_session_payload(label="rev")
             )
-            result = runner.invoke(
-                monitor, ["start", "--terminal", "term-A", "--label", "rev"]
-            )
+            result = runner.invoke(monitor, ["start", "--terminal", "term-A", "--label", "rev"])
 
         assert result.exit_code == 0
         assert mock_post.call_args.kwargs["json"]["label"] == "rev"
@@ -99,12 +95,8 @@ class TestStart:
     def test_json_output(self):
         runner = CliRunner()
         with patch(f"{MODULE}.requests.post") as mock_post:
-            mock_post.return_value = _FakeResponse(
-                status_code=201, payload=_session_payload()
-            )
-            result = runner.invoke(
-                monitor, ["start", "--terminal", "term-A", "--json"]
-            )
+            mock_post.return_value = _FakeResponse(status_code=201, payload=_session_payload())
+            result = runner.invoke(monitor, ["start", "--terminal", "term-A", "--json"])
         assert result.exit_code == 0
         assert json.loads(result.output)["id"] == "sess-1"
 
@@ -196,9 +188,7 @@ class TestList:
         runner = CliRunner()
         with patch(f"{MODULE}.requests.get") as mock_get:
             mock_get.return_value = _FakeResponse(payload=[])
-            result = runner.invoke(
-                monitor, ["list", "--limit", "25", "--offset", "50"]
-            )
+            result = runner.invoke(monitor, ["list", "--limit", "25", "--offset", "50"])
         assert result.exit_code == 0
         assert mock_get.call_args.kwargs["params"]["limit"] == 25
         assert mock_get.call_args.kwargs["params"]["offset"] == 50
@@ -213,9 +203,7 @@ class TestShow:
     def test_show_prints_session(self):
         runner = CliRunner()
         with patch(f"{MODULE}.requests.get") as mock_get:
-            mock_get.return_value = _FakeResponse(
-                payload=_session_payload(label="rev")
-            )
+            mock_get.return_value = _FakeResponse(payload=_session_payload(label="rev"))
             result = runner.invoke(monitor, ["show", "sess-1"])
         assert result.exit_code == 0
         assert "sess-1" in result.output
@@ -273,9 +261,7 @@ class TestLog:
                 text="# ...",
                 headers={"content-type": "text/markdown"},
             )
-            result = runner.invoke(
-                monitor, ["log", "sess-1", "--peer", "R1", "--peer", "R2"]
-            )
+            result = runner.invoke(monitor, ["log", "sess-1", "--peer", "R1", "--peer", "R2"])
         assert result.exit_code == 0
         params = mock_get.call_args.kwargs["params"]
         assert params["peer"] == ["R1", "R2"]
@@ -291,8 +277,10 @@ class TestLog:
                 [
                     "log",
                     "sess-1",
-                    "--since", "2026-04-18T10:00:00",
-                    "--until", "2026-04-18T11:00:00",
+                    "--since",
+                    "2026-04-18T10:00:00",
+                    "--until",
+                    "2026-04-18T11:00:00",
                 ],
             )
         assert result.exit_code == 0

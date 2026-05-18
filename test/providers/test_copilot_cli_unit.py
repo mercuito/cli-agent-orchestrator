@@ -78,9 +78,7 @@ class TestCopilotCliProviderCommand:
         mock_build_mcp.return_value = '{"mcpServers":{"cao-mcp-server":{"command":"x"}}}'
         mock_tmux.get_pane_working_directory.return_value = "/tmp/project"
 
-        provider = CopilotCliProvider(
-            "test1234", "test-session", "window-0", agent_id="repo-agent"
-        )
+        provider = CopilotCliProvider("test1234", "test-session", "window-0", agent_id="repo-agent")
         parts = shlex.split(provider._command())
         assert parts[parts.index("--agent") + 1] == "repo-agent"
 
@@ -397,18 +395,3 @@ class TestCopilotCliProviderMisc:
         provider._initialized = True
         provider.cleanup()
         assert provider._initialized is False
-
-
-def test_supported_reasoning_efforts_is_none():
-    """Copilot CLI's launch path does not consume ``reasoning_effort``.
-
-    ``CopilotCliProvider`` constructs its command without reading
-    ``agent.reasoning_effort``; the Copilot CLI exposes no reasoning_effort
-    flag. Inherits ``None`` from ``BaseProvider``.
-    """
-    assert CopilotCliProvider.supported_reasoning_efforts() is None
-
-
-def test_suggested_models_is_none():
-    """Copilot CLI does not curate model suggestions — model is not consumed."""
-    assert CopilotCliProvider.suggested_models() is None

@@ -88,9 +88,7 @@ def _session_local():
     return db_module.SessionLocal
 
 
-def _validate_complete_agent(
-    kind: Optional[str], agent_id: Optional[str], label: str
-) -> None:
+def _validate_complete_agent(kind: Optional[str], agent_id: Optional[str], label: str) -> None:
     if (kind is None) != (agent_id is None):
         raise ValueError(f"{label}_kind and {label}_id must be provided together")
 

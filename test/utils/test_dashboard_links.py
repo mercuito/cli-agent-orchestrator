@@ -47,9 +47,7 @@ def test_agent_dashboard_token_validates_for_same_agent(monkeypatch):
 
     token = dashboard_links.create_agent_dashboard_token("discovery_partner", now=100)
 
-    assert dashboard_links.validate_agent_dashboard_token(
-        token, "discovery_partner", now=120
-    )
+    assert dashboard_links.validate_agent_dashboard_token(token, "discovery_partner", now=120)
 
 
 def test_agent_dashboard_token_rejects_wrong_agent(monkeypatch):
@@ -67,6 +65,4 @@ def test_agent_dashboard_token_rejects_terminal_token(monkeypatch):
 
     token = dashboard_links.create_terminal_dashboard_token("discovery_partner", now=100)
 
-    assert not dashboard_links.validate_agent_dashboard_token(
-        token, "discovery_partner", now=120
-    )
+    assert not dashboard_links.validate_agent_dashboard_token(token, "discovery_partner", now=120)

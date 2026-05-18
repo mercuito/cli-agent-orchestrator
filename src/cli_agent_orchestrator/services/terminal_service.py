@@ -126,8 +126,11 @@ def resolve_terminal_runtime_inputs(
             from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
 
             mcp_server_names = list(agent.mcp_servers.keys()) if agent.mcp_servers else None
+            runtime_capabilities = (
+                list(agent.runtime_capabilities) if agent.runtime_capabilities is not None else None
+            )
             resolved_allowed_tools = resolve_runtime_capabilities(
-                agent.runtime_capabilities, mcp_server_names
+                runtime_capabilities, mcp_server_names
             )
         except FileNotFoundError:
             pass

@@ -64,9 +64,7 @@ def format_markdown(
     header so the artifact self-describes what slice it represents.
     """
     title = session.get("label") or session["id"]
-    ended_display = (
-        _iso(session["ended_at"]) if session.get("ended_at") else "ongoing"
-    )
+    ended_display = _iso(session["ended_at"]) if session.get("ended_at") else "ongoing"
 
     header_lines = [
         f"# Monitoring session: {title}",
@@ -81,9 +79,7 @@ def format_markdown(
 
     message_blocks = []
     for m in messages:
-        block_header = (
-            f"**{_iso(m['created_at'])} — {m['sender_id']} → {m['receiver_id']}**"
-        )
+        block_header = f"**{_iso(m['created_at'])} — {m['sender_id']} → {m['receiver_id']}**"
         message_blocks.append(block_header + "\n" + _quote(m["message"]))
 
     if message_blocks:

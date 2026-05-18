@@ -9,13 +9,13 @@ wiring that makes Phase 2's resolver actually do something.
 
 from __future__ import annotations
 
+from test.support.agent_factory import Agent
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from cli_agent_orchestrator.mcp_server import server
-from test.support.agent_factory import Agent
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 
 

@@ -160,7 +160,9 @@ def create_notification_for_message(
             return ProviderConversationInboxNotification(delivery=refreshed, created=True)
 
         if delivery.message is None:
-            raise RuntimeError("message-backed provider conversation notification lost its durable message")
+            raise RuntimeError(
+                "message-backed provider conversation notification lost its durable message"
+            )
         notification_row = session.get(db_module.InboxNotificationModel, delivery.notification.id)
         if notification_row is not None:
             session.delete(notification_row)
@@ -170,7 +172,9 @@ def create_notification_for_message(
         session.flush()
         existing = _get_existing_notification(session, receiver_id, provider_message_id)
         if existing is None:
-            raise RuntimeError("provider conversation inbox notification insert conflicted without existing row")
+            raise RuntimeError(
+                "provider conversation inbox notification insert conflicted without existing row"
+            )
         session.commit()
         return ProviderConversationInboxNotification(delivery=existing, created=False)
 
@@ -219,7 +223,8 @@ def _get_existing_notification(
         session.query(db_module.ProviderConversationInboxNotificationModel)
         .filter(
             db_module.ProviderConversationInboxNotificationModel.receiver_id == receiver_id,
-            db_module.ProviderConversationInboxNotificationModel.provider_message_id == provider_message_id,
+            db_module.ProviderConversationInboxNotificationModel.provider_message_id
+            == provider_message_id,
         )
         .first()
     )

@@ -234,18 +234,30 @@ def test_provider_conversation_migration_copies_legacy_presence_tables(tmp_path,
         "presence_inbox_notifications",
     }.issubset(table_names)
     with engine.connect() as connection:
-        assert connection.exec_driver_sql(
-            "SELECT title FROM provider_work_items WHERE id = 401"
-        ).scalar_one() == "Legacy planning issue"
-        assert connection.exec_driver_sql(
-            "SELECT work_item_id FROM provider_conversation_threads WHERE id = 501"
-        ).scalar_one() == 401
-        assert connection.exec_driver_sql(
-            "SELECT thread_id FROM provider_conversation_messages WHERE id = 601"
-        ).scalar_one() == 501
-        assert connection.exec_driver_sql(
-            "SELECT provider_message_id FROM provider_conversation_inbox_notifications WHERE id = 701"
-        ).scalar_one() == 601
+        assert (
+            connection.exec_driver_sql(
+                "SELECT title FROM provider_work_items WHERE id = 401"
+            ).scalar_one()
+            == "Legacy planning issue"
+        )
+        assert (
+            connection.exec_driver_sql(
+                "SELECT work_item_id FROM provider_conversation_threads WHERE id = 501"
+            ).scalar_one()
+            == 401
+        )
+        assert (
+            connection.exec_driver_sql(
+                "SELECT thread_id FROM provider_conversation_messages WHERE id = 601"
+            ).scalar_one()
+            == 501
+        )
+        assert (
+            connection.exec_driver_sql(
+                "SELECT provider_message_id FROM provider_conversation_inbox_notifications WHERE id = 701"
+            ).scalar_one()
+            == 601
+        )
 
 
 def test_linear_shaped_work_thread_message_and_event_are_upserted_idempotently(monkeypatch):
@@ -600,7 +612,10 @@ def test_raw_snapshot_and_metadata_round_trip_for_all_provider_conversation_reco
     work_item = upsert_work_item(
         provider="jira",
         external_id="10001",
-        raw_snapshot={"fields": {"summary": "Provider conversation persistence"}, "labels": ["cao"]},
+        raw_snapshot={
+            "fields": {"summary": "Provider conversation persistence"},
+            "labels": ["cao"],
+        },
         metadata={"project": "CAO", "rank": 1},
     )
     thread = upsert_thread(

@@ -166,7 +166,13 @@ def default_workspace_provider_registry() -> WorkspaceProviderRegistry:
     from cli_agent_orchestrator.linear.workspace_provider import LinearWorkspaceProvider
 
     registry = WorkspaceProviderRegistry()
-    registry.register("linear", lambda agents: LinearWorkspaceProvider(agent_registry=agents))
+    registry.register(
+        "linear",
+        lambda agents: LinearWorkspaceProvider(
+            agent_registry=agents,
+            preflight_credentials=False,
+        ),
+    )
     return registry
 
 

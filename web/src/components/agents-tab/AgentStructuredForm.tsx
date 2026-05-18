@@ -1,4 +1,5 @@
-import { ProviderSchema } from '../../api'
+import { useEffect } from 'react'
+import { ProviderCatalog, ProviderSchema } from '../../api'
 
 /**
  * Five tier-1 fields the structured form owns. These are the only fields
@@ -36,6 +37,8 @@ interface AgentStructuredFormProps {
   agentId: string
   values: StructuredFields
   schemas: ProviderSchema[]
+  catalog: ProviderCatalog | null
+  catalogStatus: 'idle' | 'loading' | 'ready' | 'error'
   editing: boolean
   saveError: string | null
   onChange: (next: StructuredFields) => void
@@ -45,14 +48,47 @@ export function AgentStructuredForm({
   agentId,
   values,
   schemas,
+  catalog,
+  catalogStatus,
   editing,
   saveError,
   onChange,
 }: AgentStructuredFormProps) {
   const selectedSchema = schemas.find(schema => schema.name === values.cli_provider) ?? null
-  const supportedEfforts = selectedSchema?.supported_reasoning_efforts ?? null
-  const suggestedModels = selectedSchema?.suggested_models ?? null
-  const reasoningEffortDisabled = supportedEfforts === null
+  const catalogModels = catalog?.models ?? []
+  const selectedModel = catalogModels.find(model => model.id === values.model) ?? null
+  const modelOptions =
+    values.model && !catalogModels.some(model => model.id === values.model)
+      ? [
+          {
+            id: values.model,
+            display_name: values.model,
+            reasoning_efforts: [],
+            thinking_supported: false,
+            max_input_tokens: null,
+            max_output_tokens: null,
+          },
+          ...catalogModels,
+        ]
+      : catalogModels
+  const discoveredEfforts = selectedModel
+    ? selectedModel.reasoning_efforts
+    : Array.from(new Set(catalogModels.flatMap(model => model.reasoning_efforts)))
+  const effortOptions = discoveredEfforts
+  const unsupportedReasoningEffort =
+    editing &&
+    catalogStatus === 'ready' &&
+    selectedSchema?.model_catalog_available === true &&
+    values.reasoning_effort !== '' &&
+    !discoveredEfforts.includes(values.reasoning_effort)
+  const modelDisabled =
+    selectedSchema?.model_catalog_available !== true ||
+    catalogStatus !== 'ready' ||
+    catalogModels.length === 0
+  const reasoningEffortDisabled =
+    selectedSchema?.model_catalog_available !== true ||
+    catalogStatus !== 'ready' ||
+    effortOptions.length === 0
 
   const updateField = <K extends keyof StructuredFields>(
     field: K,
@@ -60,6 +96,23 @@ export function AgentStructuredForm({
   ): void => {
     onChange({ ...values, [field]: value })
   }
+
+  const updateModel = (modelId: string): void => {
+    const nextModel = catalogModels.find(model => model.id === modelId) ?? null
+    const nextEfforts = nextModel?.reasoning_efforts ?? []
+    onChange({
+      ...values,
+      model: modelId,
+      reasoning_effort: nextEfforts.includes(values.reasoning_effort)
+        ? values.reasoning_effort
+        : '',
+    })
+  }
+
+  useEffect(() => {
+    if (!unsupportedReasoningEffort) return
+    onChange({ ...values, reasoning_effort: '' })
+  }, [onChange, unsupportedReasoningEffort, values])
 
   return (
     <section
@@ -119,7 +172,14 @@ export function AgentStructuredForm({
             <select
               aria-label={`${agentId} cli_provider`}
               value={values.cli_provider}
-              onChange={event => updateField('cli_provider', event.target.value)}
+              onChange={event =>
+                onChange({
+                  ...values,
+                  cli_provider: event.target.value,
+                  model: '',
+                  reasoning_effort: '',
+                })
+              }
               className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none"
             >
               {schemas.map(schema => (
@@ -141,22 +201,27 @@ export function AgentStructuredForm({
           saveError={saveError}
         >
           {editing ? (
-            <>
-              <input
-                aria-label={`${agentId} model`}
-                value={values.model}
-                onChange={event => updateField('model', event.target.value)}
-                list={suggestedModels ? `${agentId}-model-suggestions` : undefined}
-                className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none"
-              />
-              {suggestedModels && (
-                <datalist id={`${agentId}-model-suggestions`}>
-                  {suggestedModels.map(model => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
-              )}
-            </>
+            <select
+              aria-label={`${agentId} model`}
+              value={values.model}
+              onChange={event => updateModel(event.target.value)}
+              disabled={modelDisabled}
+              title={
+                modelDisabled
+                  ? `${values.cli_provider} has no loaded model catalog with model options`
+                  : undefined
+              }
+              className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">(unset)</option>
+              {modelOptions.map(model => (
+                <option key={model.id} value={model.id}>
+                  {model.display_name === model.id
+                    ? model.id
+                    : `${model.display_name} (${model.id})`}
+                </option>
+              ))}
+            </select>
           ) : (
             <span className="font-mono text-sm text-gray-300">
               {values.model || <em className="text-gray-600">(none)</em>}
@@ -178,13 +243,13 @@ export function AgentStructuredForm({
               disabled={reasoningEffortDisabled}
               title={
                 reasoningEffortDisabled
-                  ? `${values.cli_provider} does not support reasoning_effort`
+                  ? `${values.cli_provider} has no loaded model catalog with reasoning_effort options`
                   : undefined
               }
               className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-200 focus:border-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="">(unset)</option>
-              {(supportedEfforts ?? []).map(effort => (
+              {effortOptions.map(effort => (
                 <option key={effort} value={effort}>
                   {effort}
                 </option>

@@ -108,9 +108,7 @@ class TestApplyInheritPolicyDisablePlugins:
         assert "plugins" not in result
 
     def test_disable_plugins_coexists_with_allowlist(self):
-        policy = InheritPolicy(
-            allowlist=frozenset({"model"}), disable_plugins=True
-        )
+        policy = InheritPolicy(allowlist=frozenset({"model"}), disable_plugins=True)
         result = apply_inherit_policy(
             {
                 "model": "gpt-5.4",
@@ -165,9 +163,7 @@ class TestApplyInheritPolicyOverrides:
         policy = InheritPolicy(
             allowlist=frozenset(),
             disable_plugins=True,
-            extra_overrides={
-                "plugins": {"github@openai-curated": {"enabled": True}}
-            },
+            extra_overrides={"plugins": {"github@openai-curated": {"enabled": True}}},
         )
         result = apply_inherit_policy(
             {"plugins": {"github@openai-curated": {"enabled": True}}},
@@ -178,9 +174,7 @@ class TestApplyInheritPolicyOverrides:
     def test_overrides_do_not_mutate_the_policy(self):
         """extra_overrides is a mapping; the policy must be effectively immutable."""
         overrides = {"features": {"multi_agent": False}}
-        policy = InheritPolicy(
-            allowlist=frozenset({"model"}), extra_overrides=overrides
-        )
+        policy = InheritPolicy(allowlist=frozenset({"model"}), extra_overrides=overrides)
         apply_inherit_policy({"model": "x"}, policy)
         apply_inherit_policy({"model": "y"}, policy)
         assert overrides == {"features": {"multi_agent": False}}

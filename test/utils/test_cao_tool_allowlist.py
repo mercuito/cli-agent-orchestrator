@@ -16,6 +16,7 @@ No runtime wiring yet — this phase only adds the mechanism.
 from __future__ import annotations
 
 from test.support.agent_factory import Agent
+
 from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
 
 
@@ -49,6 +50,7 @@ class TestNothingConfigured:
         profile = _profile()
         result = resolve_cao_tool_allowlist(profile)
         assert result is None
+
 
 class TestAgentFieldSchema:
     """cao_tools must be an optional tuple-of-strings field on Agent."""

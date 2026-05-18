@@ -1,0 +1,37 @@
+{
+  "models": [
+    {
+      "slug": "test-frontier",
+      "display_name": "Test Frontier",
+      "description": "Primary test model.",
+      "visibility": "list",
+      "supported_in_api": true,
+      "context_window": 258400,
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "Low reasoning" },
+        { "effort": "medium", "description": "Medium reasoning" },
+        { "effort": "high", "description": "High reasoning" },
+        { "effort": "xhigh", "description": "Extra high reasoning" }
+      ]
+    },
+    {
+      "slug": "test-cli-only",
+      "display_name": "Test CLI Only",
+      "description": "Visible in the CLI even though it is not API-supported.",
+      "visibility": "list",
+      "supported_in_api": false,
+      "max_context_window": 128000,
+      "supported_reasoning_levels": [
+        { "effort": "high", "description": "High reasoning" }
+      ]
+    },
+    {
+      "slug": "test-hidden",
+      "display_name": "Test Hidden",
+      "visibility": "hide",
+      "supported_reasoning_levels": [
+        { "effort": "medium", "description": "Medium reasoning" }
+      ]
+    }
+  ]
+}

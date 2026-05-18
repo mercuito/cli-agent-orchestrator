@@ -6,7 +6,9 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine, event as sa_event, text
+from sqlalchemy import create_engine
+from sqlalchemy import event as sa_event
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 

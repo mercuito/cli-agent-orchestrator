@@ -28,7 +28,9 @@ from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import inbox_read_presentation_metadata
+from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
+    inbox_read_presentation_metadata,
+)
 from cli_agent_orchestrator.provider_conversations.persistence import (
     get_thread,
     list_messages,
