@@ -11,24 +11,17 @@ Use this skill to keep agent delegation intentional and bounded. The default
 dispatch posture is to pass a focused task packet, not the current thread's full
 conversation history.
 
-## Core Rule
+## Core Rules
 
-Do not fork the current context unless the user explicitly asks for it.
-
-When calling `spawn_agent`, omit `fork_context` or set `fork_context: false` by
-default. Only set `fork_context: true` when the user directly requests shared,
-forked, full, or same-thread context for that dispatched agent.
-
-Convenience is not explicit permission. Do not fork context merely because the
-current thread contains useful investigation notes, because a task is broad, or
-because the agent might infer more from full history.
+1. Do not fork the current context unless the user explicitly asks for it.
+2. Wait on the agent to complete, do not end your turn until the agent has finished its task and returned its output.
 
 ## Dispatch Packet
 
 Give each dispatched agent a self-contained packet with only the context it
 needs:
 
-- the bounded task and expected output;
+- Grounded acceptance criteria or definition of done relevant to the task;
 - owned files, directories, or responsibility area;
 - relevant source artifacts, paths, commands, and constraints;
 - coordination notes, including that other users or agents may be editing the

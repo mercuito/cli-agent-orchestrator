@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Terminal UI Cleanup Mockup</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #030712;
+        --panel: rgba(31, 41, 55, 0.62);
+        --panel-strong: rgba(17, 24, 39, 0.78);
+        --panel-soft: rgba(17, 24, 39, 0.48);
+        --border: rgba(75, 85, 99, 0.55);
+        --border-soft: rgba(75, 85, 99, 0.35);
+        --text: #f9fafb;
+        --muted: #9ca3af;
+        --faint: #6b7280;
+        --emerald: #10b981;
+        --emerald-strong: #059669;
+        --emerald-soft: rgba(6, 78, 59, 0.48);
+        --red: #dc2626;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 10% 0%, rgba(16, 185, 129, 0.08), transparent 28rem),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        letter-spacing: 0;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+        cursor: pointer;
+      }
+
+      .app {
+        display: grid;
+        grid-template-rows: 56px 1fr;
+        min-height: 100vh;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--border-soft);
+        background: rgba(3, 7, 18, 0.88);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+        background: var(--emerald-soft);
+        color: #6ee7b7;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 650;
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--emerald);
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .nav {
+        padding: 18px 12px;
+        border-right: 1px solid var(--border-soft);
+        background: rgba(3, 7, 18, 0.58);
+      }
+
+      .nav button {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 36px;
+        padding: 8px 10px;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        text-align: left;
+      }
+
+      .nav button.active {
+        background: var(--emerald-soft);
+        color: #d1fae5;
+      }
+
+      main {
+        padding: 22px;
+        min-width: 0;
+      }
+
+      .page-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .page-head h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 680;
+      }
+
+      .page-head p {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .primary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 8px 12px;
+        border-radius: 7px;
+        background: var(--emerald-strong);
+        color: white;
+        font-size: 13px;
+        font-weight: 620;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 320px minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .panel-title {
+        margin: 0;
+        color: #d1d5db;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .icon-btn {
+        display: inline-grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 7px;
+        border: 1px solid var(--border-soft);
+        background: rgba(55, 65, 81, 0.7);
+        color: #d1d5db;
+      }
+
+      .icon-btn.play {
+        background: var(--emerald-strong);
+        border-color: transparent;
+        color: white;
+      }
+
+      .icon-btn.stop {
+        background: rgba(127, 29, 29, 0.72);
+        border-color: rgba(248, 113, 113, 0.28);
+        color: #fecaca;
+      }
+
+      .agent-list {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+      }
+
+      .agent-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 76px;
+        padding: 11px;
+        border: 1px solid var(--border-soft);
+        border-radius: 8px;
+        background: var(--panel-soft);
+      }
+
+      .agent-row.selected {
+        border-color: rgba(16, 185, 129, 0.55);
+        background: rgba(6, 78, 59, 0.28);
+      }
+
+      .agent-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      .meta {
+        margin-top: 3px;
+        overflow: hidden;
+        color: var(--faint);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-height: 20px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: rgba(55, 65, 81, 0.74);
+        color: #d1d5db;
+        font-size: 11px;
+      }
+
+      .badge.live {
+        background: rgba(6, 78, 59, 0.64);
+        color: #6ee7b7;
+      }
+
+      .agent-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .detail {
+        min-width: 0;
+      }
+
+      .detail-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: start;
+        padding: 16px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .detail h3 {
+        margin: 0;
+        overflow: hidden;
+        font-size: 20px;
+        font-weight: 700;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .detail-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .secondary,
+      .danger {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 8px 11px;
+        border-radius: 7px;
+        color: white;
+        font-size: 12px;
+        font-weight: 620;
+      }
+
+      .secondary {
+        background: rgba(55, 65, 81, 0.92);
+      }
+
+      .danger {
+        background: var(--red);
+      }
+
+      .fields {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 4px 10px;
+        margin-top: 10px;
+        color: var(--faint);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+      }
+
+      .fields dd,
+      .fields dt {
+        margin: 0;
+        min-width: 0;
+      }
+
+      .fields dd {
+        overflow: hidden;
+        color: #d1d5db;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 2px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .tab {
+        min-height: 38px;
+        padding: 9px 12px;
+        border-bottom: 2px solid transparent;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .tab.active {
+        border-color: var(--emerald);
+        color: #6ee7b7;
+      }
+
+      .form {
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--border-soft);
+        border-radius: 7px;
+        background: rgba(3, 7, 18, 0.62);
+        color: #e5e7eb;
+        padding: 9px 10px;
+        outline: none;
+      }
+
+      textarea {
+        min-height: 156px;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .callout {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 11px 12px;
+        border: 1px solid rgba(16, 185, 129, 0.32);
+        border-radius: 8px;
+        background: rgba(6, 78, 59, 0.22);
+      }
+
+      .callout strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .callout span {
+        display: block;
+        margin-top: 2px;
+        color: #a7f3d0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+      }
+
+      @media (max-width: 900px) {
+        .shell,
+        .layout,
+        .form-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .nav {
+          display: none;
+        }
+
+        main {
+          padding: 14px;
+        }
+
+        .page-head,
+        .detail-head {
+          grid-template-columns: 1fr;
+        }
+
+        .detail-actions {
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">⌘</div>
+          <h1>CLI Agent Orchestrator</h1>
+        </div>
+        <div class="status"><span class="dot"></span> connected · 2 running</div>
+      </header>
+
+      <div class="shell">
+        <nav class="nav" aria-label="Primary">
+          <button>⌂ Dashboard</button>
+          <button class="active">◉ Agents</button>
+          <button>↻ Flows</button>
+          <button>▣ Monitoring</button>
+        </nav>
+
+        <main>
+          <div class="page-head">
+            <div>
+              <h2>Agents</h2>
+              <p>Configure agents and open their live terminals from the agent itself.</p>
+            </div>
+            <button class="primary">＋ New Agent</button>
+          </div>
+
+          <section class="layout">
+            <aside class="panel">
+              <div class="panel-head">
+                <h3 class="panel-title">Agents (4)</h3>
+              </div>
+
+              <div class="agent-list">
+                <article class="agent-row selected">
+                  <div>
+                    <div class="agent-name">Implementation Partner</div>
+                    <div class="meta">implementation_partner · claude_code</div>
+                    <div class="badges">
+                      <span class="badge live">● Running</span>
+                      <span class="badge">term-aria-main</span>
+                    </div>
+                  </div>
+                  <div class="agent-actions" aria-label="Implementation Partner actions">
+                    <button class="icon-btn play" title="Open terminal">▣</button>
+                    <button class="icon-btn stop" title="Stop agent">■</button>
+                  </div>
+                </article>
+
+                <article class="agent-row">
+                  <div>
+                    <div class="agent-name">Reviewer</div>
+                    <div class="meta">reviewer · codex</div>
+                    <div class="badges">
+                      <span class="badge">Stopped</span>
+                    </div>
+                  </div>
+                  <div class="agent-actions" aria-label="Reviewer actions">
+                    <button class="icon-btn play" title="Start agent">▶</button>
+                  </div>
+                </article>
+
+                <article class="agent-row">
+                  <div>
+                    <div class="agent-name">Discovery Partner</div>
+                    <div class="meta">discovery_partner · codex</div>
+                    <div class="badges">
+                      <span class="badge live">● Running</span>
+                      <span class="badge">term-discovery</span>
+                    </div>
+                  </div>
+                  <div class="agent-actions" aria-label="Discovery Partner actions">
+                    <button class="icon-btn play" title="Open terminal">▣</button>
+                    <button class="icon-btn stop" title="Stop agent">■</button>
+                  </div>
+                </article>
+
+                <article class="agent-row">
+                  <div>
+                    <div class="agent-name">Smoke Tester</div>
+                    <div class="meta">smoke_tester · gemini_cli</div>
+                    <div class="badges">
+                      <span class="badge">Stopped</span>
+                    </div>
+                  </div>
+                  <div class="agent-actions" aria-label="Smoke Tester actions">
+                    <button class="icon-btn play" title="Start agent">▶</button>
+                  </div>
+                </article>
+              </div>
+            </aside>
+
+            <section class="panel detail">
+              <header class="detail-head">
+                <div>
+                  <div class="badges">
+                    <span class="badge live">● Running</span>
+                    <span class="badge">claude_code</span>
+                  </div>
+                  <h3>Implementation Partner</h3>
+                  <dl class="fields">
+                    <dt>id</dt>
+                    <dd>implementation_partner</dd>
+                    <dt>workdir</dt>
+                    <dd>/Users/awwwwjay/Projects/cli-agent-orchestrator</dd>
+                    <dt>terminal</dt>
+                    <dd>term-aria-main</dd>
+                  </dl>
+                </div>
+                <div class="detail-actions">
+                  <button class="secondary">▣ Open Terminal</button>
+                  <button class="danger">■ Stop</button>
+                </div>
+              </header>
+
+              <div class="tabs" role="tablist" aria-label="Agent details">
+                <button class="tab active">Config</button>
+                <button class="tab">Timeline</button>
+              </div>
+
+              <div class="form">
+                <div class="callout">
+                  <div>
+                    <strong>Terminal is attached to this agent</strong>
+                    <span>term-aria-main · idle · monitored</span>
+                  </div>
+                  <button class="secondary">Open</button>
+                </div>
+
+                <div class="form-grid">
+                  <label>
+                    Display name
+                    <input value="Implementation Partner" readonly />
+                  </label>
+                  <label>
+                    Provider
+                    <input value="claude_code" readonly />
+                  </label>
+                  <label>
+                    Model
+                    <input value="claude-opus-4-7" readonly />
+                  </label>
+                  <label>
+                    Reasoning
+                    <input value="medium" readonly />
+                  </label>
+                </div>
+
+                <label>
+                  Prompt
+                  <textarea readonly># Agent
+
+Help with implementation. Prefer small, verifiable changes and keep the user looped in.</textarea>
+                </label>
+              </div>
+            </section>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
