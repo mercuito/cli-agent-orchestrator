@@ -89,6 +89,19 @@ class RecordingProviderAdapter:
         except KeyError as exc:
             raise WorkspaceSetupConfigError("provider identity is not team-authorized") from exc
 
+    def candidate_mappings_for_event(
+        self,
+        *,
+        event,
+        candidates: tuple[WorkspaceProviderCandidateMapping, ...],
+    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+        return tuple(
+            candidate
+            for candidate in candidates
+            if candidate.provider_identity == "app_user_id"
+            and candidate.provider_value == event.agent_key
+        )
+
     def describe_event_identity(self, event) -> str:
         return event.agent_key
 

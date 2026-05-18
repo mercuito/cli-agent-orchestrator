@@ -13,6 +13,7 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     _extract_app_user_name,
     _linear_presence_from_agent,
     _linear_tool_access_from_agent,
+    normalize_app_key,
     validate_linear_provider_config,
 )
 from cli_agent_orchestrator.workspace_setups import (
@@ -135,6 +136,20 @@ class LinearWorkspaceSetupAdapter:
             raise WorkspaceSetupConfigError(str(exc)) from exc
         return presence.agent_id, presence
 
+    def candidate_mappings_for_event(
+        self,
+        *,
+        event: CaoEvent,
+        candidates: tuple[WorkspaceProviderCandidateMapping, ...],
+    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+        identities = _event_identity_values(event)
+        return tuple(
+            candidate
+            for candidate in candidates
+            if candidate.mapping_kind in {"presence", "presence_alias"}
+            and identities.get(candidate.provider_identity) == candidate.provider_value
+        )
+
     def describe_event_identity(self, event: CaoEvent) -> str:
         if isinstance(event, LinearIssueContextEvent):
             return (
@@ -150,6 +165,32 @@ class LinearWorkspaceSetupAdapter:
                 f"app_user_name={_extract_app_user_name(payload) or 'unknown'}"
             )
         return "unknown"
+
+
+def _event_identity_values(event: CaoEvent) -> dict[str, str]:
+    if isinstance(event, LinearIssueContextEvent):
+        identities = {}
+        if event.app_key:
+            identities["app_key"] = normalize_app_key(event.app_key)
+        if event.app_user_id:
+            identities["app_user_id"] = event.app_user_id
+        if event.app_user_name:
+            identities["app_user_name"] = event.app_user_name
+        return identities
+    payload = getattr(event, "raw_payload", None)
+    if not isinstance(payload, dict):
+        return {}
+    identities = {}
+    app_key = _extract_app_key(payload)
+    app_user_id = _extract_app_user_id(payload)
+    app_user_name = _extract_app_user_name(payload)
+    if app_key:
+        identities["app_key"] = app_key
+    if app_user_id:
+        identities["app_user_id"] = app_user_id
+    if app_user_name:
+        identities["app_user_name"] = app_user_name
+    return identities
 
 
 def _resolve_presence_from_config(config: LinearProviderConfig, event: LinearIssueContextEvent):

@@ -14,9 +14,9 @@ from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspac
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
 from cli_agent_orchestrator.workspace_setups import (
     DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
     WorkspaceSetup,
     WorkspaceSetupConfigError,
-    WorkspaceCollaborationManager,
     WorkspaceSetupRegistry,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
@@ -138,7 +138,7 @@ def test_linear_provider_view_prunes_out_of_team_presence_and_tool_access(tmp_pa
 def test_linear_event_for_out_of_team_identity_is_not_cao_addressable(tmp_path):
     manager = _manager(tmp_path)
 
-    with pytest.raises(WorkspaceSetupConfigError, match="not CAO-addressable"):
+    with pytest.raises(WorkspaceSetupConfigError) as exc_info:
         manager.resolve_provider_event(
             "linear",
             _event(
@@ -147,3 +147,32 @@ def test_linear_event_for_out_of_team_identity_is_not_cao_addressable(tmp_path):
                 app_user_name="agent_b Linear",
             ),
         )
+    message = str(exc_info.value)
+
+    assert "not CAO-addressable" in message
+    assert "app_key=agent-b" in message
+    assert "app_user_id=linear-user-b" in message
+    assert "app_user_name=agent_b Linear" in message
+    assert "agent_b" in message
+    assert "no workspace team" in message
+
+
+def test_linear_event_for_out_of_team_alias_identity_explains_rejection(tmp_path):
+    manager = _manager(tmp_path)
+
+    with pytest.raises(WorkspaceSetupConfigError) as exc_info:
+        manager.resolve_provider_event(
+            "linear",
+            _event(
+                app_key=None,
+                app_user_id="linear-user-b",
+                app_user_name=None,
+            ),
+        )
+    message = str(exc_info.value)
+
+    assert "not CAO-addressable" in message
+    assert "app_key=unknown" in message
+    assert "app_user_id=linear-user-b" in message
+    assert "linear app_user_id linear-user-b maps to agent agent_b" in message
+    assert "no workspace team" in message

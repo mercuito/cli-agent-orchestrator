@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol
 
-from cli_agent_orchestrator.agent import Agent, AgentRegistry, load_agent_registry
+from cli_agent_orchestrator.agent import Agent, AgentConfigError, AgentRegistry, load_agent_registry
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
@@ -45,7 +45,9 @@ class WorkspaceSetup:
             raise WorkspaceSetupConfigError(f"Workspace setup {self.id} must declare providers")
         normalized = tuple(_normalize_provider(provider) for provider in self.providers)
         if len(set(normalized)) != len(normalized):
-            raise WorkspaceSetupConfigError(f"Workspace setup {self.id} declares duplicate providers")
+            raise WorkspaceSetupConfigError(
+                f"Workspace setup {self.id} declares duplicate providers"
+            )
         if isinstance(self.resolver, (tuple, list)):
             raise WorkspaceSetupConfigError(
                 f"Workspace setup {self.id} must own exactly one resolver"
@@ -159,6 +161,14 @@ class WorkspaceSetupProviderAdapter(Protocol):
 
     def describe_event_identity(self, event: CaoEvent) -> str:
         """Return a concise provider-native event identity for diagnostics."""
+
+    def candidate_mappings_for_event(
+        self,
+        *,
+        event: CaoEvent,
+        candidates: tuple[WorkspaceProviderCandidateMapping, ...],
+    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+        """Return candidate mappings that match the provider-native event identity."""
 
 
 class WorkspaceSetupRegistry:
@@ -324,7 +334,9 @@ class WorkspaceTeamService:
         self._team_store = team_store
         self._team_registry = WorkspaceTeamRegistry(team_store)
         self._agent_registry = agent_registry
-        self._available_providers = {_normalize_provider(provider) for provider in available_providers}
+        self._available_providers = {
+            _normalize_provider(provider) for provider in available_providers
+        }
 
     @property
     def team_registry(self) -> WorkspaceTeamRegistry:
@@ -428,7 +440,9 @@ class WorkspaceCollaborationManager:
             _normalize_provider(name): adapter for name, adapter in provider_adapters.items()
         }
         self._available_providers = (
-            set(self._provider_adapters) if available_providers is None else set(available_providers)
+            set(self._provider_adapters)
+            if available_providers is None
+            else set(available_providers)
         )
         if available_providers is not None:
             self._available_providers = {
@@ -606,6 +620,13 @@ class WorkspaceCollaborationManager:
             )
         identity = adapter.describe_event_identity(event)
         detail = "; ".join(errors) if errors else "no team-authorized mapping"
+        candidate_detail = self._provider_event_candidate_detail(
+            adapter=adapter,
+            provider_name=normalized_provider,
+            event=event,
+        )
+        if candidate_detail:
+            detail = f"{detail}; {candidate_detail}"
         raise WorkspaceSetupConfigError(
             f"{normalized_provider} provider identity {identity} is authenticated but not "
             f"CAO-addressable in any workspace team: {detail}"
@@ -640,7 +661,9 @@ class WorkspaceCollaborationManager:
         try:
             return self._provider_adapters[provider_name]
         except KeyError as exc:
-            raise WorkspaceSetupConfigError(f"Unavailable workspace provider: {provider_name}") from exc
+            raise WorkspaceSetupConfigError(
+                f"Unavailable workspace provider: {provider_name}"
+            ) from exc
 
     def _pruned_mapping_diagnostics(
         self, team: WorkspaceTeam, setup: WorkspaceSetup
@@ -670,6 +693,72 @@ class WorkspaceCollaborationManager:
                     )
                 )
         return tuple(diagnostics)
+
+    def _provider_event_candidate_detail(
+        self,
+        *,
+        adapter: WorkspaceSetupProviderAdapter,
+        provider_name: str,
+        event: CaoEvent,
+    ) -> str | None:
+        candidates = adapter.candidate_mappings_for_event(
+            event=event,
+            candidates=adapter.build_candidate_mappings(self._agent_registry),
+        )
+        if not candidates:
+            return None
+        details: list[str] = []
+        seen_agent_ids: set[str] = set()
+        for candidate in candidates:
+            if candidate.agent_id in seen_agent_ids:
+                continue
+            seen_agent_ids.add(candidate.agent_id)
+            details.append(
+                self._provider_event_candidate_agent_detail(
+                    provider_name=provider_name,
+                    candidate=candidate,
+                )
+            )
+        return "; ".join(details)
+
+    def _provider_event_candidate_agent_detail(
+        self,
+        *,
+        provider_name: str,
+        candidate: WorkspaceProviderCandidateMapping,
+    ) -> str:
+        try:
+            agent = self._agent_registry.get(candidate.agent_id)
+        except AgentConfigError as exc:
+            return (
+                f"{provider_name} {candidate.provider_identity} {candidate.provider_value} "
+                f"maps to unknown CAO agent {candidate.agent_id}: {exc}"
+            )
+        team_id = agent.workspace.team
+        if team_id is None:
+            return (
+                f"{provider_name} {candidate.provider_identity} {candidate.provider_value} "
+                f"maps to agent {agent.id}, but that agent has no workspace team"
+            )
+        try:
+            team = self._team_registry.get(team_id)
+            setup = self._setup_registry.get(team.workspace_setup)
+        except WorkspaceSetupConfigError as exc:
+            return (
+                f"{provider_name} {candidate.provider_identity} {candidate.provider_value} "
+                f"maps to agent {agent.id} in workspace team {team_id}, but {exc}"
+            )
+        if provider_name not in setup.providers:
+            return (
+                f"{provider_name} {candidate.provider_identity} {candidate.provider_value} "
+                f"maps to agent {agent.id} in workspace team {team.id}, but setup {setup.id} "
+                f"does not include provider {provider_name}"
+            )
+        return (
+            f"{provider_name} {candidate.provider_identity} {candidate.provider_value} maps to "
+            f"agent {agent.id} in workspace team {team.id}, but that team's provider view did "
+            "not authorize the identity"
+        )
 
 
 class _ReadOnlyTeamStore(WorkspaceTeamStore):
