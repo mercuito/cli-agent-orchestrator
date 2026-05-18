@@ -81,7 +81,7 @@ export interface AgentConfig {
   use_legacy_mcp_json: boolean | null
   runtime_capabilities: string[] | null
   codex_config: Record<string, unknown>
-  workspace_context: { enabled: boolean; resolver_id: string | null }
+  workspace: { setup: string | null; diagnostics: string[] }
   linear: {
     app_key: string | null
     client_id: string | null
@@ -119,7 +119,17 @@ export interface AgentStatus {
   agent_dashboard_token?: string | null
   active_terminal_id: string | null
   active_workspace_context_id: string | null
+  workspace_setup_id?: string | null
+  workspace_setup_diagnostics?: string[]
   last_active_at: string | null
+}
+
+export interface WorkspaceSetupDiagnostic {
+  code: string
+  message: string
+  setup_id: string | null
+  agent_id: string | null
+  provider_name: string | null
 }
 
 export interface AgentWriteRequest {
@@ -144,7 +154,7 @@ export interface AgentWriteRequest {
   use_legacy_mcp_json?: boolean | null
   runtime_capabilities?: string[] | null
   codex_config?: Record<string, unknown>
-  workspace_context?: { enabled?: boolean; resolver_id?: string | null }
+  workspace?: { setup?: string | null }
   linear?: {
     app_key?: string | null
     client_id?: string | null
@@ -314,6 +324,7 @@ export const api = {
     )
   },
   listAgents: () => fetchJSON<AgentStatus[]>('/agents'),
+  listWorkspaceSetupDiagnostics: () => fetchJSON<WorkspaceSetupDiagnostic[]>('/workspace-setups/diagnostics'),
   createAgent: (agent: AgentWriteRequest) =>
     fetchJSON<AgentStatus>('/agents', {
       method: 'POST',

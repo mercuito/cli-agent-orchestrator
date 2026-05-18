@@ -246,7 +246,12 @@ def load_enabled_provider_tool_access_policies(
         provider.initialize()
         _register_provider_events(provider)
         providers_with_tools.append(provider)
-    return load_provider_tool_access_policies(providers_with_tools)
+    policies = load_provider_tool_access_policies(providers_with_tools)
+    from cli_agent_orchestrator.workspace_setups import default_workspace_setup_manager
+
+    return default_workspace_setup_manager(
+        agent_registry=agents,
+    ).setup_bound_provider_tool_access_policies(policies)
 
 
 def resolve_agent_for_runtime(

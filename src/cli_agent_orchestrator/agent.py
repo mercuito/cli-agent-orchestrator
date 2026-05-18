@@ -90,21 +90,19 @@ def configure_agents_root(agents_root: str | Path) -> Path:
 
 
 @dataclass(frozen=True)
-class AgentWorkspaceContextConfig:
-    """Workspace-context behavior configured for one durable agent."""
+class AgentWorkspaceConfig:
+    """Workspace setup membership configured for one durable agent."""
 
-    enabled: bool = False
-    resolver_id: Optional[str] = None
+    setup: Optional[str] = None
+    diagnostics: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.enabled, bool):
-            raise AgentConfigError("workspace_context.enabled must be a boolean")
-        if self.resolver_id is not None:
-            _required_str(self.resolver_id, "workspace_context.resolver_id")
-        if self.enabled and self.resolver_id is None:
-            raise AgentConfigError(
-                "workspace_context.resolver_id is required when workspace_context is enabled"
-            )
+        if self.setup is not None:
+            _required_str(self.setup, "workspace.setup")
+        if not isinstance(self.diagnostics, tuple) or not all(
+            isinstance(item, str) for item in self.diagnostics
+        ):
+            raise AgentConfigError("workspace.diagnostics must be a tuple of strings")
 
 
 @dataclass(frozen=True)
@@ -200,7 +198,7 @@ class Agent:
     use_legacy_mcp_json: Optional[bool] = None
     runtime_capabilities: Optional[tuple[str, ...]] = None
     codex_config: Mapping[str, Any] = field(default_factory=dict)
-    workspace_context: AgentWorkspaceContextConfig = AgentWorkspaceContextConfig()
+    workspace: AgentWorkspaceConfig = AgentWorkspaceConfig()
     linear: Optional[LinearConfig] = None
     current_workspace_context_id: Optional[str] = None
 
@@ -261,10 +259,8 @@ class Agent:
             "codex_config",
             _freeze_mapping(self.codex_config, f"agents.{self.id}.codex_config"),
         )
-        if not isinstance(self.workspace_context, AgentWorkspaceContextConfig):
-            raise AgentConfigError(
-                f"agents.{self.id}.workspace_context must be AgentWorkspaceContextConfig"
-            )
+        if not isinstance(self.workspace, AgentWorkspaceConfig):
+            raise AgentConfigError(f"agents.{self.id}.workspace must be AgentWorkspaceConfig")
         if self.linear is not None and not isinstance(self.linear, LinearConfig):
             raise AgentConfigError(f"agents.{self.id}.linear must be LinearConfig")
         if self.current_workspace_context_id is not None:
@@ -513,21 +509,10 @@ def patch_agent_config(
         table_replacements.append(("hooks", dict(agent.hooks)))
     if "codex_config" in changed_fields:
         table_replacements.append(("codex_config", dict(agent.codex_config)))
-    if "workspace_context" in changed_fields:
-        workspace = {
-            "enabled": agent.workspace_context.enabled,
-            **(
-                {"resolver_id": agent.workspace_context.resolver_id}
-                if agent.workspace_context.resolver_id is not None
-                else {}
-            ),
-        }
-        table_replacements.append(
-            (
-                "workspace_context",
-                workspace if agent.workspace_context != AgentWorkspaceContextConfig() else None,
-            )
-        )
+    if "workspace" in changed_fields:
+        workspace = {"setup": agent.workspace.setup} if agent.workspace.setup is not None else None
+        table_replacements.append(("workspace", workspace))
+        table_replacements.append(("workspace_context", None))
     if "linear" in changed_fields:
         table_replacements.append(
             (
@@ -641,32 +626,76 @@ def _agent_from_config(
             config_path,
         ),
         codex_config=_mapping(data.get("codex_config"), "codex_config", config_path),
-        workspace_context=_workspace_context_config(data, agent_id=agent_id, path=config_path),
+        workspace=_workspace_config(data, agent_id=agent_id, path=config_path),
         linear=_linear_config(data.get("linear"), path=config_path),
     )
 
 
-def _workspace_context_config(
+def _workspace_config(
     data: Mapping[str, object],
     *,
     agent_id: str,
     path: Path,
-) -> AgentWorkspaceContextConfig:
-    raw = data.get("workspace_context")
-    if raw is None:
-        return AgentWorkspaceContextConfig()
+) -> AgentWorkspaceConfig:
+    diagnostics: list[str] = []
+    raw_workspace = data.get("workspace")
+    raw_legacy = data.get("workspace_context")
+    setup: str | None = None
+
+    if raw_workspace is not None:
+        if not isinstance(raw_workspace, Mapping):
+            raise AgentConfigError(f"{path}: agents.{agent_id}.workspace must be a table")
+        raw_setup = raw_workspace.get("setup")
+        if raw_setup is not None:
+            if not isinstance(raw_setup, str) or not raw_setup.strip():
+                raise AgentConfigError(f"{path}: agents.{agent_id}.workspace.setup must be a string")
+            setup = raw_setup.strip()
+
+    if raw_legacy is not None:
+        legacy_setup = _legacy_workspace_setup(raw_legacy, agent_id=agent_id, path=path)
+        if setup is not None:
+            diagnostics.append(
+                f"agents.{agent_id}.workspace_context is legacy and ignored because "
+                "[workspace] setup is authoritative"
+            )
+        elif legacy_setup is not None:
+            setup = legacy_setup
+            diagnostics.append(
+                f"agents.{agent_id}.workspace_context is legacy; mapped resolver to "
+                f"workspace setup {legacy_setup}"
+            )
+
+    return AgentWorkspaceConfig(setup=setup, diagnostics=tuple(diagnostics))
+
+
+def _legacy_workspace_setup(raw: object, *, agent_id: str, path: Path) -> str | None:
     if not isinstance(raw, Mapping):
         raise AgentConfigError(f"{path}: agents.{agent_id}.workspace_context must be a table")
     enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise AgentConfigError(
+            f"{path}: agents.{agent_id}.workspace_context.enabled must be a boolean"
+        )
     resolver_id = raw.get("resolver_id")
     if resolver_id is not None and not isinstance(resolver_id, str):
         raise AgentConfigError(
             f"{path}: agents.{agent_id}.workspace_context.resolver_id must be a string"
         )
-    return AgentWorkspaceContextConfig(
-        enabled=enabled,  # type: ignore[arg-type]
-        resolver_id=resolver_id.strip() if isinstance(resolver_id, str) else None,
-    )
+    if not enabled:
+        return None
+    if resolver_id is None or not resolver_id.strip():
+        raise AgentConfigError(
+            f"{path}: agents.{agent_id}.workspace_context.resolver_id is required when enabled"
+        )
+    migration_table = {"linear_planning": "cao_delivery"}
+    normalized = resolver_id.strip()
+    try:
+        return migration_table[normalized]
+    except KeyError as exc:
+        raise AgentConfigError(
+            f"{path}: agents.{agent_id}.workspace_context.resolver_id has no workspace setup "
+            f"migration: {normalized}"
+        ) from exc
 
 
 def _linear_config(raw: object, *, path: Path) -> Optional[LinearConfig]:
@@ -836,11 +865,8 @@ def _agent_to_toml(agent: Agent) -> str:
         data["use_legacy_mcp_json"] = agent.use_legacy_mcp_json
     if agent.runtime_capabilities is not None:
         data["runtime_capabilities"] = list(agent.runtime_capabilities)
-    if agent.workspace_context != AgentWorkspaceContextConfig():
-        data["workspace_context"] = {
-            "enabled": agent.workspace_context.enabled,
-            "resolver_id": agent.workspace_context.resolver_id,
-        }
+    if agent.workspace.setup is not None:
+        data["workspace"] = {"setup": agent.workspace.setup}
     if agent.mcp_servers:
         data["mcp_servers"] = dict(agent.mcp_servers)
     if agent.codex_config:

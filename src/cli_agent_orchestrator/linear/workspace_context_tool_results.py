@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from cli_agent_orchestrator.linear.provider_tools import CREATE_ISSUE_TOOL
-from cli_agent_orchestrator.linear.workspace_context_resolver import (
-    register_linear_workspace_context_resolver,
-)
 from cli_agent_orchestrator.linear.workspace_events import (
     publish_linear_issue_created_event,
 )
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
-    resolve_workspace_context_for_agent,
 )
+from cli_agent_orchestrator.workspace_setups import default_workspace_setup_manager
 from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolInvocationContext
 
 
@@ -26,5 +23,5 @@ def resolve_linear_tool_result_workspace_context(
     publication = publish_linear_issue_created_event(context)
     if publication is None:
         return None
-    register_linear_workspace_context_resolver()
-    return resolve_workspace_context_for_agent(context.agent, publication.event)
+    manager = default_workspace_setup_manager()
+    return manager.resolve_event_context(context.agent, publication.event)

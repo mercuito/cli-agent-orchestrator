@@ -34,7 +34,7 @@ function agentStatus(overrides: Partial<AgentStatus> = {}): AgentStatus {
       use_legacy_mcp_json: null,
       runtime_capabilities: null,
       codex_config: {},
-      workspace_context: { enabled: false, resolver_id: null },
+      workspace: { setup: null, diagnostics: [] },
       linear: null,
     },
     active: false,
@@ -116,6 +116,38 @@ describe('AgentDetailPanel', () => {
 
       // Then
       expect(onOpenTerminal).toHaveBeenCalledWith('aria')
+    })
+
+    it('renders workspace setup diagnostics from the setup manager endpoint', () => {
+      render(
+        <AgentDetailPanel
+          agent={agentStatus({ workspace_setup_id: 'cao_delivery' })}
+          workspaceSetupDiagnostics={[
+            {
+              code: 'pruned_provider_identity',
+              message: 'Workspace setup cao_delivery pruned linear tool access for discovery',
+              setup_id: 'cao_delivery',
+              agent_id: 'aria',
+              provider_name: 'linear',
+            },
+            {
+              code: 'unavailable_provider',
+              message: 'Workspace setup cao_delivery requires unavailable provider linear',
+              setup_id: 'cao_delivery',
+              agent_id: null,
+              provider_name: 'linear',
+            },
+          ]}
+          onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onStopAgent={vi.fn()}
+          renderConfigTab={renderConfigTab}
+          renderTimelineTab={renderTimelineTab}
+        />,
+      )
+
+      expect(screen.getByText(/pruned linear tool access/)).toBeInTheDocument()
+      expect(screen.getByText(/requires unavailable provider linear/)).toBeInTheDocument()
     })
 
     it('renders stopped agent header with a Start button that fires the provided handler', () => {

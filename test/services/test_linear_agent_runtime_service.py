@@ -12,7 +12,7 @@ import pytest
 
 from cli_agent_orchestrator.agent import (
     AgentRegistry,
-    AgentWorkspaceContextConfig,
+    AgentWorkspaceConfig,
     LinearConfig,
     write_agent,
 )
@@ -40,6 +40,7 @@ from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeDeliveryResult,
     AgentRuntimeFreshnessAction,
+    AgentRuntimeHandle,
     AgentRuntimeNotifyResult,
     AgentRuntimeStatus,
 )
@@ -85,6 +86,9 @@ def resolved_presence(implementation_partner_agent_factory):
 
 def _linear_provider_event(
     *,
+    app_key: str = "implementation_partner",
+    app_user_id: str | None = None,
+    app_user_name: str | None = "Implementation Partner",
     action: str = "created",
     thread_id: str = "session-1",
     prompt_context: str | None = None,
@@ -97,8 +101,9 @@ def _linear_provider_event(
     return LinearIssueContextEvent(
         event_type="AgentSessionEvent",
         action=action,
-        app_key="implementation_partner",
-        app_user_name="Implementation Partner",
+        app_key=app_key,
+        app_user_id=app_user_id,
+        app_user_name=app_user_name,
         issue_id=issue_id,
         issue_identifier=issue_identifier,
         parent_issue_id=parent_issue_id,
@@ -192,6 +197,21 @@ def test_terminal_config_comes_from_cao_agent_mapping(monkeypatch, resolved_pres
     handle.ensure_started.assert_called_once()
 
 
+def test_agent_without_workspace_setup_gets_default_runtime_context(test_db, resolved_presence):
+    resolved = resolved_presence()
+
+    handle = AgentRuntimeHandle(
+        resolved.agent,
+        agent_manager=runtime.AgentManager(
+            configured_agents=AgentRegistry({resolved.agent.id: resolved.agent})
+        ),
+    )
+
+    assert handle.workspace_context_id == db_module.default_workspace_context_id(
+        resolved.agent.id
+    )
+
+
 def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
     monkeypatch,
     resolved_presence,
@@ -268,7 +288,7 @@ def test_context_enabled_linear_event_starts_runtime_in_resolved_issue_context(
     assert captured["workspace_context_id"] == context.id
 
 
-def test_context_enabled_linear_event_fails_closed_for_wrong_resolver_id(
+def test_context_enabled_linear_event_fails_closed_for_unknown_setup(
     test_db,
     monkeypatch,
     resolved_presence,
@@ -286,10 +306,7 @@ def test_context_enabled_linear_event_fails_closed_for_wrong_resolver_id(
             presence=resolved.presence,
             agent=replace(
                 resolved.agent,
-                workspace_context=AgentWorkspaceContextConfig(
-                    enabled=True,
-                    resolver_id="future_resolver",
-                ),
+                workspace=AgentWorkspaceConfig(setup="future_setup"),
             ),
         )
 
@@ -300,7 +317,7 @@ def test_context_enabled_linear_event_fails_closed_for_wrong_resolver_id(
 
     with pytest.raises(
         runtime.LinearWorkspaceProviderConfigError,
-        match="Unknown workspace context resolver",
+        match="Unknown workspace setup",
     ):
         runtime.handle_provider_event(event)
     assert calls == []
@@ -367,10 +384,7 @@ def test_context_enabled_linear_events_switch_only_across_distinct_boundaries(
 def implementation_partner_agent_factory_with_context(agent):
     return replace(
         agent,
-        workspace_context=AgentWorkspaceContextConfig(
-            enabled=True,
-            resolver_id="linear_planning",
-        ),
+        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
     )
 
 
@@ -594,6 +608,7 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
             app_key="implementation_partner",
             app_user_name="Implementation Partner",
         ),
+        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
     )
     registry = AgentRegistry({agent.id: agent})
     agents_root = tmp_path / "agents"
@@ -675,6 +690,76 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
         app_key="implementation_partner",
     )
     create_activity.assert_called()
+
+
+def test_out_of_setup_linear_event_rejects_before_runtime_or_inbox_creation(
+    test_db,
+    tmp_path,
+    monkeypatch,
+    implementation_partner_agent_factory,
+):
+    agent_a = replace(
+        implementation_partner_agent_factory(id="agent_a", session_name="agent-a"),
+        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
+        linear=LinearConfig(app_key="agent-a", app_user_id="linear-user-a"),
+    )
+    agent_b = replace(
+        implementation_partner_agent_factory(id="agent_b", session_name="agent-b"),
+        workspace=AgentWorkspaceConfig(),
+        linear=LinearConfig(app_key="agent-b", app_user_id="linear-user-b"),
+    )
+    provider = LinearWorkspaceProvider(
+        agent_registry=AgentRegistry({agent_a.id: agent_a, agent_b.id: agent_b}),
+        preflight_credentials=False,
+    )
+    monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: provider)
+    handle = Mock()
+    bridge = Mock()
+    monkeypatch.setattr(runtime, "AgentRuntimeHandle", handle)
+    monkeypatch.setattr(runtime, "create_notification_for_persisted_event", bridge)
+
+    event = _linear_provider_event(
+        app_key="agent-b",
+        app_user_id="linear-user-b",
+        app_user_name=None,
+        prompt_body="Can you inspect this?",
+    )
+    persisted_event = PersistedProviderEventRecords(
+        processed_event=None,
+        work_item=None,
+        thread=ConversationThreadRecord(
+            id=1,
+            provider="linear",
+            external_id="session-1",
+            external_url=None,
+            work_item_id=None,
+            kind="conversation",
+            state="active",
+            prompt_context=None,
+            raw_snapshot=None,
+            metadata=None,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        ),
+        message=ConversationMessageRecord(
+            id=1,
+            thread_id=1,
+            provider="linear",
+            external_id="activity-1",
+            direction="inbound",
+            kind="prompt",
+            body="Can you inspect this?",
+            state="received",
+            raw_snapshot=None,
+            metadata=None,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        ),
+    )
+
+    assert runtime.notify_agent_for_persisted_event(persisted_event, event) is None
+    handle.assert_not_called()
+    bridge.assert_not_called()
 
 
 def test_handle_linear_provider_event_routes_through_agent_runtime_notify(

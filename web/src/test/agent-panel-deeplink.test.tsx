@@ -39,7 +39,7 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     use_legacy_mcp_json: null,
     runtime_capabilities: null,
     codex_config: {},
-    workspace_context: { enabled: false, resolver_id: null },
+    workspace: { setup: null, diagnostics: [] },
     linear: {
       app_key: agentId,
       client_id: 'linear-client',
@@ -199,6 +199,7 @@ vi.mock('../api', () => ({
       }),
     ),
     listAgents,
+    listWorkspaceSetupDiagnostics: vi.fn(() => Promise.resolve([])),
     updateAgent,
     createAgent,
     startAgent,

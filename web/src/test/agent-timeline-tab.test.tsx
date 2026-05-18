@@ -42,7 +42,7 @@ function agent(
       use_legacy_mcp_json: null,
       runtime_capabilities: null,
       codex_config: {},
-      workspace_context: { enabled: false, resolver_id: null },
+      workspace: { setup: null, diagnostics: [] },
       linear: null,
     },
     active: false,

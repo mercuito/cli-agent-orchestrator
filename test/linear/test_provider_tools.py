@@ -20,7 +20,7 @@ from cli_agent_orchestrator.agent import (
     Agent,
     AgentConfigError,
     AgentRegistry,
-    AgentWorkspaceContextConfig,
+    AgentWorkspaceConfig,
     LinearConfig,
     LinearToolAccessConfig,
 )
@@ -101,7 +101,7 @@ def test_provider_tools_imports_without_workspace_provider_import_order():
 
 def _agents(
     *,
-    workspace_context_enabled: bool = False,
+    workspace_setup: str | None = None,
     tool_access_by_agent: Mapping[str, tuple[LinearToolAccessConfig, ...]] | None = None,
 ) -> AgentRegistry:
     tool_access_by_agent = tool_access_by_agent or {}
@@ -114,10 +114,7 @@ def _agents(
                 workdir="/repo",
                 session_name="implementation-partner",
                 prompt="# Implementation Partner\n",
-                workspace_context=AgentWorkspaceContextConfig(
-                    enabled=workspace_context_enabled,
-                    resolver_id="linear_planning" if workspace_context_enabled else None,
-                ),
+                workspace=AgentWorkspaceConfig(setup=workspace_setup),
                 linear=LinearConfig(
                     app_key="implementation_partner",
                     access_token="access-token",
@@ -190,11 +187,11 @@ def _provider(
     tmp_path,
     tool_access_body: str,
     *,
-    workspace_context_enabled: bool = False,
+    workspace_setup_enabled: bool = False,
 ) -> LinearWorkspaceProvider:
     provider = LinearWorkspaceProvider(
         agent_registry=_agents(
-            workspace_context_enabled=workspace_context_enabled,
+            workspace_setup="cao_delivery" if workspace_setup_enabled else None,
             tool_access_by_agent=_tool_access_from_body(tool_access_body),
         ),
         preflight_credentials=False,
@@ -226,7 +223,7 @@ def _mcp_for_provider(
     provider: LinearWorkspaceProvider,
     terminal_id: str,
     *,
-    workspace_context_enabled: bool = False,
+    workspace_setup_enabled: bool = False,
 ):
     policy = provider.provider_tool_access()
     mcp = FastMCP(f"linear-tools-{terminal_id}", mask_error_details=False)
@@ -234,7 +231,7 @@ def _mcp_for_provider(
         terminal_id=terminal_id,
         mcp_instance=mcp,
         policies={"linear": policy},
-        agent_registry=_agents(workspace_context_enabled=workspace_context_enabled),
+        agent_registry=_agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None),
         terminal_metadata_resolver=_terminal_metadata,
     )
     return mcp, registered
@@ -686,11 +683,11 @@ def _mutated_project_payload(
 def _service(
     provider: LinearWorkspaceProvider,
     *,
-    workspace_context_enabled: bool = False,
+    workspace_setup_enabled: bool = False,
 ) -> ProviderMediatedToolInvocationService:
     return ProviderMediatedToolInvocationService(
         policies={"linear": provider.provider_tool_access()},
-        agent_registry=_agents(workspace_context_enabled=workspace_context_enabled),
+        agent_registry=_agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None),
         terminal_metadata_resolver=_terminal_metadata,
     )
 
@@ -797,7 +794,7 @@ tools = ["{CREATE_ISSUE_TOOL}"]
 create_team_ids = ["CAO"]
 create_parent_issues = ["CAO-25", "parent-25"]
 """,
-        workspace_context_enabled=True,
+        workspace_setup_enabled=True,
     )
     dispatcher = CaoEventDispatcher()
     register_linear_cao_events(dispatcher)
@@ -835,7 +832,7 @@ create_parent_issues = ["CAO-25", "parent-25"]
 
     monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
 
-    _service(provider, workspace_context_enabled=True).invoke(
+    _service(provider, workspace_setup_enabled=True).invoke(
         terminal_id="terminal-context",
         provider_name="linear",
         tool_name=CREATE_ISSUE_TOOL,

@@ -8,7 +8,13 @@ from typing import ClassVar
 
 import pytest
 
-from cli_agent_orchestrator.agent import Agent, LinearConfig, write_agent
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentWorkspaceConfig,
+    LinearConfig,
+    LinearToolAccessConfig,
+    write_agent,
+)
 from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
     get_linear_workspace_provider,
@@ -37,11 +43,13 @@ def _write_agent(
     agents_root,
     agent_id: str,
     *,
+    workspace_setup: str | None = None,
     app_key: str | None = None,
     app_user_id: str | None = None,
     app_user_name: str | None = None,
     access_token: str | None = None,
     token_expires_at: str | None = None,
+    tool_access: tuple[LinearToolAccessConfig, ...] = (),
 ) -> None:
     write_agent(
         Agent(
@@ -51,6 +59,7 @@ def _write_agent(
             workdir="/repo",
             session_name=agent_id.replace("_", "-"),
             prompt="",
+            workspace=AgentWorkspaceConfig(setup=workspace_setup),
             linear=(
                 LinearConfig(
                     app_key=app_key,
@@ -58,6 +67,7 @@ def _write_agent(
                     app_user_name=app_user_name,
                     access_token=access_token,
                     token_expires_at=token_expires_at,
+                    tool_access=tool_access,
                 )
                 if app_key
                 else None
@@ -217,3 +227,49 @@ def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_ac
     )
 
     assert policies == {}
+
+
+def test_provider_tool_policy_loading_prunes_linear_access_outside_workspace_setup(
+    tmp_path, monkeypatch
+):
+    enabled = tmp_path / "workspace-providers.toml"
+    enabled.write_text('enabled = ["linear"]\n')
+    agents = _agents_root(tmp_path)
+    _write_agent(
+        agents,
+        "implementation_partner",
+        workspace_setup="cao_delivery",
+        app_key="implementation_partner",
+        access_token="access-token",
+        tool_access=(
+            LinearToolAccessConfig(
+                access_id="impl_reads",
+                tools=("cao_linear.get_issue",),
+                issues=("CAO-1",),
+            ),
+        ),
+    )
+    _write_agent(
+        agents,
+        "discovery_partner",
+        app_key="discovery_partner",
+        access_token="access-token",
+        tool_access=(
+            LinearToolAccessConfig(
+                access_id="discovery_reads",
+                tools=("cao_linear.get_issue",),
+                issues=("CAO-2",),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        lambda presence: (_ for _ in ()).throw(AssertionError("credential preflight called")),
+    )
+
+    policies = load_enabled_provider_tool_access_policies(
+        enabled_config_path=enabled,
+        agents_config_path=agents,
+    )
+
+    assert [entry.agent_id for entry in policies["linear"].access] == ["implementation_partner"]

@@ -92,7 +92,7 @@ function ariaStatus(overrides: Partial<AgentStatus['config']> = {}): AgentStatus
       use_legacy_mcp_json: null,
       runtime_capabilities: null,
       codex_config: {},
-      workspace_context: { enabled: false, resolver_id: null },
+      workspace: { setup: null, diagnostics: [] },
       linear: {
         app_key: 'aria',
         client_id: 'linear-client',

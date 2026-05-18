@@ -16,7 +16,6 @@ from cli_agent_orchestrator.linear.workspace_events import (
 )
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
-    register_workspace_context_resolver,
 )
 
 LINEAR_PLANNING_RESOLVER_ID = "linear_planning"
@@ -35,15 +34,6 @@ def resolve_linear_workspace_event(
     if isinstance(event, LinearIssueCreatedEvent):
         return resolve_issue_created_event(event)
     return None
-
-
-def register_linear_workspace_context_resolver() -> None:
-    """Register Linear planning workspace context resolution with CAO."""
-
-    register_workspace_context_resolver(
-        LINEAR_PLANNING_RESOLVER_ID,
-        resolve_linear_workspace_event,
-    )
 
 
 def resolve_issue_context_event(

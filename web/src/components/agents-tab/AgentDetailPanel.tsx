@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Monitor, Play, Square } from 'lucide-react'
-import { AgentStatus } from '../../api'
+import { AgentStatus, WorkspaceSetupDiagnostic } from '../../api'
 
 export type AgentDetailTab = 'config' | 'timeline'
 
@@ -11,6 +11,7 @@ interface AgentDetailPanelProps {
   onStopAgent: (agentId: string) => void | Promise<void>
   startingAgentId?: string | null
   stoppingAgentId?: string | null
+  workspaceSetupDiagnostics?: WorkspaceSetupDiagnostic[]
   renderConfigTab: (agent: AgentStatus) => JSX.Element
   renderTimelineTab: (agent: AgentStatus) => JSX.Element
 }
@@ -27,6 +28,7 @@ export function AgentDetailPanel({
   onStopAgent,
   startingAgentId = null,
   stoppingAgentId = null,
+  workspaceSetupDiagnostics = [],
   renderConfigTab,
   renderTimelineTab,
 }: AgentDetailPanelProps) {
@@ -42,6 +44,12 @@ export function AgentDetailPanel({
 
   const isStarting = startingAgentId === agent.agent_id
   const isStopping = stoppingAgentId === agent.agent_id
+  const diagnostics = [
+    ...(agent.workspace_setup_diagnostics ?? []),
+    ...workspaceSetupDiagnostics
+      .filter(diagnostic => !diagnostic.agent_id || diagnostic.agent_id === agent.agent_id)
+      .map(diagnostic => diagnostic.message),
+  ]
 
   return (
     <div className="rounded-lg border border-gray-700/50 bg-gray-800/60 min-w-0">
@@ -65,6 +73,8 @@ export function AgentDetailPanel({
             <dd className="truncate text-gray-400">{agent.agent_id}</dd>
             <dt className="text-gray-600">workdir</dt>
             <dd className="truncate text-gray-400">{agent.workdir}</dd>
+            <dt className="text-gray-600">setup</dt>
+            <dd className="truncate text-violet-300">{agent.workspace_setup_id ?? 'none'}</dd>
             {agent.active && agent.active_terminal_id && (
               <>
                 <dt className="text-gray-600">terminal</dt>
@@ -78,6 +88,15 @@ export function AgentDetailPanel({
               </>
             )}
           </dl>
+          {!!diagnostics.length && (
+            <div className="mt-2 space-y-1">
+              {diagnostics.map(diagnostic => (
+                <p key={diagnostic} className="max-w-xl text-xs text-amber-300">
+                  {diagnostic}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {agent.active ? (

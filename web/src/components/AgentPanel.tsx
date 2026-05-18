@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Monitor, Play, Plus, Square, X } from 'lucide-react'
-import { api, AgentStatus } from '../api'
+import { api, AgentStatus, WorkspaceSetupDiagnostic } from '../api'
 import { useProviderSchema } from '../hooks/useProviderSchema'
 import { useStore } from '../store'
 import { AgentConfigTab } from './agents-tab/AgentConfigTab'
@@ -33,6 +33,7 @@ export function AgentPanel({
   const { selectSession, showSnackbar } = useStore()
   const providerSchema = useProviderSchema()
   const [agents, setAgents] = useState<AgentStatus[]>([])
+  const [workspaceSetupDiagnostics, setWorkspaceSetupDiagnostics] = useState<WorkspaceSetupDiagnostic[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [startingAgentId, setStartingAgentId] = useState<string | null>(null)
@@ -43,8 +44,12 @@ export function AgentPanel({
   const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentId?: string | null; terminalToken?: string | null } | null>(null)
   const initialTerminalOpened = useRef(false)
 
-  const refreshAgents = () => api.listAgents().then(nextAgents => {
+  const refreshAgents = () => Promise.all([
+    api.listAgents(),
+    api.listWorkspaceSetupDiagnostics().catch(() => [] as WorkspaceSetupDiagnostic[]),
+  ]).then(([nextAgents, nextDiagnostics]) => {
     setAgents(nextAgents)
+    setWorkspaceSetupDiagnostics(nextDiagnostics)
     setSelectedAgentId(previous => (
       previous && nextAgents.some(agent => agent.agent_id === previous)
         ? previous
@@ -268,6 +273,7 @@ export function AgentPanel({
           onStopAgent={handleStopAgent}
           startingAgentId={startingAgentId}
           stoppingAgentId={stoppingAgentId}
+          workspaceSetupDiagnostics={workspaceSetupDiagnostics}
           renderConfigTab={agent => (
             <AgentConfigTab
               key={agent.agent_id}

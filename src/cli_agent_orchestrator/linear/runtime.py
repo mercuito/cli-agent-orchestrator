@@ -18,9 +18,6 @@ from cli_agent_orchestrator.linear.agent_policies import (
     LinearPolicyRequest,
     build_default_linear_agent_policy_evaluator,
 )
-from cli_agent_orchestrator.linear.workspace_context_resolver import (
-    register_linear_workspace_context_resolver,
-)
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
@@ -53,8 +50,10 @@ from cli_agent_orchestrator.runtime.agent import (
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
-    WorkspaceContextResolverError,
-    resolve_workspace_context_for_agent,
+)
+from cli_agent_orchestrator.workspace_setups import (
+    WorkspaceSetupConfigError,
+    default_workspace_setup_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -322,14 +321,18 @@ def _persisted_external_url_was_published(thread_id: str) -> bool:
 
 
 def _resolve_linear_event(event: LinearIssueContextEvent) -> LinearResolvedPresence:
-    presence = get_linear_workspace_provider().resolve_presence(
-        app_key=event.app_key,
-        app_user_id=event.app_user_id,
-        app_user_name=event.app_user_name,
-    )
+    provider = get_linear_workspace_provider()
+    manager = default_workspace_setup_manager(agent_registry=provider.agent_registry)
+    try:
+        resolution = manager.resolve_provider_event("linear", event)
+    except WorkspaceSetupConfigError as exc:
+        raise LinearWorkspaceProviderConfigError(str(exc)) from exc
+    presence = resolution.provider_payload
+    if not hasattr(presence, "agent_id"):
+        raise LinearWorkspaceProviderConfigError("Linear workspace setup resolved invalid presence")
     return LinearResolvedPresence(
         presence=presence,
-        agent=get_linear_workspace_provider().resolve_agent_for_presence(presence),
+        agent=resolution.agent,
     )
 
 
@@ -376,7 +379,7 @@ def _runtime_handle_for_resolved_presence(
         configured_agents=AgentRegistry({resolved.agent.id: resolved.agent})
     )
     agent = agent_manager.register_agent(resolved.agent)
-    if not resolved.agent.workspace_context.enabled:
+    if resolved.agent.workspace.setup is None:
         return AgentRuntimeHandle(agent, agent_manager=agent_manager)
     if workspace_context_resolution is None:
         raise LinearWorkspaceProviderConfigError(
@@ -394,7 +397,7 @@ def _runtime_handle_for_resolved_event(
     event: CaoEvent,
 ) -> AgentRuntimeHandle:
     resolution = _resolve_workspace_context_for_event(resolved, event)
-    if not resolved.agent.workspace_context.enabled:
+    if resolved.agent.workspace.setup is None:
         return _runtime_handle_for_resolved_presence(resolved)
     return _runtime_handle_for_resolved_presence(
         resolved,
@@ -406,10 +409,12 @@ def _resolve_workspace_context_for_event(
     resolved: LinearResolvedPresence,
     event: CaoEvent,
 ) -> WorkspaceContextResolution | None:
-    register_linear_workspace_context_resolver()
+    manager = default_workspace_setup_manager(
+        agent_registry=AgentRegistry({resolved.agent.id: resolved.agent})
+    )
     try:
-        return resolve_workspace_context_for_agent(resolved.agent, event)
-    except WorkspaceContextResolverError as exc:
+        return manager.resolve_event_context(resolved.agent, event)
+    except WorkspaceSetupConfigError as exc:
         raise LinearWorkspaceProviderConfigError(str(exc)) from exc
 
 

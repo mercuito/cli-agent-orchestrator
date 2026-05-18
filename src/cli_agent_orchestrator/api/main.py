@@ -39,7 +39,7 @@ from cli_agent_orchestrator.agent import (
     Agent,
     AgentConfigError,
     AgentPathError,
-    AgentWorkspaceContextConfig,
+    AgentWorkspaceConfig,
     LinearConfig,
     LinearToolAccessConfig,
     configure_agents_root,
@@ -117,6 +117,7 @@ from cli_agent_orchestrator.workspace_providers import (
     WorkspaceProviderConfigError,
     initialize_enabled_workspace_providers,
 )
+from cli_agent_orchestrator.workspace_setups import default_workspace_setup_manager
 
 logger = logging.getLogger(__name__)
 
@@ -230,9 +231,9 @@ class AgentRuntimeTerminalResponse(BaseModel):
     terminal_token: str
 
 
-class AgentWorkspaceContextResponse(BaseModel):
-    enabled: bool
-    resolver_id: Optional[str] = None
+class AgentWorkspaceResponse(BaseModel):
+    setup: Optional[str] = None
+    diagnostics: List[str] = []
 
 
 class LinearToolAccessResponse(BaseModel):
@@ -286,7 +287,7 @@ class AgentConfigResponse(BaseModel):
     use_legacy_mcp_json: Optional[bool] = None
     runtime_capabilities: Optional[List[str]] = None
     codex_config: Dict[str, Any]
-    workspace_context: AgentWorkspaceContextResponse
+    workspace: AgentWorkspaceResponse
     linear: Optional[LinearConfigResponse] = None
 
     @classmethod
@@ -344,9 +345,9 @@ class AgentConfigResponse(BaseModel):
                 list(agent.runtime_capabilities) if agent.runtime_capabilities is not None else None
             ),
             codex_config=dict(agent.codex_config),
-            workspace_context=AgentWorkspaceContextResponse(
-                enabled=agent.workspace_context.enabled,
-                resolver_id=agent.workspace_context.resolver_id,
+            workspace=AgentWorkspaceResponse(
+                setup=agent.workspace.setup,
+                diagnostics=list(agent.workspace.diagnostics),
             ),
             linear=linear,
         )
@@ -365,6 +366,8 @@ class AgentStatusResponse(BaseModel):
     agent_dashboard_token: str
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
+    workspace_setup_id: Optional[str] = None
+    workspace_setup_diagnostics: List[str] = []
     last_active_at: Optional[datetime] = None
 
     @classmethod
@@ -380,23 +383,31 @@ class AgentStatusResponse(BaseModel):
             agent_dashboard_token=create_agent_dashboard_token(status.agent_id),
             active_terminal_id=status.active_terminal_id,
             active_workspace_context_id=status.active_workspace_context_id,
+            workspace_setup_id=status.workspace_setup_id,
+            workspace_setup_diagnostics=list(status.workspace_setup_diagnostics),
             last_active_at=status.last_active_at,
         )
 
 
-class AgentWorkspaceContextWriteRequest(BaseModel):
-    enabled: Optional[bool] = None
-    resolver_id: Optional[str] = None
+class WorkspaceSetupDiagnosticResponse(BaseModel):
+    code: str
+    message: str
+    setup_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    provider_name: Optional[str] = None
+
+
+class AgentWorkspaceWriteRequest(BaseModel):
+    setup: Optional[str] = None
 
     def to_config(
         self,
-        existing: AgentWorkspaceContextConfig | None = None,
-    ) -> AgentWorkspaceContextConfig:
-        base = existing or AgentWorkspaceContextConfig()
-        return AgentWorkspaceContextConfig(
-            enabled=self.enabled if self.enabled is not None else base.enabled,
-            resolver_id=(self.resolver_id if self.resolver_id is not None else base.resolver_id),
-        )
+        existing: AgentWorkspaceConfig | None = None,
+    ) -> AgentWorkspaceConfig:
+        base = existing or AgentWorkspaceConfig()
+        if "setup" in self.model_fields_set:
+            return AgentWorkspaceConfig(setup=self.setup)
+        return base
 
 
 class LinearToolAccessWriteRequest(BaseModel):
@@ -560,7 +571,7 @@ class AgentWriteRequest(BaseModel):
     use_legacy_mcp_json: Optional[bool] = None
     runtime_capabilities: Optional[List[str]] = None
     codex_config: Optional[Dict[str, Any]] = None
-    workspace_context: Optional[AgentWorkspaceContextWriteRequest] = None
+    workspace: Optional[AgentWorkspaceWriteRequest] = None
     linear: Optional[LinearWriteRequest] = None
 
     def to_agent(self, agent_id: str, existing: Optional[Agent] = None) -> Agent:
@@ -589,14 +600,12 @@ class AgentWriteRequest(BaseModel):
             value = field_value(field_name, default)
             return None if value is None else tuple(value)
 
-        if "workspace_context" in fields_set:
-            if self.workspace_context is None:
-                raise AgentConfigError(f"agents.{agent_id}.workspace_context must be a table")
-            workspace_context = self.workspace_context.to_config(
-                base.workspace_context if base else None
-            )
+        if "workspace" in fields_set:
+            if self.workspace is None:
+                raise AgentConfigError(f"agents.{agent_id}.workspace must be a table")
+            workspace_config = self.workspace.to_config(base.workspace if base else None)
         else:
-            workspace_context = base.workspace_context if base else AgentWorkspaceContextConfig()
+            workspace_config = base.workspace if base else AgentWorkspaceConfig()
 
         if "linear" in fields_set and self.linear is None:
             linear = None
@@ -642,7 +651,7 @@ class AgentWriteRequest(BaseModel):
                 base.runtime_capabilities if base else None,
             ),
             codex_config=mapping_value("codex_config", dict(base.codex_config) if base else {}),
-            workspace_context=workspace_context,
+            workspace=workspace_config,
             linear=linear,
         )
 
@@ -1039,6 +1048,24 @@ async def get_provider_catalog_endpoint(provider_type: str) -> ProviderCatalogRe
         discovered_at=catalog.discovered_at,
         source=catalog.source,
     )
+
+
+@app.get("/workspace-setups/diagnostics", response_model=List[WorkspaceSetupDiagnosticResponse])
+async def list_workspace_setup_diagnostics_endpoint() -> List[WorkspaceSetupDiagnosticResponse]:
+    """Return workspace setup validation and pruning diagnostics."""
+    try:
+        return [
+            WorkspaceSetupDiagnosticResponse(
+                code=diagnostic.code,
+                message=diagnostic.message,
+                setup_id=diagnostic.setup_id,
+                agent_id=diagnostic.agent_id,
+                provider_name=diagnostic.provider_name,
+            )
+            for diagnostic in default_workspace_setup_manager().diagnostics()
+        ]
+    except (AgentConfigError, AgentPathError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @app.get("/agents", response_model=List[AgentStatusResponse])

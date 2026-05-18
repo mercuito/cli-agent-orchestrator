@@ -33,6 +33,8 @@ class AgentStatus:
     active: bool
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
+    workspace_setup_id: Optional[str] = None
+    workspace_setup_diagnostics: tuple[str, ...] = ()
     last_active_at: Optional[datetime] = None
 
     @classmethod
@@ -45,6 +47,8 @@ class AgentStatus:
             session_name=agent.session_name,
             agent=agent,
             active=False,
+            workspace_setup_id=agent.workspace.setup,
+            workspace_setup_diagnostics=agent.workspace.diagnostics,
         )
 
 
@@ -169,6 +173,8 @@ class AgentManager:
             active=True,
             active_terminal_id=_optional_str(terminal.get("id")),
             active_workspace_context_id=_optional_str(terminal.get("workspace_context_id")),
+            workspace_setup_id=agent.workspace.setup,
+            workspace_setup_diagnostics=agent.workspace.diagnostics,
             last_active_at=_optional_datetime(terminal.get("last_active")),
         )
 

@@ -11,6 +11,7 @@ from pydantic.dataclasses import dataclass
 from cli_agent_orchestrator.agent import (
     Agent,
     AgentConfigError,
+    AgentWorkspaceConfig,
     LinearConfig,
     LinearToolAccessConfig,
 )
@@ -36,6 +37,7 @@ from cli_agent_orchestrator.runtime.events import (
 )
 from cli_agent_orchestrator.services.agent_manager import AgentStatus
 from cli_agent_orchestrator.utils.dashboard_links import create_agent_dashboard_token
+from cli_agent_orchestrator.workspace_setups import WorkspaceSetupDiagnostic
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
 
@@ -147,6 +149,7 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
     assert body[0]["agent_id"] == "implementation_partner"
     assert body[0]["config"]["workdir"] == "/repo"
     assert body[0]["config"]["session_name"] == "implementation-partner"
+    assert "workspace" in body[0]["config"]
     assert body[0]["config"]["mcp_servers"] == {"cao-mcp-server": {"command": "cao-mcp-server"}}
     assert body[0]["config"]["reasoning_effort"] == "medium"
     assert body[0]["config"]["tool_aliases"] == {"shell": "bash"}
@@ -161,6 +164,36 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
     assert body[0]["agent_dashboard_token"]
     assert body[0]["active_terminal_id"] == "abcd1234"
     assert body[1]["agent_id"] == "reviewer"
+
+
+def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(client, monkeypatch):
+    manager = SimpleNamespace(
+        diagnostics=lambda: (
+            WorkspaceSetupDiagnostic(
+                code="unknown_setup",
+                message="Unknown workspace setup: future",
+                setup_id="future",
+                agent_id="implementation_partner",
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_setup_manager",
+        lambda: manager,
+    )
+
+    response = client.get("/workspace-setups/diagnostics")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "code": "unknown_setup",
+            "message": "Unknown workspace setup: future",
+            "setup_id": "future",
+            "agent_id": "implementation_partner",
+            "provider_name": None,
+        }
+    ]
 
 
 def test_list_agents_active_filter(client, monkeypatch):
@@ -598,6 +631,50 @@ def test_update_agent_rejects_empty_required_field_and_clears_nullable_model(
     assert patched_agent is not None
     assert patched_agent.model is None
     assert patched_fields == {"model"}
+
+
+def test_update_agent_can_clear_workspace_setup(client, monkeypatch):
+    existing_agent = replace(_agent(), workspace=AgentWorkspaceConfig(setup="cao_delivery"))
+    patched_agent = None
+    patched_fields = None
+
+    def _patch_agent_config(agent, *, changed_fields):
+        nonlocal patched_agent, patched_fields
+        patched_agent = agent
+        patched_fields = changed_fields
+
+    class _WriteThroughAgentManager:
+        def status_for_agent(self, agent_id: str):
+            assert patched_agent is not None
+            return AgentStatus(
+                agent_id=agent_id,
+                display_name=patched_agent.display_name,
+                cli_provider=patched_agent.cli_provider,
+                workdir=patched_agent.workdir,
+                session_name=patched_agent.session_name,
+                agent=patched_agent,
+                active=False,
+            )
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.load_agent",
+        lambda agent_id: existing_agent,
+    )
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.patch_agent_config", _patch_agent_config)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _WriteThroughAgentManager(),
+    )
+
+    response = client.put(
+        "/agents/implementation_partner",
+        json={"workspace": {"setup": None}},
+    )
+
+    assert response.status_code == 200
+    assert patched_agent is not None
+    assert patched_agent.workspace.setup is None
+    assert patched_fields == {"workspace"}
 
 
 def test_runtime_terminal_endpoint_uses_agent_manager_status(client, monkeypatch):

@@ -59,6 +59,10 @@ from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderToolAccessConfigError,
     ProviderToolAccessPolicy,
 )
+from cli_agent_orchestrator.workspace_setups import (
+    WorkspaceSetupConfigError,
+    default_workspace_setup_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +319,59 @@ def _create_terminal(agent_id: str, working_directory: Optional[str] = None) -> 
     return terminal["id"], terminal["provider"]
 
 
+def _require_workspace_setup_collaboration(receiver_agent_id: str) -> None:
+    sender_agent_id = _sender_agent_id_for_workspace_setup_guard()
+    registry = load_agent_registry()
+    manager = default_workspace_setup_manager(agent_registry=registry)
+    manager.require_same_setup_collaboration(
+        sender=registry.get(sender_agent_id),
+        receiver=registry.get(receiver_agent_id.strip()),
+    )
+
+
+def _sender_agent_id_for_workspace_setup_guard() -> str:
+    sender_terminal_id = os.getenv("CAO_TERMINAL_ID")
+    if not sender_terminal_id:
+        raise WorkspaceSetupConfigError(
+            "Workspace setup collaboration rejected: sender terminal is unknown"
+        )
+    sender_metadata = db_module.get_terminal_metadata(sender_terminal_id)
+    if sender_metadata is None:
+        raise WorkspaceSetupConfigError(
+            f"Workspace setup collaboration rejected: sender terminal {sender_terminal_id} "
+            "is unknown"
+        )
+    sender_agent_id = sender_metadata.get("agent_id")
+    if not isinstance(sender_agent_id, str) or not sender_agent_id.strip():
+        raise WorkspaceSetupConfigError(
+            f"Workspace setup collaboration rejected: sender terminal {sender_terminal_id} "
+            "has no CAO agent"
+        )
+    return sender_agent_id.strip()
+
+
+def _require_workspace_setup_terminal_collaboration(receiver_terminal_id: str) -> None:
+    sender_agent_id = _sender_agent_id_for_workspace_setup_guard()
+    receiver_metadata = db_module.get_terminal_metadata(receiver_terminal_id)
+    if receiver_metadata is None:
+        raise WorkspaceSetupConfigError(
+            f"Workspace setup collaboration rejected: receiver terminal {receiver_terminal_id} "
+            "is unknown"
+        )
+    receiver_agent_id = receiver_metadata.get("agent_id")
+    if not isinstance(receiver_agent_id, str) or not receiver_agent_id.strip():
+        raise WorkspaceSetupConfigError(
+            f"Workspace setup collaboration rejected: receiver terminal {receiver_terminal_id} "
+            "has no CAO agent"
+        )
+    registry = load_agent_registry()
+    manager = default_workspace_setup_manager(agent_registry=registry)
+    manager.require_same_setup_collaboration(
+        sender=registry.get(sender_agent_id),
+        receiver=registry.get(receiver_agent_id),
+    )
+
+
 def _deliver_handoff_payload(terminal_id: str, provider: str, message: str) -> None:
     """Deliver a handoff payload through the worker's inbox.
 
@@ -409,6 +466,7 @@ async def _handoff_impl(
     start_time = time.time()
 
     try:
+        _require_workspace_setup_collaboration(agent_id)
         # Create terminal
         terminal_id, provider = _create_terminal(agent_id, working_directory)
 
@@ -592,6 +650,7 @@ def _assign_impl(
 ) -> Dict[str, Any]:
     """Implementation of assign logic."""
     try:
+        _require_workspace_setup_collaboration(agent_id)
         # Create terminal
         terminal_id, _ = _create_terminal(agent_id, working_directory)
 
@@ -911,6 +970,7 @@ def _create_baton_impl(
 ) -> Dict[str, Any]:
     try:
         actor_id = _require_cao_terminal_id()
+        _require_workspace_setup_terminal_collaboration(holder_id)
         baton = baton_service.create_baton(
             title=title,
             originator_id=actor_id,
@@ -933,6 +993,7 @@ def _pass_baton_impl(
 ) -> Dict[str, Any]:
     try:
         actor_id = _require_cao_terminal_id()
+        _require_workspace_setup_terminal_collaboration(receiver_id)
         baton = baton_service.pass_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -954,6 +1015,11 @@ def _return_baton_impl(
 ) -> Dict[str, Any]:
     try:
         actor_id = _require_cao_terminal_id()
+        existing = db_module.get_baton_record(baton_id)
+        if existing is None:
+            raise baton_service.BatonNotFound(baton_id)
+        receiver_id = existing.return_stack[-1] if existing.return_stack else existing.originator_id
+        _require_workspace_setup_terminal_collaboration(receiver_id)
         baton = baton_service.return_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -973,6 +1039,10 @@ def _complete_baton_impl(
 ) -> Dict[str, Any]:
     try:
         actor_id = _require_cao_terminal_id()
+        existing = db_module.get_baton_record(baton_id)
+        if existing is None:
+            raise baton_service.BatonNotFound(baton_id)
+        _require_workspace_setup_terminal_collaboration(existing.originator_id)
         baton = baton_service.complete_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -991,6 +1061,10 @@ def _block_baton_impl(
 ) -> Dict[str, Any]:
     try:
         actor_id = _require_cao_terminal_id()
+        existing = db_module.get_baton_record(baton_id)
+        if existing is None:
+            raise baton_service.BatonNotFound(baton_id)
+        _require_workspace_setup_terminal_collaboration(existing.originator_id)
         baton = baton_service.block_baton(
             baton_id=baton_id,
             actor_id=actor_id,

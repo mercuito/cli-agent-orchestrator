@@ -16,7 +16,7 @@ from cli_agent_orchestrator.agent import (
     Agent,
     AgentConfigError,
     AgentValidationError,
-    AgentWorkspaceContextConfig,
+    AgentWorkspaceConfig,
     LinearConfig,
     LinearToolAccessConfig,
     load_agent,
@@ -50,10 +50,7 @@ def _agent(**overrides: object) -> Agent:
         "hooks": {"pre": {"command": "true"}},
         "use_legacy_mcp_json": False,
         "runtime_capabilities": ("@builtin",),
-        "workspace_context": AgentWorkspaceContextConfig(
-            enabled=True,
-            resolver_id="linear_planning",
-        ),
+        "workspace": AgentWorkspaceConfig(setup="cao_delivery"),
         "linear": LinearConfig(
             app_key="implementation_partner",
             client_id="client-1",
@@ -96,9 +93,9 @@ def test_agents_root_honors_cao_agents_dir_env_at_import(tmp_path):
     assert result.stdout.strip() == str(agents_root)
 
 
-def test_agent_model_rejects_invalid_workspace_context_combination():
-    with pytest.raises(AgentConfigError, match="resolver_id is required"):
-        _agent(workspace_context=AgentWorkspaceContextConfig(enabled=True))
+def test_agent_model_rejects_invalid_workspace_setup():
+    with pytest.raises(AgentConfigError, match="workspace.setup"):
+        _agent(workspace=AgentWorkspaceConfig(setup=""))
 
 
 def test_agent_model_rejects_unsupported_cli_provider():
@@ -166,6 +163,29 @@ def test_write_then_load_agent_round_trips_and_sets_permissions(tmp_path):
     assert (tmp_path / "implementation_partner" / "prompt.md").stat().st_mode & 0o777 == (
         AGENT_PROMPT_MODE
     )
+
+
+def test_agent_workspace_setup_round_trips_without_legacy_block(tmp_path):
+    given_agent = _agent(workspace=AgentWorkspaceConfig(setup="cao_delivery"))
+
+    write_agent(given_agent, agents_root=tmp_path)
+    loaded = load_agent("implementation_partner", agents_root=tmp_path)
+    config_text = (tmp_path / "implementation_partner" / "agent.toml").read_text()
+
+    assert loaded.workspace.setup == "cao_delivery"
+    assert "[workspace]" in config_text
+    assert 'setup = "cao_delivery"' in config_text
+    assert "workspace_context" not in config_text
+
+
+def test_agent_without_workspace_setup_round_trips(tmp_path):
+    given_agent = _agent(workspace=AgentWorkspaceConfig())
+
+    write_agent(given_agent, agents_root=tmp_path)
+    loaded = load_agent("implementation_partner", agents_root=tmp_path)
+
+    assert loaded.workspace.setup is None
+    assert "[workspace]" not in (tmp_path / "implementation_partner" / "agent.toml").read_text()
 
 
 def test_write_agent_failed_replace_preserves_existing_file_and_removes_temp(tmp_path):
@@ -247,6 +267,59 @@ enabled = true
     assert "implementation_partner" in message
     assert str(config_path) in message
     assert "workspace_context.resolver_id" in message
+
+
+def test_legacy_workspace_context_maps_through_explicit_migration_table(tmp_path):
+    agent_dir = tmp_path / "implementation_partner"
+    agent_dir.mkdir()
+    (agent_dir / "agent.toml").write_text("""
+id = "implementation_partner"
+display_name = "Implementation Partner"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "implementation-partner"
+
+[workspace_context]
+enabled = true
+resolver_id = "linear_planning"
+""".lstrip())
+    (agent_dir / "prompt.md").write_text("# Agent\n")
+
+    agent = load_agent("implementation_partner", agents_root=tmp_path)
+
+    assert agent.workspace.setup == "cao_delivery"
+    assert agent.workspace.diagnostics == (
+        "agents.implementation_partner.workspace_context is legacy; "
+        "mapped resolver to workspace setup cao_delivery",
+    )
+
+
+def test_workspace_setup_wins_over_legacy_workspace_context(tmp_path):
+    agent_dir = tmp_path / "implementation_partner"
+    agent_dir.mkdir()
+    (agent_dir / "agent.toml").write_text("""
+id = "implementation_partner"
+display_name = "Implementation Partner"
+cli_provider = "codex"
+workdir = "/repo"
+session_name = "implementation-partner"
+
+[workspace]
+setup = "cao_delivery"
+
+[workspace_context]
+enabled = true
+resolver_id = "linear_planning"
+""".lstrip())
+    (agent_dir / "prompt.md").write_text("# Agent\n")
+
+    agent = load_agent("implementation_partner", agents_root=tmp_path)
+
+    assert agent.workspace.setup == "cao_delivery"
+    assert agent.workspace.diagnostics == (
+        "agents.implementation_partner.workspace_context is legacy and ignored because "
+        "[workspace] setup is authoritative",
+    )
 
 
 def test_load_agent_path_only_semantic_errors_get_agent_context(tmp_path):

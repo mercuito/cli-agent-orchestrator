@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cli_agent_orchestrator.agent import Agent, AgentWorkspaceContextConfig
+from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.workspace_context_store import (
     WORKSPACE_CONTEXT_ROLE_CHILD_WORK_ITEM,
@@ -11,7 +11,6 @@ from cli_agent_orchestrator.clients.workspace_context_store import (
 from cli_agent_orchestrator.events import CaoEvent, agent_participants_for
 from cli_agent_orchestrator.linear.workspace_context_resolver import (
     LINEAR_PLANNING_RESOLVER_ID,
-    register_linear_workspace_context_resolver,
     resolve_linear_workspace_event,
 )
 from cli_agent_orchestrator.linear.workspace_events import (
@@ -27,7 +26,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueDelegatedToAgentEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.workspace_contexts import resolve_workspace_context_for_agent
+from cli_agent_orchestrator.workspace_setups import default_workspace_setup_manager
 
 
 def _agent_session_payload(issue: dict | None, *, session_id: str = "session-1") -> dict:
@@ -60,10 +59,7 @@ def _context_agent() -> Agent:
         workdir="/tmp/cao",
         session_name="implementation-partner",
         prompt="",
-        workspace_context=AgentWorkspaceContextConfig(
-            enabled=True,
-            resolver_id=LINEAR_PLANNING_RESOLVER_ID,
-        ),
+        workspace=AgentWorkspaceConfig(setup="cao_delivery"),
     )
 
 
@@ -181,9 +177,10 @@ def test_linear_event_without_issue_does_not_guess_context(runtime_inbox_db_sess
 def test_agent_resolver_explicitly_resolves_traced_linear_provider_event(
     runtime_inbox_db_session,
 ):
-    register_linear_workspace_context_resolver()
-    resolution = resolve_workspace_context_for_agent(
-        _context_agent(),
+    agent = _context_agent()
+    manager = default_workspace_setup_manager(agent_registry=AgentRegistry({agent.id: agent}))
+    resolution = manager.resolve_event_context(
+        agent,
         _published_event(_agent_session_payload({"id": "issue-79", "identifier": "CAO-79"})),
     )
 
