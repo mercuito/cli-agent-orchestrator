@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cao-server",
+      "runtimeExecutable": "cao-server",
+      "runtimeArgs": [],
+      "port": 9890
+    }
+  ]
+}
