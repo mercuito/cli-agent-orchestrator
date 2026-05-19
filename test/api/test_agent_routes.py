@@ -15,6 +15,9 @@ from cli_agent_orchestrator.agent import (
     AgentWorkspaceConfig,
     LinearConfig,
     LinearToolAccessConfig,
+    load_agent,
+    load_agent_registry,
+    write_agent,
 )
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import TerminalAgentAlreadyRunningError
@@ -325,22 +328,18 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
         def list_teams(self):
             return (team,)
 
-        def create_or_update_team(
+        def update_team_metadata(
             self,
             *,
             team_id: str,
             display_name: str,
             workspace_setup: str,
-            roles=None,
-            role_assignments=None,
         ):
             saved.append((team_id, display_name, workspace_setup))
             return WorkspaceTeam(
                 id=team_id,
                 display_name=display_name,
                 workspace_setup=workspace_setup,
-                roles=roles or {},
-                role_assignments=role_assignments or {},
             )
 
     monkeypatch.setattr(
@@ -395,7 +394,9 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
     assert saved == [("research", "Research", "linear_delivery_setup")]
 
 
-def test_workspace_team_api_round_trips_role_policy_through_store(client, monkeypatch, tmp_path):
+def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
+    client, monkeypatch, tmp_path
+):
     setup_registry = WorkspaceSetupRegistry(
         (
             WorkspaceSetup(
@@ -426,39 +427,40 @@ def test_workspace_team_api_round_trips_role_policy_through_store(client, monkey
         lambda: SimpleNamespace(diagnostics=lambda: ()),
     )
 
-    save_response = client.put(
-        "/workspace-teams/research",
+    create_response = client.post(
+        "/workspace-teams",
         json={
             "id": "research",
             "display_name": "Research",
             "workspace_setup": "linear_delivery_setup",
-            "roles": {
-                "reviewer": {
-                    "display_name": "Reviewer",
-                    "cao_tools": ["read_inbox_message"],
-                    "mcp_servers": {"custom": {"command": "custom-mcp"}},
-                    "providers": {
-                        "linear": {
-                            "reads": {
-                                "tools": ["cao_linear.get_issue"],
-                                "issues": ["*"],
-                            }
-                        }
-                    },
+        },
+    )
+    role_response = client.put(
+        "/workspace-teams/research/roles/reviewer",
+        json={
+            "display_name": "Reviewer",
+            "cao_tools": ["read_inbox_message"],
+            "mcp_servers": {"custom": {"command": "custom-mcp"}},
+            "providers": {
+                "linear": {
+                    "reads": {
+                        "tools": ["cao_linear.get_issue"],
+                        "issues": ["*"],
+                    }
                 }
             },
-            "role_assignments": {"aria": "reviewer"},
         },
     )
     list_response = client.get("/workspace-teams")
     stored = WorkspaceTeamStore(tmp_path / "workspace-teams.json").get("research")
 
-    assert save_response.status_code == 200
-    assert save_response.json()["roles"]["reviewer"]["providers"]["linear"]["reads"][
+    assert create_response.status_code == 201
+    assert role_response.status_code == 200
+    assert role_response.json()["roles"]["reviewer"]["providers"]["linear"]["reads"][
         "issues"
     ] == ["*"]
     assert list_response.status_code == 200
-    assert list_response.json()[0]["role_assignments"] == {"aria": "reviewer"}
+    assert list_response.json()[0]["role_assignments"] == {}
     assert stored.roles["reviewer"] == WorkspaceTeamRole(
         display_name="Reviewer",
         cao_tools=("read_inbox_message",),
@@ -472,6 +474,339 @@ def test_workspace_team_api_round_trips_role_policy_through_store(client, monkey
             }
         },
     )
+
+
+def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch, tmp_path):
+    setup_registry = WorkspaceSetupRegistry(
+        (
+            WorkspaceSetup(
+                id="linear_delivery_setup",
+                display_name="Linear Delivery Setup",
+                providers=("linear",),
+                resolver=lambda event: None,
+            ),
+        )
+    )
+    service = WorkspaceTeamService(
+        setup_registry=setup_registry,
+        team_store=WorkspaceTeamStore(tmp_path / "workspace-teams.json", bootstrap_teams=()),
+        agent_registry=AgentRegistry({}),
+        available_providers=("linear",),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(list_agents=lambda: ()),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(diagnostics=lambda: ()),
+    )
+
+    created = client.post(
+        "/workspace-teams",
+        json={
+            "id": "research",
+            "display_name": "Research",
+            "workspace_setup": "linear_delivery_setup",
+        },
+    )
+    fetched = client.get("/workspace-teams/research")
+    updated = client.put(
+        "/workspace-teams/research",
+        json={
+            "id": "research",
+            "display_name": "Research Renamed",
+            "workspace_setup": "linear_delivery_setup",
+        },
+    )
+    deleted = client.delete("/workspace-teams/research")
+
+    assert created.status_code == 201
+    assert created.json()["roles"]["member"]["deletable"] is False
+    assert fetched.status_code == 200
+    assert fetched.json()["id"] == "research"
+    assert updated.status_code == 200
+    assert updated.json()["display_name"] == "Research Renamed"
+    assert deleted.status_code == 200
+    assert deleted.json()["id"] == "research"
+    assert service.list_teams() == ()
+
+
+def test_workspace_team_role_delete_api_falls_assignments_back_to_member(
+    client, monkeypatch, tmp_path
+):
+    setup_registry = WorkspaceSetupRegistry(
+        (
+            WorkspaceSetup(
+                id="linear_delivery_setup",
+                display_name="Linear Delivery Setup",
+                providers=("linear",),
+                resolver=lambda event: None,
+            ),
+        )
+    )
+    service = WorkspaceTeamService(
+        setup_registry=setup_registry,
+        team_store=WorkspaceTeamStore(
+            tmp_path / "workspace-teams.json",
+            bootstrap_teams=(
+                WorkspaceTeam(
+                    id="research",
+                    display_name="Research",
+                    workspace_setup="linear_delivery_setup",
+                    roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
+                    role_assignments={"aria": "reviewer"},
+                ),
+            ),
+        ),
+        agent_registry=AgentRegistry({}),
+        available_providers=("linear",),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(list_agents=lambda: ()),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(diagnostics=lambda: ()),
+    )
+
+    response = client.delete("/workspace-teams/research/roles/reviewer")
+
+    assert response.status_code == 200
+    assert "reviewer" not in response.json()["roles"]
+    assert response.json()["role_assignments"] == {"aria": "member"}
+
+
+def test_workspace_team_api_rejects_member_role_and_member_team_deletion(
+    client, monkeypatch, tmp_path
+):
+    agents_root = tmp_path / "agents"
+    write_agent(
+        replace(_agent("aria"), workspace=AgentWorkspaceConfig(team="research")),
+        agents_root=agents_root,
+    )
+    setup_registry = WorkspaceSetupRegistry(
+        (
+            WorkspaceSetup(
+                id="linear_delivery_setup",
+                display_name="Linear Delivery Setup",
+                providers=("linear",),
+                resolver=lambda event: None,
+            ),
+        )
+    )
+    service = WorkspaceTeamService(
+        setup_registry=setup_registry,
+        team_store=WorkspaceTeamStore(
+            tmp_path / "workspace-teams.json",
+            bootstrap_teams=(
+                WorkspaceTeam(
+                    id="research",
+                    display_name="Research",
+                    workspace_setup="linear_delivery_setup",
+                ),
+            ),
+        ),
+        agent_registry=load_agent_registry(agents_root=agents_root),
+        available_providers=("linear",),
+        agents_root=agents_root,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(
+            list_agents=lambda: tuple(load_agent_registry(agents_root=agents_root).all().values())
+        ),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(diagnostics=lambda: ()),
+    )
+
+    role_delete = client.delete("/workspace-teams/research/roles/member")
+    team_delete = client.delete("/workspace-teams/research")
+
+    assert role_delete.status_code == 400
+    assert "member role cannot be deleted" in role_delete.json()["detail"]
+    assert team_delete.status_code == 400
+    assert "members exist" in team_delete.json()["detail"]
+
+
+def test_workspace_team_metadata_put_rejects_legacy_role_policy_payload(client, monkeypatch):
+    team = WorkspaceTeam(
+        id="research",
+        display_name="Research",
+        workspace_setup="linear_delivery_setup",
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: SimpleNamespace(get_team=lambda team_id: team),
+    )
+
+    response = client.put(
+        "/workspace-teams/research",
+        json={
+            "id": "research",
+            "display_name": "Research",
+            "workspace_setup": "linear_delivery_setup",
+            "roles": {"reviewer": {"display_name": "Reviewer"}},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"][0]["loc"] == ["body", "roles"]
+
+
+def test_workspace_team_member_api_moves_agent_and_returns_member_detail(
+    client, monkeypatch, tmp_path
+):
+    agents_root = tmp_path / "agents"
+    write_agent(
+        replace(_agent("aria"), workspace=AgentWorkspaceConfig(team="delivery")),
+        agents_root=agents_root,
+    )
+    setup_registry = WorkspaceSetupRegistry(
+        (
+            WorkspaceSetup(
+                id="linear_delivery_setup",
+                display_name="Linear Delivery Setup",
+                providers=("linear",),
+                resolver=lambda event: None,
+            ),
+        )
+    )
+    team_store = WorkspaceTeamStore(
+        tmp_path / "workspace-teams.json",
+        bootstrap_teams=(
+            WorkspaceTeam(
+                id="delivery",
+                display_name="Delivery",
+                workspace_setup="linear_delivery_setup",
+                roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
+                role_assignments={"aria": "reviewer"},
+            ),
+            WorkspaceTeam(
+                id="research",
+                display_name="Research",
+                workspace_setup="linear_delivery_setup",
+            ),
+        ),
+    )
+    service = WorkspaceTeamService(
+        setup_registry=setup_registry,
+        team_store=team_store,
+        agent_registry=load_agent_registry(agents_root=agents_root),
+        available_providers=("linear",),
+        agents_root=agents_root,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(
+            list_agents=lambda: tuple(load_agent_registry(agents_root=agents_root).all().values())
+        ),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(diagnostics=lambda: ()),
+    )
+
+    response = client.put(
+        "/workspace-teams/research/members/aria",
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert load_agent("aria", agents_root=agents_root).workspace.team == "research"
+    assert response.json()["members"] == ["aria"]
+    assert response.json()["member_details"] == [
+        {
+            "agent_id": "aria",
+            "display_name": "Implementation Partner",
+            "role_id": "member",
+            "role_explicitly_assigned": True,
+        }
+    ]
+    assert WorkspaceTeamStore(tmp_path / "workspace-teams.json").get(
+        "delivery"
+    ).role_assignments == {}
+
+
+def test_workspace_team_member_remove_api_clears_membership_and_assignment(
+    client, monkeypatch, tmp_path
+):
+    agents_root = tmp_path / "agents"
+    write_agent(
+        replace(_agent("aria"), workspace=AgentWorkspaceConfig(team="delivery")),
+        agents_root=agents_root,
+    )
+    setup_registry = WorkspaceSetupRegistry(
+        (
+            WorkspaceSetup(
+                id="linear_delivery_setup",
+                display_name="Linear Delivery Setup",
+                providers=("linear",),
+                resolver=lambda event: None,
+            ),
+        )
+    )
+    team_store = WorkspaceTeamStore(
+        tmp_path / "workspace-teams.json",
+        bootstrap_teams=(
+            WorkspaceTeam(
+                id="delivery",
+                display_name="Delivery",
+                workspace_setup="linear_delivery_setup",
+                roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
+                role_assignments={"aria": "reviewer"},
+            ),
+        ),
+    )
+    service = WorkspaceTeamService(
+        setup_registry=setup_registry,
+        team_store=team_store,
+        agent_registry=load_agent_registry(agents_root=agents_root),
+        available_providers=("linear",),
+        agents_root=agents_root,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(
+            list_agents=lambda: tuple(load_agent_registry(agents_root=agents_root).all().values())
+        ),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(diagnostics=lambda: ()),
+    )
+
+    response = client.delete("/workspace-teams/delivery/members/aria")
+
+    assert response.status_code == 200
+    assert load_agent("aria", agents_root=agents_root).workspace.team is None
+    assert response.json()["members"] == []
+    assert WorkspaceTeamStore(tmp_path / "workspace-teams.json").get(
+        "delivery"
+    ).role_assignments == {}
 
 
 def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monkeypatch):
@@ -959,48 +1294,45 @@ def test_update_agent_rejects_empty_required_field_and_clears_nullable_model(
     assert patched_fields == {"model"}
 
 
-def test_update_agent_can_clear_workspace_team(client, monkeypatch):
+def test_update_agent_rejects_direct_workspace_team_mutation(client, monkeypatch):
     existing_agent = replace(_agent(), workspace=AgentWorkspaceConfig(team="cao_delivery"))
-    patched_agent = None
-    patched_fields = None
-
-    def _patch_agent_config(agent, *, changed_fields):
-        nonlocal patched_agent, patched_fields
-        patched_agent = agent
-        patched_fields = changed_fields
-
-    class _WriteThroughAgentManager:
-        def status_for_agent(self, agent_id: str):
-            assert patched_agent is not None
-            return AgentStatus(
-                agent_id=agent_id,
-                display_name=patched_agent.display_name,
-                cli_provider=patched_agent.cli_provider,
-                workdir=patched_agent.workdir,
-                session_name=patched_agent.session_name,
-                agent=patched_agent,
-                active=False,
-            )
-
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.load_agent",
         lambda agent_id: existing_agent,
     )
-    monkeypatch.setattr("cli_agent_orchestrator.api.main.patch_agent_config", _patch_agent_config)
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_agent_manager",
-        lambda: _WriteThroughAgentManager(),
-    )
 
-    response = client.put(
+    clear_response = client.put(
         "/agents/implementation_partner",
         json={"workspace": {"team": None}},
     )
+    move_response = client.put(
+        "/agents/implementation_partner",
+        json={"workspace": {"team": "research"}},
+    )
 
-    assert response.status_code == 200
-    assert patched_agent is not None
-    assert patched_agent.workspace.team is None
-    assert patched_fields == {"workspace"}
+    assert clear_response.status_code == 400
+    assert "/workspace-teams/{team_id}/members/{agent_id}" in clear_response.json()["detail"]
+    assert move_response.status_code == 400
+    assert "/workspace-teams/{team_id}/members/{agent_id}" in move_response.json()["detail"]
+
+
+def test_create_agent_rejects_direct_workspace_team_membership(client, monkeypatch, tmp_path):
+    agents_root = tmp_path / "agents"
+    monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
+
+    response = client.post(
+        "/agents",
+        json={
+            "id": "teamed_agent",
+            "display_name": "Teamed Agent",
+            "cli_provider": "codex",
+            "workdir": "/repo",
+            "workspace": {"team": "research"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "/workspace-teams/{team_id}/members/{agent_id}" in response.json()["detail"]
 
 
 def test_update_agent_rejects_legacy_workspace_setup(client, monkeypatch):

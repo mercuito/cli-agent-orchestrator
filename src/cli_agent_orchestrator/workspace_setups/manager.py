@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import json
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol
+from typing import Any, Iterable, Mapping, Optional, Protocol
 
-from cli_agent_orchestrator.agent import Agent, AgentConfigError, AgentRegistry, load_agent_registry
+import cli_agent_orchestrator.agent as agent_config
+from cli_agent_orchestrator.agent import (
+    Agent,
+    AgentConfigError,
+    AgentRegistry,
+    AgentWorkspaceConfig,
+    load_agent,
+    load_agent_registry,
+    patch_agent_config,
+)
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
@@ -317,11 +326,43 @@ class WorkspaceTeamStore:
         self._write(teams)
         return team
 
+    def update_many(
+        self,
+        *,
+        upsert_teams: Iterable[WorkspaceTeam] = (),
+        delete_team_ids: Iterable[str] = (),
+    ) -> dict[str, WorkspaceTeam]:
+        teams = self._read_after_seed()
+        deleted: set[str] = set()
+        for team_id in delete_team_ids:
+            normalized = _required_token(team_id, "workspace team id")
+            if normalized not in teams:
+                raise WorkspaceSetupConfigError(f"Unknown workspace team: {normalized}")
+            teams.pop(normalized)
+            deleted.add(normalized)
+        changed: dict[str, WorkspaceTeam] = {}
+        for team in upsert_teams:
+            if team.id in deleted:
+                raise WorkspaceSetupConfigError(
+                    f"Workspace team {team.id} cannot be upserted and deleted together"
+                )
+            teams[team.id] = team
+            changed[team.id] = team
+        self._write(teams)
+        return changed
+
+    def delete(self, team_id: str) -> WorkspaceTeam:
+        team = self.get(team_id)
+        self.update_many(delete_team_ids=(team.id,))
+        return team
+
     def _read_after_seed(self) -> dict[str, WorkspaceTeam]:
         self._ensure_seeded()
         return self._read()
 
     def _ensure_seeded(self) -> None:
+        if self._path.exists():
+            return
         teams = self._read()
         changed = False
         for team in self._bootstrap_teams:
@@ -427,11 +468,14 @@ class WorkspaceTeamService:
         team_store: WorkspaceTeamStore,
         agent_registry: AgentRegistry,
         available_providers: tuple[str, ...],
+        agents_root: str | Path | None = None,
     ) -> None:
         self._setup_registry = setup_registry
         self._team_store = team_store
         self._team_registry = WorkspaceTeamRegistry(team_store)
         self._agent_registry = agent_registry
+        self._agents_root = Path(agents_root) if agents_root is not None else None
+        self._agent_registry_file_backed = self._agents_root is not None
         self._available_providers = {
             _normalize_provider(provider) for provider in available_providers
         }
@@ -442,6 +486,59 @@ class WorkspaceTeamService:
 
     def list_teams(self) -> tuple[WorkspaceTeam, ...]:
         return self._team_registry.all()
+
+    def get_team(self, team_id: str) -> WorkspaceTeam:
+        return self._team_registry.get(team_id)
+
+    def create_team(
+        self,
+        *,
+        team_id: str,
+        display_name: str,
+        workspace_setup: str,
+    ) -> WorkspaceTeam:
+        normalized = _required_token(team_id, "workspace team id")
+        try:
+            self._team_registry.get(normalized)
+        except WorkspaceSetupConfigError:
+            pass
+        else:
+            raise WorkspaceSetupConfigError(f"Workspace team already exists: {normalized}")
+        team = WorkspaceTeam(
+            id=normalized,
+            display_name=display_name,
+            workspace_setup=workspace_setup,
+        )
+        self._setup_registry.get(team.workspace_setup)
+        return self._team_store.upsert(team)
+
+    def update_team_metadata(
+        self,
+        *,
+        team_id: str,
+        display_name: str,
+        workspace_setup: str,
+    ) -> WorkspaceTeam:
+        existing = self._team_registry.get(team_id)
+        team = WorkspaceTeam(
+            id=existing.id,
+            display_name=display_name,
+            workspace_setup=workspace_setup,
+            roles=existing.roles,
+            role_assignments=existing.role_assignments,
+        )
+        self._setup_registry.get(team.workspace_setup)
+        return self._team_store.upsert(team)
+
+    def delete_team(self, team_id: str) -> WorkspaceTeam:
+        team = self._team_registry.get(team_id)
+        members = self._member_ids_for_team(team.id)
+        if members:
+            raise WorkspaceSetupConfigError(
+                f"Workspace team {team.id} cannot be deleted while members exist: "
+                f"{', '.join(sorted(members))}"
+            )
+        return self._team_store.delete(team.id)
 
     def create_or_update_team(
         self,
@@ -468,7 +565,29 @@ class WorkspaceTeamService:
             ),
         )
         self._setup_registry.get(team.workspace_setup)
+        self._validate_role_assignments(team)
         return self._team_store.upsert(team)
+
+    def put_role(
+        self,
+        *,
+        team_id: str,
+        role_id: str,
+        role: WorkspaceTeamRole,
+    ) -> WorkspaceTeam:
+        team = self._team_registry.get(team_id)
+        normalized_role = _required_token(role_id, "workspace team role id")
+        roles = dict(team.roles)
+        roles[normalized_role] = role
+        updated = WorkspaceTeam(
+            id=team.id,
+            display_name=team.display_name,
+            workspace_setup=team.workspace_setup,
+            roles=roles,
+            role_assignments=team.role_assignments,
+        )
+        self._validate_role_assignments(updated)
+        return self._team_store.upsert(updated)
 
     def assign_role(self, *, team_id: str, agent_id: str, role_id: str) -> WorkspaceTeam:
         team = self._team_registry.get(team_id)
@@ -506,6 +625,57 @@ class WorkspaceTeamService:
     def delete_role(self, *, team_id: str, role_id: str) -> WorkspaceTeam:
         team = self._team_registry.get(team_id)
         return self._team_store.upsert(team.without_role(role_id))
+
+    def assign_member(
+        self,
+        *,
+        team_id: str,
+        agent_id: str,
+        role_id: str | None = None,
+    ) -> WorkspaceTeam:
+        team = self._team_registry.get(team_id)
+        self._setup_registry.get(team.workspace_setup)
+        agent = self._load_agent_for_update(agent_id)
+        normalized_role = (
+            DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE
+            if role_id is None
+            else _required_token(role_id, "workspace team role id")
+        )
+        if normalized_role not in team.roles:
+            raise WorkspaceSetupConfigError(
+                f"Unknown workspace team role {normalized_role} for team {team.id}"
+            )
+
+        old_team = self._existing_team_or_none(agent.workspace.team)
+        updated_target = _team_with_role_assignment(team, agent.id, normalized_role)
+        updated_teams = [updated_target]
+        originals = {team.id: team}
+        if old_team is not None and old_team.id != team.id:
+            updated_old = _team_without_role_assignment(old_team, agent.id)
+            updated_teams.append(updated_old)
+            originals[old_team.id] = old_team
+
+        self._upsert_teams_then_patch_agent(
+            updated_teams=tuple(updated_teams),
+            rollback_teams=tuple(originals.values()),
+            agent=agent,
+            team_id=team.id,
+            patch_needed=agent.workspace.team != team.id,
+        )
+        return self._team_registry.get(team.id)
+
+    def remove_member(self, *, team_id: str, agent_id: str) -> WorkspaceTeam:
+        team = self._team_registry.get(team_id)
+        agent = self._load_agent_for_update(agent_id)
+        updated = _team_without_role_assignment(team, agent.id)
+        self._upsert_teams_then_patch_agent(
+            updated_teams=(updated,),
+            rollback_teams=(team,),
+            agent=agent,
+            team_id=None,
+            patch_needed=agent.workspace.team == team.id,
+        )
+        return self._team_registry.get(team.id)
 
     def setup_for_team(self, team_id: str) -> WorkspaceSetup:
         team = self._team_registry.get(team_id)
@@ -566,6 +736,66 @@ class WorkspaceTeamService:
                     )
                 )
         return tuple(diagnostics)
+
+    def _validate_role_assignments(self, team: WorkspaceTeam) -> None:
+        for agent_id, role_id in team.role_assignments.items():
+            if role_id not in team.roles:
+                raise WorkspaceSetupConfigError(
+                    f"Unknown workspace team role {role_id} for team {team.id} "
+                    f"assignment {agent_id}"
+                )
+
+    def _member_ids_for_team(self, team_id: str) -> set[str]:
+        self._refresh_agent_registry()
+        return {
+            agent.id
+            for agent in self._agent_registry.all().values()
+            if agent.workspace.team == team_id
+        }
+
+    def _load_agent_for_update(self, agent_id: str) -> Agent:
+        normalized = _required_token(agent_id, "agent id")
+        if self._agents_root is None:
+            raise WorkspaceSetupConfigError("WorkspaceTeamService requires agents_root")
+        agent = load_agent(normalized, agents_root=self._agents_root)
+        self._agent_registry_file_backed = True
+        return agent
+
+    def _existing_team_or_none(self, team_id: str | None) -> WorkspaceTeam | None:
+        if team_id is None:
+            return None
+        try:
+            return self._team_registry.get(team_id)
+        except WorkspaceSetupConfigError:
+            return None
+
+    def _upsert_teams_then_patch_agent(
+        self,
+        *,
+        updated_teams: tuple[WorkspaceTeam, ...],
+        rollback_teams: tuple[WorkspaceTeam, ...],
+        agent: Agent,
+        team_id: str | None,
+        patch_needed: bool,
+    ) -> None:
+        self._team_store.update_many(upsert_teams=updated_teams)
+        if not patch_needed:
+            return
+        try:
+            updated_agent = replace(agent, workspace=AgentWorkspaceConfig(team=team_id))
+            patch_agent_config(
+                updated_agent,
+                changed_fields={"workspace"},
+                agents_root=self._agents_root,
+            )
+        except Exception:
+            self._team_store.update_many(upsert_teams=rollback_teams)
+            raise
+        self._refresh_agent_registry()
+
+    def _refresh_agent_registry(self) -> None:
+        if self._agent_registry_file_backed:
+            self._agent_registry = load_agent_registry(agents_root=self._agents_root)
 
 
 class WorkspaceCollaborationManager:
@@ -930,11 +1160,13 @@ def default_workspace_team_store(
 def default_workspace_team_service(
     *,
     agent_registry: AgentRegistry | None = None,
+    agents_root: str | Path | None = None,
     team_store_path: str | Path | None = None,
 ) -> WorkspaceTeamService:
     from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
 
-    registry = agent_registry or load_agent_registry()
+    resolved_agents_root = Path(agents_root) if agents_root is not None else agent_config.AGENTS_ROOT
+    registry = agent_registry or load_agent_registry(agents_root=resolved_agents_root)
     setup_registry = default_workspace_setup_registry()
     adapters = {"linear": LinearWorkspaceSetupAdapter()}
     return WorkspaceTeamService(
@@ -942,6 +1174,7 @@ def default_workspace_team_service(
         team_store=default_workspace_team_store(path=team_store_path),
         agent_registry=registry,
         available_providers=tuple(adapters),
+        agents_root=resolved_agents_root,
     )
 
 
@@ -1038,6 +1271,37 @@ def _roles_from_json(value: Any) -> Mapping[str, WorkspaceTeamRole]:
             },
         )
     return roles
+
+
+def _team_with_role_assignment(
+    team: WorkspaceTeam,
+    agent_id: str,
+    role_id: str,
+) -> WorkspaceTeam:
+    assignments = dict(team.role_assignments)
+    assignments[_required_token(agent_id, "agent id")] = _required_token(
+        role_id,
+        "workspace team role id",
+    )
+    return WorkspaceTeam(
+        id=team.id,
+        display_name=team.display_name,
+        workspace_setup=team.workspace_setup,
+        roles=team.roles,
+        role_assignments=assignments,
+    )
+
+
+def _team_without_role_assignment(team: WorkspaceTeam, agent_id: str) -> WorkspaceTeam:
+    assignments = dict(team.role_assignments)
+    assignments.pop(_required_token(agent_id, "agent id"), None)
+    return WorkspaceTeam(
+        id=team.id,
+        display_name=team.display_name,
+        workspace_setup=team.workspace_setup,
+        roles=team.roles,
+        role_assignments=assignments,
+    )
 
 
 def _role_to_json(role: WorkspaceTeamRole) -> Mapping[str, Any]:

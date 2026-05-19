@@ -596,6 +596,13 @@ class WorkspaceTeamRoleResponse(BaseModel):
         )
 
 
+class WorkspaceTeamMemberResponse(BaseModel):
+    agent_id: str
+    display_name: str
+    role_id: str
+    role_explicitly_assigned: bool
+
+
 class WorkspaceTeamResponse(BaseModel):
     id: str
     display_name: str
@@ -603,17 +610,32 @@ class WorkspaceTeamResponse(BaseModel):
     roles: Dict[str, WorkspaceTeamRoleResponse] = Field(default_factory=dict)
     role_assignments: Dict[str, str] = Field(default_factory=dict)
     members: List[str] = Field(default_factory=list)
+    member_details: List[WorkspaceTeamMemberResponse] = Field(default_factory=list)
     diagnostics: List[str] = Field(default_factory=list)
 
     @classmethod
-    def from_team(cls, team: WorkspaceTeam) -> "WorkspaceTeamResponse":
-        agents = default_agent_manager().list_agents()
-        diagnostics = [
-            diagnostic.message
-            for diagnostic in default_workspace_collaboration_manager().diagnostics()
-            if diagnostic.team_id == team.id
-            and diagnostic.code != PRUNED_PROVIDER_IDENTITY_DIAGNOSTIC_CODE
-        ]
+    def from_team(
+        cls,
+        team: WorkspaceTeam,
+        *,
+        agents: Optional[List[Agent]] = None,
+        diagnostics: Optional[List[str]] = None,
+    ) -> "WorkspaceTeamResponse":
+        team_agents = agents if agents is not None else list(default_agent_manager().list_agents())
+        team_diagnostics = (
+            diagnostics
+            if diagnostics is not None
+            else [
+                diagnostic.message
+                for diagnostic in default_workspace_collaboration_manager().diagnostics()
+                if diagnostic.team_id == team.id
+                and diagnostic.code != PRUNED_PROVIDER_IDENTITY_DIAGNOSTIC_CODE
+            ]
+        )
+        members = sorted(
+            (agent for agent in team_agents if agent.workspace.team == team.id),
+            key=lambda agent: agent.id,
+        )
         return cls(
             id=team.id,
             display_name=team.display_name,
@@ -623,22 +645,47 @@ class WorkspaceTeamResponse(BaseModel):
                 for role_id, role in sorted(team.roles.items())
             },
             role_assignments=dict(sorted(team.role_assignments.items())),
-            members=sorted(agent.id for agent in agents if agent.workspace.team == team.id),
-            diagnostics=diagnostics,
+            members=[agent.id for agent in members],
+            member_details=[
+                WorkspaceTeamMemberResponse(
+                    agent_id=agent.id,
+                    display_name=agent.display_name,
+                    role_id=team.role_for_member(agent.id)[0],
+                    role_explicitly_assigned=(
+                        agent.id in team.role_assignments
+                        and team.role_assignments[agent.id] in team.roles
+                    ),
+                )
+                for agent in members
+            ],
+            diagnostics=team_diagnostics,
         )
 
 
-class WorkspaceTeamWriteRequest(BaseModel):
+class WorkspaceTeamCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     display_name: str
     workspace_setup: str
-    roles: Optional[Dict[str, WorkspaceTeamRoleResponse]] = None
-    role_assignments: Optional[Dict[str, str]] = None
 
-    def roles_for_store(self) -> Optional[Dict[str, WorkspaceTeamRole]]:
-        if self.roles is None:
-            return None
-        return {role_id: role.to_role() for role_id, role in self.roles.items()}
+
+class WorkspaceTeamUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Optional[str] = None
+    display_name: str
+    workspace_setup: str
+
+
+class WorkspaceTeamRoleWriteRequest(WorkspaceTeamRoleResponse):
+    model_config = ConfigDict(extra="forbid")
+
+
+class WorkspaceTeamMemberAssignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role_id: Optional[str] = None
 
 
 def _derived_setup_for_agent(agent: Agent) -> Optional[str]:
@@ -908,6 +955,14 @@ class AgentWriteRequest(BaseModel):
             codex_config=mapping_value("codex_config", dict(base.codex_config) if base else {}),
             workspace=workspace_config,
             linear=linear,
+        )
+
+
+def _reject_workspace_team_write(body: AgentWriteRequest) -> None:
+    workspace = body.workspace
+    if workspace is not None and "team" in workspace.model_fields_set:
+        raise AgentConfigError(
+            "agents.workspace.team is managed by /workspace-teams/{team_id}/members/{agent_id}"
         )
 
 
@@ -1229,12 +1284,21 @@ def _is_agent_write_validation(request: Request) -> bool:
     return False
 
 
+def _is_workspace_team_write_validation(request: Request) -> bool:
+    parts = [part for part in request.url.path.split("/") if part]
+    return bool(parts and parts[0] == "workspace-teams" and request.method in {"POST", "PUT"})
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    status_code = status.HTTP_400_BAD_REQUEST if _is_agent_write_validation(request) else 422
+    status_code = (
+        status.HTTP_400_BAD_REQUEST
+        if _is_agent_write_validation(request) or _is_workspace_team_write_validation(request)
+        else 422
+    )
     return JSONResponse(
         status_code=status_code,
         content={"detail": jsonable_encoder(exc.errors())},
@@ -1390,24 +1454,154 @@ async def list_workspace_teams_endpoint() -> List[WorkspaceTeamResponse]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@app.put("/workspace-teams/{team_id}", response_model=WorkspaceTeamResponse)
-async def upsert_workspace_team_endpoint(
-    team_id: str, body: WorkspaceTeamWriteRequest
-) -> WorkspaceTeamResponse:
-    """Create or update one persisted workspace team through the owner service."""
-    if body.id != team_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="team id mismatch")
+def _workspace_team_error(exc: Exception) -> HTTPException:
+    detail = str(exc)
+    not_found_markers = (
+        "Unknown workspace team",
+        "Unknown CAO agent",
+        "Unknown workspace team role",
+        "directory not found",
+        "missing config file",
+    )
+    status_code = (
+        status.HTTP_404_NOT_FOUND
+        if any(marker in detail for marker in not_found_markers)
+        else status.HTTP_400_BAD_REQUEST
+    )
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+@app.get("/workspace-teams/{team_id}", response_model=WorkspaceTeamResponse)
+async def get_workspace_team_endpoint(team_id: str) -> WorkspaceTeamResponse:
+    """Return one persisted workspace team with current member detail."""
     try:
-        team = default_workspace_team_service().create_or_update_team(
+        return WorkspaceTeamResponse.from_team(default_workspace_team_service().get_team(team_id))
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise _workspace_team_error(e)
+
+
+@app.post(
+    "/workspace-teams",
+    response_model=WorkspaceTeamResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_workspace_team_endpoint(
+    body: WorkspaceTeamCreateRequest,
+) -> WorkspaceTeamResponse:
+    """Create one workspace team with the default member role."""
+    try:
+        team = default_workspace_team_service().create_team(
             team_id=body.id,
             display_name=body.display_name,
             workspace_setup=body.workspace_setup,
-            roles=body.roles_for_store(),
-            role_assignments=body.role_assignments,
         )
         return WorkspaceTeamResponse.from_team(team)
     except (AgentConfigError, AgentPathError, ValueError) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise _workspace_team_error(e)
+
+
+@app.put("/workspace-teams/{team_id}", response_model=WorkspaceTeamResponse)
+async def upsert_workspace_team_endpoint(
+    team_id: str, body: WorkspaceTeamUpdateRequest
+) -> WorkspaceTeamResponse:
+    """Update one persisted workspace team's metadata through the owner service."""
+    if body.id is not None and body.id != team_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="team id mismatch")
+    try:
+        team = default_workspace_team_service().update_team_metadata(
+            team_id=team_id,
+            display_name=body.display_name,
+            workspace_setup=body.workspace_setup,
+        )
+        return WorkspaceTeamResponse.from_team(team)
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise _workspace_team_error(e)
+
+
+@app.delete("/workspace-teams/{team_id}", response_model=WorkspaceTeamResponse)
+async def delete_workspace_team_endpoint(team_id: str) -> WorkspaceTeamResponse:
+    """Delete an empty workspace team."""
+    try:
+        return WorkspaceTeamResponse.from_team(default_workspace_team_service().delete_team(team_id))
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise _workspace_team_error(e)
+
+
+@app.put(
+    "/workspace-teams/{team_id}/roles/{role_id}",
+    response_model=WorkspaceTeamResponse,
+)
+async def put_workspace_team_role_endpoint(
+    team_id: str,
+    role_id: str,
+    body: WorkspaceTeamRoleWriteRequest,
+) -> WorkspaceTeamResponse:
+    """Create or update one role on a workspace team."""
+    try:
+        team = default_workspace_team_service().put_role(
+            team_id=team_id,
+            role_id=role_id,
+            role=body.to_role(),
+        )
+        return WorkspaceTeamResponse.from_team(team)
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise _workspace_team_error(e)
+
+
+@app.delete(
+    "/workspace-teams/{team_id}/roles/{role_id}",
+    response_model=WorkspaceTeamResponse,
+)
+async def delete_workspace_team_role_endpoint(
+    team_id: str,
+    role_id: str,
+) -> WorkspaceTeamResponse:
+    """Delete one role and fall assignments back to member."""
+    try:
+        team = default_workspace_team_service().delete_role(team_id=team_id, role_id=role_id)
+        return WorkspaceTeamResponse.from_team(team)
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise _workspace_team_error(e)
+
+
+@app.put(
+    "/workspace-teams/{team_id}/members/{agent_id}",
+    response_model=WorkspaceTeamResponse,
+)
+async def assign_workspace_team_member_endpoint(
+    team_id: str,
+    agent_id: str,
+    body: WorkspaceTeamMemberAssignRequest,
+) -> WorkspaceTeamResponse:
+    """Assign or move one agent into a team and set its role."""
+    try:
+        team = default_workspace_team_service().assign_member(
+            team_id=team_id,
+            agent_id=agent_id,
+            role_id=body.role_id,
+        )
+        return WorkspaceTeamResponse.from_team(team)
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise _workspace_team_error(e)
+
+
+@app.delete(
+    "/workspace-teams/{team_id}/members/{agent_id}",
+    response_model=WorkspaceTeamResponse,
+)
+async def remove_workspace_team_member_endpoint(
+    team_id: str,
+    agent_id: str,
+) -> WorkspaceTeamResponse:
+    """Remove one agent from a team and clear that team's role assignment."""
+    try:
+        team = default_workspace_team_service().remove_member(
+            team_id=team_id,
+            agent_id=agent_id,
+        )
+        return WorkspaceTeamResponse.from_team(team)
+    except (AgentConfigError, AgentPathError, ValueError) as e:
+        raise _workspace_team_error(e)
 
 
 @app.get("/agents", response_model=List[AgentStatusResponse])
@@ -1449,6 +1643,7 @@ async def create_agent_endpoint(body: AgentWriteRequest) -> AgentStatusResponse:
     if not agent_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="id is required")
     try:
+        _reject_workspace_team_write(body)
         agent = body.to_agent(agent_id)
         write_agent(agent)
         return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent.id))
@@ -1459,6 +1654,7 @@ async def create_agent_endpoint(body: AgentWriteRequest) -> AgentStatusResponse:
 @app.put("/agents/{agent_id}", response_model=AgentStatusResponse)
 async def update_agent_endpoint(agent_id: str, body: AgentWriteRequest) -> AgentStatusResponse:
     try:
+        _reject_workspace_team_write(body)
         existing = load_agent(agent_id)
         updated = body.to_agent(agent_id, existing)
         patch_agent_config(updated, changed_fields=set(body.model_fields_set))
