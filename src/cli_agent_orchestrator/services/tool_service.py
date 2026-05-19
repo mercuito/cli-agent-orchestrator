@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Iterable, Mapping, Optional
+from typing import Any, Callable, Iterable, Literal, Mapping, Optional
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, load_agent_registry
 from cli_agent_orchestrator.clients import database as db_module
@@ -13,6 +13,7 @@ from cli_agent_orchestrator.services.agent_manager import AgentManager, default_
 from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
 from cli_agent_orchestrator.workspace_providers.registry import (
     ProviderConversationAccessWorkspaceProvider,
+    ProviderRoleToolAccessWorkspaceProvider,
     ProviderToolAccessConfigurableWorkspaceProvider,
     ProviderToolAccessWorkspaceProvider,
     WorkspaceProviderConfigError,
@@ -24,11 +25,13 @@ from cli_agent_orchestrator.workspace_providers.registry import (
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderConversationAccessRequirement,
     ProviderMediatedToolDefinition,
+    ProviderRoleToolAccessGrant,
     ProviderToolAccess,
     ProviderToolAccessConfigError,
     ProviderToolAccessPolicy,
 )
 from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
     WorkspaceCollaborationManager,
     WorkspaceSetupConfigError,
     default_workspace_collaboration_manager,
@@ -44,6 +47,12 @@ ProviderConversationRequirementLoader = Callable[
 CollaborationManagerFactory = Callable[[AgentRegistry], WorkspaceCollaborationManager]
 
 MANAGED_CAO_MCP_SERVER = "cao-mcp-server"
+_PROVIDER_CONVERSATION_OPERATION_CAO_TOOLS = {
+    "preview": "read_inbox_message",
+    "read": "read_inbox_message",
+    "reply": "reply_to_inbox_message",
+    "activity": "post_provider_activity",
+}
 
 
 @dataclass(frozen=True)
@@ -87,7 +96,7 @@ class AgentToolAccess:
     provider_access: tuple[ProviderToolAccess, ...]
     direct_mcp_servers: Mapping[str, Mapping[str, Any]]
     materialized_mcp_servers: Mapping[str, Mapping[str, Any]]
-    runtime_capabilities: tuple[str, ...]
+    runtime_capabilities: tuple[str, ...] | None
     source_markers: Mapping[str, str]
     inactive_local_grants: Mapping[str, Any]
     provider_conversation_requirements: tuple[ProviderConversationAccessRequirement, ...]
@@ -104,6 +113,266 @@ class ToolRegistration:
     provider_mediated_tools: tuple[tuple[str, ProviderMediatedToolDefinition], ...]
     registered_tools: tuple[str, ...]
     diagnostics: tuple[ToolAccessDiagnostic, ...]
+
+
+@dataclass(frozen=True)
+class ToolAccessSourceResult:
+    """Normalized grant material from exactly one active access source."""
+
+    agent_id: str
+    team_id: str | None
+    role_id: str | None
+    source_name: str
+    provider_access_source: Literal["standalone_local", "team_role"]
+    local_cao_tools: tuple[str, ...] | None
+    direct_mcp_servers: Mapping[str, Mapping[str, Any]]
+    provider_role_grants: tuple[ProviderRoleToolAccessGrant, ...]
+    provider_conversation_requirements: tuple[ProviderConversationAccessRequirement, ...]
+    runtime_capabilities: tuple[str, ...] | None
+    source_markers: Mapping[str, str]
+    inactive_local_grants: Mapping[str, Any]
+    diagnostics: tuple[ToolAccessDiagnostic, ...]
+
+
+class StandaloneAgentToolAccessSource:
+    """Active grant source for agents without a workspace team."""
+
+    source_name = "agent-local standalone policy"
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    def resolve(self) -> ToolAccessSourceResult:
+        return ToolAccessSourceResult(
+            agent_id=self._agent.id,
+            team_id=None,
+            role_id=None,
+            source_name=self.source_name,
+            provider_access_source="standalone_local",
+            local_cao_tools=(
+                None if self._agent.cao_tools is None else tuple(self._agent.cao_tools)
+            ),
+            direct_mcp_servers=_local_mcp_servers_from_agent(self._agent),
+            provider_role_grants=(),
+            provider_conversation_requirements=(),
+            runtime_capabilities=_runtime_capabilities_input(self._agent),
+            source_markers={
+                **{
+                    name: "agent_config:cao_tools"
+                    for name in tuple(self._agent.cao_tools or ())
+                },
+                **{
+                    f"@{name}": "agent_config:mcp_servers"
+                    for name in _local_mcp_servers_from_agent(self._agent)
+                },
+            },
+            inactive_local_grants={},
+            diagnostics=(),
+        )
+
+
+class TeamRoleToolAccessSource:
+    """Active grant source for agents that belong to a workspace team."""
+
+    source_name = "team role policy"
+
+    def __init__(
+        self,
+        agent: Agent,
+        *,
+        collaboration_manager: WorkspaceCollaborationManager,
+        provider_conversation_requirements: Mapping[
+            str, tuple[ProviderConversationAccessRequirement, ...]
+        ],
+        inactive_local_grants: Mapping[str, Any],
+    ) -> None:
+        self._agent = agent
+        self._collaboration_manager = collaboration_manager
+        self._provider_conversation_requirements = provider_conversation_requirements
+        self._inactive_local_grants = inactive_local_grants
+
+    def resolve(self) -> ToolAccessSourceResult:
+        diagnostics: list[ToolAccessDiagnostic] = []
+        if self._inactive_local_grants:
+            diagnostics.append(
+                ToolAccessDiagnostic(
+                    code="inactive_teamed_local_tool_access",
+                    message=(
+                        f"Agent {self._agent.id} belongs to workspace team "
+                        f"{self._agent.workspace.team}; agent-local tool grants are retained "
+                        "for diagnostics only."
+                    ),
+                    source="agent_config",
+                )
+            )
+        try:
+            team = self._collaboration_manager.team_for_agent(self._agent)
+            if team is None:
+                raise WorkspaceSetupConfigError(
+                    f"caller agent {self._agent.id} has no workspace team"
+                )
+            setup = self._collaboration_manager.setup_for_agent(self._agent)
+            if setup is None:
+                raise WorkspaceSetupConfigError(f"workspace team {team.id} has no setup")
+        except Exception as exc:
+            diagnostics.append(
+                ToolAccessDiagnostic(
+                    code="invalid_workspace_team",
+                    message=str(exc),
+                    source="workspace_team",
+                )
+            )
+            return ToolAccessSourceResult(
+                agent_id=self._agent.id,
+                team_id=self._agent.workspace.team,
+                role_id=None,
+                source_name=self.source_name,
+                provider_access_source="team_role",
+                local_cao_tools=(),
+                direct_mcp_servers={},
+                provider_role_grants=(),
+                provider_conversation_requirements=(),
+                runtime_capabilities=_runtime_capabilities_input(self._agent),
+                source_markers={},
+                inactive_local_grants=self._inactive_local_grants,
+                diagnostics=tuple(diagnostics),
+            )
+
+        assigned_role_id = team.role_assignments.get(
+            self._agent.id,
+            DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
+        )
+        if assigned_role_id not in team.roles:
+            diagnostics.append(
+                ToolAccessDiagnostic(
+                    code="invalid_team_role_assignment",
+                    message=(
+                        f"Workspace team {team.id} assigns agent {self._agent.id} "
+                        f"to missing role {assigned_role_id}; using member."
+                    ),
+                    source="workspace_team.role_assignments",
+                )
+            )
+        role_id, role = team.role_for_member(self._agent.id)
+        member_ids = {
+            agent.id
+            for agent in self._collaboration_manager.agent_registry.all().values()
+            if agent.workspace.team == team.id
+        }
+        for assigned_agent_id in sorted(set(team.role_assignments) - member_ids):
+            diagnostics.append(
+                ToolAccessDiagnostic(
+                    code="inactive_non_member_role_assignment",
+                    message=(
+                        f"Workspace team {team.id} assigns role "
+                        f"{team.role_assignments[assigned_agent_id]} to non-member "
+                        f"{assigned_agent_id}; assignment is inactive."
+                    ),
+                    source="workspace_team.role_assignments",
+                )
+            )
+        direct_mcp_servers = {
+            name: _copy_jsonish_mapping(config)
+            for name, config in role.mcp_servers.items()
+            if name != MANAGED_CAO_MCP_SERVER
+        }
+        if MANAGED_CAO_MCP_SERVER in role.mcp_servers:
+            diagnostics.append(
+                ToolAccessDiagnostic(
+                    code="managed_mcp_server_shadow_rejected",
+                    message=(
+                        f"Workspace team {team.id} role {role_id} declares "
+                        f"{MANAGED_CAO_MCP_SERVER}, which is CAO-managed and cannot be "
+                        "overridden."
+                    ),
+                    source=f"workspace_team.{team.id}.roles.{role_id}.mcp_servers",
+                )
+            )
+        setup_providers = {provider.strip().lower() for provider in setup.providers}
+        provider_grants: list[ProviderRoleToolAccessGrant] = []
+        for provider_name, grants in role.providers.items():
+            if provider_name not in setup_providers:
+                diagnostics.append(
+                    ToolAccessDiagnostic(
+                        code="role_provider_not_in_workspace_setup",
+                        message=(
+                            f"Workspace team {team.id} role {role_id} grants provider "
+                            f"{provider_name}, but setup {setup.id} does not include it."
+                        ),
+                        source=f"workspace_team.{team.id}.roles.{role_id}.providers.{provider_name}",
+                    )
+                )
+                continue
+            for access_id, spec in grants.items():
+                provider_grants.append(
+                    ProviderRoleToolAccessGrant(
+                        provider_name=provider_name,
+                        access_id=access_id,
+                        agent_id=self._agent.id,
+                        source_location=(
+                            f"workspace_team.{team.id}.roles.{role_id}."
+                            f"providers.{provider_name}.{access_id}"
+                        ),
+                        spec=spec,
+                    )
+                )
+        provider_conversation_requirements = _role_provider_conversation_requirements(
+            role.cao_tools,
+            setup_providers=setup_providers,
+            requirements_by_provider=self._provider_conversation_requirements,
+        )
+        return ToolAccessSourceResult(
+            agent_id=self._agent.id,
+            team_id=team.id,
+            role_id=role_id,
+            source_name=self.source_name,
+            provider_access_source="team_role",
+            local_cao_tools=tuple(role.cao_tools),
+            direct_mcp_servers=direct_mcp_servers,
+            provider_role_grants=tuple(provider_grants),
+            provider_conversation_requirements=provider_conversation_requirements,
+            runtime_capabilities=_runtime_capabilities_input(self._agent),
+            source_markers={
+                **{
+                    name: f"workspace_team.{team.id}.roles.{role_id}.cao_tools"
+                    for name in role.cao_tools
+                },
+                **{
+                    f"@{name}": f"workspace_team.{team.id}.roles.{role_id}.mcp_servers.{name}"
+                    for name in direct_mcp_servers
+                },
+            },
+            inactive_local_grants=self._inactive_local_grants,
+            diagnostics=tuple(diagnostics),
+        )
+
+class ToolAccessResolver:
+    """Choose the single active tool access source for one agent."""
+
+    def __init__(
+        self,
+        *,
+        collaboration_manager_factory: CollaborationManagerFactory,
+    ) -> None:
+        self._collaboration_manager_factory = collaboration_manager_factory
+
+    def resolve(
+        self,
+        agent: Agent,
+        agent_registry: AgentRegistry,
+        *,
+        provider_conversation_requirements: Mapping[
+            str, tuple[ProviderConversationAccessRequirement, ...]
+        ] | None = None,
+    ) -> ToolAccessSourceResult:
+        if agent.workspace.team is None:
+            return StandaloneAgentToolAccessSource(agent).resolve()
+        return TeamRoleToolAccessSource(
+            agent,
+            collaboration_manager=self._collaboration_manager_factory(agent_registry),
+            provider_conversation_requirements=provider_conversation_requirements or {},
+            inactive_local_grants=_inactive_local_grants(agent),
+        ).resolve()
 
 
 class ToolService:
@@ -127,6 +396,9 @@ class ToolService:
         self._collaboration_manager_factory = collaboration_manager_factory or (
             lambda registry: default_workspace_collaboration_manager(agent_registry=registry)
         )
+        self._resolver = ToolAccessResolver(
+            collaboration_manager_factory=self._collaboration_manager_factory
+        )
 
     def tools_for_agent(
         self,
@@ -136,30 +408,23 @@ class ToolService:
     ) -> AgentToolAccess:
         """Return effective access for one agent through the owner boundary."""
         agent = self._agent_manager.resolve_agent(agent_id)
+        agent_registry = self._agent_registry()
         built_in_names = tuple(dict.fromkeys(name for name in built_in_tool_names if name))
-        team_id = agent.workspace.team
-        diagnostics: list[ToolAccessDiagnostic] = []
-        inactive_local = self._inactive_local_grants(agent)
-        if team_id is not None and inactive_local:
-            diagnostics.append(
-                ToolAccessDiagnostic(
-                    code="inactive_teamed_local_tool_access",
-                    message=(
-                        f"Agent {agent.id} belongs to workspace team {team_id}; "
-                        "agent-local tool grants are retained for diagnostics only."
-                    ),
-                    source="agent_config",
-                )
-            )
-
-        local_cao_tools = self._effective_local_cao_tools(agent, built_in_names)
-        provider_policies = self.provider_policies_for_agent(agent.id)
+        source_result = self._resolver.resolve(
+            agent,
+            agent_registry,
+            provider_conversation_requirements=self._provider_conversation_requirements(),
+        )
+        provider_policies, provider_diagnostics = self._provider_policies_for_source(
+            agent,
+            source_result,
+        )
         provider_access = tuple(
             access for policy in provider_policies.values() for access in policy.access
         )
         built_in_effective = self._effective_built_in_tools(
             built_in_names=built_in_names,
-            local_cao_tools=local_cao_tools,
+            local_cao_tools=source_result.local_cao_tools,
         )
         provider_tool_entries = self._provider_mediated_tools_for_agent_from_policies(
             agent.id,
@@ -184,28 +449,37 @@ class ToolService:
             for access in provider_access
             if (access.provider_name, access.tool_name) in effective_provider_names
         )
-        direct_mcp_servers = self._effective_direct_mcp_servers(agent)
+        direct_mcp_servers = source_result.direct_mcp_servers
         materialized_mcp_servers = self.materialized_mcp_servers_for_agent(agent.id)
         runtime_capabilities = tuple(
             resolve_runtime_capabilities(
-                self._effective_runtime_capabilities_input(agent),
+                source_result.runtime_capabilities,
                 list(materialized_mcp_servers),
             )
         )
         allowed = tuple(dict.fromkeys((*built_in_effective, *provider_tool_names)))
         registered = tuple(dict.fromkeys((*allowed, *(f"@{name}" for name in materialized_mcp_servers))))
         source_markers = {
-            **{name: self._built_in_source(agent) for name in built_in_effective},
+            **source_result.source_markers,
+            **{
+                name: source_result.source_markers.get(name, self._built_in_source(agent))
+                for name in built_in_effective
+            },
             **{
                 access.tool_name: f"{access.provider_name}:{access.source_location}"
                 for access in provider_access
             },
-            **{f"@{name}": self._mcp_source(agent, name) for name in materialized_mcp_servers},
+            **{
+                f"@{name}": source_result.source_markers.get(
+                    f"@{name}", self._mcp_source(agent, name)
+                )
+                for name in materialized_mcp_servers
+            },
         }
         return AgentToolAccess(
             agent_id=agent.id,
-            team_id=team_id,
-            role_id=None,
+            team_id=source_result.team_id,
+            role_id=source_result.role_id,
             registered_tools=registered,
             allowed_tools=allowed,
             blocked_tools=(),
@@ -216,11 +490,9 @@ class ToolService:
             materialized_mcp_servers=materialized_mcp_servers,
             runtime_capabilities=runtime_capabilities,
             source_markers=source_markers,
-            inactive_local_grants=inactive_local,
-            provider_conversation_requirements=self.provider_conversation_requirements_for_agent(
-                agent.id
-            ),
-            diagnostics=tuple(diagnostics),
+            inactive_local_grants=source_result.inactive_local_grants,
+            provider_conversation_requirements=source_result.provider_conversation_requirements,
+            diagnostics=(*source_result.diagnostics, *provider_diagnostics),
         )
 
     def registered_tools_for_terminal(
@@ -253,23 +525,24 @@ class ToolService:
 
     def provider_policies(self) -> Mapping[str, ProviderToolAccessPolicy]:
         """Return provider policies filtered through ToolService authority."""
-        raw = self._raw_provider_policies()
         agents = self._agent_registry()
         effective: dict[str, ProviderToolAccessPolicy] = {}
-        for provider_name, policy in raw.items():
-            entries: list[ProviderToolAccess] = []
-            for agent in agents.all().values():
-                agent_policy = self._policy_for_agent(policy, agent)
-                entries.extend(agent_policy.access)
-            effective[provider_name] = replace(
-                policy,
-                access=tuple(
+        for agent in agents.all().values():
+            for provider_name, policy in self.provider_policies_for_agent(agent.id).items():
+                existing = effective.get(provider_name)
+                merged_access = tuple(
                     sorted(
-                        {self._access_key(entry): entry for entry in entries}.values(),
+                        {
+                            self._access_key(entry): entry
+                            for entry in (
+                                *(existing.access if existing is not None else ()),
+                                *policy.access,
+                            )
+                        }.values(),
                         key=lambda item: (item.agent_id, item.tool_name, item.source_location),
                     )
-                ),
-            )
+                )
+                effective[provider_name] = replace(policy, access=merged_access)
         return effective
 
     def provider_policies_for_agent(
@@ -277,10 +550,9 @@ class ToolService:
     ) -> Mapping[str, ProviderToolAccessPolicy]:
         """Return provider policies scoped to one agent's effective access."""
         agent = self._agent_manager.resolve_agent(agent_id)
-        return {
-            provider_name: self._policy_for_agent(policy, agent)
-            for provider_name, policy in self._raw_provider_policies().items()
-        }
+        source_result = self._resolver.resolve(agent, self._agent_registry())
+        policies, _diagnostics = self._provider_policies_for_source(agent, source_result)
+        return policies
 
     def provider_mediated_tools_for_agent(
         self,
@@ -359,13 +631,67 @@ class ToolService:
             context={"terminal_id": terminal_id, **dict(context or {})},
         )
 
+    def can_invoke_for_terminal_target(
+        self,
+        terminal_id: str,
+        tool_ref: str,
+        *,
+        target_terminal_id: str,
+        provider_name: str | None = None,
+        built_in_tool_names: Iterable[str] = (),
+        context: Mapping[str, Any] | None = None,
+    ) -> ToolAccessDecision:
+        """Return whether a terminal may invoke a tool against another terminal."""
+        decision = self.can_invoke_for_terminal(
+            terminal_id,
+            tool_ref,
+            provider_name=provider_name,
+            built_in_tool_names=built_in_tool_names,
+            context={"target_terminal_id": target_terminal_id, **dict(context or {})},
+        )
+        if not decision.allowed or tool_ref != "terminate":
+            return decision
+        try:
+            caller = self.agent_for_terminal(terminal_id)
+            target = self.agent_for_terminal(target_terminal_id)
+        except Exception as exc:
+            return ToolAccessDecision.deny(
+                "target_terminal_unresolved",
+                diagnostics={
+                    "terminal_id": terminal_id,
+                    "target_terminal_id": target_terminal_id,
+                    "error": str(exc),
+                },
+            )
+        if caller.workspace.team is None or caller.workspace.team != target.workspace.team:
+            return ToolAccessDecision.deny(
+                "target_terminal_not_same_workspace_team",
+                diagnostics={
+                    "terminal_id": terminal_id,
+                    "agent_id": caller.id,
+                    "agent_team": caller.workspace.team,
+                    "target_terminal_id": target_terminal_id,
+                    "target_agent_id": target.id,
+                    "target_agent_team": target.workspace.team,
+                },
+            )
+        return ToolAccessDecision.allow(
+            reason="target_terminal_same_workspace_team",
+            diagnostics={
+                "terminal_id": terminal_id,
+                "target_terminal_id": target_terminal_id,
+                "tool_name": tool_ref,
+            },
+        )
+
     def materialized_mcp_servers_for_agent(
         self, agent_id: str
     ) -> Mapping[str, Mapping[str, Any]]:
         """Return effective direct/custom MCP servers to materialize."""
         agent = self._agent_manager.resolve_agent(agent_id)
+        source_result = self._resolver.resolve(agent, self._agent_registry())
         servers: dict[str, Mapping[str, Any]] = {}
-        servers.update(self._effective_direct_mcp_servers(agent))
+        servers.update(source_result.direct_mcp_servers)
         managed = self._managed_cao_mcp_server(agent)
         existing = servers.get(MANAGED_CAO_MCP_SERVER)
         if isinstance(existing, Mapping):
@@ -376,9 +702,14 @@ class ToolService:
     def runtime_capabilities_for_agent(self, agent_id: str) -> tuple[str, ...]:
         """Return effective runtime capabilities, including MCP server markers."""
         agent = self._agent_manager.resolve_agent(agent_id)
+        source_result = self._resolver.resolve(
+            agent,
+            self._agent_registry(),
+            provider_conversation_requirements=self._provider_conversation_requirements(),
+        )
         return tuple(
             resolve_runtime_capabilities(
-                self._effective_runtime_capabilities_input(agent),
+                source_result.runtime_capabilities,
                 list(self.materialized_mcp_servers_for_agent(agent.id)),
             )
         )
@@ -395,41 +726,12 @@ class ToolService:
     ) -> tuple[ProviderConversationAccessRequirement, ...]:
         """Return provider-conversation operations ToolService can decide."""
         agent = self._agent_manager.resolve_agent(agent_id)
-        if agent.workspace.team is None:
-            return ()
-        try:
-            manager = self._collaboration_manager()
-            setup = manager.setup_for_agent(agent)
-            if setup is None:
-                return ()
-            setup_providers = {provider.strip().lower() for provider in setup.providers}
-        except Exception:
-            logger.exception("Failed to resolve team providers for agent %s", agent.id)
-            return ()
-
-        requirements: list[ProviderConversationAccessRequirement] = []
-        for provider_name, provider_requirements in self._provider_conversation_requirements().items():
-            if provider_name not in setup_providers:
-                continue
-            requirements.extend(provider_requirements)
-        return tuple(
-            sorted(
-                {
-                    (
-                        item.provider_name.strip().lower(),
-                        item.operation.strip().lower(),
-                        item.required_identity.strip().lower(),
-                    ): ProviderConversationAccessRequirement(
-                        provider_name=item.provider_name.strip().lower(),
-                        operation=item.operation.strip().lower(),
-                        required_identity=item.required_identity.strip().lower(),
-                    )
-                    for item in requirements
-                    if item.provider_name.strip() and item.operation.strip()
-                }.values(),
-                key=lambda item: (item.provider_name, item.operation, item.required_identity),
-            )
+        source_result = self._resolver.resolve(
+            agent,
+            self._agent_registry(),
+            provider_conversation_requirements=self._provider_conversation_requirements(),
         )
+        return source_result.provider_conversation_requirements
 
     def provider_conversation_decision(
         self,
@@ -560,18 +862,6 @@ class ToolService:
             return built_in_names
         return tuple(name for name in built_in_names if name in set(local_cao_tools))
 
-    def _effective_local_cao_tools(
-        self, agent: Agent, built_in_names: tuple[str, ...]
-    ) -> tuple[str, ...] | None:
-        if agent.workspace.team is not None:
-            return ()
-        return None if agent.cao_tools is None else tuple(agent.cao_tools)
-
-    def _effective_direct_mcp_servers(self, agent: Agent) -> Mapping[str, Mapping[str, Any]]:
-        if agent.workspace.team is not None:
-            return {}
-        return self._local_mcp_servers_from_agent(agent)
-
     def _effective_runtime_capabilities_input(self, agent: Agent) -> list[str] | None:
         return None if agent.runtime_capabilities is None else list(agent.runtime_capabilities)
 
@@ -612,35 +902,6 @@ class ToolService:
             for provider_name, tool_names in sorted(mapped.items())
         }
 
-    def _local_mcp_servers_from_agent(self, agent: Agent) -> Mapping[str, Mapping[str, Any]]:
-        servers: dict[str, Mapping[str, Any]] = {}
-        for name, server in agent.mcp_servers.items():
-            entry = _mcp_server_entry(server)
-            if entry is not None:
-                servers[name] = entry
-        nested = agent.codex_config.get("mcp_servers")
-        if isinstance(nested, Mapping):
-            for name, server in nested.items():
-                entry = _mcp_server_entry(server)
-                if isinstance(name, str) and entry is not None:
-                    servers[name] = entry
-        return servers
-
-    def _inactive_local_grants(self, agent: Agent) -> Mapping[str, Any]:
-        if agent.workspace.team is None:
-            return {}
-        inactive: dict[str, Any] = {}
-        if agent.cao_tools is not None:
-            inactive["cao_tools"] = list(agent.cao_tools)
-        if agent.mcp_servers:
-            inactive["mcp_servers"] = dict(agent.mcp_servers)
-        nested_mcp = agent.codex_config.get("mcp_servers")
-        if isinstance(nested_mcp, Mapping):
-            inactive["codex_config.mcp_servers"] = dict(nested_mcp)
-        if agent.linear is not None and agent.linear.tool_access:
-            inactive["linear.tool_access"] = [access.access_id for access in agent.linear.tool_access]
-        return inactive
-
     def _managed_cao_mcp_server(self, agent: Agent) -> Mapping[str, Any]:
         return {"command": MANAGED_CAO_MCP_SERVER, "enabled": True}
 
@@ -662,36 +923,72 @@ class ToolService:
         self, policy: ProviderToolAccessPolicy, agent: Agent
     ) -> ProviderToolAccessPolicy:
         access = tuple(entry for entry in policy.access if entry.agent_id == agent.id)
-        if agent.workspace.team is None:
-            return replace(policy, access=access)
-        try:
-            manager = self._collaboration_manager()
-            setup = manager.setup_for_agent(agent)
-            if setup is None or policy.provider_name not in setup.providers:
-                return replace(policy, access=())
-            authorized_locations = manager.authorized_tool_access_locations(policy.provider_name)
-        except Exception:
-            logger.exception(
-                "Failed to resolve workspace setup provider access for teamed agent %r",
-                agent.id,
+        return replace(policy, access=access)
+
+    def _provider_policies_for_source(
+        self,
+        agent: Agent,
+        source_result: ToolAccessSourceResult,
+    ) -> tuple[Mapping[str, ProviderToolAccessPolicy], tuple[ToolAccessDiagnostic, ...]]:
+        if source_result.provider_access_source == "standalone_local":
+            return (
+                {
+                    provider_name: self._policy_for_agent(policy, agent)
+                    for provider_name, policy in self._raw_provider_policies().items()
+                },
+                (),
             )
-            return replace(policy, access=())
-        return replace(
-            policy,
-            access=tuple(
-                entry
-                for entry in access
-                if _is_team_owned_provider_access(entry)
-                and entry.source_location in authorized_locations
-            ),
-        )
+        return self._role_provider_policy_resolution(agent, source_result)
+
+    def _role_provider_policy_resolution(
+        self,
+        agent: Agent,
+        source_result: ToolAccessSourceResult,
+    ) -> tuple[Mapping[str, ProviderToolAccessPolicy], tuple[ToolAccessDiagnostic, ...]]:
+        grants_by_provider: dict[str, list[ProviderRoleToolAccessGrant]] = {}
+        for grant in source_result.provider_role_grants:
+            grants_by_provider.setdefault(grant.provider_name, []).append(grant)
+        if not grants_by_provider:
+            return {}, ()
+
+        provider_registry = default_workspace_provider_registry()
+        policies: dict[str, ProviderToolAccessPolicy] = {}
+        diagnostics: list[ToolAccessDiagnostic] = []
+        for provider_name, grants in sorted(grants_by_provider.items()):
+            try:
+                provider = provider_registry.create(provider_name, self._agent_registry())
+                if not isinstance(provider, ProviderRoleToolAccessWorkspaceProvider):
+                    diagnostics.append(
+                        ToolAccessDiagnostic(
+                            code="provider_role_access_unsupported",
+                            message=(
+                                f"Workspace provider {provider_name} does not support "
+                                "team-role-owned tool access."
+                            ),
+                            source=f"workspace_team.providers.{provider_name}",
+                        )
+                    )
+                    continue
+                policies[provider_name] = provider.provider_role_tool_access(tuple(grants))
+            except Exception as exc:
+                diagnostics.append(
+                    ToolAccessDiagnostic(
+                        code="provider_role_access_invalid",
+                        message=(
+                            f"Workspace provider {provider_name} rejected team role tool "
+                            f"access for agent {agent.id}: {exc}"
+                        ),
+                        source=f"workspace_team.providers.{provider_name}",
+                    )
+                )
+        return policies, tuple(diagnostics)
 
     def _raw_provider_policies(self) -> Mapping[str, ProviderToolAccessPolicy]:
         if self._provider_policy_loader is not None:
             return self._provider_policy_loader(self._agent_registry())
         try:
             return _load_raw_enabled_provider_tool_access_policies(
-                agent_registry=self._agent_registry()
+                agent_registry=self._standalone_provider_agent_registry()
             )
         except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
             raise
@@ -716,6 +1013,15 @@ class ToolService:
 
     def _agent_registry(self) -> AgentRegistry:
         return AgentRegistry({agent.id: agent for agent in self._agent_manager.list_agents()})
+
+    def _standalone_provider_agent_registry(self) -> AgentRegistry:
+        agents: dict[str, Agent] = {}
+        registry = self._agent_registry()
+        for agent in registry.all().values():
+            source_result = self._resolver.resolve(agent, registry)
+            if source_result.provider_access_source == "standalone_local":
+                agents[agent.id] = agent
+        return AgentRegistry(agents)
 
     def _collaboration_manager(self) -> WorkspaceCollaborationManager:
         return self._collaboration_manager_factory(self._agent_registry())
@@ -828,10 +1134,89 @@ def tool_service_for_loaded_agent(
             runtime_capabilities=_optional_tuple(getattr(agent, "runtime_capabilities", None)),
             codex_config=_mapping_or_empty(getattr(agent, "codex_config", {})),
         )
-    agents = {resolved.id: resolved}
+    try:
+        agents = dict(load_agent_registry().all())
+    except Exception:
+        agents = {}
+    agents[resolved.id] = resolved
     if fallback_agent_id and fallback_agent_id != resolved.id:
         agents[fallback_agent_id] = resolved
     return ToolService(agent_manager=AgentManager(configured_agents=AgentRegistry(agents)))
+
+
+def _runtime_capabilities_input(agent: Agent) -> tuple[str, ...] | None:
+    if agent.runtime_capabilities is None:
+        return None
+    return tuple(agent.runtime_capabilities)
+
+
+def _local_mcp_servers_from_agent(agent: Agent) -> Mapping[str, Mapping[str, Any]]:
+    servers: dict[str, Mapping[str, Any]] = {}
+    for name, server in agent.mcp_servers.items():
+        entry = _mcp_server_entry(server)
+        if entry is not None:
+            servers[name] = entry
+    nested = agent.codex_config.get("mcp_servers")
+    if isinstance(nested, Mapping):
+        for name, server in nested.items():
+            entry = _mcp_server_entry(server)
+            if isinstance(name, str) and entry is not None:
+                servers[name] = entry
+    return servers
+
+
+def _inactive_local_grants(agent: Agent) -> Mapping[str, Any]:
+    if agent.workspace.team is None:
+        return {}
+    inactive: dict[str, Any] = {}
+    if agent.cao_tools is not None:
+        inactive["cao_tools"] = list(agent.cao_tools)
+    if agent.mcp_servers:
+        inactive["mcp_servers"] = dict(agent.mcp_servers)
+    nested_mcp = agent.codex_config.get("mcp_servers")
+    if isinstance(nested_mcp, Mapping):
+        inactive["codex_config.mcp_servers"] = dict(nested_mcp)
+    if agent.linear is not None and agent.linear.tool_access:
+        inactive["linear.tool_access"] = [access.access_id for access in agent.linear.tool_access]
+    return inactive
+
+
+def _role_provider_conversation_requirements(
+    role_cao_tools: Iterable[str],
+    *,
+    setup_providers: set[str],
+    requirements_by_provider: Mapping[str, tuple[ProviderConversationAccessRequirement, ...]],
+) -> tuple[ProviderConversationAccessRequirement, ...]:
+    granted_tools = set(role_cao_tools)
+    requirements: list[ProviderConversationAccessRequirement] = []
+    for provider_name, provider_requirements in requirements_by_provider.items():
+        if provider_name not in setup_providers:
+            continue
+        for requirement in provider_requirements:
+            tool_name = _provider_conversation_operation_tool(requirement.operation)
+            if tool_name is None or tool_name not in granted_tools:
+                continue
+            requirements.append(
+                ProviderConversationAccessRequirement(
+                    provider_name=requirement.provider_name.strip().lower(),
+                    operation=requirement.operation.strip().lower(),
+                    required_identity=requirement.required_identity.strip().lower(),
+                )
+            )
+    return tuple(
+        sorted(
+            {
+                (item.provider_name, item.operation, item.required_identity): item
+                for item in requirements
+                if item.provider_name and item.operation
+            }.values(),
+            key=lambda item: (item.provider_name, item.operation, item.required_identity),
+        )
+    )
+
+
+def _provider_conversation_operation_tool(operation: str) -> str | None:
+    return _PROVIDER_CONVERSATION_OPERATION_CAO_TOOLS.get(operation.strip().lower())
 
 
 def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
@@ -887,8 +1272,11 @@ __all__ = [
     "ProviderConversationAccessRequirement",
     "ToolAccessDecision",
     "ToolAccessDiagnostic",
+    "ToolAccessResolver",
     "ToolRegistration",
     "ToolService",
+    "StandaloneAgentToolAccessSource",
+    "TeamRoleToolAccessSource",
     "default_tool_service",
     "tool_service_for_loaded_agent",
 ]

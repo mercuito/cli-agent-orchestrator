@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,6 +23,8 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceTeamRegistry,
     default_workspace_setup_registry,
 )
+
+_REAL_AVAILABLE_BATON_HOLDER_TOOLS = baton_service.available_baton_holder_tools
 
 
 class _TeamStore:
@@ -61,6 +64,16 @@ def allow_baton_collaboration(monkeypatch):
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
         _collaboration_manager,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "available_baton_holder_tools",
+        lambda db, terminal_id: (
+            "pass_baton",
+            "return_baton",
+            "complete_baton",
+            "block_baton",
+        ),
     )
 
 
@@ -125,6 +138,18 @@ def _create_terminal_for_agent(terminal_id: str, agent_id: str):
     )
 
 
+class _ToolService:
+    def __init__(self, built_in_tools: tuple[str, ...]) -> None:
+        self._built_in_tools = set(built_in_tools)
+
+    def tools_for_agent(self, agent_id: str, *, built_in_tool_names=()):
+        return SimpleNamespace(
+            built_in_cao_tools=tuple(
+                tool for tool in built_in_tool_names if tool in self._built_in_tools
+            )
+        )
+
+
 def _provider(status: TerminalStatus):
     provider = MagicMock()
     provider.get_status.return_value = status
@@ -181,6 +206,47 @@ def test_idle_or_completed_holder_receives_nudge_after_grace(patched_db, monkeyp
     assert "return_baton" in queued[-1].message.body
     assert "complete_baton" in queued[-1].message.body
     assert "block_baton" in queued[-1].message.body
+
+
+def test_idle_holder_without_baton_tools_gets_no_lifecycle_tool_guidance(
+    patched_db, monkeypatch
+):
+    _create_terminal("impl")
+    provider = _provider(TerminalStatus.IDLE)
+    monkeypatch.setattr(
+        baton_watchdog_service.provider_manager,
+        "get_provider",
+        lambda terminal_id: provider,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "available_baton_holder_tools",
+        _REAL_AVAILABLE_BATON_HOLDER_TOOLS,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "default_tool_service",
+        lambda: _ToolService(()),
+    )
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T05",
+        originator_id="originator",
+        holder_id="impl",
+    )
+
+    result = baton_watchdog_service.scan_active_batons(
+        config=_config(),
+        now=datetime.now() + timedelta(seconds=5),
+    )
+
+    assert result.nudged == 1
+    body = _messages("impl")[-1].message.body
+    assert "no baton lifecycle tools available" in body
+    assert "pass_baton" not in body
+    assert "return_baton" not in body
+    assert "complete_baton" not in body
+    assert "block_baton" not in body
 
 
 def test_processing_holder_is_not_nudged(patched_db, monkeypatch):

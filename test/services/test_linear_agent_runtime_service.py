@@ -44,7 +44,20 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeNotifyResult,
     AgentRuntimeStatus,
 )
-from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
+from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision, ToolService
+from cli_agent_orchestrator.workspace_providers.tool_access import (
+    ProviderConversationAccessRequirement,
+)
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    WorkspaceTeamRole,
+    default_workspace_setup_registry,
+)
+from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
 
 
 @pytest.fixture
@@ -104,6 +117,60 @@ class _ActivityToolService:
         if self.allowed:
             return ToolAccessDecision.allow(reason="provider_conversation_allowed")
         return ToolAccessDecision.deny("provider_conversation_denied")
+
+
+class _TeamStore:
+    def __init__(self, teams: tuple[WorkspaceTeam, ...]) -> None:
+        self._teams = {team.id: team for team in teams}
+
+    def get(self, team_id: str) -> WorkspaceTeam:
+        return self._teams[team_id]
+
+    def list(self) -> tuple[WorkspaceTeam, ...]:
+        return tuple(self._teams.values())
+
+
+def _provider_conversation_collaboration_manager(
+    agent_registry: AgentRegistry,
+) -> WorkspaceCollaborationManager:
+    team = WorkspaceTeam(
+        id="cao_delivery",
+        display_name="CAO Delivery",
+        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        roles={
+            "member": WorkspaceTeamRole(
+                display_name="Member",
+                cao_tools=("send_message", "handoff", "read_inbox_message"),
+            ),
+        },
+    )
+    return WorkspaceCollaborationManager(
+        setup_registry=default_workspace_setup_registry(),
+        team_registry=WorkspaceTeamRegistry(_TeamStore((team,))),
+        agent_registry=agent_registry,
+        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+    )
+
+
+def _provider_conversation_tool_service(agent_registry: AgentRegistry) -> ToolService:
+    return ToolService(
+        agent_manager=AgentManager(configured_agents=agent_registry),
+        provider_conversation_requirement_loader=lambda _registry: {
+            "linear": (
+                ProviderConversationAccessRequirement(
+                    provider_name="linear",
+                    operation="preview",
+                    required_identity="workspace_team_presence",
+                ),
+                ProviderConversationAccessRequirement(
+                    provider_name="linear",
+                    operation="read",
+                    required_identity="workspace_team_presence",
+                ),
+            )
+        },
+        collaboration_manager_factory=_provider_conversation_collaboration_manager,
+    )
 
 
 def _linear_provider_event(
@@ -714,7 +781,12 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
         agent_registry=registry,
         preflight_credentials=False,
     )
+    tool_service = _provider_conversation_tool_service(registry)
     monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: workspace_provider)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        lambda: tool_service,
+    )
     monkeypatch.setattr(
         "cli_agent_orchestrator.agent.AGENTS_ROOT",
         agents_root,

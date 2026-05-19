@@ -20,6 +20,7 @@ from cli_agent_orchestrator.services.collaboration_policy import (
     require_terminal_same_team_collaboration,
     require_terminal_workspace_team,
 )
+from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 
@@ -40,6 +41,7 @@ class BatonInvalidTransition(BatonError):
 
 
 _FINAL_STATUSES = {BatonStatus.COMPLETED.value, BatonStatus.CANCELED.value}
+_BATON_HOLDER_TOOLS = ("pass_baton", "return_baton", "complete_baton", "block_baton")
 
 
 def _load_baton(db: Session, baton_id: str) -> BatonModel:
@@ -141,19 +143,27 @@ def _format_artifacts(artifact_paths: Optional[Sequence[str]]) -> str:
     return "\n\nArtifacts:\n" + "\n".join(f"- {path}" for path in artifact_paths)
 
 
-def _expectation_text(expected_next_action: Optional[str]) -> str:
+def _expectation_text(expected_next_action: Optional[str], *, guidance_tools: Sequence[str] = _BATON_HOLDER_TOOLS) -> str:
+    if not guidance_tools and expected_next_action is None:
+        return "No baton lifecycle tools are currently available in this terminal."
     return expected_next_action or (
-        "Use the baton tools to pass, return, complete, or block this baton when ready."
+        f"Use available baton tools ({', '.join(guidance_tools)}) when ready."
     )
 
 
-def _holder_guidance(baton_id: str) -> str:
+def _holder_guidance(db: Session, *, baton_id: str, holder_id: str) -> str:
+    available_tools = _available_baton_holder_tools(db, holder_id)
+    if not available_tools:
+        return (
+            "Next tool guidance: this terminal currently has no baton lifecycle "
+            "tools available. Continue the work if possible and ask the originator "
+            "or operator to move, complete, or block the baton."
+        )
     return (
-        "Next tool guidance: when your obligation is done, call one of "
-        f'pass_baton(baton_id="{baton_id}", ...), '
-        f'return_baton(baton_id="{baton_id}", ...), '
-        f'complete_baton(baton_id="{baton_id}", ...), or '
-        f'block_baton(baton_id="{baton_id}", ...). '
+        "Next tool guidance: when your obligation is done, call an available "
+        "baton tool: "
+        + ", ".join(f'{tool}(baton_id="{baton_id}", ...)' for tool in available_tools)
+        + ". "
         "Do not use send_message to transfer baton ownership."
     )
 
@@ -177,15 +187,38 @@ def _baton_message(
     artifact_paths: Optional[Sequence[str]] = None,
 ) -> str:
     message_body = body or "(no additional message)"
+    guidance_tools = _tools_from_holder_guidance(guidance)
     return (
         f"[CAO Baton] {action}\n\n"
         f"Baton id: {baton_id}\n"
         f"Title: {title}\n"
-        f"Current expectation: {_expectation_text(expected_next_action)}\n\n"
+        f"Current expectation: {_expectation_text(expected_next_action, guidance_tools=guidance_tools)}\n\n"
         f"Message:\n{message_body}\n\n"
         f"{guidance}"
         f"{_format_artifacts(artifact_paths)}"
     )
+
+
+def available_baton_holder_tools(db: Session, terminal_id: str | None) -> tuple[str, ...]:
+    """Return baton lifecycle tools currently granted to a terminal's agent."""
+    if not terminal_id:
+        return ()
+    terminal = db.query(db_module.TerminalModel).filter(db_module.TerminalModel.id == terminal_id).first()
+    if terminal is None:
+        return ()
+    access = default_tool_service().tools_for_agent(
+        str(terminal.agent_id),
+        built_in_tool_names=_BATON_HOLDER_TOOLS,
+    )
+    return tuple(tool for tool in _BATON_HOLDER_TOOLS if tool in access.built_in_cao_tools)
+
+
+def _available_baton_holder_tools(db: Session, terminal_id: str) -> tuple[str, ...]:
+    return available_baton_holder_tools(db, terminal_id)
+
+
+def _tools_from_holder_guidance(guidance: str) -> tuple[str, ...]:
+    return tuple(tool for tool in _BATON_HOLDER_TOOLS if f"{tool}(" in guidance)
 
 
 def _queue_baton_message(
@@ -270,7 +303,7 @@ def create_baton(
             title=title,
             body=message,
             expected_next_action=expected_next_action,
-            guidance=_holder_guidance(row.id),
+            guidance=_holder_guidance(db, baton_id=row.id, holder_id=holder_id),
             artifact_paths=artifact_paths,
         )
         return _finish(db, row)
@@ -318,7 +351,7 @@ def pass_baton(
             title=row.title,
             body=message,
             expected_next_action=expected_next_action,
-            guidance=_holder_guidance(baton_id),
+            guidance=_holder_guidance(db, baton_id=baton_id, holder_id=receiver_id),
             artifact_paths=artifact_paths,
         )
         return _finish(db, row)
@@ -369,7 +402,7 @@ def return_baton(
             title=row.title,
             body=message,
             expected_next_action=expected_next_action,
-            guidance=_holder_guidance(baton_id),
+            guidance=_holder_guidance(db, baton_id=baton_id, holder_id=receiver_id),
             artifact_paths=artifact_paths,
         )
         return _finish(db, row)

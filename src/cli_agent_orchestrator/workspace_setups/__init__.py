@@ -2,6 +2,8 @@
 
 from .manager import (
     DEFAULT_WORKSPACE_SETUP_ID,
+    DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
+    DEFAULT_WORKSPACE_TEAM_MEMBER_TOOLS,
     DEFAULT_WORKSPACE_TEAM_ID,
     WORKSPACE_TEAMS_FILENAME,
     WorkspaceCollaborationManager,
@@ -17,6 +19,7 @@ from .manager import (
     WorkspaceTeam,
     WorkspaceTeamAuthorizedMapping,
     WorkspaceTeamRegistry,
+    WorkspaceTeamRole,
     WorkspaceTeamService,
     WorkspaceTeamStore,
     default_workspace_collaboration_manager,
@@ -27,6 +30,8 @@ from .manager import (
 
 __all__ = [
     "DEFAULT_WORKSPACE_SETUP_ID",
+    "DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE",
+    "DEFAULT_WORKSPACE_TEAM_MEMBER_TOOLS",
     "DEFAULT_WORKSPACE_TEAM_ID",
     "WORKSPACE_TEAMS_FILENAME",
     "WorkspaceCollaborationManager",
@@ -42,6 +47,7 @@ __all__ = [
     "WorkspaceTeam",
     "WorkspaceTeamAuthorizedMapping",
     "WorkspaceTeamRegistry",
+    "WorkspaceTeamRole",
     "WorkspaceTeamService",
     "WorkspaceTeamStore",
     "default_workspace_collaboration_manager",

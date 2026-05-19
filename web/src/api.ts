@@ -176,8 +176,29 @@ export interface WorkspaceTeam {
   id: string
   display_name: string
   workspace_setup: string
+  roles: Record<string, WorkspaceTeamRole>
+  role_assignments: Record<string, string>
   members: string[]
   diagnostics: string[]
+}
+
+export interface WorkspaceTeamRole {
+  display_name: string
+  cao_tools: string[]
+  mcp_servers: Record<string, unknown>
+  providers: Record<string, Record<string, Record<string, unknown>>>
+  deletable?: boolean
+}
+
+export interface ToolDescriptor {
+  name: string
+  description: string
+}
+
+export interface ProviderRoleAccessSchema {
+  provider: string
+  tools: ToolDescriptor[]
+  fields: Record<string, unknown>
 }
 
 export interface AgentWriteRequest {
@@ -375,6 +396,11 @@ export const api = {
   listWorkspaceSetupDiagnostics: () => fetchJSON<WorkspaceSetupDiagnostic[]>('/workspace-setups/diagnostics'),
   listWorkspaceSetups: () => fetchJSON<WorkspaceSetup[]>('/workspace-setups'),
   listWorkspaceTeams: () => fetchJSON<WorkspaceTeam[]>('/workspace-teams'),
+  listCaoToolDescriptors: () => fetchJSON<ToolDescriptor[]>('/cao-tools/descriptors'),
+  getWorkspaceProviderRoleAccessSchema: (provider: string) =>
+    fetchJSON<ProviderRoleAccessSchema>(
+      `/workspace-providers/${encodeURIComponent(provider)}/role-access-schema`,
+    ),
   upsertWorkspaceTeam: (team: WorkspaceTeam) =>
     fetchJSON<WorkspaceTeam>(`/workspace-teams/${encodeURIComponent(team.id)}`, {
       method: 'PUT',
@@ -383,6 +409,8 @@ export const api = {
         id: team.id,
         display_name: team.display_name,
         workspace_setup: team.workspace_setup,
+        roles: team.roles,
+        role_assignments: team.role_assignments,
       }),
     }),
   createAgent: (agent: AgentWriteRequest) =>

@@ -122,8 +122,10 @@ from cli_agent_orchestrator.workspace_providers import (
     initialize_enabled_workspace_providers,
 )
 from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
     WorkspaceSetupConfigError,
     WorkspaceTeam,
+    WorkspaceTeamRole,
     default_workspace_collaboration_manager,
     default_workspace_setup_registry,
     default_workspace_team_service,
@@ -552,12 +554,56 @@ class WorkspaceSetupResponse(BaseModel):
     providers: List[str]
 
 
+class ToolDescriptorResponse(BaseModel):
+    name: str
+    description: str
+
+
+class ProviderRoleAccessSchemaResponse(BaseModel):
+    provider: str
+    tools: List[ToolDescriptorResponse]
+    fields: Dict[str, Any]
+
+
+class WorkspaceTeamRoleResponse(BaseModel):
+    display_name: str
+    cao_tools: List[str] = Field(default_factory=list)
+    mcp_servers: Dict[str, Any] = Field(default_factory=dict)
+    providers: Dict[str, Dict[str, Dict[str, Any]]] = Field(default_factory=dict)
+    deletable: bool = True
+
+    @classmethod
+    def from_role(
+        cls, role_id: str, role: WorkspaceTeamRole
+    ) -> "WorkspaceTeamRoleResponse":
+        return cls(
+            display_name=role.display_name,
+            cao_tools=list(role.cao_tools),
+            mcp_servers=dict(role.mcp_servers),
+            providers={
+                provider: {access_id: dict(spec) for access_id, spec in grants.items()}
+                for provider, grants in role.providers.items()
+            },
+            deletable=role_id != DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
+        )
+
+    def to_role(self) -> WorkspaceTeamRole:
+        return WorkspaceTeamRole(
+            display_name=self.display_name,
+            cao_tools=tuple(self.cao_tools),
+            mcp_servers=self.mcp_servers,
+            providers=self.providers,
+        )
+
+
 class WorkspaceTeamResponse(BaseModel):
     id: str
     display_name: str
     workspace_setup: str
-    members: List[str] = []
-    diagnostics: List[str] = []
+    roles: Dict[str, WorkspaceTeamRoleResponse] = Field(default_factory=dict)
+    role_assignments: Dict[str, str] = Field(default_factory=dict)
+    members: List[str] = Field(default_factory=list)
+    diagnostics: List[str] = Field(default_factory=list)
 
     @classmethod
     def from_team(cls, team: WorkspaceTeam) -> "WorkspaceTeamResponse":
@@ -572,6 +618,11 @@ class WorkspaceTeamResponse(BaseModel):
             id=team.id,
             display_name=team.display_name,
             workspace_setup=team.workspace_setup,
+            roles={
+                role_id: WorkspaceTeamRoleResponse.from_role(role_id, role)
+                for role_id, role in sorted(team.roles.items())
+            },
+            role_assignments=dict(sorted(team.role_assignments.items())),
             members=sorted(agent.id for agent in agents if agent.workspace.team == team.id),
             diagnostics=diagnostics,
         )
@@ -581,6 +632,13 @@ class WorkspaceTeamWriteRequest(BaseModel):
     id: str
     display_name: str
     workspace_setup: str
+    roles: Optional[Dict[str, WorkspaceTeamRoleResponse]] = None
+    role_assignments: Optional[Dict[str, str]] = None
+
+    def roles_for_store(self) -> Optional[Dict[str, WorkspaceTeamRole]]:
+        if self.roles is None:
+            return None
+        return {role_id: role.to_role() for role_id, role in self.roles.items()}
 
 
 def _derived_setup_for_agent(agent: Agent) -> Optional[str]:
@@ -1279,6 +1337,47 @@ async def list_workspace_setups_endpoint() -> List[WorkspaceSetupResponse]:
     ]
 
 
+@app.get("/cao-tools/descriptors", response_model=List[ToolDescriptorResponse])
+async def list_cao_tool_descriptors_endpoint() -> List[ToolDescriptorResponse]:
+    """Return backend-owned grantable built-in CAO tool descriptors."""
+    from cli_agent_orchestrator.mcp_server.server import built_in_cao_tool_descriptors
+
+    return [
+        ToolDescriptorResponse(
+            name=descriptor["name"],
+            description=descriptor["description"],
+        )
+        for descriptor in built_in_cao_tool_descriptors()
+    ]
+
+
+@app.get(
+    "/workspace-providers/{provider}/role-access-schema",
+    response_model=ProviderRoleAccessSchemaResponse,
+)
+async def workspace_provider_role_access_schema_endpoint(
+    provider: str,
+) -> ProviderRoleAccessSchemaResponse:
+    """Return provider-owned role access descriptors for dashboard editing."""
+    normalized = provider.strip().lower()
+    if normalized != "linear":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"unknown workspace provider role access schema: {normalized}",
+        )
+    from cli_agent_orchestrator.linear.provider_tools import linear_role_access_schema
+
+    schema = linear_role_access_schema()
+    return ProviderRoleAccessSchemaResponse(
+        provider=normalized,
+        tools=[
+            ToolDescriptorResponse(name=str(tool["name"]), description=str(tool["description"]))
+            for tool in schema["tools"]
+        ],
+        fields=dict(schema["fields"]),
+    )
+
+
 @app.get("/workspace-teams", response_model=List[WorkspaceTeamResponse])
 async def list_workspace_teams_endpoint() -> List[WorkspaceTeamResponse]:
     """Return persisted workspace teams and their current members."""
@@ -1303,6 +1402,8 @@ async def upsert_workspace_team_endpoint(
             team_id=body.id,
             display_name=body.display_name,
             workspace_setup=body.workspace_setup,
+            roles=body.roles_for_store(),
+            role_assignments=body.role_assignments,
         )
         return WorkspaceTeamResponse.from_team(team)
     except (AgentConfigError, AgentPathError, ValueError) as e:

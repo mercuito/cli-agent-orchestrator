@@ -19,6 +19,7 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceTeam,
     WorkspaceTeamAuthorizedMapping,
     WorkspaceTeamRegistry,
+    WorkspaceTeamRole,
     WorkspaceTeamService,
     WorkspaceTeamStore,
 )
@@ -194,6 +195,74 @@ def test_team_store_seeds_bootstrap_and_persists_dashboard_edits(tmp_path):
 
     assert [team.id for team in reloaded.all()] == ["cao_delivery", "research"]
     assert reloaded.get("research").workspace_setup == DEFAULT_WORKSPACE_SETUP_ID
+
+
+def test_team_store_persists_roles_and_role_assignments(tmp_path):
+    service = WorkspaceTeamService(
+        setup_registry=_setup_registry(),
+        team_store=_team_store(tmp_path),
+        agent_registry=AgentRegistry({}),
+        available_providers=("test",),
+    )
+
+    service.create_or_update_team(
+        team_id="delivery",
+        display_name="Delivery",
+        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        roles={
+            "reviewer": WorkspaceTeamRole(
+                display_name="Reviewer",
+                cao_tools=("read_inbox_message",),
+                mcp_servers={"custom": {"command": "custom-mcp"}},
+                providers={"test": {"read": {"tools": ["test.read"]}}},
+            )
+        },
+        role_assignments={"agent_a": "reviewer"},
+    )
+    reloaded = WorkspaceTeamRegistry(_team_store(tmp_path)).get("delivery")
+
+    assert reloaded.roles["member"].cao_tools == ("send_message", "handoff")
+    assert reloaded.roles["reviewer"].providers == {"test": {"read": {"tools": ["test.read"]}}}
+    assert reloaded.roles["reviewer"].mcp_servers == {"custom": {"command": "custom-mcp"}}
+    assert reloaded.role_assignments == {"agent_a": "reviewer"}
+
+
+def test_team_role_assignment_and_deletion_semantics(tmp_path):
+    team = WorkspaceTeam(
+        id="delivery",
+        display_name="Delivery",
+        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        roles={
+            "reviewer": WorkspaceTeamRole(
+                display_name="Reviewer",
+                cao_tools=("read_inbox_message",),
+            )
+        },
+        role_assignments={"agent_a": "reviewer", "outsider": "reviewer"},
+    )
+    registry = AgentRegistry({"agent_a": _agent("agent_a", "delivery")})
+    service = WorkspaceTeamService(
+        setup_registry=_setup_registry(),
+        team_store=_team_store(tmp_path, team),
+        agent_registry=registry,
+        available_providers=("test",),
+    )
+
+    service.delete_role_assignment(team_id="delivery", agent_id="outsider")
+    without_assignment = WorkspaceTeamRegistry(_team_store(tmp_path)).get("delivery")
+    assert without_assignment.role_assignments == {"agent_a": "reviewer"}
+    assert without_assignment.role_for_member("missing") == (
+        "member",
+        without_assignment.roles["member"],
+    )
+
+    service.delete_role(team_id="delivery", role_id="reviewer")
+    without_role = WorkspaceTeamRegistry(_team_store(tmp_path)).get("delivery")
+    assert without_role.role_assignments == {"agent_a": "member"}
+    assert "reviewer" not in without_role.roles
+
+    with pytest.raises(WorkspaceSetupConfigError, match="member role cannot be deleted"):
+        service.delete_role(team_id="delivery", role_id="member")
 
 
 def test_team_store_rejects_non_string_persisted_team_fields(tmp_path):

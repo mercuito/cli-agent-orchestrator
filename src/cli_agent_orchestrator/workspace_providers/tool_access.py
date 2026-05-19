@@ -72,6 +72,17 @@ class ProviderToolAccessRequest:
 
 
 @dataclass(frozen=True)
+class ProviderRoleToolAccessGrant:
+    """Team-role-owned provider grant selected by ToolService."""
+
+    provider_name: str
+    access_id: str
+    agent_id: str
+    source_location: str
+    spec: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class ProviderToolAccess:
     """Validated provider-mediated tool access for a CAO agent."""
 

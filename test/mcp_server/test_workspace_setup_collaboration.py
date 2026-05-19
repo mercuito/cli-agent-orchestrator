@@ -45,6 +45,27 @@ def test_assign_allows_same_team_collaboration(monkeypatch):
     assert sent == {"terminal_id": "t1", "message": "please help"}
 
 
+def test_assign_delivery_does_not_promise_hidden_send_message(monkeypatch):
+    sent = {}
+
+    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
+    monkeypatch.setattr(server, "ENABLE_SENDER_ID_INJECTION", True)
+    monkeypatch.setattr(server, "_terminal_can_invoke_builtin", lambda terminal_id, tool: False)
+    monkeypatch.setattr(
+        server,
+        "_send_to_inbox",
+        lambda terminal_id, message: sent.update({"terminal_id": terminal_id, "message": message}),
+    )
+
+    server._deliver_assign_payload("worker-terminal", "please help")
+
+    assert sent == {
+        "terminal_id": "worker-terminal",
+        "message": "please help\n\n[Assigned by terminal terminal-sender.]",
+    }
+    assert "send_message" not in sent["message"]
+
+
 def test_assign_rejects_different_or_missing_team_before_terminal_creation(monkeypatch):
     sender = _agent("sender", "cao_delivery")
     receiver = _agent("receiver", "other_team")

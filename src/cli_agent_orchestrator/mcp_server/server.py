@@ -113,6 +113,19 @@ def built_in_cao_tool_names(
     )
 
 
+def built_in_cao_tool_descriptors() -> tuple[dict[str, str], ...]:
+    """Return backend-owned descriptors for grantable built-in CAO MCP tools."""
+    grantable = set(built_in_cao_tool_names(include_disabled=True))
+    return tuple(
+        {
+            "name": name,
+            "description": str(kwargs.get("description", "")),
+        }
+        for name, _fn, kwargs in _PENDING_TOOLS
+        if name in grantable
+    )
+
+
 def _deferred_tool(name: Optional[str] = None, **tool_kwargs: Any) -> Callable:
     """Drop-in replacement for FastMCP's @mcp.tool() that defers registration.
 
@@ -203,11 +216,25 @@ def _toolservice_authorized_callable(
                 f"CAO MCP tool {tool_name!r} denied by ToolService: "
                 "missing terminal context"
             )
-        decision = tool_service.can_invoke_for_terminal(
-            terminal_id,
-            tool_name,
-            built_in_tool_names=built_in_tool_names(),
-        )
+        if tool_name == "terminate":
+            target_terminal_id = _bound_tool_argument(fn, args, kwargs, "terminal_id")
+            if not isinstance(target_terminal_id, str) or not target_terminal_id.strip():
+                raise PermissionError(
+                    "CAO MCP tool 'terminate' denied by ToolService: "
+                    "missing target terminal"
+                )
+            decision = tool_service.can_invoke_for_terminal_target(
+                terminal_id,
+                tool_name,
+                target_terminal_id=target_terminal_id.strip(),
+                built_in_tool_names=built_in_tool_names(),
+            )
+        else:
+            decision = tool_service.can_invoke_for_terminal(
+                terminal_id,
+                tool_name,
+                built_in_tool_names=built_in_tool_names(),
+            )
         if not decision.allowed:
             raise PermissionError(
                 f"CAO MCP tool {tool_name!r} denied by ToolService: {decision.reason}"
@@ -219,6 +246,14 @@ def _toolservice_authorized_callable(
 
     wrapper.__signature__ = inspect.signature(fn)  # type: ignore[attr-defined]
     return wrapper
+
+
+def _bound_tool_argument(fn: Callable, args: tuple[Any, ...], kwargs: dict[str, Any], name: str) -> Any:
+    try:
+        bound = inspect.signature(fn).bind_partial(*args, **kwargs)
+    except TypeError:
+        return kwargs.get(name)
+    return bound.arguments.get(name)
 
 
 def build_mcp_surface_descriptor_for_agent(
@@ -454,16 +489,19 @@ def _deliver_assign_payload(terminal_id: str, message: str) -> None:
 
     Routing via the inbox keeps assign on the same channel as send_message
     so monitoring sessions capture it. The supervisor is the sender (via
-    CAO_TERMINAL_ID), matching what the worker would see for any hand-rolled
-    send_message from the same supervisor.
+    CAO_TERMINAL_ID). Callback guidance is appended only when ToolService says
+    the receiving terminal can invoke send_message.
     """
     # Auto-inject sender terminal ID suffix when enabled
     if ENABLE_SENDER_ID_INJECTION:
         sender_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
-        message += (
-            f"\n\n[Assigned by terminal {sender_id}. "
-            f"When done, send results back to terminal {sender_id} using send_message]"
-        )
+        if _terminal_can_invoke_builtin(terminal_id, "send_message"):
+            message += (
+                f"\n\n[Assigned by terminal {sender_id}. "
+                f"When done, send results back to terminal {sender_id} using send_message]"
+            )
+        else:
+            message += f"\n\n[Assigned by terminal {sender_id}.]"
 
     _send_to_inbox(terminal_id, message)
 
@@ -724,17 +762,20 @@ def _build_assign_description(enable_sender_id: bool, enable_workdir: bool) -> s
         desc = """\
 Assigns a task to another agent without blocking.
 
-The sender's terminal ID and callback instructions will automatically be appended to the message.
-The callback still goes through workspace team message policy and may be rejected if the agents
-are not in the same workspace team."""
+The sender's terminal ID will automatically be appended to the message. Callback instructions
+are appended only when the receiving terminal is allowed to invoke the callback tool. Callback
+delivery still goes through workspace team message policy and may be rejected if the agents are
+not in the same workspace team."""
     else:
         desc = """\
 Assigns a task to another agent without blocking.
 
-In the message to the worker agent include instruction to send results back via send_message tool.
+In the message to the worker agent include the terminal ID that should receive results. Tell the
+worker to use send_message only when that tool is available to them; otherwise they should provide
+results through their normal visible response channel.
 **IMPORTANT**: The terminal id of each agent is available in environment variable CAO_TERMINAL_ID.
 When assigning, first find out your own CAO_TERMINAL_ID value, then include the terminal_id value in the message to the worker agent for callback routing. Terminal id possession is not authorization; send_message is subject to same-workspace-team policy and may be rejected.
-Example message: "Analyze the logs. When done, send results back to terminal ee3f93b3 using send_message tool.\""""
+Example message: "Analyze the logs. When done, send results back to terminal ee3f93b3 if send_message is available; otherwise provide the result in your normal response.\""""
 
     if enable_workdir:
         desc += """
@@ -836,9 +877,9 @@ async def terminate(
     provider's cleanup hooks run, and the terminal is removed from the
     database.
 
-    Use after an ``assign``'d worker has delivered its callback via
-    ``send_message`` and you no longer need it. ``handoff`` does this
-    automatically, so don't call ``terminate`` on a handoff'd worker.
+    Use after an ``assign``'d worker has delivered its result through an
+    available response channel and you no longer need it. ``handoff`` does
+    this automatically, so don't call ``terminate`` on a handoff'd worker.
 
     Returns:
         Dict with ``success`` (bool), ``terminal_id``, and either a
@@ -854,14 +895,29 @@ def _send_message_impl(receiver_id: str, message: str) -> Dict[str, Any]:
         # Auto-inject sender terminal ID suffix when enabled
         if ENABLE_SENDER_ID_INJECTION:
             sender_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
-            message += (
-                f"\n\n[Message from terminal {sender_id}. "
-                "Use send_message MCP tool for any follow-up work.]"
-            )
+            if _terminal_can_invoke_builtin(receiver_id, "send_message"):
+                message += (
+                    f"\n\n[Message from terminal {sender_id}. "
+                    "Use send_message MCP tool for any follow-up work.]"
+                )
+            else:
+                message += f"\n\n[Message from terminal {sender_id}.]"
 
         return _send_to_inbox(receiver_id, message)
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _terminal_can_invoke_builtin(terminal_id: str, tool_name: str) -> bool:
+    try:
+        decision = default_tool_service().can_invoke_for_terminal(
+            terminal_id,
+            tool_name,
+            built_in_tool_names=built_in_cao_tool_names(),
+        )
+    except Exception:
+        return False
+    return decision.allowed
 
 
 @_deferred_tool()

@@ -2922,6 +2922,35 @@ def _parse_expires_at(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def linear_role_access_schema() -> Mapping[str, Any]:
+    """Return Linear-owned descriptors for team role access editing."""
+    empty_config = type("_LinearRoleSchemaConfig", (), {"tool_access": {}})()
+    tools = LinearToolProvider(config=empty_config, agent_registry=None)._tools()
+    return {
+        "tools": [
+            {"name": tool.name, "description": tool.description}
+            for tool in sorted(tools, key=lambda item: item.name)
+        ],
+        "fields": {
+            "tools": {"type": "string_list", "required": True},
+            "issues": {"type": "string_list", "required_for": sorted(ISSUE_TARGETING_TOOLS)},
+            "create_team_ids": {
+                "type": "string_list",
+                "required_for": sorted({CREATE_ISSUE_TOOL, CREATE_PROJECT_TOOL}),
+            },
+            "create_project_ids": {"type": "string_list"},
+            "create_parent_issues": {"type": "string_list"},
+            "allow_top_level_create": {"type": "boolean"},
+            "update_fields": {
+                "type": "string_list",
+                "allowed_values": sorted(UPDATE_ISSUE_FIELDS),
+                "required_for": [UPDATE_ISSUE_TOOL],
+            },
+            "reason": {"type": "string"},
+        },
+    }
+
+
 __all__ = [
     "CREATE_COMMENT_TOOL",
     "CREATE_ISSUE_FIELDS",
@@ -2944,4 +2973,5 @@ __all__ = [
     "LinearToolProvider",
     "LinearToolAccess",
     "LinearToolError",
+    "linear_role_access_schema",
 ]

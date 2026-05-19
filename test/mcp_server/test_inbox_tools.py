@@ -44,6 +44,7 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceCollaborationManager,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
+    WorkspaceTeamRole,
     default_workspace_setup_registry,
 )
 from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
@@ -84,7 +85,9 @@ def test_session(monkeypatch):
     yield
 
 
-def _provider_inbox_collaboration_manager() -> WorkspaceCollaborationManager:
+def _provider_inbox_collaboration_manager(
+    cao_tools: tuple[str, ...] = ("read_inbox_message", "reply_to_inbox_message"),
+) -> WorkspaceCollaborationManager:
     implementation = Agent(
         id="implementation_partner",
         display_name="Implementation Partner",
@@ -116,11 +119,23 @@ def _provider_inbox_collaboration_manager() -> WorkspaceCollaborationManager:
                         id="cao_delivery",
                         display_name="CAO Delivery",
                         workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        roles={
+                            "member": WorkspaceTeamRole(
+                                display_name="Member",
+                                cao_tools=cao_tools,
+                            )
+                        },
                     ),
                     WorkspaceTeam(
                         id="other_team",
                         display_name="Other Team",
                         workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        roles={
+                            "member": WorkspaceTeamRole(
+                                display_name="Member",
+                                cao_tools=("read_inbox_message", "reply_to_inbox_message"),
+                            )
+                        },
                     ),
                 )
             )
@@ -142,15 +157,16 @@ def _ensure_caller_agent_terminal(agent_id: str = "implementation_partner") -> N
 def _provider_conversation_notification() -> int:
     _ensure_caller_agent_terminal()
     thread = upsert_thread(
-        provider="example",
+        provider="linear",
         external_id="thread-1",
         external_url="https://presence.example/thread-1",
         kind="conversation",
         prompt_context="Full context from provider",
+        metadata={"linear_app_key": "implementation_partner"},
     )
     message = upsert_message(
         thread_id=thread.id,
-        provider="example",
+        provider="linear",
         external_id="message-1",
         direction="inbound",
         kind="prompt",
@@ -167,20 +183,20 @@ def _provider_conversation_notification() -> int:
 def _provider_conversation_notification_with_large_raw_snapshot() -> int:
     _ensure_caller_agent_terminal()
     thread = upsert_thread(
-        provider="example",
+        provider="linear",
         external_id="thread-raw",
-        raw_snapshot={"large": "x" * 50_000},
-        metadata={"large": "y" * 50_000},
+        raw_snapshot={"large": "x" * 50_000, "_cao_linear_app_key": "implementation_partner"},
+        metadata={"large": "y" * 50_000, "linear_app_key": "implementation_partner"},
     )
     message = upsert_message(
         thread_id=thread.id,
-        provider="example",
+        provider="linear",
         external_id="message-raw",
         direction="inbound",
         kind="prompt",
         body="Small provider body",
         raw_snapshot={"large": "z" * 50_000},
-        metadata={"actor": {"name": "Provider Author"}},
+        metadata={"actor": {"name": "Provider Author"}, "linear_app_key": "implementation_partner"},
     )
     return create_notification_for_message(
         provider_message_id=message.id,
@@ -329,7 +345,7 @@ def test_provider_backed_read_returns_slim_payload_without_raw_context(test_sess
         "success": True,
         "notification_id": notification_id,
         "message_id": result["message_id"],
-        "from": "Example",
+        "from": "Linear",
         "body": "Full provider body",
         "replyable": True,
     }
@@ -337,6 +353,22 @@ def test_provider_backed_read_returns_slim_payload_without_raw_context(test_sess
     assert "provider_context" not in result
     assert "inbox_message" not in result
     assert "reply" not in result
+
+
+def test_provider_backed_read_is_not_replyable_when_reply_tool_is_hidden(
+    test_session, monkeypatch
+):
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_workspace_collaboration_manager",
+        lambda: _provider_inbox_collaboration_manager(("read_inbox_message",)),
+    )
+    notification_id = _provider_conversation_notification()
+
+    result = _read_inbox_message_impl(notification_id)
+
+    assert result["success"] is True
+    assert result["replyable"] is False
+    assert "reply_to_inbox_message" in result["reply_error"]
 
 
 def test_linear_backed_read_returns_provider_owned_workspace_breadcrumb(test_session):
@@ -491,7 +523,7 @@ def test_large_raw_snapshots_do_not_inflate_default_read_response(test_session):
     encoded = json.dumps(result)
 
     assert result["body"] == "Small provider body"
-    assert result["from"] == "Example"
+    assert result["from"] == "Linear"
     assert len(encoded) < 500
     assert "z" * 1000 not in encoded
 
@@ -515,10 +547,14 @@ def test_large_linear_raw_snapshots_do_not_leak_through_breadcrumb_or_sender_lab
 
 def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(test_session):
     _ensure_caller_agent_terminal()
-    thread = upsert_thread(provider="example", external_id="thread-invalid-workspace")
+    thread = upsert_thread(
+        provider="linear",
+        external_id="thread-invalid-workspace",
+        metadata={"linear_app_key": "implementation_partner"},
+    )
     message = upsert_message(
         thread_id=thread.id,
-        provider="example",
+        provider="linear",
         external_id="message-invalid-workspace",
         direction="inbound",
         kind="prompt",
@@ -542,10 +578,14 @@ def test_invalid_provider_authored_workspace_metadata_is_omitted_from_slim_read(
 
 def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_read(test_session):
     _ensure_caller_agent_terminal()
-    thread = upsert_thread(provider="example", external_id="thread-oversized-workspace")
+    thread = upsert_thread(
+        provider="linear",
+        external_id="thread-oversized-workspace",
+        metadata={"linear_app_key": "implementation_partner"},
+    )
     message = upsert_message(
         thread_id=thread.id,
-        provider="example",
+        provider="linear",
         external_id="message-oversized-workspace",
         direction="inbound",
         kind="prompt",
@@ -708,6 +748,50 @@ def test_reply_to_inbox_message_uses_linear_provider_directly(
     create_activity.assert_called_once_with(
         "session-1",
         {"type": "response", "body": "Reply through default Linear provider"},
+        app_key="implementation_partner",
+    )
+
+
+def test_reply_to_inbox_message_uses_selected_message_identity_context(
+    test_session,
+    monkeypatch,
+):
+    _ensure_caller_agent_terminal()
+    thread = upsert_thread(
+        provider="linear",
+        external_id="message-owned-session",
+        kind="conversation",
+    )
+    message = upsert_message(
+        thread_id=thread.id,
+        provider="linear",
+        external_id="message-owned-activity",
+        direction="inbound",
+        kind="prompt",
+        body="Reply using the selected message identity.",
+        metadata={"linear_app_key": "implementation_partner"},
+    )
+    delivery = create_notification_for_message(
+        provider_message_id=message.id,
+        receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
+    )
+    notification_id = delivery.delivery.notification.id
+    create_activity = Mock(return_value={"id": "reply-1"})
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.app_client.create_agent_activity",
+        create_activity,
+    )
+
+    assert "reply_to_inbox_message" in delivery.delivery.notification.body
+    read_result = _read_inbox_message_impl(notification_id)
+    result = _reply_to_inbox_message_impl(notification_id, "Reply through selected message")
+
+    assert read_result["replyable"] is True
+    assert result["success"] is True
+    create_activity.assert_called_once_with(
+        "message-owned-session",
+        {"type": "response", "body": "Reply through selected message"},
         app_key="implementation_partner",
     )
 

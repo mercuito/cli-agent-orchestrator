@@ -55,14 +55,18 @@ class TestAssignSenderIdInjection:
     """Tests for sender ID injection in _assign_impl."""
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", True)
+    @patch("cli_agent_orchestrator.mcp_server.server._terminal_can_invoke_builtin")
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
-    def test_assign_appends_sender_id_when_injection_enabled(self, mock_create, mock_send):
+    def test_assign_appends_sender_id_when_injection_enabled(
+        self, mock_create, mock_send, mock_can_invoke
+    ):
         """When injection is enabled, assign should append sender ID suffix."""
         from cli_agent_orchestrator.mcp_server.server import _assign_impl
 
         mock_create.return_value = ("worker-1", "claude_code")
         mock_send.return_value = None
+        mock_can_invoke.return_value = True
 
         with (
             patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),

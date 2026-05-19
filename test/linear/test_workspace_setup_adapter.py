@@ -120,7 +120,7 @@ def _event(**overrides: str | None) -> LinearIssueContextEvent:
     return LinearIssueContextEvent(**values)
 
 
-def test_linear_provider_view_prunes_out_of_team_presence_and_tool_access(tmp_path):
+def test_linear_provider_view_prunes_out_of_team_presence_and_does_not_authorize_tool_access(tmp_path):
     manager = _manager(tmp_path)
 
     view = manager.provider_view("cao_delivery", "linear")
@@ -132,7 +132,8 @@ def test_linear_provider_view_prunes_out_of_team_presence_and_tool_access(tmp_pa
     assert config.presence_by_app_key("agent-b") is None
     assert config.presence_by_app_user_id("linear-user-b") is None
     assert config.presence_by_app_user_name("agent_b Linear") is None
-    assert [access.agent_id for access in config.tool_access.values()] == ["agent_a"]
+    assert config.tool_access == {}
+    assert manager.authorized_tool_access_locations("linear") == frozenset()
 
 
 def test_linear_event_for_out_of_team_identity_is_not_cao_addressable(tmp_path):

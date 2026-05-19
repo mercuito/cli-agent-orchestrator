@@ -12,6 +12,7 @@ from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
 )
 from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+    provider_inbox_authorization_decision,
     require_provider_inbox_authorization,
     require_inbox_notification_receiver,
 )
@@ -136,6 +137,24 @@ def read_inbox_message(
         if not thread_row.provider or not thread_row.external_id:
             replyable = False
             reply_error = "backing provider thread ref is missing"
+        else:
+            reply_decision = provider_inbox_authorization_decision(
+                delivery,
+                caller_terminal_id=caller_terminal_id,
+                provider=thread_row.provider,
+                operation="reply",
+                thread_metadata=_thread_metadata(thread_row),
+                thread_raw_snapshot=_thread_raw_snapshot(thread_row),
+                message_metadata=message_metadata,
+                message_raw_snapshot=_message_raw_snapshot(message_row),
+                error=InboxReadError,
+            )
+            if not reply_decision.allowed:
+                replyable = False
+                reply_error = (
+                    "reply_to_inbox_message is not authorized by ToolService: "
+                    f"{reply_decision.reason}"
+                )
 
         return InboxReadResult(
             delivery=delivery,

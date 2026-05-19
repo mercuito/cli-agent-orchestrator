@@ -140,6 +140,15 @@ ERROR_PATTERN = (
 )
 
 
+def _is_cao_managed_gemini_mcp_entry(entry: object) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    env = entry.get("env")
+    if not isinstance(env, dict):
+        return False
+    return bool(env.get("CAO_MANAGED_MCP_SERVER") or env.get("CAO_TERMINAL_ID"))
+
+
 class GeminiCliProvider(BaseProvider):
     """Provider for Gemini CLI tool integration.
 
@@ -368,6 +377,12 @@ class GeminiCliProvider(BaseProvider):
         if "mcpServers" not in settings:
             settings["mcpServers"] = {}
 
+        settings["mcpServers"] = {
+            name: entry
+            for name, entry in settings["mcpServers"].items()
+            if not _is_cao_managed_gemini_mcp_entry(entry)
+        }
+
         for server_name, server_config in mcp_servers.items():
             if isinstance(server_config, dict):
                 cfg = server_config
@@ -382,6 +397,7 @@ class GeminiCliProvider(BaseProvider):
             # can identify the current terminal for handoff/assign operations.
             env = dict(cfg.get("env", {}))
             env["CAO_TERMINAL_ID"] = self.terminal_id
+            env["CAO_MANAGED_MCP_SERVER"] = "1"
             entry["env"] = env
 
             settings["mcpServers"][server_name] = entry
@@ -412,6 +428,11 @@ class GeminiCliProvider(BaseProvider):
             mcp_servers = settings.get("mcpServers", {})
             for server_name in self._mcp_server_names:
                 mcp_servers.pop(server_name, None)
+            settings["mcpServers"] = {
+                name: entry
+                for name, entry in mcp_servers.items()
+                if not _is_cao_managed_gemini_mcp_entry(entry)
+            }
 
             with open(settings_path, "w") as f:
                 json.dump(settings, f, indent=2)

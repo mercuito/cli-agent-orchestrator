@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol
 
@@ -16,6 +16,8 @@ from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
 DEFAULT_WORKSPACE_SETUP_ID = "linear_delivery_setup"
 DEFAULT_WORKSPACE_TEAM_ID = "cao_delivery"
 WORKSPACE_TEAMS_FILENAME = "workspace-teams.json"
+DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE = "member"
+DEFAULT_WORKSPACE_TEAM_MEMBER_TOOLS = ("send_message", "handoff")
 
 
 class WorkspaceSetupConfigError(ValueError):
@@ -58,17 +60,103 @@ class WorkspaceSetup:
 
 
 @dataclass(frozen=True)
+class WorkspaceTeamRole:
+    """Persisted team-owned tool access policy for one role."""
+
+    display_name: str
+    cao_tools: tuple[str, ...] = DEFAULT_WORKSPACE_TEAM_MEMBER_TOOLS
+    mcp_servers: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    providers: Mapping[str, Mapping[str, Mapping[str, Any]]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _required_token(self.display_name, "workspace team role display name")
+        object.__setattr__(self, "cao_tools", _str_tuple(self.cao_tools, "role cao_tools"))
+        object.__setattr__(
+            self,
+            "mcp_servers",
+            {
+                _required_token(name, "role mcp server name"): dict(config)
+                for name, config in self.mcp_servers.items()
+                if isinstance(config, Mapping)
+            },
+        )
+        normalized_providers: dict[str, dict[str, Mapping[str, Any]]] = {}
+        for provider_name, grants in self.providers.items():
+            normalized_provider = _normalize_provider(provider_name)
+            if not isinstance(grants, Mapping):
+                raise WorkspaceSetupConfigError(
+                    f"workspace team role provider {normalized_provider} grants must be an object"
+                )
+            normalized_providers[normalized_provider] = {
+                _required_token(access_id, "role provider access id"): dict(spec)
+                for access_id, spec in grants.items()
+                if isinstance(spec, Mapping)
+            }
+        object.__setattr__(self, "providers", normalized_providers)
+
+
+@dataclass(frozen=True)
 class WorkspaceTeam:
     """Persisted definition of one CAO workspace team."""
 
     id: str
     display_name: str
     workspace_setup: str
+    roles: Mapping[str, WorkspaceTeamRole] = field(default_factory=dict)
+    role_assignments: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _required_token(self.id, "workspace team id")
         _required_token(self.display_name, "workspace team display name")
         _required_token(self.workspace_setup, "workspace team setup id")
+        roles = {
+            _required_token(role_id, "workspace team role id"): role
+            for role_id, role in self.roles.items()
+        }
+        if DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE not in roles:
+            roles[DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE] = WorkspaceTeamRole(
+                display_name="Member",
+                cao_tools=DEFAULT_WORKSPACE_TEAM_MEMBER_TOOLS,
+                mcp_servers={},
+                providers={},
+            )
+        assignments = {
+            _required_token(agent_id, "workspace team role assignment agent id"): _required_token(
+                role_id,
+                "workspace team role assignment role id",
+            )
+            for agent_id, role_id in self.role_assignments.items()
+        }
+        object.__setattr__(self, "roles", roles)
+        object.__setattr__(self, "role_assignments", assignments)
+
+    def role_for_member(self, agent_id: str) -> tuple[str, WorkspaceTeamRole]:
+        """Return the assigned role, falling back to member for missing/deleted roles."""
+        assigned = self.role_assignments.get(agent_id, DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE)
+        if assigned not in self.roles:
+            assigned = DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE
+        return assigned, self.roles[assigned]
+
+    def without_role(self, role_id: str) -> "WorkspaceTeam":
+        """Return this team after deleting one role and moving assignments to member."""
+        normalized = _required_token(role_id, "workspace team role id")
+        if normalized == DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE:
+            raise WorkspaceSetupConfigError("Workspace team member role cannot be deleted")
+        roles = dict(self.roles)
+        roles.pop(normalized, None)
+        assignments = {
+            agent_id: (
+                DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE if assigned == normalized else assigned
+            )
+            for agent_id, assigned in self.role_assignments.items()
+        }
+        return WorkspaceTeam(
+            id=self.id,
+            display_name=self.display_name,
+            workspace_setup=self.workspace_setup,
+            roles=roles,
+            role_assignments=assignments,
+        )
 
 
 @dataclass(frozen=True)
@@ -275,6 +363,11 @@ class WorkspaceTeamStore:
                     "workspace_setup",
                     "workspace team setup id",
                 ),
+                roles=_roles_from_json(raw_team.get("roles", {})),
+                role_assignments=_str_mapping(
+                    raw_team.get("role_assignments", {}),
+                    "workspace team role_assignments",
+                ),
             )
             if team.id in teams:
                 raise WorkspaceSetupConfigError(f"Duplicate workspace team: {team.id}")
@@ -289,6 +382,11 @@ class WorkspaceTeamStore:
                     "id": team.id,
                     "display_name": team.display_name,
                     "workspace_setup": team.workspace_setup,
+                    "roles": {
+                        role_id: _role_to_json(role)
+                        for role_id, role in sorted(team.roles.items())
+                    },
+                    "role_assignments": dict(sorted(team.role_assignments.items())),
                 }
                 for team in sorted(teams.values(), key=lambda item: item.id)
             ]
@@ -351,14 +449,63 @@ class WorkspaceTeamService:
         team_id: str,
         display_name: str,
         workspace_setup: str,
+        roles: Mapping[str, WorkspaceTeamRole] | None = None,
+        role_assignments: Mapping[str, str] | None = None,
     ) -> WorkspaceTeam:
+        try:
+            existing = self._team_registry.get(team_id)
+        except WorkspaceSetupConfigError:
+            existing = None
         team = WorkspaceTeam(
             id=team_id,
             display_name=display_name,
             workspace_setup=workspace_setup,
+            roles=roles if roles is not None else (existing.roles if existing else {}),
+            role_assignments=(
+                role_assignments
+                if role_assignments is not None
+                else (existing.role_assignments if existing else {})
+            ),
         )
         self._setup_registry.get(team.workspace_setup)
         return self._team_store.upsert(team)
+
+    def assign_role(self, *, team_id: str, agent_id: str, role_id: str) -> WorkspaceTeam:
+        team = self._team_registry.get(team_id)
+        normalized_role = _required_token(role_id, "workspace team role id")
+        if normalized_role not in team.roles:
+            raise WorkspaceSetupConfigError(
+                f"Unknown workspace team role {normalized_role} for team {team.id}"
+            )
+        assignments = dict(team.role_assignments)
+        assignments[_required_token(agent_id, "agent id")] = normalized_role
+        return self._team_store.upsert(
+            WorkspaceTeam(
+                id=team.id,
+                display_name=team.display_name,
+                workspace_setup=team.workspace_setup,
+                roles=team.roles,
+                role_assignments=assignments,
+            )
+        )
+
+    def delete_role_assignment(self, *, team_id: str, agent_id: str) -> WorkspaceTeam:
+        team = self._team_registry.get(team_id)
+        assignments = dict(team.role_assignments)
+        assignments.pop(_required_token(agent_id, "agent id"), None)
+        return self._team_store.upsert(
+            WorkspaceTeam(
+                id=team.id,
+                display_name=team.display_name,
+                workspace_setup=team.workspace_setup,
+                roles=team.roles,
+                role_assignments=assignments,
+            )
+        )
+
+    def delete_role(self, *, team_id: str, role_id: str) -> WorkspaceTeam:
+        team = self._team_registry.get(team_id)
+        return self._team_store.upsert(team.without_role(role_id))
 
     def setup_for_team(self, team_id: str) -> WorkspaceSetup:
         team = self._team_registry.get(team_id)
@@ -534,21 +681,8 @@ class WorkspaceCollaborationManager:
         return tuple(authorized)
 
     def authorized_tool_access_locations(self, provider_name: str) -> frozenset[str]:
-        normalized_provider = _normalize_provider(provider_name)
-        if normalized_provider not in self._provider_adapters:
-            return frozenset()
-        locations: set[str] = set()
-        for team in self._team_registry.all():
-            try:
-                setup = self._setup_registry.get(team.workspace_setup)
-            except WorkspaceSetupConfigError:
-                continue
-            if normalized_provider not in setup.providers:
-                continue
-            for mapping in self.authorized_mappings(team.id, normalized_provider):
-                if mapping.mapping_kind == "tool_access":
-                    locations.add(mapping.provider_value)
-        return frozenset(locations)
+        _normalize_provider(provider_name)
+        return frozenset()
 
     def resolve_event_context(
         self, agent: Agent, event: CaoEvent
@@ -844,3 +978,75 @@ def _required_json_token(raw: Mapping[str, Any], key: str, label: str) -> str:
 
 def _normalize_provider(value: str) -> str:
     return _required_token(value, "workspace provider name").lower()
+
+
+def _str_tuple(value: Any, label: str) -> tuple[str, ...]:
+    if not isinstance(value, (tuple, list)):
+        raise WorkspaceSetupConfigError(f"{label} must be a string list")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise WorkspaceSetupConfigError(f"{label} must contain only non-empty strings")
+        result.append(item.strip())
+    return tuple(dict.fromkeys(result))
+
+
+def _str_mapping(value: Any, label: str) -> Mapping[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise WorkspaceSetupConfigError(f"{label} must be an object")
+    return {
+        _required_token(str(key), f"{label} key"): _required_token(str(item), f"{label} value")
+        for key, item in value.items()
+    }
+
+
+def _roles_from_json(value: Any) -> Mapping[str, WorkspaceTeamRole]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise WorkspaceSetupConfigError("workspace team roles must be an object")
+    roles: dict[str, WorkspaceTeamRole] = {}
+    for role_id, role_value in value.items():
+        if not isinstance(role_value, Mapping):
+            raise WorkspaceSetupConfigError("workspace team role entries must be objects")
+        roles[_required_token(str(role_id), "workspace team role id")] = WorkspaceTeamRole(
+            display_name=_required_json_token(
+                role_value,
+                "display_name",
+                "workspace team role display name",
+            ),
+            cao_tools=_str_tuple(role_value.get("cao_tools", []), "workspace team role cao_tools"),
+            mcp_servers={
+                str(name): dict(config)
+                for name, config in (
+                    role_value.get("mcp_servers", {}) if isinstance(role_value, Mapping) else {}
+                ).items()
+                if isinstance(config, Mapping)
+            },
+            providers={
+                str(provider_name): {
+                    str(access_id): dict(spec)
+                    for access_id, spec in grants.items()
+                    if isinstance(spec, Mapping)
+                }
+                for provider_name, grants in (
+                    role_value.get("providers", {}) if isinstance(role_value, Mapping) else {}
+                ).items()
+                if isinstance(grants, Mapping)
+            },
+        )
+    return roles
+
+
+def _role_to_json(role: WorkspaceTeamRole) -> Mapping[str, Any]:
+    return {
+        "display_name": role.display_name,
+        "cao_tools": list(role.cao_tools),
+        "mcp_servers": dict(role.mcp_servers),
+        "providers": {
+            provider_name: {access_id: dict(spec) for access_id, spec in grants.items()}
+            for provider_name, grants in role.providers.items()
+        },
+    }

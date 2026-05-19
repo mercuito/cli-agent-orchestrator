@@ -31,6 +31,7 @@ from cli_agent_orchestrator.utils.env import load_env_vars
 from cli_agent_orchestrator.workspace_providers.registry import WorkspaceProviderConfigError
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderConversationAccessRequirement,
+    ProviderRoleToolAccessGrant,
     ProviderToolAccessPolicy,
 )
 
@@ -326,6 +327,7 @@ def load_linear_provider_config(
     agents_root: Optional[Path] = None,
     agent_registry: Optional[AgentRegistry] = None,
     env_reader: Callable[[str], Optional[str]] = linear_env,
+    include_tool_access: bool = True,
 ) -> Optional[LinearProviderConfig]:
     """Load Linear workspace-provider config from durable agent directories."""
     registry = agent_registry or load_agent_registry(agents_root)
@@ -336,8 +338,9 @@ def load_linear_provider_config(
         presence = _linear_presence_from_agent(agent)
         if presence is not None:
             presences[presence.presence_id] = presence
-        for access in _linear_tool_access_from_agent(agent):
-            tool_access[access.location] = access
+        if include_tool_access:
+            for access in _linear_tool_access_from_agent(agent):
+                tool_access[access.location] = access
     if not presences and not tool_access:
         return None
     config = LinearProviderConfig(
@@ -583,6 +586,25 @@ def _extract_app_key(payload: Mapping[str, Any]) -> Optional[str]:
     return normalize_app_key(str(value)) if value else None
 
 
+def _role_str_tuple(value: Any, location: str) -> tuple[str, ...]:
+    if not isinstance(value, (tuple, list)):
+        raise LinearWorkspaceProviderConfigError(f"{location} must be a string list")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise LinearWorkspaceProviderConfigError(
+                f"{location} must contain only non-empty strings"
+            )
+        result.append(item.strip())
+    return tuple(dict.fromkeys(result))
+
+
+def _role_bool(value: Any, location: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise LinearWorkspaceProviderConfigError(f"{location} must be a boolean")
+
+
 class LinearWorkspaceProvider:
     """Linear workspace-provider lifecycle and presence resolver."""
 
@@ -655,6 +677,72 @@ class LinearWorkspaceProvider:
         config = self._load_config()
         return LinearToolProvider(
             config=config,
+            agent_registry=self._agent_registry,
+        ).provider_tool_access()
+
+    def provider_role_tool_access(
+        self, grants: tuple[ProviderRoleToolAccessGrant, ...]
+    ) -> ProviderToolAccessPolicy:
+        """Return Linear tool access converted from team-role-owned grants."""
+        config = self._config or load_linear_provider_config(
+            agents_root=self._agents_root,
+            agent_registry=self._agent_registry,
+            env_reader=self._env_reader,
+            include_tool_access=False,
+        )
+        if config is None:
+            raise LinearWorkspaceProviderConfigError(
+                "Linear workspace provider is enabled but no Linear config was found"
+            )
+        tool_access: dict[str, LinearToolAccess] = {}
+        for grant in grants:
+            if grant.provider_name != self.name:
+                continue
+            spec = grant.spec
+            access = LinearToolAccess(
+                access_id=grant.access_id,
+                agent_id=grant.agent_id,
+                tools=_role_str_tuple(spec.get("tools", ()), f"{grant.source_location}.tools"),
+                issues=_role_str_tuple(
+                    spec.get("issues", ()),
+                    f"{grant.source_location}.issues",
+                ),
+                create_team_ids=_role_str_tuple(
+                    spec.get("create_team_ids", ()),
+                    f"{grant.source_location}.create_team_ids",
+                ),
+                create_project_ids=_role_str_tuple(
+                    spec.get("create_project_ids", ()),
+                    f"{grant.source_location}.create_project_ids",
+                ),
+                create_parent_issues=_role_str_tuple(
+                    spec.get("create_parent_issues", ()),
+                    f"{grant.source_location}.create_parent_issues",
+                ),
+                allow_top_level_create=_role_bool(
+                    spec.get("allow_top_level_create", False),
+                    f"{grant.source_location}.allow_top_level_create",
+                ),
+                update_fields=_role_str_tuple(
+                    spec.get("update_fields", ()),
+                    f"{grant.source_location}.update_fields",
+                ),
+                reason=str(spec["reason"]).strip()
+                if isinstance(spec.get("reason"), str) and str(spec["reason"]).strip()
+                else None,
+                source_location=grant.source_location,
+            )
+            _validate_linear_tool_access(self._agent_registry.get(grant.agent_id), access)
+            tool_access[access.location] = access
+        role_config = LinearProviderConfig(
+            public_url=config.public_url,
+            presences=config.presences,
+            tool_access=tool_access,
+            agent_policies_enabled=config.agent_policies_enabled,
+            source="workspace_team_roles",
+        )
+        return LinearToolProvider(
+            config=role_config,
             agent_registry=self._agent_registry,
         ).provider_tool_access()
 

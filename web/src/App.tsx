@@ -6,6 +6,7 @@ import { AgentPanel } from './components/AgentPanel'
 import { FlowsPanel } from './components/FlowsPanel'
 import { WorkspaceTeamsPanel } from './components/WorkspaceTeamsPanel'
 import { parseInitialDashboardView, type TabKey } from './dashboardLink'
+import { api } from './api'
 import { Bot, Home, Clock, CheckCircle, XCircle, Info, Wifi, WifiOff, Users } from 'lucide-react'
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
@@ -55,6 +56,7 @@ export default function App() {
     agentToken: initialView.agentToken,
   }))
   const [tab, setTab] = useState<TabKey>(initialView.tab)
+  const [agentCount, setAgentCount] = useState(0)
   const { sessions, connected, fetchSessions } = useStore()
 
   const consumeInitialDeepLink = useCallback(() => {
@@ -73,6 +75,27 @@ export default function App() {
     fetchSessions()
     const interval = setInterval(fetchSessions, 10000)
     return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    let active = true
+
+    const refreshAgentCount = () => {
+      api.listAgents()
+        .then(agents => {
+          if (active) setAgentCount(agents.length)
+        })
+        .catch(() => {
+          if (active) setAgentCount(0)
+        })
+    }
+
+    refreshAgentCount()
+    const interval = setInterval(refreshAgentCount, 10000)
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
   }, [])
 
   // Keyboard shortcuts: Alt+1-4
@@ -133,9 +156,9 @@ export default function App() {
               >
                 {t.icon}
                 {t.label}
-                {t.key === 'agents' && sessions.length > 0 && (
+                {t.key === 'agents' && agentCount > 0 && (
                   <span className={`px-1.5 py-0.5 text-xs rounded-full ${tab === t.key ? 'bg-white/20' : 'bg-gray-700'}`}>
-                    {sessions.length}
+                    {agentCount}
                   </span>
                 )}
               </button>

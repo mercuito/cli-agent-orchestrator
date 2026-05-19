@@ -20,6 +20,7 @@ from cli_agent_orchestrator.workspace_providers.events import (
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderConversationAccessRequirement,
+    ProviderRoleToolAccessGrant,
     ProviderToolAccessPolicy,
 )
 
@@ -76,6 +77,16 @@ class ProviderToolAccessConfigurableWorkspaceProvider(
 
     def has_provider_tool_access_config(self) -> bool:
         """Return whether this provider has configured mediated tool access."""
+
+
+@runtime_checkable
+class ProviderRoleToolAccessWorkspaceProvider(WorkspaceProvider, Protocol):
+    """Optional provider surface for validating team-role-owned access grants."""
+
+    def provider_role_tool_access(
+        self, grants: tuple[ProviderRoleToolAccessGrant, ...]
+    ) -> ProviderToolAccessPolicy:
+        """Return provider-mediated access converted from role-owned grants."""
 
 
 @runtime_checkable

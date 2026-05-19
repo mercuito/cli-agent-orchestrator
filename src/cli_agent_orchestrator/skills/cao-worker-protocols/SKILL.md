@@ -9,12 +9,17 @@ Use this skill when acting as a worker agent inside CLI Agent Orchestrator.
 
 This skill explains how workers should interpret assigned, handed-off, and baton-controlled work, when to call `send_message`, and how to report results back cleanly.
 
+Only use CAO MCP tools that are visible in your current tool list. Team role
+policy can hide `send_message` or baton lifecycle tools for your terminal, and
+hidden tools are not available just because this skill describes a workflow.
+
 ## Understand the Dispatch Mode
 
 Workers receive tasks through one of two orchestration modes:
 
 - `handoff`: blocking work where the orchestrator captures your final output automatically
-- `assign`: non-blocking work where you must actively return results to the requesting terminal
+- `assign`: non-blocking work where you are expected to return results to the
+  requesting terminal, using `send_message` only when that tool is available
 
 Baton-controlled work may arrive through `assign` or through a direct message
 from another worker. In that mode, the task text should identify a baton and
@@ -46,13 +51,16 @@ When the task came through `assign`, the task message should include a callback 
 
 1. Extract the callback terminal ID from the task message.
 2. Format the result clearly and concisely.
-3. Call `send_message(receiver_id=..., message=...)` with the completed result.
+3. If `send_message` is available, call
+   `send_message(receiver_id=..., message=...)` with the completed result.
+   If it is not available, provide the result in your normal response and state
+   that callback delivery is unavailable in this role.
 
 `send_message` is governed by workspace team policy. A callback terminal ID
 identifies the intended route, but CAO can still reject the message if the
 agents are no longer in the same workspace team.
 
-Do not stop after writing a normal response if the assignment explicitly requires a callback. The requesting terminal depends on `send_message` to receive the result.
+When `send_message` is available, do not stop after writing a normal response if the assignment explicitly requires a callback. The requesting terminal depends on that callback delivery to receive the result. If `send_message` is not available, provide the result in your normal response and state that callback delivery is unavailable in this role.
 
 Assigned tasks may include callback instructions directly in the main message or in an appended suffix such as `[Assigned by terminal ...]`. Treat that callback terminal ID as authoritative.
 
@@ -65,7 +73,7 @@ workflow until you transfer, complete, or block the baton. A baton has exactly
 one current holder while active. The current holder is responsible for choosing
 the next baton action.
 
-Use the planned baton tools this way when they are available:
+Use baton tools this way when they are available:
 
 - `pass_baton`: send control to another agent for their next move.
 - `return_baton`: send control back to the previous holder on the return stack.
@@ -116,7 +124,9 @@ Return results that are easy for the supervisor to merge into a larger workflow:
 - Include the requested output or deliverable
 - Keep the message specific enough to act on without re-reading the whole task
 
-If the task asks for progress updates, use `send_message` for those updates too. Otherwise prefer one final callback with the completed deliverable.
+If the task asks for progress updates and `send_message` is available, use it
+for those updates too. Otherwise prefer one final callback with the completed
+deliverable.
 
 ## Filesystem and Reporting Discipline
 

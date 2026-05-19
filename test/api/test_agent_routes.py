@@ -44,7 +44,15 @@ from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderToolAccess,
     ProviderToolAccessPolicy,
 )
-from cli_agent_orchestrator.workspace_setups import WorkspaceSetup, WorkspaceSetupDiagnostic, WorkspaceTeam
+from cli_agent_orchestrator.workspace_setups import (
+    WorkspaceSetup,
+    WorkspaceSetupDiagnostic,
+    WorkspaceSetupRegistry,
+    WorkspaceTeam,
+    WorkspaceTeamRole,
+    WorkspaceTeamService,
+    WorkspaceTeamStore,
+)
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
 
@@ -317,12 +325,22 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
         def list_teams(self):
             return (team,)
 
-        def create_or_update_team(self, *, team_id: str, display_name: str, workspace_setup: str):
+        def create_or_update_team(
+            self,
+            *,
+            team_id: str,
+            display_name: str,
+            workspace_setup: str,
+            roles=None,
+            role_assignments=None,
+        ):
             saved.append((team_id, display_name, workspace_setup))
             return WorkspaceTeam(
                 id=team_id,
                 display_name=display_name,
                 workspace_setup=workspace_setup,
+                roles=roles or {},
+                role_assignments=role_assignments or {},
             )
 
     monkeypatch.setattr(
@@ -375,6 +393,85 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
     assert setups_response.json()[0]["id"] == "linear_delivery_setup"
     assert save_response.status_code == 200
     assert saved == [("research", "Research", "linear_delivery_setup")]
+
+
+def test_workspace_team_api_round_trips_role_policy_through_store(client, monkeypatch, tmp_path):
+    setup_registry = WorkspaceSetupRegistry(
+        (
+            WorkspaceSetup(
+                id="linear_delivery_setup",
+                display_name="Linear Delivery Setup",
+                providers=("linear",),
+                resolver=lambda event: None,
+            ),
+        )
+    )
+    team_store = WorkspaceTeamStore(tmp_path / "workspace-teams.json", bootstrap_teams=())
+    service = WorkspaceTeamService(
+        setup_registry=setup_registry,
+        team_store=team_store,
+        agent_registry=AgentRegistry({}),
+        available_providers=("linear",),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_team_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: SimpleNamespace(list_agents=lambda: ()),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
+        lambda: SimpleNamespace(diagnostics=lambda: ()),
+    )
+
+    save_response = client.put(
+        "/workspace-teams/research",
+        json={
+            "id": "research",
+            "display_name": "Research",
+            "workspace_setup": "linear_delivery_setup",
+            "roles": {
+                "reviewer": {
+                    "display_name": "Reviewer",
+                    "cao_tools": ["read_inbox_message"],
+                    "mcp_servers": {"custom": {"command": "custom-mcp"}},
+                    "providers": {
+                        "linear": {
+                            "reads": {
+                                "tools": ["cao_linear.get_issue"],
+                                "issues": ["*"],
+                            }
+                        }
+                    },
+                }
+            },
+            "role_assignments": {"aria": "reviewer"},
+        },
+    )
+    list_response = client.get("/workspace-teams")
+    stored = WorkspaceTeamStore(tmp_path / "workspace-teams.json").get("research")
+
+    assert save_response.status_code == 200
+    assert save_response.json()["roles"]["reviewer"]["providers"]["linear"]["reads"][
+        "issues"
+    ] == ["*"]
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["role_assignments"] == {"aria": "reviewer"}
+    assert stored.roles["reviewer"] == WorkspaceTeamRole(
+        display_name="Reviewer",
+        cao_tools=("read_inbox_message",),
+        mcp_servers={"custom": {"command": "custom-mcp"}},
+        providers={
+            "linear": {
+                "reads": {
+                    "tools": ["cao_linear.get_issue"],
+                    "issues": ["*"],
+                }
+            }
+        },
+    )
 
 
 def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monkeypatch):

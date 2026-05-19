@@ -33,6 +33,7 @@ export function AgentPanel({
   const { selectSession, showSnackbar } = useStore()
   const providerSchema = useProviderSchema()
   const [agents, setAgents] = useState<AgentStatus[]>([])
+  const [agentsLoaded, setAgentsLoaded] = useState(false)
   const [workspaceSetupDiagnostics, setWorkspaceSetupDiagnostics] = useState<WorkspaceSetupDiagnostic[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -44,18 +45,20 @@ export function AgentPanel({
   const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentId?: string | null; terminalToken?: string | null } | null>(null)
   const initialTerminalOpened = useRef(false)
 
-  const refreshAgents = () => Promise.all([
-    api.listAgents(),
-    api.listWorkspaceSetupDiagnostics().catch(() => [] as WorkspaceSetupDiagnostic[]),
-  ]).then(([nextAgents, nextDiagnostics]) => {
+  const refreshAgents = () => api.listAgents().then(nextAgents => {
     setAgents(nextAgents)
-    setWorkspaceSetupDiagnostics(nextDiagnostics)
+    setAgentsLoaded(true)
     setSelectedAgentId(previous => (
       previous && nextAgents.some(agent => agent.agent_id === previous)
         ? previous
         : nextAgents[0]?.agent_id ?? null
     ))
-  }).catch(() => {})
+    return api.listWorkspaceSetupDiagnostics()
+      .then(nextDiagnostics => setWorkspaceSetupDiagnostics(nextDiagnostics))
+      .catch(() => setWorkspaceSetupDiagnostics([]))
+  }).catch(() => {
+    setAgentsLoaded(true)
+  })
 
   const selectedAgent = agents.find(agent => agent.agent_id === selectedAgentId) ?? agents[0] ?? null
 
@@ -184,7 +187,9 @@ export function AgentPanel({
       <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="bg-gray-800/60 border border-gray-700/50 rounded-lg p-4">
           <div className="flex items-center justify-between gap-3 mb-3">
-            <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Agents ({agents.length})</h3>
+            <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+              Agents{agentsLoaded ? ` (${agents.length})` : ''}
+            </h3>
             <button
               type="button"
               onClick={() => setShowCreateDialog(true)}
@@ -193,7 +198,9 @@ export function AgentPanel({
               <Plus size={14} /> New Agent
             </button>
           </div>
-          {agents.length === 0 ? (
+          {!agentsLoaded ? (
+            <p className="text-gray-500 text-sm">Loading agents...</p>
+          ) : agents.length === 0 ? (
             <p className="text-gray-500 text-sm">No agents configured.</p>
           ) : (
             <div className="space-y-2">

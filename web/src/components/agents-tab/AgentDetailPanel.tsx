@@ -31,6 +31,12 @@ function sourceLabel(source: { kind: string; name: string }) {
   return `${source.kind.replace(/_/g, ' ')} / ${source.name}`
 }
 
+function sameToolSet(left: string[], right: string[]) {
+  if (left.length !== right.length) return false
+  const rightSet = new Set(right)
+  return left.every(tool => rightSet.has(tool))
+}
+
 export function AgentDetailPanel({
   agent,
   onStartAgent,
@@ -43,8 +49,8 @@ export function AgentDetailPanel({
   renderTimelineTab,
 }: AgentDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<AgentDetailTab>('config')
-  const [mcpToolsOpen, setMcpToolsOpen] = useState(false)
-  const [toolAccessOpen, setToolAccessOpen] = useState(false)
+  const [availableToolsOpen, setAvailableToolsOpen] = useState(false)
+  const [toolDetailsOpen, setToolDetailsOpen] = useState(false)
 
   if (!agent) {
     return (
@@ -69,6 +75,15 @@ export function AgentDetailPanel({
   const allowedTools = effectiveToolAccess?.allowed_tools ?? []
   const inactiveGrantNames = Object.keys(effectiveToolAccess?.inactive_local_grants ?? {})
   const materializedServers = Object.keys(effectiveToolAccess?.materialized_mcp_servers ?? {})
+  const visibleToolNames = mcpTools.map(tool => tool.name)
+  const toolSurfaceMismatch = !!effectiveToolAccess
+    && mcpToolSurfaceAvailable
+    && !sameToolSet(visibleToolNames, allowedTools)
+  const showToolAccessDetails = !!effectiveToolAccess && (
+    toolSurfaceMismatch
+    || inactiveGrantNames.length > 0
+    || effectiveToolAccess.diagnostics.length > 0
+  )
 
   return (
     <div className="rounded-lg border border-gray-700/50 bg-gray-800/60 min-w-0">
@@ -121,17 +136,17 @@ export function AgentDetailPanel({
           <section className="mt-3 max-w-xl border-t border-gray-700/50 pt-3">
             <button
               type="button"
-              onClick={() => setMcpToolsOpen(open => !open)}
-              aria-expanded={mcpToolsOpen}
+              onClick={() => setAvailableToolsOpen(open => !open)}
+              aria-expanded={availableToolsOpen}
               className="flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-gray-100"
             >
               <Wrench size={13} className="text-emerald-300" />
-              <span>Effective MCP tools</span>
+              <span>Available tools</span>
               <span className="rounded-full bg-gray-700/70 px-1.5 py-0.5 font-mono text-[10px] text-gray-400">
                 {mcpToolSurfaceAvailable ? mcpTools.length : 'unavailable'}
               </span>
             </button>
-            {mcpToolsOpen && (
+            {availableToolsOpen && (
               <div className="mt-2 space-y-2">
                 {!mcpToolSurfaceAvailable ? (
                   <p className="text-xs text-amber-300">
@@ -142,6 +157,9 @@ export function AgentDetailPanel({
                     Current config for new MCP sessions; this running terminal may need a restart to pick up tool changes.
                   </p>
                 ) : null}
+                {mcpToolSurfaceAvailable && (
+                  <p className="text-xs text-gray-500">Managed by ToolService.</p>
+                )}
                 {!mcpToolSurfaceAvailable ? null : mcpTools.length ? (
                   <ul className="space-y-2">
                     {mcpTools.map(tool => (
@@ -164,66 +182,67 @@ export function AgentDetailPanel({
               </div>
             )}
           </section>
-          <section className="mt-3 max-w-xl border-t border-gray-700/50 pt-3">
-            <button
-              type="button"
-              onClick={() => setToolAccessOpen(open => !open)}
-              aria-expanded={toolAccessOpen}
-              className="flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-gray-100"
-            >
-              <Wrench size={13} className="text-cyan-300" />
-              <span>ToolService access</span>
-              <span className="rounded-full bg-gray-700/70 px-1.5 py-0.5 font-mono text-[10px] text-gray-400">
-                {effectiveToolAccess ? effectiveToolAccess.allowed_tools.length : 'not loaded'}
-              </span>
-            </button>
-            {toolAccessOpen && (
-              <div className="mt-2 space-y-2 text-xs">
-                {!effectiveToolAccess ? (
-                  <p className="text-amber-300">ToolService access is unavailable from this dashboard response.</p>
-                ) : (
-                  <>
-                    <div className="grid gap-1 font-mono text-gray-400">
-                      <div className="flex flex-wrap gap-x-2 gap-y-1">
-                        <span>allowed:</span>
-                        {allowedTools.length ? (
-                          allowedTools.map(tool => (
-                            <span
-                              key={tool}
-                              className="inline-flex max-w-full flex-wrap gap-x-1 text-gray-300"
-                            >
-                              <span>{tool}</span>
-                              {effectiveToolAccess.source_markers[tool] && (
-                                <span className="text-gray-500">
-                                  {effectiveToolAccess.source_markers[tool]}
-                                </span>
-                              )}
-                            </span>
-                          ))
-                        ) : (
-                          <span>none</span>
-                        )}
-                      </div>
-                      <div>runtime: {effectiveToolAccess.runtime_capabilities.join(', ') || 'none'}</div>
-                      <div>mcp: {materializedServers.join(', ') || 'none'}</div>
+          {showToolAccessDetails && (
+            <section className="mt-3 max-w-xl border-t border-gray-700/50 pt-3">
+              <button
+                type="button"
+                onClick={() => setToolDetailsOpen(open => !open)}
+                aria-expanded={toolDetailsOpen}
+                className="flex items-center gap-2 text-xs font-medium text-amber-200 hover:text-amber-100"
+              >
+                <Wrench size={13} className="text-amber-300" />
+                <span>Tool access details</span>
+                <span className="rounded-full bg-amber-950/50 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
+                  debug
+                </span>
+              </button>
+              {toolDetailsOpen && (
+                <div className="mt-2 space-y-2 text-xs">
+                  {toolSurfaceMismatch && (
+                    <p className="text-amber-300">
+                      Available tools differ from ToolService allowed tools.
+                    </p>
+                  )}
+                  <div className="grid gap-1 font-mono text-gray-400">
+                    <div className="flex flex-wrap gap-x-2 gap-y-1">
+                      <span>allowed:</span>
+                      {allowedTools.length ? (
+                        allowedTools.map(tool => (
+                          <span
+                            key={tool}
+                            className="inline-flex max-w-full flex-wrap gap-x-1 text-gray-300"
+                          >
+                            <span>{tool}</span>
+                            {effectiveToolAccess.source_markers[tool] && (
+                              <span className="text-gray-500">
+                                {effectiveToolAccess.source_markers[tool]}
+                              </span>
+                            )}
+                          </span>
+                        ))
+                      ) : (
+                        <span>none</span>
+                      )}
                     </div>
-                    {!!inactiveGrantNames.length && (
-                      <div className="rounded-md border border-amber-500/30 bg-amber-950/20 p-2 text-amber-200">
-                        Inactive agent-local grants: {inactiveGrantNames.join(', ')}
-                      </div>
-                    )}
-                    {!!effectiveToolAccess.diagnostics.length && (
-                      <ul className="space-y-1 text-amber-300">
-                        {effectiveToolAccess.diagnostics.map(item => (
-                          <li key={`${item.code}:${item.message}`}>{item.message}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </section>
+                    <div>runtime: {effectiveToolAccess.runtime_capabilities.join(', ') || 'none'}</div>
+                    <div>mcp: {materializedServers.join(', ') || 'none'}</div>
+                  </div>
+                  {!!inactiveGrantNames.length && (
+                    <div className="rounded-md border border-amber-500/30 bg-amber-950/20 p-2 text-amber-200">
+                      Inactive agent-local grants: {inactiveGrantNames.join(', ')}
+                    </div>
+                  )}
+                  {!!effectiveToolAccess.diagnostics.length && (
+                    <ul className="space-y-1 text-amber-300">
+                      {effectiveToolAccess.diagnostics.map(item => (
+                        <li key={`${item.code}:${item.message}`}>{item.message}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {agent.active ? (

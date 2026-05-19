@@ -38,6 +38,21 @@ class _ToolService:
             return ToolAccessDecision.deny("revoked")
         return ToolAccessDecision.allow()
 
+    def can_invoke_for_terminal_target(
+        self,
+        terminal_id,
+        tool_ref,
+        *,
+        target_terminal_id,
+        **kwargs,
+    ):
+        self.invocation_checks.append(
+            (terminal_id, tool_ref, {"target_terminal_id": target_terminal_id, **kwargs})
+        )
+        if tool_ref in self.deny_invocations:
+            return ToolAccessDecision.deny("revoked")
+        return ToolAccessDecision.allow()
+
 
 class TestDeferredToolRegistry:
     """Every @_deferred_tool decorator must record its function + metadata
@@ -199,6 +214,45 @@ class TestRegisterTools:
                 "terminal-1",
                 "a",
                 {"built_in_tool_names": ("a", "b")},
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_registered_terminate_rechecks_target_terminal_policy(self):
+        async def terminate_tool(terminal_id: str):
+            return {"terminated": terminal_id}
+
+        captured = []
+        mcp_instance = MagicMock()
+
+        def _decorator(**kwargs):
+            def _wrap(fn):
+                captured.append(fn)
+                return fn
+
+            return _wrap
+
+        mcp_instance.tool.side_effect = _decorator
+
+        tool_service = _ToolService(("terminate",))
+        server._register_tools(
+            [("terminate", terminate_tool, {})],
+            mcp_instance,
+            terminal_id="caller-terminal",
+            tool_service=tool_service,
+        )
+
+        result = await captured[0](terminal_id="target-terminal")
+
+        assert result == {"terminated": "target-terminal"}
+        assert tool_service.invocation_checks == [
+            (
+                "caller-terminal",
+                "terminate",
+                {
+                    "target_terminal_id": "target-terminal",
+                    "built_in_tool_names": ("terminate",),
+                },
             )
         ]
 

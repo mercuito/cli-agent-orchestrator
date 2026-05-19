@@ -12,7 +12,6 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     _extract_app_user_id,
     _extract_app_user_name,
     _linear_presence_from_agent,
-    _linear_tool_access_from_agent,
     normalize_app_key,
     validate_linear_provider_config,
 )
@@ -70,17 +69,6 @@ class LinearWorkspaceSetupAdapter:
                             payload=presence,
                         )
                     )
-            for access in _linear_tool_access_from_agent(agent):
-                mappings.append(
-                    WorkspaceProviderCandidateMapping(
-                        provider_name=self.provider_name,
-                        agent_id=agent.id,
-                        mapping_kind="tool_access",
-                        provider_identity="tool_access",
-                        provider_value=access.location,
-                        payload=access,
-                    )
-                )
         return tuple(mappings)
 
     def build_provider_view(
@@ -96,15 +84,10 @@ class LinearWorkspaceSetupAdapter:
             for mapping in authorized_mappings
             if mapping.mapping_kind in {"presence", "presence_alias"}
         }
-        tool_access = {
-            mapping.payload.location: mapping.payload
-            for mapping in authorized_mappings
-            if mapping.mapping_kind == "tool_access"
-        }
         config = LinearProviderConfig(
             public_url=None,
             presences=presences,
-            tool_access=tool_access,
+            tool_access={},
             agent_policies_enabled=False,
             source=f"workspace_team:{team.id}:setup:{setup.id}",
         )

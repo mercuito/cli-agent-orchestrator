@@ -142,6 +142,8 @@ export function AgentConfigTab({
 
   const schemas = providerSchema.schemas
   const inactiveLocalGrantNames = Object.keys(agent.effective_tool_access?.inactive_local_grants ?? {})
+  const rawLocalAccessFallbackNotice =
+    Boolean(editing ? workspaceTeamDraft : agent.config.workspace.team)
   const selectedWorkspaceTeam = teams.find(team => team.id === workspaceTeamDraft)
   const derivedWorkspaceSetup = editing
     ? workspaceTeamDraft
@@ -250,9 +252,12 @@ export function AgentConfigTab({
             <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200">
               Raw agent.toml (unstructured fields)
             </summary>
-            {!!inactiveLocalGrantNames.length && (
+            {rawLocalAccessFallbackNotice && (
               <p className="border-t border-amber-500/20 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
-                ToolService marks these agent-local tool grants inactive for this teamed agent: {inactiveLocalGrantNames.join(', ')}
+                {inactiveLocalGrantNames.length
+                  ? `ToolService marks these agent-local tool grants inactive for this teamed agent: ${inactiveLocalGrantNames.join(', ')}. `
+                  : 'This teamed agent inherits tool access from its workspace team role. '}
+                Edits affect only standalone fallback behavior after leaving the team.
               </p>
             )}
             <textarea
@@ -288,9 +293,12 @@ export function AgentConfigTab({
             <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200">
               Raw agent.toml (unstructured fields)
             </summary>
-            {!!inactiveLocalGrantNames.length && (
+            {rawLocalAccessFallbackNotice && (
               <p className="border-t border-amber-500/20 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
-                ToolService marks these agent-local tool grants inactive for this teamed agent: {inactiveLocalGrantNames.join(', ')}
+                {inactiveLocalGrantNames.length
+                  ? `ToolService marks these agent-local tool grants inactive for this teamed agent: ${inactiveLocalGrantNames.join(', ')}. `
+                  : 'This teamed agent inherits tool access from its workspace team role. '}
+                These values affect only standalone fallback behavior after leaving the team.
               </p>
             )}
             <pre className="max-h-[300px] overflow-auto rounded-b-lg border-t border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">

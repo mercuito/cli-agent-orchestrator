@@ -118,6 +118,19 @@ def _test_file_session(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(db_module, "engine", engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr(constants, "DATABASE_FILE", db_path)
+    tool_service = _ProviderConversationToolService()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.default_tool_service",
+        lambda: tool_service,
+    )
     return engine
 
 

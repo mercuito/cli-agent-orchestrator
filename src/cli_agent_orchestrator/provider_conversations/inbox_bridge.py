@@ -14,12 +14,12 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
     provider_identity_from_metadata,
+    provider_conversation_tool_service,
 )
 from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
-from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 PROVIDER_CONVERSATION_INBOX_SOURCE_KIND = "provider_conversation_thread"
@@ -117,6 +117,13 @@ def create_notification_for_message(
             thread_row=thread_row,
             message_row=message_row,
         )
+        reply_authorized = _provider_reply_authorized(
+            agent_id=authorized_agent_id,
+            provider=cast(str, thread_row.provider),
+            provider_message_id=provider_message_id,
+            thread_row=thread_row,
+            message_row=message_row,
+        )
 
         delivery = db_module.create_inbox_delivery(
             PROVIDER_CONVERSATION_INBOX_SENDER_ID,
@@ -135,6 +142,7 @@ def create_notification_for_message(
                 work_item_row=work_item_row,
                 preview_chars=preview_chars,
                 notification_chars=notification_chars,
+                include_reply_guidance=reply_authorized,
             ),
         )
         notification_row = session.get(db_module.InboxNotificationModel, delivery.notification.id)
@@ -148,6 +156,7 @@ def create_notification_for_message(
             work_item_row=work_item_row,
             preview_chars=preview_chars,
             notification_chars=notification_chars,
+            include_reply_guidance=reply_authorized,
         )
         session.flush()
 
@@ -225,6 +234,37 @@ def _require_provider_preview_authorized(
         )
 
 
+def _provider_reply_authorized(
+    *,
+    agent_id: str,
+    provider: str,
+    provider_message_id: int,
+    thread_row: db_module.ProviderConversationThreadModel,
+    message_row: db_module.ProviderConversationMessageModel,
+) -> bool:
+    if not thread_row.provider or not thread_row.external_id:
+        return False
+    provider_identity = provider_identity_from_metadata(
+        provider,
+        _load_json_object(cast(Optional[str], thread_row.metadata_json)),
+        _load_json_object(cast(Optional[str], thread_row.raw_snapshot_json)),
+        _load_json_object(cast(Optional[str], message_row.metadata_json)),
+        _load_json_object(cast(Optional[str], message_row.raw_snapshot_json)),
+    )
+    decision = default_tool_service().provider_conversation_decision(
+        agent_id,
+        provider=provider,
+        operation="reply",
+        source=f"provider_conversation_message:{provider_message_id}",
+        provider_identity=provider_identity,
+    )
+    return decision.allowed
+
+
+def default_tool_service():
+    return provider_conversation_tool_service()
+
+
 def _require_receiver_authorized_for_agent(
     session: Session,
     receiver_id: str,
@@ -264,6 +304,7 @@ def format_provider_conversation_notification(
     work_item_row: Optional[db_module.ProviderWorkItemModel] = None,
     preview_chars: int = DEFAULT_PREVIEW_CHARS,
     notification_chars: int = DEFAULT_NOTIFICATION_CHARS,
+    include_reply_guidance: bool = True,
 ) -> str:
     """Build the compact agent-visible notification sent through the inbox."""
 
@@ -279,13 +320,16 @@ def format_provider_conversation_notification(
         cast(Optional[str], message_row.metadata_json)
     ) or _metadata_indicates_media(cast(Optional[str], message_row.raw_snapshot_json)):
         lines.append("Attachment/media metadata present.")
-    guidance = "\n".join(
-        [
-            "",
-            f"Read: read_inbox_message(notification_id={inbox_notification_id}).",
-            "Reply: " f"reply_to_inbox_message(notification_id={inbox_notification_id}, body=...).",
-        ]
-    )
+    guidance_lines = [
+        "",
+        f"Read: read_inbox_message(notification_id={inbox_notification_id}).",
+    ]
+    if include_reply_guidance:
+        guidance_lines.append(
+            "Reply: "
+            f"reply_to_inbox_message(notification_id={inbox_notification_id}, body=...)."
+        )
+    guidance = "\n".join(guidance_lines)
     body = "\n".join(line for line in lines if line)
     reserved = len(guidance) + 1
     if len(body) + reserved > notification_chars:

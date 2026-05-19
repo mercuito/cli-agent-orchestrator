@@ -6,7 +6,8 @@ from typing import Any, Callable, Mapping, TypeVar
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
-from cli_agent_orchestrator.services.tool_service import default_tool_service
+from cli_agent_orchestrator.services.tool_service import ToolService
+from cli_agent_orchestrator.workspace_setups import default_workspace_collaboration_manager
 
 ErrorT = TypeVar("ErrorT", bound=Exception)
 
@@ -55,6 +56,38 @@ def require_provider_inbox_authorization(
 ) -> None:
     """Require current receiver ownership and team-bound provider authorization."""
 
+    decision = provider_inbox_authorization_decision(
+        delivery,
+        caller_terminal_id=caller_terminal_id,
+        provider=provider,
+        operation=operation,
+        thread_metadata=thread_metadata,
+        thread_raw_snapshot=thread_raw_snapshot,
+        message_metadata=message_metadata,
+        message_raw_snapshot=message_raw_snapshot,
+        error=error,
+    )
+    if not decision.allowed:
+        raise error(
+            "Provider inbox notification is not authorized by ToolService: "
+            f"{decision.reason}"
+        )
+
+
+def provider_inbox_authorization_decision(
+    delivery: InboxDelivery,
+    *,
+    caller_terminal_id: str | None,
+    provider: str,
+    operation: str,
+    thread_metadata: Mapping[str, Any] | None = None,
+    thread_raw_snapshot: Mapping[str, Any] | None = None,
+    message_metadata: Mapping[str, Any] | None = None,
+    message_raw_snapshot: Mapping[str, Any] | None = None,
+    error: Callable[[str], ErrorT],
+):
+    """Return the current ToolService provider inbox decision for this receiver."""
+
     require_inbox_notification_receiver(
         delivery,
         caller_terminal_id=caller_terminal_id,
@@ -69,18 +102,25 @@ def require_provider_inbox_authorization(
     )
     if provider == "linear" and not provider_identity:
         raise error("Linear provider inbox notification is missing a current app key")
-    decision = default_tool_service().provider_conversation_decision_for_inbox(
+    return default_tool_service().provider_conversation_decision_for_inbox(
         delivery,
         caller_terminal_id=caller_terminal_id,
         provider=provider,
         operation=operation,
         provider_identity=provider_identity,
     )
-    if not decision.allowed:
-        raise error(
-            "Provider inbox notification is not authorized by ToolService: "
-            f"{decision.reason}"
-        )
+
+
+def provider_conversation_tool_service() -> ToolService:
+    """Return ToolService wired through the provider-conversation manager hook."""
+
+    return ToolService(
+        collaboration_manager_factory=lambda registry: _provider_conversation_manager(registry)
+    )
+
+
+def default_tool_service() -> ToolService:
+    return provider_conversation_tool_service()
 
 
 def provider_identity_from_metadata(
@@ -90,6 +130,13 @@ def provider_identity_from_metadata(
     if provider.strip().lower() == "linear":
         return _linear_app_key(*values)
     return None
+
+
+def _provider_conversation_manager(registry: Any):
+    try:
+        return default_workspace_collaboration_manager(agent_registry=registry)
+    except TypeError:
+        return default_workspace_collaboration_manager()
 
 
 def _linear_app_key(*values: Mapping[str, Any] | None) -> str | None:

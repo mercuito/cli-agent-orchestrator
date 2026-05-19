@@ -289,6 +289,27 @@ describe('AgentPanel', () => {
   })
 
   describe('unified detail panel layout', () => {
+    it('does not render an empty roster while the agent list is still loading', async () => {
+      // Given
+      let resolveAgents: (agents: any[]) => void = () => {}
+      listAgents.mockImplementation(() => new Promise(resolve => {
+        resolveAgents = resolve
+      }))
+
+      // When
+      render(<AgentPanel />)
+
+      // Then
+      expect(screen.getByRole('heading', { name: /^agents$/i })).toBeInTheDocument()
+      expect(screen.getByText('Loading agents...')).toBeInTheDocument()
+      expect(screen.queryByText('No agents configured.')).not.toBeInTheDocument()
+
+      resolveAgents([])
+
+      expect(await screen.findByText('No agents configured.')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: /agents \(0\)/i })).toBeInTheDocument()
+    })
+
     it('selecting an agent in the roster updates the detail panel for that agent', async () => {
       // Given
       listAgents.mockResolvedValue([

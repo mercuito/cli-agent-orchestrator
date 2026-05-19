@@ -65,9 +65,13 @@ class _PreviewToolService:
     def __init__(self) -> None:
         self.calls: list[tuple[tuple, dict]] = []
         self.decision = ToolAccessDecision.allow(reason="provider_conversation_allowed")
+        self.decisions_by_operation: dict[str, ToolAccessDecision] = {}
 
     def provider_conversation_decision(self, *args, **kwargs) -> ToolAccessDecision:
         self.calls.append((args, kwargs))
+        operation = str(kwargs.get("operation", "")).strip().lower()
+        if operation in self.decisions_by_operation:
+            return self.decisions_by_operation[operation]
         return self.decision
 
 
@@ -136,7 +140,16 @@ def test_provider_conversation_notification_uses_thread_source_and_internal_thre
                 "source": f"provider_conversation_message:{message.id}",
                 "provider_identity": "implementation_partner",
             },
-        )
+        ),
+        (
+            (AUTHORIZED_AGENT_ID,),
+            {
+                "provider": "linear",
+                "operation": "reply",
+                "source": f"provider_conversation_message:{message.id}",
+                "provider_identity": "implementation_partner",
+            },
+        ),
     ]
 
 
@@ -183,6 +196,32 @@ def test_message_backed_notification_body_is_compact_and_message_body_is_durable
         f"Reply: reply_to_inbox_message(notification_id={result.delivery.notification.id}" in body
     )
     assert "missing migration test" in body
+
+
+def test_notification_body_omits_reply_guidance_when_reply_tool_is_hidden(
+    test_session, preview_tool_service
+):
+    _, _, message = _persist_message(
+        provider="generic-chat",
+        body="The worker only has preview access.",
+    )
+    preview_tool_service.decisions_by_operation["reply"] = ToolAccessDecision.deny(
+        "reply_to_inbox_message is hidden"
+    )
+
+    result = create_notification_for_message(
+        provider_message_id=message.id,
+        receiver_id=AUTHORIZED_RECEIVER_ID,
+        authorized_agent_id=AUTHORIZED_AGENT_ID,
+    )
+
+    body = result.delivery.notification.body
+    assert f"Read: read_inbox_message(notification_id={result.delivery.notification.id})" in body
+    assert "reply_to_inbox_message" not in body
+    assert [call[1]["operation"] for call in preview_tool_service.calls] == [
+        "preview",
+        "reply",
+    ]
 
 
 def test_semantic_notification_body_is_bounded(test_session):

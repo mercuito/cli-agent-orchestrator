@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -24,6 +26,8 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceTeamRegistry,
     default_workspace_setup_registry,
 )
+
+_REAL_AVAILABLE_BATON_HOLDER_TOOLS = baton_service.available_baton_holder_tools
 
 
 class _TeamStore:
@@ -65,6 +69,16 @@ def allow_baton_collaboration(monkeypatch):
         "require_terminal_workspace_team",
         lambda terminal_id, **kwargs: None,
     )
+    monkeypatch.setattr(
+        baton_service,
+        "available_baton_holder_tools",
+        lambda db, terminal_id: (
+            "pass_baton",
+            "return_baton",
+            "complete_baton",
+            "block_baton",
+        ),
+    )
 
 
 def _agent(agent_id: str, team: str) -> Agent:
@@ -88,6 +102,18 @@ def _create_terminal(terminal_id: str, agent_id: str) -> None:
         agent_id=agent_id,
         workspace_context_id=db_module.ensure_default_workspace_context(agent_id).id,
     )
+
+
+class _ToolService:
+    def __init__(self, built_in_tools: tuple[str, ...]) -> None:
+        self._built_in_tools = set(built_in_tools)
+
+    def tools_for_agent(self, agent_id: str, *, built_in_tool_names=()):
+        return SimpleNamespace(
+            built_in_cao_tools=tuple(
+                tool for tool in built_in_tool_names if tool in self._built_in_tools
+            )
+        )
 
 
 def _collaboration_manager() -> WorkspaceCollaborationManager:
@@ -321,6 +347,33 @@ def test_create_baton_persists_active_holder_and_event(patched_db):
     assert "Title: T01" in queued[0].message.body
     assert "Current expectation: implement" in queued[0].message.body
     assert "complete_baton" in queued[0].message.body
+
+
+def test_create_baton_guidance_uses_tool_service_baton_access(patched_db, monkeypatch):
+    _create_terminal("impl", "impl_agent")
+    monkeypatch.setattr(
+        baton_service,
+        "available_baton_holder_tools",
+        _REAL_AVAILABLE_BATON_HOLDER_TOOLS,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "default_tool_service",
+        lambda: _ToolService(("complete_baton",)),
+    )
+
+    baton_service.create_baton(
+        baton_id="baton-1",
+        title="T01",
+        originator_id="originator",
+        holder_id="impl",
+    )
+
+    body = _messages("impl")[0].message.body
+    assert "complete_baton" in body
+    assert "pass_baton" not in body
+    assert "return_baton" not in body
+    assert "block_baton" not in body
 
 
 def test_pass_baton_pushes_previous_holder_and_sets_receiver(patched_db):

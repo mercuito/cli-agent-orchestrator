@@ -153,7 +153,7 @@ describe('AgentDetailPanel', () => {
       expect(screen.getByText(/requires unavailable provider linear/)).toBeInTheDocument()
     })
 
-    it('renders current MCP tool access in a collapsed section', () => {
+    it('renders current MCP tool access as the primary available tools section', () => {
       // Given
       const agent = agentStatus({
         active: true,
@@ -188,16 +188,18 @@ describe('AgentDetailPanel', () => {
       )
 
       // Then
-      expect(screen.getByText('Effective MCP tools')).toBeInTheDocument()
+      expect(screen.getByText('Available tools')).toBeInTheDocument()
+      expect(screen.queryByText('ToolService access')).not.toBeInTheDocument()
       expect(screen.queryByText('cao_linear.get_issue')).not.toBeInTheDocument()
 
-      fireEvent.click(screen.getByText('Effective MCP tools'))
+      fireEvent.click(screen.getByText('Available tools'))
 
       expect(screen.getByText('send_message')).toBeInTheDocument()
       expect(screen.getByText('cao_linear.get_issue')).toBeInTheDocument()
       expect(screen.getByText('cao builtin / cao')).toBeInTheDocument()
       expect(screen.getByText('provider / linear')).toBeInTheDocument()
       expect(screen.getByText(/running terminal may need a restart/i)).toBeInTheDocument()
+      expect(screen.getByText(/managed by ToolService/i)).toBeInTheDocument()
     })
 
     it('does not treat a missing MCP tool surface as zero effective tools', () => {
@@ -217,7 +219,7 @@ describe('AgentDetailPanel', () => {
           renderTimelineTab={renderTimelineTab}
         />,
       )
-      fireEvent.click(screen.getByText('Effective MCP tools'))
+      fireEvent.click(screen.getByText('Available tools'))
 
       // Then
       expect(screen.getByText('unavailable')).toBeInTheDocument()
@@ -225,8 +227,23 @@ describe('AgentDetailPanel', () => {
       expect(screen.queryByText('No MCP tools visible for this agent.')).not.toBeInTheDocument()
     })
 
-    it('renders actual ToolService allowed tools instead of only the count', () => {
+    it('hides ToolService debug details when they match the visible MCP tools', () => {
       const agent = agentStatus({
+        mcp_tool_surface: {
+          schema_version: 'cao-agent-mcp-surface.v1',
+          tools: [
+            {
+              source: { kind: 'cao_builtin', name: 'cao' },
+              name: 'send_message',
+              description: 'Send a message.',
+            },
+            {
+              source: { kind: 'provider', name: 'linear' },
+              name: 'cao_linear.get_issue',
+              description: 'Read a Linear issue.',
+            },
+          ],
+        },
         effective_tool_access: {
           agent_id: 'aria',
           team_id: null,
@@ -238,10 +255,7 @@ describe('AgentDetailPanel', () => {
           provider_mediated_tools: { linear: ['cao_linear.get_issue'] },
           materialized_mcp_servers: { 'cao-mcp-server': {} },
           runtime_capabilities: ['fs_read', '@cao-mcp-server'],
-          source_markers: {
-            send_message: 'agent_config:cao_tools',
-            'cao_linear.get_issue': 'linear:tool_access.workflow',
-          },
+          source_markers: {},
           inactive_local_grants: {},
           provider_conversation_requirements: [],
           diagnostics: [],
@@ -258,13 +272,62 @@ describe('AgentDetailPanel', () => {
           renderTimelineTab={renderTimelineTab}
         />,
       )
-      fireEvent.click(screen.getByText('ToolService access'))
+
+      expect(screen.queryByText('Tool access details')).not.toBeInTheDocument()
+    })
+
+    it('renders ToolService debug details when they add diagnostic signal', () => {
+      const agent = agentStatus({
+        mcp_tool_surface: {
+          schema_version: 'cao-agent-mcp-surface.v1',
+          tools: [
+            {
+              source: { kind: 'cao_builtin', name: 'cao' },
+              name: 'send_message',
+              description: 'Send a message.',
+            },
+          ],
+        },
+        effective_tool_access: {
+          agent_id: 'aria',
+          team_id: null,
+          role_id: null,
+          registered_tools: ['send_message', 'cao_linear.get_issue', '@cao-mcp-server'],
+          allowed_tools: ['send_message', 'cao_linear.get_issue'],
+          blocked_tools: [],
+          built_in_cao_tools: ['send_message'],
+          provider_mediated_tools: { linear: ['cao_linear.get_issue'] },
+          materialized_mcp_servers: { 'cao-mcp-server': {} },
+          runtime_capabilities: ['fs_read', '@cao-mcp-server'],
+          source_markers: {
+            send_message: 'agent_config:cao_tools',
+            'cao_linear.get_issue': 'linear:tool_access.workflow',
+          },
+          inactive_local_grants: { local: ['legacy_tool'] },
+          provider_conversation_requirements: [],
+          diagnostics: [{ code: 'debug', message: 'Tool access mismatch detected', source: 'test' }],
+        },
+      })
+
+      render(
+        <AgentDetailPanel
+          agent={agent}
+          onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onStopAgent={vi.fn()}
+          renderConfigTab={renderConfigTab}
+          renderTimelineTab={renderTimelineTab}
+        />,
+      )
+      fireEvent.click(screen.getByText('Tool access details'))
 
       expect(screen.getByText('allowed:')).toBeInTheDocument()
       expect(screen.getByText('send_message')).toBeInTheDocument()
       expect(screen.getByText('cao_linear.get_issue')).toBeInTheDocument()
       expect(screen.getByText('agent_config:cao_tools')).toBeInTheDocument()
       expect(screen.getByText('linear:tool_access.workflow')).toBeInTheDocument()
+      expect(screen.getByText(/Inactive agent-local grants: local/)).toBeInTheDocument()
+      expect(screen.getByText('Tool access mismatch detected')).toBeInTheDocument()
     })
 
     it('renders stopped agent header with a Start button that fires the provided handler', () => {

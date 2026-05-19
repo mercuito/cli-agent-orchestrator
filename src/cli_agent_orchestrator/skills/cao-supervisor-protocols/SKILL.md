@@ -9,16 +9,19 @@ Use this skill when supervising worker agents through CLI Agent Orchestrator.
 
 This skill covers how supervisors should dispatch work, decide between `assign`, `handoff`, and baton-controlled work, and receive worker results without blocking inbox delivery.
 
-## Core MCP Tools
+## Tool Availability
 
-From `cao-mcp-server`, supervisors orchestrate work with:
+Only use CAO MCP tools that are visible in your current tool list. Team role
+policy can hide any of these tools for your terminal, and hidden tools are not
+available just because this skill mentions a workflow.
 
-- `assign(agent_id, message)` for asynchronous work that returns immediately
-- `handoff(agent_id, message)` for synchronous work that blocks until the worker finishes
-- `send_message(receiver_id, message)` for direct messages to an existing terminal
+When granted by `cao-mcp-server`, supervisors may orchestrate work with:
 
-Some CAO deployments may also expose baton tools while baton control is being
-implemented:
+- `assign(agent_id, message)` for asynchronous work that returns immediately.
+- `handoff(agent_id, message)` for synchronous work that blocks until the worker finishes.
+- `send_message(receiver_id, message)` for direct messages to an existing terminal.
+
+Some CAO deployments and team roles may also expose baton tools:
 
 - `create_baton(title, holder_id, message, expected_next_action?, artifact_paths?)`
 - `pass_baton(baton_id, receiver_id, message, expected_next_action?, artifact_paths?)`
@@ -35,9 +38,13 @@ Your own terminal ID is available in the `CAO_TERMINAL_ID` environment variable.
 
 ## Choosing Between Assign, Handoff, and Baton
 
-Use `assign` when the worker should continue independently and report back later. This is the normal pattern for fan-out work or parallel execution.
+Use `assign` when it is available and the worker should continue independently
+and report back later. This is the normal pattern for fan-out work or parallel
+execution.
 
-Use `handoff` when the next step is blocked on the worker result. The orchestrator waits for completion, captures the worker output, and returns it directly to the supervisor.
+Use `handoff` when it is available and the next step is blocked on the worker
+result. The orchestrator waits for completion, captures the worker output, and
+returns it directly to the supervisor.
 
 Baton control sits between `assign` and `handoff`. Use a baton when work should
 continue asynchronously, but there must be a persistent answer to "who owes the
@@ -46,9 +53,9 @@ control to the originator when the work completes or blocks.
 
 Typical pattern:
 
-- Use `assign` for analysis, research, or code changes that can run in parallel.
-- Use `handoff` for report generation, blocking review steps, or any task where you need the result before you can continue.
-- Use `create_baton` for async workflows that need tracked control transfer, such as implementer-reviewer-implementer loops.
+- Use `assign`, when available, for analysis, research, or code changes that can run in parallel.
+- Use `handoff`, when available, for report generation, blocking review steps, or any task where you need the result before you can continue.
+- Use `create_baton`, when available, for async workflows that need tracked control transfer, such as implementer-reviewer-implementer loops.
 
 ## Baton Protocol
 
@@ -68,7 +75,7 @@ The baton message should be self-contained. Include the task, the expected next
 action, any artifact paths, and the rule that transfer tools move both control
 and the message.
 
-Do not use a separate `send_message` to simulate a baton transfer. Planned
+Do not use a separate `send_message` to simulate a baton transfer. Available
 transfer tools such as `pass_baton`, `return_baton`, `complete_baton`, and
 `block_baton` update baton state and deliver the inbox message as one
 operation. A separate message can notify an agent, but it does not change who
@@ -91,7 +98,9 @@ obligation is resolved or cannot continue.
 
 ## Idle-Based Message Delivery
 
-Assigned workers usually return results through `send_message`. Those inbox messages are delivered to the supervisor automatically when the supervisor terminal becomes idle.
+Assigned workers usually return results through `send_message` when that tool
+is granted to the worker. Those inbox messages are delivered to the supervisor
+automatically when the supervisor terminal becomes idle.
 
 This means supervisors should:
 
@@ -105,12 +114,16 @@ If you need multiple worker results, dispatch them all first, then end the turn.
 
 ## Callback Pattern
 
-When you use `assign`, include the callback terminal ID in the task message. Tell the worker exactly which terminal should receive the result and instruct the worker to use `send_message`. The callback is still subject to CAO workspace team policy; terminal ID possession is not sufficient authority if the agents are not in the same team.
+When you use `assign`, include the callback terminal ID in the task message.
+Tell the worker exactly which terminal should receive the result and instruct
+the worker to use `send_message` only if that tool is available to them. The
+callback is still subject to CAO workspace team policy; terminal ID possession
+is not sufficient authority if the agents are not in the same team.
 
 Example pattern:
 
 ```text
-Analyze dataset A. Send results back to terminal abc123 using send_message.
+Analyze dataset A. Send results back to terminal abc123 if send_message is available; otherwise provide the result in your normal response.
 ```
 
 Some CAO deployments also append an automatic callback suffix to assigned messages. Treat that appended context as helpful reinforcement, but still write task messages that are explicit and self-contained.
@@ -123,7 +136,8 @@ not transfer baton ownership.
 
 ## Direct Supervisor Communication
 
-Use `send_message` when you need to contact an existing same-team terminal directly rather than spawning a new worker.
+Use `send_message`, when available, to contact an existing same-team terminal
+directly rather than spawning a new worker.
 
 Examples:
 
@@ -138,7 +152,7 @@ When sending direct messages, include enough context that the receiver can act w
 1. Read or determine your terminal ID.
 2. Dispatch asynchronous workers with `assign` and include callback instructions.
 3. If baton control is available and useful, create batons for async work that needs tracked ownership.
-4. Use `handoff` only for steps that must finish before you can continue.
+4. Use `handoff`, when available, only for steps that must finish before you can continue.
 5. End the turn so asynchronous worker messages can be delivered.
 6. When messages arrive or batons return, synthesize the results and continue the workflow.
 
@@ -148,4 +162,4 @@ When sending direct messages, include enough context that the receiver can act w
 - When workers create files, ask them to return absolute paths in their callback message.
 - Do not assume results will be delivered while your terminal is still busy.
 - Keep orchestration instructions separate from domain requirements so workers can parse both cleanly.
-- For baton-controlled work, make the expected next action explicit and remind holders to use baton transfer tools rather than standalone messages for ownership changes.
+- For baton-controlled work, make the expected next action explicit and remind holders to use baton transfer tools, when available, rather than standalone messages for ownership changes.

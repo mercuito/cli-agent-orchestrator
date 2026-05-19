@@ -19,7 +19,6 @@ from cli_agent_orchestrator.agent import (
     AgentRegistry,
     AgentWorkspaceConfig,
     LinearConfig,
-    LinearToolAccessConfig,
     write_agent,
 )
 from cli_agent_orchestrator.clients import database as db_module
@@ -39,6 +38,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
 )
 from cli_agent_orchestrator.linear.workspace_context_resolver import resolve_issue_context_event
 from cli_agent_orchestrator.linear.workspace_provider import LinearWorkspaceProvider
+from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
 from cli_agent_orchestrator.mcp_server.provider_tools import register_provider_mediated_mcp_tools
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import (
@@ -49,6 +49,16 @@ from cli_agent_orchestrator.providers.base import (
 )
 from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeFreshnessAction, AgentRuntimeHandle
+from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision, ToolService
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_SETUP_ID,
+    WorkspaceCollaborationManager,
+    WorkspaceTeam,
+    WorkspaceTeamRegistry,
+    WorkspaceTeamRole,
+    default_workspace_setup_registry,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -194,6 +204,62 @@ class TmuxTestProvider(BaseProvider):
 
     def cleanup(self) -> None:
         return None
+
+
+class _ProviderConversationToolService:
+    def provider_conversation_decision(self, *args, **kwargs) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
+
+    def provider_conversation_decision_for_inbox(self, *args, **kwargs) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
+
+
+class _TeamStore:
+    def __init__(self, teams: tuple[WorkspaceTeam, ...]) -> None:
+        self._teams = {team.id: team for team in teams}
+
+    def get(self, team_id: str) -> WorkspaceTeam:
+        return self._teams[team_id]
+
+    def list(self) -> tuple[WorkspaceTeam, ...]:
+        return tuple(self._teams.values())
+
+
+def _linear_role_collaboration_manager(agent_registry: AgentRegistry) -> WorkspaceCollaborationManager:
+    team = WorkspaceTeam(
+        id="cao_delivery",
+        display_name="CAO Delivery",
+        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        roles={
+            "member": WorkspaceTeamRole(
+                display_name="Member",
+                cao_tools=("send_message", "handoff", "read_inbox_message"),
+                providers={
+                    "linear": {
+                        "cao52_vertical_proof": {
+                            "tools": [
+                                GET_ISSUE_TOOL,
+                                LIST_COMMENTS_TOOL,
+                                CREATE_COMMENT_TOOL,
+                                CREATE_ISSUE_TOOL,
+                                UPDATE_ISSUE_TOOL,
+                            ],
+                            "issues": ["CAO-52", "issue-52"],
+                            "create_team_ids": ["CAO"],
+                            "allow_top_level_create": True,
+                            "update_fields": ["title"],
+                        }
+                    }
+                },
+            )
+        },
+    )
+    return WorkspaceCollaborationManager(
+        setup_registry=default_workspace_setup_registry(),
+        team_registry=WorkspaceTeamRegistry(_TeamStore((team,))),
+        agent_registry=agent_registry,
+        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+    )
 
 
 @dataclass
@@ -351,38 +417,33 @@ def _install_linear_workspace_provider(
     agent: Agent,
     config_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    tool_access: str = "",
 ) -> LinearWorkspaceProvider:
-    access_entries = ()
-    if tool_access:
-        access_entries = (
-            LinearToolAccessConfig(
-                access_id="cao52_vertical_proof",
-                tools=(
-                    GET_ISSUE_TOOL,
-                    LIST_COMMENTS_TOOL,
-                    CREATE_COMMENT_TOOL,
-                    CREATE_ISSUE_TOOL,
-                    UPDATE_ISSUE_TOOL,
-                ),
-                issues=("CAO-52", "issue-52"),
-                create_team_ids=("CAO",),
-                allow_top_level_create=True,
-                update_fields=("title",),
-            ),
-        )
     configured_agent = replace(
         agent,
         linear=LinearConfig(
             app_key="discovery_partner",
             app_user_name="Discovery Partner",
             access_token="integration-access-token",
-            tool_access=access_entries,
         ),
     )
+    write_agent(configured_agent)
     workspace_provider = LinearWorkspaceProvider(
         agent_registry=AgentRegistry({configured_agent.id: configured_agent}),
         preflight_credentials=False,
+    )
+    tool_service = _ProviderConversationToolService()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(
+        linear_runtime,
+        "default_tool_service",
+        lambda: tool_service,
     )
     monkeypatch.setattr(
         linear_runtime,
@@ -707,25 +768,19 @@ async def test_linear_agent_session_terminal_uses_provider_mediated_linear_mcp_t
     if not shutil.which("tmux"):
         pytest.skip("tmux not installed")
 
+    monkeypatch.setattr(
+        linear_runtime,
+        "default_workspace_collaboration_manager",
+        lambda *, agent_registry: _linear_role_collaboration_manager(agent_registry),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.tool_service.default_workspace_collaboration_manager",
+        lambda *, agent_registry: _linear_role_collaboration_manager(agent_registry),
+    )
     provider = _install_linear_workspace_provider(
         agent=integration_agent,
         config_path=tmp_path / "linear.toml",
         monkeypatch=monkeypatch,
-        tool_access=f"""
-[tool_access.cao52_vertical_proof]
-agent_id = "{integration_agent.id}"
-tools = [
-  "{GET_ISSUE_TOOL}",
-  "{LIST_COMMENTS_TOOL}",
-  "{CREATE_COMMENT_TOOL}",
-  "{CREATE_ISSUE_TOOL}",
-  "{UPDATE_ISSUE_TOOL}",
-]
-issues = ["CAO-52", "issue-52"]
-create_team_ids = ["CAO"]
-allow_top_level_create = true
-update_fields = ["title"]
-""",
     )
     monkeypatch.setattr(
         linear_runtime.app_client,
@@ -894,13 +949,20 @@ update_fields = ["title"]
         assert "Linear started an AgentSession with prompt context" not in refreshed_output
         assert "This promptContext must stay out of the terminal body" not in refreshed_output
 
-        policy = provider.provider_tool_access()
+        agent_manager = AgentManager(configured_agents=provider.agent_registry)
+        tool_service = ToolService(
+            agent_manager=agent_manager,
+            collaboration_manager_factory=_linear_role_collaboration_manager,
+        )
+        policies = tool_service.provider_policies_for_agent(integration_agent.id)
         mcp = FastMCP("cao52-linear-vertical", mask_error_details=False)
         registered = register_provider_mediated_mcp_tools(
             terminal_id=result.terminal_id,
             mcp_instance=mcp,
-            policies={"linear": policy},
-            agent_registry=AgentRegistry({integration_agent.id: integration_agent}),
+            policies=policies,
+            agent_registry=provider.agent_registry,
+            agent_manager=agent_manager,
+            tool_service=tool_service,
         )
 
         assert registered == [
@@ -971,8 +1033,10 @@ update_fields = ["title"]
         raw_registered = register_provider_mediated_mcp_tools(
             terminal_id=raw_terminal_id,
             mcp_instance=raw_mcp,
-            policies={"linear": policy},
-            agent_registry=AgentRegistry({integration_agent.id: integration_agent}),
+            policies=policies,
+            agent_registry=provider.agent_registry,
+            agent_manager=agent_manager,
+            tool_service=tool_service,
         )
 
         assert raw_registered == []

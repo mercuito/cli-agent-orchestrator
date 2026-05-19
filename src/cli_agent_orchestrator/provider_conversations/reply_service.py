@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
@@ -118,6 +119,9 @@ def reply_to_inbox_message(
         raise ProviderConversationReplyNotFoundError(
             f"provider conversation thread {thread_id} for inbox notification {notification_id} not found"
         )
+    selected_message_metadata, selected_message_raw_snapshot = _selected_provider_message_context(
+        delivery.notification.id
+    )
     require_provider_inbox_authorization(
         delivery,
         caller_terminal_id=caller_terminal_id,
@@ -125,6 +129,8 @@ def reply_to_inbox_message(
         operation="reply",
         thread_metadata=thread.metadata,
         thread_raw_snapshot=thread.raw_snapshot,
+        message_metadata=selected_message_metadata,
+        message_raw_snapshot=selected_message_raw_snapshot,
         error=ProviderConversationReplyError,
     )
 
@@ -132,7 +138,13 @@ def reply_to_inbox_message(
         provider_reply = _send_provider_thread_reply(
             thread,
             body,
-            metadata=_reply_metadata(delivery.notification.id, thread=thread, metadata=metadata),
+            metadata=_reply_metadata(
+                delivery.notification.id,
+                thread=thread,
+                metadata=metadata,
+                selected_message_metadata=selected_message_metadata,
+                selected_message_raw_snapshot=selected_message_raw_snapshot,
+            ),
         )
     except Exception as exc:
         safe_error = _safe_provider_error(exc)
@@ -206,7 +218,13 @@ def _linear_app_key_from_reply_metadata(metadata: Mapping[str, Any]) -> Optional
         value = metadata.get(key)
         if value:
             return str(value)
-    for key in ("thread_metadata", "thread_raw_snapshot", "raw_snapshot"):
+    for key in (
+        "thread_metadata",
+        "thread_raw_snapshot",
+        "message_metadata",
+        "message_raw_snapshot",
+        "raw_snapshot",
+    ):
         found = _linear_app_key_from_nested(metadata.get(key))
         if found:
             return found
@@ -280,11 +298,50 @@ def _parse_thread_route_id(delivery: InboxDelivery) -> int:
         ) from exc
 
 
+def _selected_provider_message_context(
+    inbox_notification_id: int,
+) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    with db_module.SessionLocal() as session:
+        marker = (
+            session.query(db_module.ProviderConversationInboxNotificationModel)
+            .filter(
+                db_module.ProviderConversationInboxNotificationModel.inbox_notification_id
+                == inbox_notification_id
+            )
+            .first()
+        )
+        if marker is None:
+            return None, None
+        message_row = (
+            session.query(db_module.ProviderConversationMessageModel)
+            .filter(db_module.ProviderConversationMessageModel.id == marker.provider_message_id)
+            .first()
+        )
+        if message_row is None:
+            return None, None
+        return (
+            _load_json_object(message_row.metadata_json),
+            _load_json_object(message_row.raw_snapshot_json),
+        )
+
+
+def _load_json_object(value: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not value:
+        return None
+    try:
+        loaded = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
 def _reply_metadata(
     inbox_notification_id: int,
     *,
     thread: ConversationThreadRecord,
     metadata: Optional[Mapping[str, Any]],
+    selected_message_metadata: Optional[Mapping[str, Any]] = None,
+    selected_message_raw_snapshot: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "inbox_notification_id": inbox_notification_id,
@@ -293,6 +350,10 @@ def _reply_metadata(
         result["thread_metadata"] = thread.metadata
     if thread.raw_snapshot is not None:
         result["thread_raw_snapshot"] = thread.raw_snapshot
+    if selected_message_metadata is not None:
+        result["message_metadata"] = dict(selected_message_metadata)
+    if selected_message_raw_snapshot is not None:
+        result["message_raw_snapshot"] = dict(selected_message_raw_snapshot)
     if metadata is not None:
         result.update(dict(metadata))
     return result

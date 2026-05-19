@@ -16,12 +16,14 @@ from cli_agent_orchestrator.clients.database import BatonEventModel, BatonModel,
 from cli_agent_orchestrator.models.baton import BatonEventType, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.collaboration_policy import require_terminal_workspace_team
 from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 logger = logging.getLogger(__name__)
 
 WATCHDOG_ACTOR_ID = "baton-watchdog"
+_BATON_HOLDER_TOOLS = ("pass_baton", "return_baton", "complete_baton", "block_baton")
 DEFAULT_INTERVAL_SECONDS = float(os.environ.get("CAO_BATON_WATCHDOG_INTERVAL_SECONDS", "30"))
 DEFAULT_GRACE_SECONDS = float(os.environ.get("CAO_BATON_IDLE_GRACE_SECONDS", "300"))
 DEFAULT_NUDGE_RATE_LIMIT_SECONDS = float(
@@ -108,38 +110,60 @@ def _nudge_rate_limit_elapsed(
     return now - row.last_nudged_at >= rate_limit
 
 
-def _expected_next_action(row: BatonModel) -> str:
+def _expected_next_action(db, row: BatonModel) -> str:
+    tools = _available_baton_holder_tools(db, row.current_holder_id)
+    if not tools and row.expected_next_action is None:
+        return "No baton lifecycle tools are currently available in this terminal."
     return row.expected_next_action or (
-        "Use pass_baton, return_baton, complete_baton, or block_baton when ready."
+        f"Use available baton tools ({', '.join(tools)}) when ready."
     )
 
 
-def _nudge_message(row: BatonModel) -> str:
+def _nudge_message(db, row: BatonModel) -> str:
+    tools = _available_baton_holder_tools(db, row.current_holder_id)
+    if not tools:
+        action_text = (
+            "This terminal currently has no baton lifecycle tools available. "
+            "Continue the work if possible and ask the originator or operator to "
+            "move, complete, or block the baton."
+        )
+    else:
+        actions = []
+        if "pass_baton" in tools:
+            actions.append(
+                "If you are waiting on another agent to make the next move, pass "
+                "the baton to that agent with pass_baton."
+            )
+        if "complete_baton" in tools:
+            actions.append("If the work is done, call complete_baton.")
+        if "return_baton" in tools:
+            actions.append("If control should go back to the previous holder, call return_baton.")
+        if "block_baton" in tools:
+            actions.append("If you cannot proceed, call block_baton with the reason.")
+        action_text = " ".join(actions)
     return (
         "[CAO Baton] Gentle reminder\n\n"
         f"Baton id: {row.id}\n"
         f"Title: {row.title}\n"
-        f"Expected next action: {_expected_next_action(row)}\n\n"
+        f"Expected next action: {_expected_next_action(db, row)}\n\n"
         "You are still the current holder for this active baton. "
         "If you are actively working, continue. "
-        "If you are waiting on another agent to make the next move, pass the baton "
-        "to that agent with pass_baton. "
-        "If another agent has already responded and you need to act, continue from "
-        "their message. "
-        "If the work is done, call complete_baton. "
-        "If control should go back to the previous holder, call return_baton. "
-        "If you cannot proceed, call block_baton with the reason. "
+        f"{action_text} "
         "Idle detection is advisory; CAO will not complete or pass this baton for you."
     )
 
 
-def _orphan_message(row: BatonModel, previous_holder_id: str) -> str:
+def _available_baton_holder_tools(db, terminal_id: Optional[str]) -> tuple[str, ...]:
+    return baton_service.available_baton_holder_tools(db, terminal_id)
+
+
+def _orphan_message(db, row: BatonModel, previous_holder_id: str) -> str:
     return (
         "[CAO Baton] Baton orphaned\n\n"
         f"Baton id: {row.id}\n"
         f"Title: {row.title}\n"
         f"Previous holder: {previous_holder_id}\n"
-        f"Expected next action: {_expected_next_action(row)}\n\n"
+        f"Expected next action: {_expected_next_action(db, row)}\n\n"
         "CAO could not find terminal metadata or a live provider for the current holder, "
         "so this baton was marked orphaned. Inspect the baton and create or reassign "
         "follow-up ownership as needed."
@@ -161,7 +185,7 @@ def _mark_orphaned(db, row: BatonModel, *, now: datetime) -> None:
     if previous_holder_id is None:
         return
 
-    message = _orphan_message(row, previous_holder_id)
+    message = _orphan_message(db, row, previous_holder_id)
     row.status = BatonStatus.ORPHANED.value
     row.current_holder_id = None
     row.updated_at = now
@@ -191,7 +215,7 @@ def _nudge_holder(db, row: BatonModel, *, now: datetime) -> None:
     if holder_id is None:
         return
 
-    message = _nudge_message(row)
+    message = _nudge_message(db, row)
     row.last_nudged_at = now
     _append_event(
         db,

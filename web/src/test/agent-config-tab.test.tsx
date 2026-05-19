@@ -607,6 +607,32 @@ describe('AgentConfigTab raw TOML disclosure', () => {
     // not carry it either.
     expect('id' in body).toBe(false)
   })
+
+  it('labels raw local access edits as standalone fallback for teamed agents without existing local grants', async () => {
+    const { AgentConfigTab } = await loadConfigTab()
+    const teamedAgent = ariaStatus({
+      workspace: { team: 'cao_delivery', derived_setup: 'linear_delivery_setup', diagnostics: [] },
+      cao_tools: null,
+      mcp_servers: {},
+      codex_config: {},
+      linear: null,
+    })
+
+    render(<AgentConfigTab agent={teamedAgent} onAgentUpdated={vi.fn()} />)
+
+    expect(
+      await screen.findByText(/inherits tool access from its workspace team role/i),
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /edit aria/i }))
+
+    expect(
+      screen.getByText(/inherits tool access from its workspace team role/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/edits affect only standalone fallback behavior after leaving the team/i),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('aria agent.toml')).toBeEnabled()
+  })
 })
 
 describe('AgentDetailPanel header', () => {

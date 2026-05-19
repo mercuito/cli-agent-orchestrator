@@ -31,6 +31,7 @@ from cli_agent_orchestrator.provider_conversations.persistence import (
     get_processed_event,
     get_thread,
 )
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
 
 NOW = datetime(2026, 5, 9, 12, 0, tzinfo=timezone.utc)
 
@@ -94,6 +95,16 @@ class RetryRecordingHandle:
         )()
 
 
+class _ProviderConversationToolService:
+    def provider_conversation_decision(self, *args: Any, **kwargs: Any) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
+
+    def provider_conversation_decision_for_inbox(
+        self, *args: Any, **kwargs: Any
+    ) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
+
+
 def _notify_result(notification: Any):
     return type(
         "NotifyResult",
@@ -132,6 +143,16 @@ def linear_monitor_world(
     )
     provider.initialize()
     monkeypatch.setattr(linear_workspace_provider, "_default_linear_workspace_provider", provider)
+    tool_service = _ProviderConversationToolService()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(runtime, "default_tool_service", lambda: tool_service)
     RecordingRuntimeHandle.notifications = []
     monkeypatch.setattr(
         runtime,
