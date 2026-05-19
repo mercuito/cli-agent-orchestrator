@@ -13,7 +13,7 @@ import termios
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Dict, List, Literal, NoReturn, Optional
+from typing import Annotated, Any, Dict, List, Literal, Mapping, NoReturn, Optional
 
 from fastapi import (
     FastAPI,
@@ -103,7 +103,12 @@ from cli_agent_orchestrator.services.collaboration_policy import (
 )
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
-from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
+from cli_agent_orchestrator.services.tool_service import (
+    AgentToolAccess,
+    AgentToolView,
+    ToolService,
+    tool_service_for_loaded_agent,
+)
 from cli_agent_orchestrator.utils import monitoring_formatter
 from cli_agent_orchestrator.utils.dashboard_links import (
     create_agent_dashboard_token,
@@ -406,15 +411,7 @@ class EffectiveToolAccessResponse(BaseModel):
     diagnostics: List[ToolAccessDiagnosticResponse]
 
     @classmethod
-    def from_agent(cls, agent: Agent) -> "EffectiveToolAccessResponse":
-        access = tool_service_for_loaded_agent(
-            agent,
-            fallback_agent_id=agent.id,
-            cli_provider=agent.cli_provider,
-        ).tools_for_agent(
-            agent.id,
-            built_in_tool_names=_available_builtin_cao_tool_names_for_access(),
-        )
+    def from_access(cls, access: AgentToolAccess) -> "EffectiveToolAccessResponse":
         return cls(
             agent_id=access.agent_id,
             team_id=access.team_id,
@@ -449,6 +446,18 @@ class EffectiveToolAccessResponse(BaseModel):
             ],
         )
 
+    @classmethod
+    def from_agent(cls, agent: Agent) -> "EffectiveToolAccessResponse":
+        access = tool_service_for_loaded_agent(
+            agent,
+            fallback_agent_id=agent.id,
+            cli_provider=agent.cli_provider,
+        ).tools_for_agent(
+            agent.id,
+            built_in_tool_names=_available_builtin_cao_tool_names_for_access(),
+        )
+        return cls.from_access(access)
+
 
 class McpToolSourceResponse(BaseModel):
     kind: str
@@ -466,8 +475,7 @@ class AgentMcpToolSurfaceResponse(BaseModel):
     tools: List[McpToolResponse]
 
     @classmethod
-    def from_agent(cls, agent: Agent) -> "AgentMcpToolSurfaceResponse":
-        descriptor = _build_mcp_surface_descriptor_for_agent(agent)
+    def from_descriptor(cls, descriptor: Mapping[str, Any]) -> "AgentMcpToolSurfaceResponse":
         return cls(
             schema_version=str(descriptor.get("schema_version", "")),
             tools=[
@@ -484,6 +492,11 @@ class AgentMcpToolSurfaceResponse(BaseModel):
             ],
         )
 
+    @classmethod
+    def from_agent(cls, agent: Agent) -> "AgentMcpToolSurfaceResponse":
+        descriptor = _build_mcp_surface_descriptor_for_agent(agent)
+        return cls.from_descriptor(descriptor)
+
 
 def _build_mcp_surface_descriptor_for_agent(agent: Agent) -> Dict[str, Any]:
     from cli_agent_orchestrator.mcp_server.server import build_mcp_surface_descriptor_for_agent
@@ -495,6 +508,12 @@ def _available_builtin_cao_tool_names_for_access() -> tuple[str, ...]:
     from cli_agent_orchestrator.mcp_server.server import built_in_cao_tool_names
 
     return built_in_cao_tool_names()
+
+
+def _pending_builtin_cao_tools_for_surface():
+    from cli_agent_orchestrator.mcp_server.server import pending_builtin_mcp_tools
+
+    return pending_builtin_mcp_tools()
 
 
 class AgentStatusResponse(BaseModel):
@@ -518,7 +537,22 @@ class AgentStatusResponse(BaseModel):
     last_active_at: Optional[datetime] = None
 
     @classmethod
-    def from_status(cls, status: AgentStatus) -> "AgentStatusResponse":
+    def from_status(
+        cls,
+        status: AgentStatus,
+        *,
+        tool_view: AgentToolView | None = None,
+    ) -> "AgentStatusResponse":
+        mcp_tool_surface = (
+            AgentMcpToolSurfaceResponse.from_descriptor(tool_view.mcp_surface_descriptor)
+            if tool_view is not None
+            else AgentMcpToolSurfaceResponse.from_agent(status.agent)
+        )
+        effective_tool_access = (
+            EffectiveToolAccessResponse.from_access(tool_view.effective_access)
+            if tool_view is not None
+            else EffectiveToolAccessResponse.from_agent(status.agent)
+        )
         return cls(
             agent_id=status.agent_id,
             display_name=status.display_name,
@@ -533,8 +567,8 @@ class AgentStatusResponse(BaseModel):
             workspace_team_id=status.workspace_team_id,
             derived_workspace_setup_id=status.derived_workspace_setup_id,
             workspace_team_diagnostics=list(status.workspace_team_diagnostics),
-            mcp_tool_surface=AgentMcpToolSurfaceResponse.from_agent(status.agent),
-            effective_tool_access=EffectiveToolAccessResponse.from_agent(status.agent),
+            mcp_tool_surface=mcp_tool_surface,
+            effective_tool_access=effective_tool_access,
             last_active_at=status.last_active_at,
         )
 
@@ -1610,9 +1644,21 @@ async def list_agents_endpoint(
 ) -> List[AgentStatusResponse]:
     """List CAO agents and current terminal status."""
     try:
+        agent_manager = default_agent_manager()
+        tool_service = ToolService(agent_manager=agent_manager)
+        built_in_tool_names = _available_builtin_cao_tool_names_for_access()
+        built_in_tools = _pending_builtin_cao_tools_for_surface()
         return [
-            AgentStatusResponse.from_status(agent_status)
-            for agent_status in default_agent_manager().list_statuses(active=active)
+            AgentStatusResponse.from_status(
+                agent_status,
+                tool_view=tool_service.agent_tool_view(
+                    agent_status.agent_id,
+                    built_in_tools=built_in_tools,
+                    built_in_tool_names=built_in_tool_names,
+                    baton_enabled=True,
+                ),
+            )
+            for agent_status in agent_manager.list_statuses(active=active)
         ]
     except (AgentConfigError, AgentPathError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -1627,7 +1673,18 @@ async def list_agents_endpoint(
 async def get_agent_endpoint(agent_id: str) -> AgentStatusResponse:
     """Resolve one CAO agent and current terminal status."""
     try:
-        return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent_id))
+        agent_manager = default_agent_manager()
+        tool_service = ToolService(agent_manager=agent_manager)
+        agent_status = agent_manager.status_for_agent(agent_id)
+        return AgentStatusResponse.from_status(
+            agent_status,
+            tool_view=tool_service.agent_tool_view(
+                agent_status.agent_id,
+                built_in_tools=_pending_builtin_cao_tools_for_surface(),
+                built_in_tool_names=_available_builtin_cao_tool_names_for_access(),
+                baton_enabled=True,
+            ),
+        )
     except AgentConfigError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:

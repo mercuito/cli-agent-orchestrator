@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 
@@ -13,16 +13,8 @@ const agentPanelMock = vi.hoisted(() =>
     </div>
   )),
 )
-const listAgents = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
-
 vi.mock('../components/AgentPanel', () => ({
   AgentPanel: agentPanelMock,
-}))
-
-vi.mock('../api', () => ({
-  api: {
-    listAgents,
-  },
 }))
 
 vi.mock('../store', () => ({
@@ -42,7 +34,6 @@ describe('App deep links', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
-    listAgents.mockResolvedValue([])
     window.history.replaceState(null, '', '/')
   })
 
@@ -50,8 +41,6 @@ describe('App deep links', () => {
     window.history.replaceState(null, '', '/?terminal_id=term-1&terminal_token=signed-token')
 
     render(<App />)
-
-    await waitFor(() => expect(listAgents).toHaveBeenCalled())
 
     expect(screen.getByTestId('agent-panel-terminal-id')).toHaveTextContent('term-1')
     expect(screen.getByTestId('agent-panel-terminal-token')).toHaveTextContent('signed-token')
@@ -69,18 +58,13 @@ describe('App deep links', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(listAgents).toHaveBeenCalled())
-
     expect(screen.getByRole('tab', { name: /^agents$/i })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: /agents\s+1/i })).not.toBeInTheDocument()
   })
 
-  it('shows the configured agent count as the agents tab badge', async () => {
-    listAgents.mockResolvedValue([{}, {}] as any)
-
+  it('does not poll the heavy agent roster endpoint for a navigation badge', async () => {
     render(<App />)
 
-    await waitFor(() => expect(screen.getByRole('tab', { name: /agents/i })).toHaveTextContent(/agents\s*2/i))
-    expect(screen.queryByRole('tab', { name: /agents\s+1/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^agents$/i })).toBeInTheDocument()
   })
 })

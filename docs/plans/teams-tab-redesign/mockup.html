@@ -1,0 +1,1090 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Teams Tab Supported-Scope Mockup</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f0f14;
+      --panel: #1b202a;
+      --panel-strong: #111722;
+      --panel-soft: #151b25;
+      --line: #2b3545;
+      --line-soft: #243042;
+      --text: #eef2f7;
+      --muted: #98a2b3;
+      --faint: #667085;
+      --green: #10b981;
+      --green-soft: rgba(16, 185, 129, 0.14);
+      --blue: #3b82f6;
+      --blue-soft: rgba(59, 130, 246, 0.16);
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    .app {
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(15, 15, 20, 0.88) 240px),
+        var(--bg);
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid #1f2937;
+      background: rgba(17, 24, 39, 0.92);
+      backdrop-filter: blur(12px);
+    }
+
+    .topbar-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand,
+    .status,
+    .tabs,
+    .row,
+    .inline,
+    .counts,
+    .icon-row,
+    .footer {
+      display: flex;
+      align-items: center;
+    }
+
+    .brand {
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #10b981, #047857);
+      color: white;
+      font-weight: 800;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    .status {
+      gap: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .live {
+      color: var(--green);
+    }
+
+    .tabbar {
+      border-bottom: 1px solid #1f2937;
+      background: rgba(15, 15, 20, 0.72);
+    }
+
+    .tabs {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 8px 24px;
+      gap: 4px;
+    }
+
+    .tab {
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      padding: 9px 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 650;
+      cursor: default;
+    }
+
+    .tab.active {
+      color: white;
+      background: linear-gradient(90deg, #059669, #10b981);
+      box-shadow: 0 10px 24px rgba(16, 185, 129, 0.16);
+    }
+
+    .page {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr) 340px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .rail,
+    .surface,
+    .drawer {
+      border: 1px solid var(--line);
+      background: rgba(27, 32, 42, 0.78);
+      border-radius: 8px;
+    }
+
+    .rail {
+      min-height: 690px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .rail-header,
+    .surface-header,
+    .panel-header,
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .rail-title,
+    .section-title,
+    .panel-title,
+    .drawer-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 750;
+      color: #d7dde8;
+      letter-spacing: 0.01em;
+    }
+
+    .new-team,
+    .primary,
+    .ghost,
+    .icon-button,
+    .danger-soft {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: default;
+      min-height: 34px;
+    }
+
+    .new-team,
+    .primary {
+      background: #059669;
+      font-weight: 700;
+      padding: 7px 12px;
+    }
+
+    .ghost {
+      background: #334155;
+      color: #e5e7eb;
+      padding: 7px 11px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .icon-button {
+      width: 34px;
+      background: #293241;
+      color: #cbd5e1;
+      border-color: #3b4658;
+    }
+
+    .danger-soft {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #fecaca;
+      padding: 7px 11px;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .team-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .team-card {
+      border: 1px solid var(--line-soft);
+      background: rgba(17, 24, 39, 0.72);
+      border-radius: 8px;
+      padding: 13px 14px;
+      position: relative;
+    }
+
+    .team-card.active {
+      border-color: #10b981;
+      background: linear-gradient(90deg, rgba(16, 185, 129, 0.18), rgba(17, 24, 39, 0.74));
+    }
+
+    .team-card.active::before {
+      content: "";
+      position: absolute;
+      inset: 12px auto 12px 0;
+      width: 4px;
+      border-radius: 0 4px 4px 0;
+      background: var(--green);
+    }
+
+    .team-card h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      line-height: 1.25;
+    }
+
+    .counts {
+      gap: 7px;
+    }
+
+    .pill {
+      border-radius: 6px;
+      background: #293241;
+      color: #cbd5e1;
+      padding: 4px 7px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .rail-foot {
+      margin-top: auto;
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(17, 24, 39, 0.58);
+    }
+
+    .main {
+      display: grid;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .surface {
+      padding: 16px;
+    }
+
+    .team-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 9px;
+      font-size: 22px;
+      line-height: 1.2;
+      max-width: 100%;
+    }
+
+    .team-name span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 4px 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .meta dt {
+      color: var(--faint);
+    }
+
+    .mono {
+      font-family: var(--mono);
+    }
+
+    .setup-select {
+      min-width: 320px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid #344055;
+      border-radius: 8px;
+      background: #0b1019;
+      color: #e5e7eb;
+      padding: 9px 10px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 84px;
+      resize: vertical;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .panels {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.54);
+      padding: 14px;
+      min-width: 0;
+    }
+
+    .panel-header {
+      margin-bottom: 12px;
+    }
+
+    .search {
+      margin-bottom: 12px;
+    }
+
+    .agent-list,
+    .member-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .agent-row,
+    .member-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #263246;
+      border-radius: 8px;
+      background: rgba(31, 41, 55, 0.58);
+      padding: 10px;
+      min-width: 0;
+    }
+
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: #dbeafe;
+      background: #263246;
+      border: 1px solid #3b4658;
+      font-size: 14px;
+    }
+
+    .agent-name {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .agent-name strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .agent-name span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .provider {
+      border-radius: 6px;
+      background: #2b3444;
+      color: #cbd5e1;
+      padding: 3px 6px;
+      font-size: 10px;
+      font-family: var(--mono);
+    }
+
+    .member-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .role-select {
+      width: 118px;
+      padding: 7px 9px;
+      font-size: 12px;
+    }
+
+    .roles-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(160px, 1fr)) minmax(160px, 0.72fr);
+      gap: 10px;
+    }
+
+    .role-card {
+      border: 1px solid #344055;
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.72);
+      padding: 13px;
+      min-height: 124px;
+      display: grid;
+      align-content: space-between;
+      gap: 10px;
+    }
+
+    .role-card.selected {
+      border-color: #3b82f6;
+      background: linear-gradient(180deg, rgba(59, 130, 246, 0.16), rgba(17, 24, 39, 0.72));
+    }
+
+    .role-card.add {
+      border-style: dashed;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .role-card h4 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .role-card p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .icon-row {
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .tool-chip {
+      border: 1px solid #3b4658;
+      border-radius: 6px;
+      background: #121a27;
+      color: #dbeafe;
+      padding: 5px 7px;
+      font-size: 11px;
+      font-family: var(--mono);
+    }
+
+    .drawer {
+      padding: 16px;
+      min-height: 690px;
+      background: linear-gradient(180deg, rgba(27, 32, 42, 0.94), rgba(17, 24, 39, 0.92));
+    }
+
+    .drawer-header {
+      margin-bottom: 16px;
+    }
+
+    .drawer-title {
+      color: white;
+      font-size: 16px;
+    }
+
+    .role-heading {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .role-icon {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: #bfdbfe;
+      background: var(--blue-soft);
+      border: 1px solid rgba(59, 130, 246, 0.42);
+    }
+
+    .role-heading h3 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .drawer-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .read-only {
+      border: 1px solid transparent;
+      color: #cbd5e1;
+      font-family: var(--mono);
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 36px;
+    }
+
+    .section {
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      background: rgba(11, 16, 25, 0.7);
+      overflow: hidden;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line-soft);
+      color: #dbe3ee;
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .section-body {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .check {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+      color: #d7dde8;
+    }
+
+    .check input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--green);
+      padding: 0;
+    }
+
+    .tool-filter {
+      margin-bottom: 0;
+    }
+
+    .tool-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .tool-row {
+      border: 1px solid #344055;
+      border-radius: 8px;
+      background: #121a27;
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .tool-row input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--green);
+      padding: 0;
+    }
+
+    .tool-meta {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .tool-meta strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .tool-meta span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .note {
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      background: rgba(59, 130, 246, 0.12);
+      color: #bfdbfe;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .footer {
+      justify-content: space-between;
+      border-top: 1px solid #1f2937;
+      padding: 13px 24px;
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(15, 15, 20, 0.78);
+    }
+
+    @media (max-width: 1120px) {
+      .page {
+        grid-template-columns: 240px minmax(0, 1fr);
+      }
+
+      .drawer {
+        grid-column: 1 / -1;
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .page,
+      .panels,
+      .roles-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .rail {
+        min-height: auto;
+      }
+
+      .surface-header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .setup-select {
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <div class="brand-icon">CAO</div>
+          <h1>CLI Agent Orchestrator</h1>
+        </div>
+        <div class="status">
+          <span>6 sessions</span>
+          <span class="live">● Live</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="tabbar">
+      <nav class="tabs" aria-label="Dashboard tabs">
+        <button class="tab">⌂ Home</button>
+        <button class="tab">▣ Agents <span class="pill">3</span></button>
+        <button class="tab active">♙ Teams</button>
+        <button class="tab">◷ Flows</button>
+      </nav>
+    </div>
+
+    <main class="page">
+      <aside class="rail" aria-label="Teams">
+        <div class="rail-header">
+          <h2 class="rail-title">Teams</h2>
+          <button class="new-team">＋ New team</button>
+        </div>
+
+        <div class="team-list">
+          <article class="team-card">
+            <h3>CAO Delivery</h3>
+            <div class="counts">
+              <span class="pill">1 agent</span>
+              <span class="pill">2 roles</span>
+            </div>
+          </article>
+
+          <article class="team-card active">
+            <h3>Safari Review Team</h3>
+            <div class="counts">
+              <span class="pill">4 agents</span>
+              <span class="pill">3 roles</span>
+            </div>
+          </article>
+
+          <article class="team-card">
+            <h3>Docs Automation</h3>
+            <div class="counts">
+              <span class="pill">3 agents</span>
+              <span class="pill">2 roles</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="rail-foot">Workspace: Safari Review Team</div>
+      </aside>
+
+      <section class="main">
+        <section class="surface">
+          <div class="surface-header">
+            <div class="min-w-0">
+              <h2 class="team-name">
+                <span>Safari Review Team</span>
+              </h2>
+              <dl class="meta">
+                <dt>Team ID</dt>
+                <dd class="mono">safari_review_team ⧉</dd>
+              </dl>
+            </div>
+            <label class="setup-select">
+              Workspace setup
+              <select>
+                <option>Linear Delivery Setup (linear_delivery_setup)</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="panels">
+          <div class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">Available agents</h3>
+              <span class="pill">not in team</span>
+            </div>
+            <input class="search" value="" placeholder="Search agents..." aria-label="Search available agents" />
+            <div class="agent-list">
+              <div class="agent-row">
+                <div class="avatar">▤</div>
+                <div class="agent-name">
+                  <strong>Release Notes Bot</strong>
+                  <span class="mono">release_notes_bot</span>
+                </div>
+                <button class="ghost">Add</button>
+              </div>
+              <div class="agent-row">
+                <div class="avatar">◎</div>
+                <div class="agent-name">
+                  <strong>QA Analyst</strong>
+                  <span class="mono">qa_analyst</span>
+                </div>
+                <button class="ghost">Add</button>
+              </div>
+              <div class="agent-row">
+                <div class="avatar">✎</div>
+                <div class="agent-name">
+                  <strong>Changelog Writer</strong>
+                  <span class="mono">changelog_writer</span>
+                </div>
+                <button class="ghost">Add</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h3 class="panel-title">Members</h3>
+              <span class="pill">role assignment</span>
+            </div>
+            <input class="search" value="" placeholder="Search members..." aria-label="Search members" />
+            <div class="member-list">
+              <div class="member-row">
+                <div class="avatar">⌕</div>
+                <div class="agent-name">
+                  <strong>Code Reviewer</strong>
+                  <span><span class="provider">claude_code</span> <span class="mono">code_reviewer</span></span>
+                </div>
+                <div class="member-actions">
+                  <select class="role-select" aria-label="Code Reviewer role">
+                    <option>lead</option>
+                    <option selected>reviewer</option>
+                    <option>member</option>
+                  </select>
+                  <button class="icon-button" aria-label="Remove Code Reviewer">×</button>
+                </div>
+              </div>
+              <div class="member-row">
+                <div class="avatar">▥</div>
+                <div class="agent-name">
+                  <strong>Technical Writer</strong>
+                  <span><span class="provider">codex</span> <span class="mono">technical_writer</span></span>
+                </div>
+                <div class="member-actions">
+                  <select class="role-select" aria-label="Technical Writer role">
+                    <option>lead</option>
+                    <option selected>reviewer</option>
+                    <option>member</option>
+                  </select>
+                  <button class="icon-button" aria-label="Remove Technical Writer">×</button>
+                </div>
+              </div>
+              <div class="member-row">
+                <div class="avatar">☷</div>
+                <div class="agent-name">
+                  <strong>Docs Editor</strong>
+                  <span><span class="provider">claude_code</span> <span class="mono">docs_editor</span></span>
+                </div>
+                <div class="member-actions">
+                  <select class="role-select" aria-label="Docs Editor role">
+                    <option>lead</option>
+                    <option>reviewer</option>
+                    <option selected>member</option>
+                  </select>
+                  <button class="icon-button" aria-label="Remove Docs Editor">×</button>
+                </div>
+              </div>
+              <div class="member-row">
+                <div class="avatar">▦</div>
+                <div class="agent-name">
+                  <strong>Release Manager</strong>
+                  <span><span class="provider">codex</span> <span class="mono">release_manager</span></span>
+                </div>
+                <div class="member-actions">
+                  <select class="role-select" aria-label="Release Manager role">
+                    <option>lead</option>
+                    <option>reviewer</option>
+                    <option selected>member</option>
+                  </select>
+                  <button class="icon-button" aria-label="Remove Release Manager">×</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="surface">
+          <div class="panel-header" style="margin-bottom:12px">
+            <h3 class="section-title">Roles</h3>
+            <button class="ghost">＋ New role</button>
+          </div>
+          <div class="roles-strip">
+            <article class="role-card">
+              <div>
+                <h4>lead</h4>
+                <p>1 member · broad tool access across categories</p>
+              </div>
+              <div class="icon-row">
+                <span class="tool-chip">send</span>
+                <span class="tool-chip">reply</span>
+                <span class="tool-chip">linear</span>
+              </div>
+            </article>
+            <article class="role-card selected">
+              <div>
+                <h4>reviewer</h4>
+                <p>2 members · review and quality focus</p>
+              </div>
+              <div class="icon-row">
+                <span class="tool-chip">read</span>
+                <span class="tool-chip">reply</span>
+                <span class="tool-chip">linear</span>
+              </div>
+            </article>
+            <article class="role-card">
+              <div>
+                <h4>member</h4>
+                <p>1 member · standard team access</p>
+              </div>
+              <div class="icon-row">
+                <span class="tool-chip">read</span>
+                <span class="tool-chip">reply</span>
+              </div>
+            </article>
+            <article class="role-card add">＋ New role</article>
+          </div>
+        </section>
+      </section>
+
+      <aside class="drawer" aria-label="Edit role">
+        <div class="drawer-header">
+          <h2 class="drawer-title">Edit role</h2>
+          <button class="icon-button" aria-label="Close role editor">×</button>
+        </div>
+
+        <div class="role-heading">
+          <div class="role-icon">♙</div>
+          <h3>Reviewer</h3>
+        </div>
+
+        <div class="drawer-grid">
+          <label>
+            Display name
+            <input value="Reviewer" />
+          </label>
+
+          <section class="section">
+            <div class="section-head">
+              <span>Tools</span>
+              <span class="pill">7 enabled</span>
+            </div>
+            <div class="section-body">
+              <input class="search tool-filter" value="" placeholder="Search tools by name..." aria-label="Search tools" />
+
+              <div class="tool-list">
+                <label class="tool-row">
+                  <input type="checkbox" checked />
+                  <span class="tool-meta">
+                    <strong>read_inbox_message</strong>
+                    <span>Read inbox message</span>
+                  </span>
+                  <span class="pill">CAO</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" checked />
+                  <span class="tool-meta">
+                    <strong>reply_to_inbox_message</strong>
+                    <span>Reply to inbox message</span>
+                  </span>
+                  <span class="pill">CAO</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" checked />
+                  <span class="tool-meta">
+                    <strong>send_message</strong>
+                    <span>Send message</span>
+                  </span>
+                  <span class="pill">CAO</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" />
+                  <span class="tool-meta">
+                    <strong>start_baton</strong>
+                    <span>Start baton</span>
+                  </span>
+                  <span class="pill">CAO</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" />
+                  <span class="tool-meta">
+                    <strong>manage_baton</strong>
+                    <span>Manage baton</span>
+                  </span>
+                  <span class="pill">CAO</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" checked />
+                  <span class="tool-meta">
+                    <strong>shell</strong>
+                    <span>Configured MCP server</span>
+                  </span>
+                  <span class="pill">MCP</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" checked />
+                  <span class="tool-meta">
+                    <strong>files</strong>
+                    <span>Configured MCP server</span>
+                  </span>
+                  <span class="pill">MCP</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" />
+                  <span class="tool-meta">
+                    <strong>git</strong>
+                    <span>Configured MCP server</span>
+                  </span>
+                  <span class="pill">MCP</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" />
+                  <span class="tool-meta">
+                    <strong>db</strong>
+                    <span>Configured MCP server</span>
+                  </span>
+                  <span class="pill">MCP</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" checked />
+                  <span class="tool-meta">
+                    <strong>cao_linear.get_issue</strong>
+                    <span>Linear workspace provider</span>
+                  </span>
+                  <span class="pill">Linear</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" checked />
+                  <span class="tool-meta">
+                    <strong>cao_linear.create_comment</strong>
+                    <span>Linear workspace provider</span>
+                  </span>
+                  <span class="pill">Linear</span>
+                </label>
+                <label class="tool-row">
+                  <input type="checkbox" />
+                  <span class="tool-meta">
+                    <strong>cao_linear.update_issue</strong>
+                    <span>Linear workspace provider</span>
+                  </span>
+                  <span class="pill">Linear</span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <div class="note">
+            Changes to a role affect members assigned to that role. Running agents may need a terminal refresh before live tool access reflects the new configuration.
+          </div>
+
+          <div class="row" style="justify-content:space-between;gap:10px">
+            <button class="danger-soft">Delete role</button>
+            <button class="primary">Save role</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>Workspace: Safari Review Team · linear_delivery_setup</span>
+      <span class="live">● Changes saved</span>
+    </footer>
+  </div>
+</body>
+</html>

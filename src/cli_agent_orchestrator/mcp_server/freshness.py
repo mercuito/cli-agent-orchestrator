@@ -6,8 +6,10 @@ import ast
 import hashlib
 import inspect
 import json
+import os
 import textwrap
 from collections.abc import Iterable
+from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Mapping, Optional, cast
@@ -215,16 +217,64 @@ def callable_runtime_fingerprint(
 def callable_source_fingerprint(fn: Callable[..., Any]) -> dict[str, Any]:
     """Return stable local source material for one callable."""
     target = getattr(fn, "__func__", fn)
+    source_token = _callable_source_cache_token(target)
+    try:
+        return dict(_cached_callable_source_fingerprint(target, source_token))
+    except TypeError:
+        return dict(_callable_source_fingerprint_items(target))
+
+
+@lru_cache(maxsize=None)
+def _cached_callable_source_fingerprint(
+    target: Callable[..., Any],
+    source_token: tuple[Any, ...],
+) -> tuple[tuple[str, Any], ...]:
+    _ = source_token
+    return _callable_source_fingerprint_items(target)
+
+
+def _callable_source_cache_token(target: Callable[..., Any]) -> tuple[Any, ...]:
+    code = getattr(target, "__code__", None)
+    filename = getattr(code, "co_filename", None)
+    if filename is None:
+        try:
+            filename = inspect.getsourcefile(target) or inspect.getfile(target)
+        except TypeError:
+            filename = None
+    file_token: tuple[Any, ...]
+    if filename is None:
+        file_token = ("", None, None)
+    else:
+        try:
+            stat = os.stat(filename)
+            file_token = (filename, stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            file_token = (filename, None, None)
+    return (
+        getattr(target, "__module__", ""),
+        getattr(target, "__qualname__", repr(target)),
+        getattr(code, "co_firstlineno", None),
+        getattr(code, "co_argcount", None),
+        getattr(code, "co_kwonlyargcount", None),
+        file_token,
+    )
+
+
+def _callable_source_fingerprint_items(
+    target: Callable[..., Any],
+) -> tuple[tuple[str, Any], ...]:
     try:
         source = inspect.getsource(target)
     except (OSError, TypeError):
         source = repr(target)
-    return {
-        "schema_version": "cao-callable-source-fingerprint.v1",
-        "module": getattr(target, "__module__", ""),
-        "qualname": getattr(target, "__qualname__", repr(target)),
-        "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
-    }
+    return tuple(
+        {
+            "schema_version": "cao-callable-source-fingerprint.v1",
+            "module": getattr(target, "__module__", ""),
+            "qualname": getattr(target, "__qualname__", repr(target)),
+            "sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        }.items()
+    )
 
 
 def _collect_callable_runtime_entries(
@@ -307,8 +357,28 @@ class _CallableSourceReferences:
 
 
 def _callable_source_references(fn: Callable[..., Any]) -> _CallableSourceReferences:
+    target = getattr(fn, "__func__", fn)
+    source_token = _callable_source_cache_token(target)
     try:
-        source = inspect.getsource(fn)
+        return _cached_callable_source_references(target, source_token)
+    except TypeError:
+        return _callable_source_references_for_target(target)
+
+
+@lru_cache(maxsize=None)
+def _cached_callable_source_references(
+    target: Callable[..., Any],
+    source_token: tuple[Any, ...],
+) -> _CallableSourceReferences:
+    _ = source_token
+    return _callable_source_references_for_target(target)
+
+
+def _callable_source_references_for_target(
+    target: Callable[..., Any],
+) -> _CallableSourceReferences:
+    try:
+        source = inspect.getsource(target)
     except (OSError, TypeError):
         return _CallableSourceReferences(names=set(), attributes=set(), module_attributes={})
     try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Literal, Mapping, Optional
 
@@ -16,6 +17,7 @@ from cli_agent_orchestrator.workspace_providers.registry import (
     ProviderRoleToolAccessWorkspaceProvider,
     ProviderToolAccessConfigurableWorkspaceProvider,
     ProviderToolAccessWorkspaceProvider,
+    WORKSPACE_PROVIDERS_CONFIG_PATH,
     WorkspaceProviderConfigError,
     WorkspaceProviderRegistry,
     default_workspace_provider_registry,
@@ -101,6 +103,15 @@ class AgentToolAccess:
     inactive_local_grants: Mapping[str, Any]
     provider_conversation_requirements: tuple[ProviderConversationAccessRequirement, ...]
     diagnostics: tuple[ToolAccessDiagnostic, ...]
+
+
+@dataclass(frozen=True)
+class AgentToolView:
+    """Dashboard/API tool metadata projection owned by ToolService."""
+
+    agent_id: str
+    effective_access: AgentToolAccess
+    mcp_surface_descriptor: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -399,6 +410,95 @@ class ToolService:
         self._resolver = ToolAccessResolver(
             collaboration_manager_factory=self._collaboration_manager_factory
         )
+        self._raw_provider_policies_cache: dict[
+            tuple[Any, ...], Mapping[str, ProviderToolAccessPolicy]
+        ] = {}
+        self._provider_conversation_requirements_cache: dict[
+            tuple[Any, ...], Mapping[str, tuple[ProviderConversationAccessRequirement, ...]]
+        ] = {}
+        self._role_provider_policy_cache: dict[
+            tuple[Any, ...],
+            tuple[Mapping[str, ProviderToolAccessPolicy], tuple[ToolAccessDiagnostic, ...]],
+        ] = {}
+
+    def agent_tool_view(
+        self,
+        agent_id: str,
+        *,
+        built_in_tools: Iterable[tuple[str, Callable[..., Any], Mapping[str, Any]]],
+        built_in_tool_names: Iterable[str],
+        baton_enabled: bool = True,
+    ) -> AgentToolView:
+        """Return the API-facing tool view for one agent through ToolService."""
+        access = self.tools_for_agent(agent_id, built_in_tool_names=built_in_tool_names)
+        descriptor = self.mcp_surface_descriptor_for_agent(
+            agent_id,
+            built_in_tools=built_in_tools,
+            built_in_tool_names=built_in_tool_names,
+            baton_enabled=baton_enabled,
+            access=access,
+        )
+        return AgentToolView(
+            agent_id=agent_id,
+            effective_access=access,
+            mcp_surface_descriptor=descriptor,
+        )
+
+    def mcp_surface_descriptor_for_agent(
+        self,
+        agent_id: str,
+        *,
+        built_in_tools: Iterable[tuple[str, Callable[..., Any], Mapping[str, Any]]],
+        built_in_tool_names: Iterable[str],
+        baton_enabled: bool = True,
+        access: AgentToolAccess | None = None,
+    ) -> Mapping[str, Any]:
+        """Build one agent's visible MCP tool surface from ToolService decisions."""
+        from cli_agent_orchestrator.mcp_server.freshness import (
+            build_agent_mcp_surface_descriptor,
+        )
+
+        agent = self._agent_manager.resolve_agent(agent_id)
+        effective_access = access or self.tools_for_agent(
+            agent.id,
+            built_in_tool_names=built_in_tool_names,
+        )
+        provider_policies = self.provider_policies_for_agent(agent.id)
+        return build_agent_mcp_surface_descriptor(
+            agent=agent,
+            built_in_tools=tuple(built_in_tools),
+            built_in_tool_allowlist=list(effective_access.built_in_cao_tools),
+            provider_policies=provider_policies,
+            baton_enabled=baton_enabled,
+            provider_tool_allowlist=effective_access.provider_mediated_tools,
+        )
+
+    def mcp_runtime_generation_descriptor_for_agent(
+        self,
+        agent_id: str,
+        *,
+        built_in_tools: Iterable[tuple[str, Callable[..., Any], Mapping[str, Any]]],
+        built_in_tool_names: Iterable[str],
+        built_in_runtime_generation: Mapping[str, Any],
+        baton_enabled: bool = True,
+    ) -> Mapping[str, Any]:
+        """Build runtime-generation material from ToolService access decisions."""
+        from cli_agent_orchestrator.mcp_server.freshness import (
+            build_agent_mcp_runtime_generation_descriptor,
+        )
+
+        agent = self._agent_manager.resolve_agent(agent_id)
+        access = self.tools_for_agent(agent.id, built_in_tool_names=built_in_tool_names)
+        provider_policies = self.provider_policies_for_agent(agent.id)
+        return build_agent_mcp_runtime_generation_descriptor(
+            agent=agent,
+            built_in_tools=tuple(built_in_tools),
+            built_in_tool_allowlist=list(access.built_in_cao_tools),
+            provider_policies=provider_policies,
+            baton_enabled=baton_enabled,
+            built_in_runtime_generation=built_in_runtime_generation,
+            provider_tool_allowlist=access.provider_mediated_tools,
+        )
 
     def tools_for_agent(
         self,
@@ -550,7 +650,11 @@ class ToolService:
     ) -> Mapping[str, ProviderToolAccessPolicy]:
         """Return provider policies scoped to one agent's effective access."""
         agent = self._agent_manager.resolve_agent(agent_id)
-        source_result = self._resolver.resolve(agent, self._agent_registry())
+        source_result = self._resolver.resolve(
+            agent,
+            self._agent_registry(),
+            provider_conversation_requirements=self._provider_conversation_requirements(),
+        )
         policies, _diagnostics = self._provider_policies_for_source(agent, source_result)
         return policies
 
@@ -945,6 +1049,15 @@ class ToolService:
         agent: Agent,
         source_result: ToolAccessSourceResult,
     ) -> tuple[Mapping[str, ProviderToolAccessPolicy], tuple[ToolAccessDiagnostic, ...]]:
+        cache_key = (
+            "role_provider_policy",
+            _agent_cache_token(agent),
+            _source_result_cache_token(source_result),
+            _agent_registry_cache_token(self._agent_registry()),
+            _workspace_provider_config_cache_token(),
+        )
+        if cache_key in self._role_provider_policy_cache:
+            return self._role_provider_policy_cache[cache_key]
         grants_by_provider: dict[str, list[ProviderRoleToolAccessGrant]] = {}
         for grant in source_result.provider_role_grants:
             grants_by_provider.setdefault(grant.provider_name, []).append(grant)
@@ -981,15 +1094,28 @@ class ToolService:
                         source=f"workspace_team.providers.{provider_name}",
                     )
                 )
-        return policies, tuple(diagnostics)
+        result = (policies, tuple(diagnostics))
+        self._role_provider_policy_cache[cache_key] = result
+        return result
 
     def _raw_provider_policies(self) -> Mapping[str, ProviderToolAccessPolicy]:
+        cache_key = (
+            "raw_provider_policies",
+            _agent_registry_cache_token(self._standalone_provider_agent_registry()),
+            _workspace_provider_config_cache_token(),
+        )
+        if cache_key in self._raw_provider_policies_cache:
+            return self._raw_provider_policies_cache[cache_key]
         if self._provider_policy_loader is not None:
-            return self._provider_policy_loader(self._agent_registry())
+            policies = self._provider_policy_loader(self._agent_registry())
+            self._raw_provider_policies_cache[cache_key] = policies
+            return policies
         try:
-            return _load_raw_enabled_provider_tool_access_policies(
+            policies = _load_raw_enabled_provider_tool_access_policies(
                 agent_registry=self._standalone_provider_agent_registry()
             )
+            self._raw_provider_policies_cache[cache_key] = policies
+            return policies
         except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
             raise
         except Exception:
@@ -999,12 +1125,25 @@ class ToolService:
     def _provider_conversation_requirements(
         self,
     ) -> Mapping[str, tuple[ProviderConversationAccessRequirement, ...]]:
+        cache_key = (
+            "provider_conversation_requirements",
+            _agent_registry_cache_token(self._agent_registry()),
+            _workspace_provider_config_cache_token(),
+        )
+        if cache_key in self._provider_conversation_requirements_cache:
+            return self._provider_conversation_requirements_cache[cache_key]
         if self._provider_conversation_requirement_loader is not None:
-            return self._provider_conversation_requirement_loader(self._agent_registry())
+            requirements = self._provider_conversation_requirement_loader(
+                self._agent_registry()
+            )
+            self._provider_conversation_requirements_cache[cache_key] = requirements
+            return requirements
         try:
-            return _load_raw_enabled_provider_conversation_requirements(
+            requirements = _load_raw_enabled_provider_conversation_requirements(
                 agent_registry=self._agent_registry()
             )
+            self._provider_conversation_requirements_cache[cache_key] = requirements
+            return requirements
         except WorkspaceProviderConfigError:
             raise
         except Exception:
@@ -1219,6 +1358,73 @@ def _provider_conversation_operation_tool(operation: str) -> str | None:
     return _PROVIDER_CONVERSATION_OPERATION_CAO_TOOLS.get(operation.strip().lower())
 
 
+def _agent_registry_cache_token(registry: AgentRegistry) -> tuple[Any, ...]:
+    return tuple(
+        _agent_cache_token(agent)
+        for agent in sorted(registry.all().values(), key=lambda item: item.id)
+    )
+
+
+def _agent_cache_token(agent: Agent) -> tuple[Any, ...]:
+    return (
+        agent.id,
+        agent.cli_provider,
+        agent.workdir,
+        agent.session_name,
+        _cache_token(agent.cao_tools),
+        _cache_token(agent.mcp_servers),
+        _cache_token(agent.codex_config),
+        _cache_token(agent.runtime_capabilities),
+        _cache_token(agent.workspace.team),
+        _cache_token(agent.linear),
+    )
+
+
+def _source_result_cache_token(source_result: ToolAccessSourceResult) -> tuple[Any, ...]:
+    return (
+        source_result.agent_id,
+        source_result.team_id,
+        source_result.role_id,
+        source_result.provider_access_source,
+        _cache_token(source_result.local_cao_tools),
+        _cache_token(source_result.direct_mcp_servers),
+        _cache_token(source_result.provider_role_grants),
+        _cache_token(source_result.provider_conversation_requirements),
+        _cache_token(source_result.runtime_capabilities),
+        _cache_token(source_result.source_markers),
+        _cache_token(source_result.inactive_local_grants),
+    )
+
+
+def _workspace_provider_config_cache_token() -> tuple[str, int | None, int | None]:
+    path = WORKSPACE_PROVIDERS_CONFIG_PATH
+    try:
+        stat = path.stat()
+    except OSError:
+        return (str(path), None, None)
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def _cache_token(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        return tuple(
+            (str(key), _cache_token(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, tuple):
+        return tuple(_cache_token(item) for item in value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_cache_token(item) for item in value)
+    if hasattr(value, "__dataclass_fields__"):
+        return tuple(
+            (field_name, _cache_token(getattr(value, field_name)))
+            for field_name in sorted(value.__dataclass_fields__)
+        )
+    return repr(value)
+
+
 def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         return {}
@@ -1268,6 +1474,7 @@ def _is_team_owned_provider_access(entry: ProviderToolAccess) -> bool:
 
 __all__ = [
     "AgentToolAccess",
+    "AgentToolView",
     "MANAGED_CAO_MCP_SERVER",
     "ProviderConversationAccessRequirement",
     "ToolAccessDecision",

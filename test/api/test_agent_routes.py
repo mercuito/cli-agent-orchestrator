@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import ClassVar, Literal
 
+import pytest
 from pydantic.dataclasses import dataclass
 
 from cli_agent_orchestrator.agent import (
@@ -93,6 +94,58 @@ class _FakeAgentManager:
         raise AgentConfigError(f"Unknown CAO agent: {agent_id}")
 
 
+def _tool_view(agent_id: str, *, built_ins: tuple[str, ...] = ("send_message",)):
+    return SimpleNamespace(
+        mcp_surface_descriptor={
+            "schema_version": "cao-agent-mcp-surface.v1",
+            "tools": [
+                {
+                    "source": {"kind": "cao_builtin", "name": "cao"},
+                    "name": name,
+                    "description": f"{name} tool.",
+                }
+                for name in built_ins
+            ],
+        },
+        effective_access=SimpleNamespace(
+            agent_id=agent_id,
+            team_id=None,
+            role_id=None,
+            registered_tools=built_ins,
+            allowed_tools=built_ins,
+            blocked_tools=(),
+            built_in_cao_tools=built_ins,
+            provider_mediated_tools={},
+            materialized_mcp_servers={},
+            runtime_capabilities=(),
+            source_markers={name: "test" for name in built_ins},
+            inactive_local_grants={},
+            provider_conversation_requirements=(),
+            diagnostics=(),
+        ),
+    )
+
+
+def _install_route_tool_service(monkeypatch, manager, factory=None):
+    class FakeToolService:
+        def __init__(self, *, agent_manager):
+            assert agent_manager is manager
+
+        def agent_tool_view(
+            self,
+            agent_id,
+            *,
+            built_in_tools,
+            built_in_tool_names,
+            baton_enabled=True,
+        ):
+            if factory is not None:
+                return factory(agent_id, built_in_tools, built_in_tool_names, baton_enabled)
+            return _tool_view(agent_id)
+
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.ToolService", FakeToolService)
+
+
 def _agent(agent_id: str = "implementation_partner") -> Agent:
     return Agent(
         id=agent_id,
@@ -155,32 +208,48 @@ def _status(
 
 
 def test_list_agents_returns_stable_status_shape(client, monkeypatch):
+    manager = _FakeAgentManager((_status(active=True), _status("reviewer")))
+
+    def factory(agent_id, _built_in_tools, _built_in_tool_names, _baton_enabled):
+        return SimpleNamespace(
+            mcp_surface_descriptor={
+                "schema_version": "cao-agent-mcp-surface.v1",
+                "tools": [
+                    {
+                        "source": {"kind": "cao_builtin", "name": "cao"},
+                        "name": "send_message",
+                        "description": "Send a message to another CAO agent.",
+                    },
+                    {
+                        "source": {"kind": "provider", "name": "linear"},
+                        "name": "cao_linear.get_issue",
+                        "description": "Read a Linear issue.",
+                    },
+                ],
+            },
+            effective_access=SimpleNamespace(
+                agent_id=agent_id,
+                team_id=None,
+                role_id=None,
+                registered_tools=("send_message", "cao_linear.get_issue"),
+                allowed_tools=("send_message", "cao_linear.get_issue"),
+                blocked_tools=(),
+                built_in_cao_tools=("send_message",),
+                provider_mediated_tools={"linear": ("cao_linear.get_issue",)},
+                materialized_mcp_servers={},
+                runtime_capabilities=(),
+                source_markers={"send_message": "test"},
+                inactive_local_grants={},
+                provider_conversation_requirements=(),
+                diagnostics=(),
+            ),
+        )
+
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_agent_manager",
-        lambda: _FakeAgentManager((_status(active=True), _status("reviewer"))),
+        lambda: manager,
     )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main._build_mcp_surface_descriptor_for_agent",
-        lambda agent: {
-            "schema_version": "cao-agent-mcp-surface.v1",
-            "tools": [
-                {
-                    "source": {"kind": "cao_builtin", "name": "cao"},
-                    "name": "send_message",
-                    "description": "Send a message to another CAO agent.",
-                    "input_schema": {"type": "object"},
-                },
-                {
-                    "source": {"kind": "provider", "name": "linear"},
-                    "name": "cao_linear.get_issue",
-                    "description": "Read a Linear issue.",
-                    "input_schema": {"type": "object"},
-                    "pre_hooks": ["require_issue_access"],
-                    "post_hooks": [],
-                },
-            ],
-        },
-    )
+    _install_route_tool_service(monkeypatch, manager, factory)
 
     response = client.get("/agents")
 
@@ -247,34 +316,52 @@ def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monk
     )
 
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_agent_manager",
-        lambda: _FakeAgentManager((_status(active=False),)),
-    )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main._build_mcp_surface_descriptor_for_agent",
-        lambda _agent: {
-            "schema_version": "cao-agent-mcp-surface.v1",
-            "tools": [
-                {
-                    "source": {"kind": "cao_builtin", "name": "cao"},
-                    "name": "send_message",
-                    "description": "Send a message to another CAO agent.",
-                    "input_schema": {"type": "object"},
-                },
-            ],
-        },
-    )
-    monkeypatch.setattr(
         "cli_agent_orchestrator.api.main._available_builtin_cao_tool_names_for_access",
         lambda: ("send_message", "assign"),
     )
+
+    class FakeToolService:
+        def __init__(self, *, agent_manager):
+            assert agent_manager is manager
+            self._service = ToolService(
+                agent_manager=AgentManager(
+                    configured_agents=AgentRegistry({agent.id: agent})
+                ),
+                provider_policy_loader=lambda _registry: {"linear": policy},
+            )
+
+        def agent_tool_view(
+            self,
+            agent_id,
+            *,
+            built_in_tools,
+            built_in_tool_names,
+            baton_enabled=True,
+        ):
+            access = self._service.tools_for_agent(
+                agent_id,
+                built_in_tool_names=built_in_tool_names,
+            )
+            return SimpleNamespace(
+                mcp_surface_descriptor={
+                    "schema_version": "cao-agent-mcp-surface.v1",
+                    "tools": [
+                        {
+                            "source": {"kind": "cao_builtin", "name": "cao"},
+                            "name": "send_message",
+                            "description": "Send a message to another CAO agent.",
+                        }
+                    ],
+                },
+                effective_access=access,
+            )
+
+    manager = _FakeAgentManager((replace(_status(active=False), agent=agent),))
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.tool_service_for_loaded_agent",
-        lambda loaded_agent, *, fallback_agent_id, cli_provider: ToolService(
-            agent_manager=AgentManager(configured_agents=AgentRegistry({loaded_agent.id: loaded_agent})),
-            provider_policy_loader=lambda _registry: {"linear": policy},
-        ),
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: manager,
     )
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.ToolService", FakeToolService)
 
     response = client.get("/agents")
 
@@ -283,6 +370,111 @@ def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monk
     assert effective_access["built_in_cao_tools"] == ["send_message"]
     assert effective_access["provider_mediated_tools"] == {"linear": []}
     assert effective_access["allowed_tools"] == ["send_message"]
+
+
+def test_list_agents_reads_tool_metadata_from_tool_service_owner(client, monkeypatch):
+    manager = _FakeAgentManager((_status(active=True),))
+    calls: list[str] = []
+
+    class FakeToolService:
+        def __init__(self, *, agent_manager):
+            assert agent_manager is manager
+
+        def agent_tool_view(
+            self,
+            agent_id,
+            *,
+            built_in_tools,
+            built_in_tool_names,
+            baton_enabled=True,
+        ):
+            calls.append(agent_id)
+            assert built_in_tool_names == ("send_message", "assign")
+            assert baton_enabled is True
+            return SimpleNamespace(
+                mcp_surface_descriptor={
+                    "schema_version": "cao-agent-mcp-surface.v1",
+                    "tools": [
+                        {
+                            "source": {"kind": "cao_builtin", "name": "cao"},
+                            "name": "send_message",
+                            "description": "Send a message.",
+                        }
+                    ],
+                },
+                effective_access=SimpleNamespace(
+                    agent_id=agent_id,
+                    team_id=None,
+                    role_id=None,
+                    registered_tools=("send_message",),
+                    allowed_tools=("send_message",),
+                    blocked_tools=(),
+                    built_in_cao_tools=("send_message",),
+                    provider_mediated_tools={},
+                    materialized_mcp_servers={},
+                    runtime_capabilities=(),
+                    source_markers={"send_message": "test"},
+                    inactive_local_grants={},
+                    provider_conversation_requirements=(),
+                    diagnostics=(),
+                ),
+            )
+
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.default_agent_manager", lambda: manager)
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.ToolService", FakeToolService)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main._build_mcp_surface_descriptor_for_agent",
+        lambda _agent: pytest.fail("API route should ask ToolService for MCP surface"),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.tool_service_for_loaded_agent",
+        lambda *_args, **_kwargs: pytest.fail("API route should not build per-agent services"),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main._available_builtin_cao_tool_names_for_access",
+        lambda: ("send_message", "assign"),
+    )
+
+    response = client.get("/agents")
+
+    assert response.status_code == 200
+    assert calls == ["implementation_partner"]
+    assert response.json()[0]["mcp_tool_surface"]["tools"][0]["name"] == "send_message"
+    assert response.json()[0]["effective_tool_access"]["allowed_tools"] == ["send_message"]
+
+
+def test_get_agent_reads_tool_metadata_from_tool_service_owner(client, monkeypatch):
+    manager = _FakeAgentManager((_status(active=True),))
+    calls: list[str] = []
+
+    def factory(agent_id, _built_in_tools, built_in_tool_names, baton_enabled):
+        calls.append(agent_id)
+        assert built_in_tool_names == ("send_message", "assign")
+        assert baton_enabled is True
+        return _tool_view(agent_id, built_ins=("assign",))
+
+    monkeypatch.setattr("cli_agent_orchestrator.api.main.default_agent_manager", lambda: manager)
+    _install_route_tool_service(monkeypatch, manager, factory)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main._build_mcp_surface_descriptor_for_agent",
+        lambda _agent: pytest.fail("API route should ask ToolService for MCP surface"),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.tool_service_for_loaded_agent",
+        lambda *_args, **_kwargs: pytest.fail("API route should not build per-agent services"),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main._available_builtin_cao_tool_names_for_access",
+        lambda: ("send_message", "assign"),
+    )
+
+    response = client.get("/agents/implementation_partner")
+
+    assert response.status_code == 200
+    assert calls == ["implementation_partner"]
+    assert response.json()["agent_id"] == "implementation_partner"
+    assert response.json()["mcp_tool_surface"]["tools"][0]["name"] == "assign"
+    assert response.json()["effective_tool_access"]["allowed_tools"] == ["assign"]
 
 
 def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(client, monkeypatch):
@@ -858,10 +1050,12 @@ def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monk
 
 
 def test_list_agents_active_filter(client, monkeypatch):
+    manager = _FakeAgentManager((_status(active=True), _status("reviewer")))
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_agent_manager",
-        lambda: _FakeAgentManager((_status(active=True), _status("reviewer"))),
+        lambda: manager,
     )
+    _install_route_tool_service(monkeypatch, manager)
 
     response = client.get("/agents?active=true")
 

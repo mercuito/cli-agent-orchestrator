@@ -154,6 +154,85 @@ describe('API wrapper', () => {
     expect(mockFetch).toHaveBeenCalledWith('/agents', expect.any(Object))
   })
 
+  it('creates workspace teams through the collection endpoint', async () => {
+    const team = {
+      id: 'review',
+      display_name: 'Review',
+      workspace_setup: 'linear_delivery_setup',
+      roles: {},
+      role_assignments: {},
+      members: [],
+      member_details: [],
+      diagnostics: [],
+    }
+    mockResponse(team, 201)
+
+    const result = await api.createWorkspaceTeam({
+      id: 'review',
+      display_name: 'Review',
+      workspace_setup: 'linear_delivery_setup',
+    })
+
+    expect(result).toEqual(team)
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('/workspace-teams')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({
+      id: 'review',
+      display_name: 'Review',
+      workspace_setup: 'linear_delivery_setup',
+    })
+  })
+
+  it('updates workspace team metadata with the full metadata PUT payload', async () => {
+    mockResponse({ id: 'review' })
+
+    await api.updateWorkspaceTeamMetadata('review/team', {
+      display_name: 'Review Team',
+      workspace_setup: 'linear_delivery_setup',
+    })
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('/workspace-teams/review%2Fteam')
+    expect(opts.method).toBe('PUT')
+    expect(JSON.parse(opts.body)).toEqual({
+      display_name: 'Review Team',
+      workspace_setup: 'linear_delivery_setup',
+    })
+  })
+
+  it('writes workspace team roles and members through granular endpoints', async () => {
+    mockResponse({ id: 'review' })
+    await api.putWorkspaceTeamRole('review', 'lead', {
+      display_name: 'Lead',
+      cao_tools: ['send_message'],
+      mcp_servers: { shell: { command: 'shell' } },
+      providers: { linear: { default: { tools: ['cao_linear.get_issue'] } } },
+      deletable: true,
+    })
+
+    mockResponse({ id: 'review' })
+    await api.putWorkspaceTeamMember('review', 'aria', { role_id: 'lead' })
+
+    mockResponse({ id: 'review' })
+    await api.deleteWorkspaceTeamMember('review', 'aria')
+
+    expect(mockFetch.mock.calls[0][0]).toBe('/workspace-teams/review/roles/lead')
+    expect(mockFetch.mock.calls[0][1].method).toBe('PUT')
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      display_name: 'Lead',
+      cao_tools: ['send_message'],
+      mcp_servers: { shell: { command: 'shell' } },
+      providers: { linear: { default: { tools: ['cao_linear.get_issue'] } } },
+      deletable: true,
+    })
+    expect(mockFetch.mock.calls[1][0]).toBe('/workspace-teams/review/members/aria')
+    expect(mockFetch.mock.calls[1][1].method).toBe('PUT')
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ role_id: 'lead' })
+    expect(mockFetch.mock.calls[2][0]).toBe('/workspace-teams/review/members/aria')
+    expect(mockFetch.mock.calls[2][1].method).toBe('DELETE')
+  })
+
   it('createAgent POSTs durable agent config to /agents', async () => {
     const agent = {
       agent_id: 'new-agent',

@@ -179,7 +179,15 @@ export interface WorkspaceTeam {
   roles: Record<string, WorkspaceTeamRole>
   role_assignments: Record<string, string>
   members: string[]
+  member_details: WorkspaceTeamMemberDetail[]
   diagnostics: string[]
+}
+
+export interface WorkspaceTeamMemberDetail {
+  agent_id: string
+  display_name: string
+  role_id: string
+  role_explicitly_assigned: boolean
 }
 
 export interface WorkspaceTeamRole {
@@ -392,7 +400,7 @@ export const api = {
       `/agents/runtime/${encodeURIComponent(agentId)}/terminal${query}`,
     )
   },
-  listAgents: () => fetchJSON<AgentStatus[]>('/agents'),
+  listAgents: () => fetchJSON<AgentStatus[]>('/agents', { timeoutMs: 30000 }),
   listWorkspaceSetupDiagnostics: () => fetchJSON<WorkspaceSetupDiagnostic[]>('/workspace-setups/diagnostics'),
   listWorkspaceSetups: () => fetchJSON<WorkspaceSetup[]>('/workspace-setups'),
   listWorkspaceTeams: () => fetchJSON<WorkspaceTeam[]>('/workspace-teams'),
@@ -401,18 +409,54 @@ export const api = {
     fetchJSON<ProviderRoleAccessSchema>(
       `/workspace-providers/${encodeURIComponent(provider)}/role-access-schema`,
     ),
-  upsertWorkspaceTeam: (team: WorkspaceTeam) =>
-    fetchJSON<WorkspaceTeam>(`/workspace-teams/${encodeURIComponent(team.id)}`, {
+  createWorkspaceTeam: (team: { id: string; display_name: string; workspace_setup: string }) =>
+    fetchJSON<WorkspaceTeam>('/workspace-teams', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(team),
+    }),
+  updateWorkspaceTeamMetadata: (teamId: string, metadata: { display_name: string; workspace_setup: string }) =>
+    fetchJSON<WorkspaceTeam>(`/workspace-teams/${encodeURIComponent(teamId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: team.id,
-        display_name: team.display_name,
-        workspace_setup: team.workspace_setup,
-        roles: team.roles,
-        role_assignments: team.role_assignments,
-      }),
+      body: JSON.stringify(metadata),
     }),
+  deleteWorkspaceTeam: (teamId: string) =>
+    fetchJSON<WorkspaceTeam>(`/workspace-teams/${encodeURIComponent(teamId)}`, {
+      method: 'DELETE',
+    }),
+  putWorkspaceTeamRole: (teamId: string, roleId: string, role: WorkspaceTeamRole) =>
+    fetchJSON<WorkspaceTeam>(
+      `/workspace-teams/${encodeURIComponent(teamId)}/roles/${encodeURIComponent(roleId)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(role),
+      },
+    ),
+  deleteWorkspaceTeamRole: (teamId: string, roleId: string) =>
+    fetchJSON<WorkspaceTeam>(
+      `/workspace-teams/${encodeURIComponent(teamId)}/roles/${encodeURIComponent(roleId)}`,
+      {
+        method: 'DELETE',
+      },
+    ),
+  putWorkspaceTeamMember: (teamId: string, agentId: string, body: { role_id?: string | null } = {}) =>
+    fetchJSON<WorkspaceTeam>(
+      `/workspace-teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(agentId)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    ),
+  deleteWorkspaceTeamMember: (teamId: string, agentId: string) =>
+    fetchJSON<WorkspaceTeam>(
+      `/workspace-teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(agentId)}`,
+      {
+        method: 'DELETE',
+      },
+    ),
   createAgent: (agent: AgentWriteRequest) =>
     fetchJSON<AgentStatus>('/agents', {
       method: 'POST',

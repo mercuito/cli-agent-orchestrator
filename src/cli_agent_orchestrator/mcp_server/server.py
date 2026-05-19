@@ -98,6 +98,11 @@ mcp = FastMCP(
 _PENDING_TOOLS: List[Tuple[str, Callable, Dict[str, Any]]] = []
 
 
+def pending_builtin_mcp_tools() -> tuple[tuple[str, Callable, Dict[str, Any]], ...]:
+    """Return built-in MCP tool definitions owned by the MCP server."""
+    return tuple(_PENDING_TOOLS)
+
+
 def built_in_cao_tool_names(
     pending: Iterable[Tuple[str, Callable, Dict[str, Any]]] | None = None,
     *,
@@ -268,17 +273,21 @@ def build_mcp_surface_descriptor_for_agent(
             configured_agents=agent_registry or AgentRegistry({agent.id: agent})
         )
     )
+    if provider_policies is None:
+        return dict(
+            service.mcp_surface_descriptor_for_agent(
+                agent.id,
+                built_in_tools=_PENDING_TOOLS,
+                built_in_tool_names=built_in_cao_tool_names(),
+                baton_enabled=True,
+            )
+        )
     access = service.tools_for_agent(agent.id, built_in_tool_names=built_in_cao_tool_names())
-    policies = (
-        provider_policies
-        if provider_policies is not None
-        else service.provider_policies_for_agent(agent.id)
-    )
     return build_agent_mcp_surface_descriptor(
         agent=agent,
         built_in_tools=_PENDING_TOOLS,
         built_in_tool_allowlist=list(access.built_in_cao_tools),
-        provider_policies=policies,
+        provider_policies=provider_policies,
         baton_enabled=True,
         provider_tool_allowlist=access.provider_mediated_tools,
     )
@@ -296,17 +305,22 @@ def build_mcp_runtime_generation_descriptor_for_agent(
             configured_agents=agent_registry or AgentRegistry({agent.id: agent})
         )
     )
+    if provider_policies is None:
+        return dict(
+            service.mcp_runtime_generation_descriptor_for_agent(
+                agent.id,
+                built_in_tools=_PENDING_TOOLS,
+                built_in_tool_names=built_in_cao_tool_names(),
+                built_in_runtime_generation=_built_in_mcp_runtime_generation_material(),
+                baton_enabled=True,
+            )
+        )
     access = service.tools_for_agent(agent.id, built_in_tool_names=built_in_cao_tool_names())
-    policies = (
-        provider_policies
-        if provider_policies is not None
-        else service.provider_policies_for_agent(agent.id)
-    )
     return build_agent_mcp_runtime_generation_descriptor(
         agent=agent,
         built_in_tools=_PENDING_TOOLS,
         built_in_tool_allowlist=list(access.built_in_cao_tools),
-        provider_policies=policies,
+        provider_policies=provider_policies,
         baton_enabled=True,
         built_in_runtime_generation=_built_in_mcp_runtime_generation_material(),
         provider_tool_allowlist=access.provider_mediated_tools,

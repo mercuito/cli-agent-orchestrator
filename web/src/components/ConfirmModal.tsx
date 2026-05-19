@@ -53,7 +53,7 @@ export function ConfirmModal({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
 
       {/* Modal */}
-      <div className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in-95">
+      <div role="dialog" aria-modal="true" className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="flex items-start gap-4 p-6 pb-4">
           <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${colors.icon}`}>

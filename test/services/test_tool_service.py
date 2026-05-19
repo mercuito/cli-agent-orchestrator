@@ -306,6 +306,297 @@ def test_provider_mediated_access_is_scoped_by_tool_service():
     assert decision.allowed is True
 
 
+def test_agent_tool_view_reuses_provider_policy_metadata_for_same_inputs():
+    agent = _agent()
+    calls = 0
+    policy = ProviderToolAccessPolicy(
+        provider_name="linear",
+        tools={
+            "cao_linear.get_issue": ProviderMediatedToolDefinition(
+                name="cao_linear.get_issue",
+                description="Read issue",
+                input_schema={},
+                handler=lambda _context, _arguments: {"ok": True},
+            )
+        },
+        hooks={},
+        access=(
+            ProviderToolAccess(
+                provider_name="linear",
+                tool_name="cao_linear.get_issue",
+                agent_id=agent.id,
+                pre_hooks=(),
+                post_hooks=(),
+                source_location="linear.tool_access.reads",
+            ),
+        ),
+    )
+
+    def provider_policy_loader(_registry):
+        nonlocal calls
+        calls += 1
+        return {"linear": policy}
+
+    service = ToolService(
+        agent_manager=_manager(agent),
+        provider_policy_loader=provider_policy_loader,
+    )
+
+    first = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("send_message",),
+    )
+    second = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("send_message",),
+    )
+
+    assert first.effective_access.provider_mediated_tools == {
+        "linear": ("cao_linear.get_issue",)
+    }
+    assert second.effective_access.provider_mediated_tools == {
+        "linear": ("cao_linear.get_issue",)
+    }
+    assert calls == 1
+
+
+def test_agent_tool_view_recomputes_provider_policy_when_provider_config_changes(
+    monkeypatch,
+):
+    agent = _agent()
+    calls = 0
+    version = "one"
+
+    def provider_policy_loader(_registry):
+        nonlocal calls
+        calls += 1
+        return {
+            "linear": ProviderToolAccessPolicy(
+                provider_name="linear",
+                tools={
+                    "cao_linear.get_issue": ProviderMediatedToolDefinition(
+                        name="cao_linear.get_issue",
+                        description=f"Read issue {version}",
+                        input_schema={},
+                        handler=lambda _context, _arguments: {"ok": True},
+                    )
+                },
+                hooks={},
+                access=(
+                    ProviderToolAccess(
+                        provider_name="linear",
+                        tool_name="cao_linear.get_issue",
+                        agent_id=agent.id,
+                        pre_hooks=(),
+                        post_hooks=(),
+                        source_location=f"linear.tool_access.{version}",
+                    ),
+                ),
+            )
+        }
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.tool_service._workspace_provider_config_cache_token",
+        lambda: ("providers", version, 1),
+    )
+    service = ToolService(
+        agent_manager=_manager(agent),
+        provider_policy_loader=provider_policy_loader,
+    )
+
+    first = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("send_message",),
+    )
+    again = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("send_message",),
+    )
+    version = "two"
+    changed = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("send_message",),
+    )
+
+    assert first.mcp_surface_descriptor["tools"][0]["description"] == "Read issue one"
+    assert again.mcp_surface_descriptor["tools"][0]["description"] == "Read issue one"
+    assert changed.mcp_surface_descriptor["tools"][0]["description"] == "Read issue two"
+    assert calls == 2
+
+
+def test_agent_tool_view_recomputes_when_agent_tool_inputs_change():
+    class MutableAgentManager:
+        def __init__(self, agent):
+            self.agent = agent
+
+        def list_agents(self):
+            return [self.agent]
+
+        def resolve_agent(self, agent_id):
+            assert agent_id == self.agent.id
+            return self.agent
+
+    manager = MutableAgentManager(
+        _agent(agent_id="agent", cao_tools=("send_message",))
+    )
+    service = ToolService(agent_manager=manager)
+
+    before = service.agent_tool_view(
+        "agent",
+        built_in_tools=(),
+        built_in_tool_names=("send_message", "assign"),
+    )
+    manager.agent = _agent(agent_id="agent", cao_tools=("assign",))
+    after = service.agent_tool_view(
+        "agent",
+        built_in_tools=(),
+        built_in_tool_names=("send_message", "assign"),
+    )
+
+    assert before.effective_access.built_in_cao_tools == ("send_message",)
+    assert after.effective_access.built_in_cao_tools == ("assign",)
+
+
+def test_agent_tool_view_recomputes_when_team_role_grants_change():
+    agent = _agent(agent_id="agent", team="delivery")
+    team = WorkspaceTeam(
+        id="delivery",
+        display_name="Delivery",
+        workspace_setup="setup",
+        roles={
+            "member": WorkspaceTeamRole(
+                display_name="Member",
+                cao_tools=("send_message",),
+            )
+        },
+    )
+    service = ToolService(
+        agent_manager=_manager(agent),
+        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+            team=team,
+            agents=(agent,),
+        ),
+    )
+
+    before = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("send_message", "assign"),
+    )
+    team.roles["member"] = WorkspaceTeamRole(
+        display_name="Member",
+        cao_tools=("assign",),
+    )
+    after = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("send_message", "assign"),
+    )
+
+    assert before.effective_access.built_in_cao_tools == ("send_message",)
+    assert after.effective_access.built_in_cao_tools == ("assign",)
+
+
+def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
+    monkeypatch,
+):
+    agent = _agent(agent_id="agent", team="delivery")
+    team = WorkspaceTeam(
+        id="delivery",
+        display_name="Delivery",
+        workspace_setup="setup",
+        roles={
+            "member": WorkspaceTeamRole(
+                display_name="Member",
+                cao_tools=("read_inbox_message",),
+                providers={
+                    "linear": {
+                        "reads": {
+                            "tools": ["cao_linear.get_issue"],
+                        },
+                    },
+                },
+            )
+        },
+    )
+    calls = 0
+
+    class FakeRoleProvider:
+        name = "linear"
+
+        def initialize(self):
+            return None
+
+        def provider_role_tool_access(self, grants):
+            nonlocal calls
+            calls += 1
+            return ProviderToolAccessPolicy(
+                provider_name="linear",
+                tools={
+                    "cao_linear.get_issue": ProviderMediatedToolDefinition(
+                        name="cao_linear.get_issue",
+                        description="Read issue",
+                        input_schema={},
+                        handler=lambda _context, _arguments: {"ok": True},
+                    )
+                },
+                hooks={},
+                access=(
+                    ProviderToolAccess(
+                        provider_name="linear",
+                        tool_name="cao_linear.get_issue",
+                        agent_id=agent.id,
+                        pre_hooks=(),
+                        post_hooks=(),
+                        source_location=grants[0].source_location,
+                    ),
+                ),
+            )
+
+    class FakeProviderRegistry:
+        def create(self, provider_name, _agent_registry):
+            assert provider_name == "linear"
+            return FakeRoleProvider()
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.tool_service.default_workspace_provider_registry",
+        lambda: FakeProviderRegistry(),
+    )
+    service = ToolService(
+        agent_manager=_manager(agent),
+        provider_conversation_requirement_loader=lambda _registry: {
+            "linear": (
+                ProviderConversationAccessRequirement(
+                    provider_name="linear",
+                    operation="read",
+                    required_identity="workspace_team_presence",
+                ),
+            )
+        },
+        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+            team=team,
+            agents=(agent,),
+        ),
+    )
+
+    view = service.agent_tool_view(
+        agent.id,
+        built_in_tools=(),
+        built_in_tool_names=("read_inbox_message",),
+    )
+
+    assert view.effective_access.provider_mediated_tools == {
+        "linear": ("cao_linear.get_issue",)
+    }
+    assert view.mcp_surface_descriptor["tools"][0]["name"] == "cao_linear.get_issue"
+    assert calls == 1
+
+
 def test_provider_mediated_registration_skips_builtin_name_conflicts():
     agent = _agent()
     policy = ProviderToolAccessPolicy(

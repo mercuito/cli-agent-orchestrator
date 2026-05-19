@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Mapping
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry
+from cli_agent_orchestrator.mcp_server import freshness
 from cli_agent_orchestrator.mcp_server.freshness import (
     build_agent_mcp_runtime_generation_fingerprint,
     build_agent_mcp_surface_descriptor,
@@ -332,3 +334,57 @@ def test_callable_runtime_fingerprint_includes_local_helper_dependencies():
 
     assert "_wrapper_with_runtime_dependency" in entries
     assert "_local_runtime_dependency" in entries
+
+
+def test_callable_runtime_fingerprint_reuses_source_inspection(monkeypatch):
+    freshness._cached_callable_source_fingerprint.cache_clear()
+    freshness._cached_callable_source_references.cache_clear()
+    calls = 0
+    original_getsource = inspect.getsource
+
+    def counting_getsource(target: Any) -> str:
+        nonlocal calls
+        calls += 1
+        return original_getsource(target)
+
+    monkeypatch.setattr(inspect, "getsource", counting_getsource)
+
+    callable_runtime_fingerprint(_wrapper_with_runtime_dependency)
+    first_call_count = calls
+    callable_runtime_fingerprint(_wrapper_with_runtime_dependency)
+
+    assert first_call_count > 0
+    assert calls == first_call_count
+
+
+def test_callable_runtime_fingerprint_refreshes_source_inspection_when_source_token_changes(
+    monkeypatch,
+):
+    freshness._cached_callable_source_fingerprint.cache_clear()
+    freshness._cached_callable_source_references.cache_clear()
+    calls = 0
+    version = {"value": 1}
+    original_getsource = inspect.getsource
+    original_cache_token = freshness._callable_source_cache_token
+
+    def counting_getsource(target: Any) -> str:
+        nonlocal calls
+        calls += 1
+        return original_getsource(target)
+
+    def versioned_cache_token(target: Any) -> tuple[Any, ...]:
+        return (*original_cache_token(target), ("test_version", version["value"]))
+
+    monkeypatch.setattr(inspect, "getsource", counting_getsource)
+    monkeypatch.setattr(freshness, "_callable_source_cache_token", versioned_cache_token)
+
+    callable_runtime_fingerprint(_wrapper_with_runtime_dependency)
+    first_call_count = calls
+    callable_runtime_fingerprint(_wrapper_with_runtime_dependency)
+    cached_call_count = calls
+    version["value"] = 2
+    callable_runtime_fingerprint(_wrapper_with_runtime_dependency)
+
+    assert first_call_count > 0
+    assert cached_call_count == first_call_count
+    assert calls > cached_call_count
