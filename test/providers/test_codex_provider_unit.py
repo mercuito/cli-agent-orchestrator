@@ -370,8 +370,9 @@ class TestCodexBuildCommand:
         command = provider._build_codex_command()
 
         assert "mcp_servers.cao-mcp-server.command=" in command
-        assert "uvx" in command
-        assert "mcp_servers.cao-mcp-server.args=" in command
+        assert '"cao-mcp-server"' in command
+        assert "uvx" not in command
+        assert "mcp_servers.cao-mcp-server.args=" not in command
         assert "cao-mcp-server" in command
         # CAO_TERMINAL_ID must be forwarded for handoff to work
         assert "mcp_servers.cao-mcp-server.env_vars=" in command
@@ -433,11 +434,8 @@ class TestCodexBuildCommand:
         provider = CodexProvider("test1234", "test-session", "window-0", "empty_agent")
         command = provider._build_codex_command()
 
-        assert (
-            command
-            == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
-        )
         assert "developer_instructions" not in command
+        assert "mcp_servers.cao-mcp-server.command=" in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_none_system_prompt(self, mock_load_profile):
@@ -449,10 +447,8 @@ class TestCodexBuildCommand:
         provider = CodexProvider("test1234", "test-session", "window-0", "none_agent")
         command = provider._build_codex_command()
 
-        assert (
-            command
-            == "codex --yolo --no-alt-screen --disable shell_snapshot --disable plugins --disable apps"
-        )
+        assert "developer_instructions" not in command
+        assert "mcp_servers.cao-mcp-server.command=" in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent")
     def test_build_command_profile_load_failure(self, mock_load_profile):

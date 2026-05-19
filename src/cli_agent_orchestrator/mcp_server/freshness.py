@@ -35,6 +35,7 @@ def build_agent_mcp_surface_descriptor(
     built_in_tool_allowlist: Optional[Iterable[str]],
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
     baton_enabled: bool,
+    provider_tool_allowlist: Mapping[str, Iterable[str]] | None = None,
 ) -> dict[str, Any]:
     """Build the stable MCP contract visible to one CAO agent."""
     built_ins = _visible_builtin_tool_entries(
@@ -42,11 +43,10 @@ def build_agent_mcp_surface_descriptor(
         allowlist=built_in_tool_allowlist,
         baton_enabled=baton_enabled,
     )
-    reserved_builtin_names = {tool_name for tool_name, _, _ in built_in_tools}
     provider_tools = _visible_provider_tool_entries(
         agent=agent,
         policies=provider_policies,
-        reserved_tool_names=reserved_builtin_names,
+        provider_tool_allowlist=provider_tool_allowlist,
     )
     descriptor = {
         "schema_version": MCP_SURFACE_DESCRIPTOR_SCHEMA_VERSION,
@@ -74,6 +74,7 @@ def build_agent_mcp_surface_fingerprint(
     built_in_tool_allowlist: Optional[Iterable[str]],
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
     baton_enabled: bool,
+    provider_tool_allowlist: Mapping[str, Iterable[str]] | None = None,
 ) -> str:
     """Build and fingerprint the stable MCP contract visible to one agent."""
     return fingerprint_agent_mcp_surface(
@@ -81,6 +82,7 @@ def build_agent_mcp_surface_fingerprint(
             agent=agent,
             built_in_tools=built_in_tools,
             built_in_tool_allowlist=built_in_tool_allowlist,
+            provider_tool_allowlist=provider_tool_allowlist,
             provider_policies=provider_policies,
             baton_enabled=baton_enabled,
         )
@@ -95,6 +97,7 @@ def build_agent_mcp_runtime_generation_descriptor(
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
     baton_enabled: bool,
     built_in_runtime_generation: Mapping[str, Any],
+    provider_tool_allowlist: Mapping[str, Iterable[str]] | None = None,
 ) -> dict[str, Any]:
     """Build implementation/runtime material behind visible MCP tools."""
     built_ins = _visible_builtin_tool_entries(
@@ -102,11 +105,10 @@ def build_agent_mcp_runtime_generation_descriptor(
         allowlist=built_in_tool_allowlist,
         baton_enabled=baton_enabled,
     )
-    reserved_builtin_names = {tool_name for tool_name, _, _ in built_in_tools}
     provider_tools = _visible_provider_runtime_generation_entries(
         agent=agent,
         policies=provider_policies,
-        reserved_tool_names=reserved_builtin_names,
+        provider_tool_allowlist=provider_tool_allowlist,
     )
     descriptor = {
         "schema_version": MCP_RUNTIME_GENERATION_DESCRIPTOR_SCHEMA_VERSION,
@@ -142,6 +144,7 @@ def build_agent_mcp_runtime_generation_fingerprint(
     provider_policies: Mapping[str, ProviderToolAccessPolicy],
     baton_enabled: bool,
     built_in_runtime_generation: Mapping[str, Any],
+    provider_tool_allowlist: Mapping[str, Iterable[str]] | None = None,
 ) -> str:
     """Build and fingerprint implementation/runtime material behind visible tools."""
     return fingerprint_agent_mcp_surface(
@@ -149,6 +152,7 @@ def build_agent_mcp_runtime_generation_fingerprint(
             agent=agent,
             built_in_tools=built_in_tools,
             built_in_tool_allowlist=built_in_tool_allowlist,
+            provider_tool_allowlist=provider_tool_allowlist,
             provider_policies=provider_policies,
             baton_enabled=baton_enabled,
             built_in_runtime_generation=built_in_runtime_generation,
@@ -357,20 +361,24 @@ def _visible_provider_tool_entries(
     *,
     agent: Agent,
     policies: Mapping[str, ProviderToolAccessPolicy],
-    reserved_tool_names: set[str],
+    provider_tool_allowlist: Mapping[str, Iterable[str]] | None,
 ) -> list[dict[str, Any]]:
+    allowed_by_provider = (
+        None
+        if provider_tool_allowlist is None
+        else {provider: set(tools) for provider, tools in provider_tool_allowlist.items()}
+    )
     entries: list[dict[str, Any]] = []
-    seen_provider_tool_names: set[str] = set()
     descriptors: list[ProviderMediatedToolSurfaceDescriptor] = []
     for provider_name in sorted(policies):
         descriptors.extend(policies[provider_name].surface_descriptors_for_agent(agent))
 
     for descriptor in sorted(descriptors, key=lambda item: (item.provider_name, item.name)):
-        if descriptor.name in reserved_tool_names:
+        if (
+            allowed_by_provider is not None
+            and descriptor.name not in allowed_by_provider.get(descriptor.provider_name, set())
+        ):
             continue
-        if descriptor.name in seen_provider_tool_names:
-            continue
-        seen_provider_tool_names.add(descriptor.name)
         entries.append(
             {
                 "source": {"kind": "provider", "name": descriptor.provider_name},
@@ -388,20 +396,24 @@ def _visible_provider_runtime_generation_entries(
     *,
     agent: Agent,
     policies: Mapping[str, ProviderToolAccessPolicy],
-    reserved_tool_names: set[str],
+    provider_tool_allowlist: Mapping[str, Iterable[str]] | None,
 ) -> list[dict[str, Any]]:
+    allowed_by_provider = (
+        None
+        if provider_tool_allowlist is None
+        else {provider: set(tools) for provider, tools in provider_tool_allowlist.items()}
+    )
     entries: list[dict[str, Any]] = []
-    seen_provider_tool_names: set[str] = set()
     descriptors: list[ProviderMediatedToolRuntimeGenerationDescriptor] = []
     for provider_name in sorted(policies):
         descriptors.extend(policies[provider_name].runtime_generation_descriptors_for_agent(agent))
 
     for descriptor in sorted(descriptors, key=lambda item: (item.provider_name, item.name)):
-        if descriptor.name in reserved_tool_names:
+        if (
+            allowed_by_provider is not None
+            and descriptor.name not in allowed_by_provider.get(descriptor.provider_name, set())
+        ):
             continue
-        if descriptor.name in seen_provider_tool_names:
-            continue
-        seen_provider_tool_names.add(descriptor.name)
         entries.append(
             {
                 "source": {"kind": "provider", "name": descriptor.provider_name},

@@ -51,6 +51,7 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeNotifyResult,
     AgentRuntimeTerminal,
 )
+from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
@@ -120,10 +121,25 @@ def _post_lifecycle_activity(
     thread_id: Optional[str],
     content: Dict[str, Any],
     *,
+    agent_id: str,
     app_key: Optional[str],
     description: str,
 ) -> None:
     if not thread_id:
+        return
+    decision = default_tool_service().provider_conversation_decision(
+        agent_id,
+        provider="linear",
+        operation="activity",
+        source=f"linear_agent_session:{thread_id}",
+        provider_identity=app_key,
+    )
+    if not decision.allowed:
+        logger.warning(
+            "Skipped Linear %s AgentActivity because ToolService denied activity access: %s",
+            description,
+            decision.reason,
+        )
         return
     try:
         app_client.create_agent_activity(thread_id, content, app_key=app_key)
@@ -149,6 +165,7 @@ def _post_accepted_activity(
                 f"CAO accepted this Linear session and is starting or notifying {actor_name}."
             ),
         },
+        agent_id=resolved.agent.id,
         app_key=resolved.presence.app_key,
         description="accepted",
     )
@@ -157,7 +174,7 @@ def _post_accepted_activity(
 def _post_startup_failed_activity(
     *,
     thread_id: Optional[str],
-    app_key: Optional[str],
+    resolved: LinearResolvedPresence,
 ) -> None:
     _post_lifecycle_activity(
         thread_id,
@@ -168,7 +185,8 @@ def _post_startup_failed_activity(
                 "The inbox notification was saved for retry."
             ),
         },
-        app_key=app_key,
+        agent_id=resolved.agent.id,
+        app_key=resolved.presence.app_key,
         description="startup failure",
     )
 
@@ -535,6 +553,7 @@ def handle_provider_event(event: LinearIssueContextEvent) -> Optional[str]:
                     "CAO has started the mapped terminal and is reading the Linear context."
                 ),
             },
+            agent_id=resolved.agent.id,
             app_key=app_key,
             description="ready",
         )
@@ -721,7 +740,7 @@ def notify_agent_for_persisted_event(
         if result.error and result.terminal_id is None:
             _post_startup_failed_activity(
                 thread_id=thread_id,
-                app_key=resolved.presence.app_key,
+                resolved=resolved,
             )
 
     logger.info(

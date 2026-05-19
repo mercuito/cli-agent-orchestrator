@@ -44,6 +44,7 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeNotifyResult,
     AgentRuntimeStatus,
 )
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
 
 
 def _test_session(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,6 +62,27 @@ def _test_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+    tool_service = _ProviderConversationToolService()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        lambda: tool_service,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.routes.runtime.default_tool_service",
+        lambda: tool_service,
+    )
+
+
+class _ProviderConversationToolService:
+    def provider_conversation_decision(self, *args, **kwargs) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
+
+    def provider_conversation_decision_for_inbox(self, *args, **kwargs) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
 
 
 def _attach_reply_terminal() -> str:

@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from cli_agent_orchestrator.agent import AgentRegistry
 from cli_agent_orchestrator.services.agent_manager import (
     AgentManager,
     default_agent_manager,
 )
+from cli_agent_orchestrator.services.tool_service import ToolService
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderMediatedToolDefinition,
     ProviderToolAccess,
@@ -63,6 +64,8 @@ class ProviderMediatedToolInvocationService:
     agent_registry: AgentRegistry | None = None
     agent_manager: AgentManager | None = None
     terminal_metadata_resolver: TerminalMetadataResolver | None = None
+    tool_service: ToolService | None = None
+    built_in_tool_names: Iterable[str] = ()
 
     def invoke(
         self,
@@ -75,9 +78,22 @@ class ProviderMediatedToolInvocationService:
         """Invoke a provider-mediated tool for an agent-managed terminal."""
         normalized_tool_name = tool_name.strip()
         agent = self._resolve_agent_for_terminal(terminal_id)
-        policy = self._resolve_policy(provider_name)
+        policy = self._resolve_policy(provider_name, agent.id)
         tool = self._resolve_tool(policy, normalized_tool_name)
         access = self._resolve_access(policy, agent.id, normalized_tool_name)
+        decision = self._tool_service().can_invoke(
+            agent.id,
+            normalized_tool_name,
+            provider_name=policy.provider_name,
+            built_in_tool_names=self.built_in_tool_names,
+            context={"terminal_id": terminal_id},
+        )
+        if not decision.allowed:
+            raise ProviderMediatedToolAccessDenied(
+                "Provider-mediated tool call denied by ToolService",
+                reason=decision.reason,
+                diagnostics=decision.diagnostics,
+            )
         context = ProviderToolInvocationContext(
             provider_name=policy.provider_name,
             tool_name=normalized_tool_name,
@@ -102,17 +118,14 @@ class ProviderMediatedToolInvocationService:
         terminals without widening provider access.
         """
         agent = self._resolve_agent_for_terminal(terminal_id)
-        visible: list[tuple[str, ProviderMediatedToolDefinition]] = []
-        for policy in self.policies.values():
-            for access in policy.access_for_agent(agent):
-                tool = policy.tools.get(access.tool_name)
-                if tool is not None:
-                    visible.append((policy.provider_name, tool))
-        return tuple(sorted(visible, key=lambda item: (item[0], item[1].name)))
+        return self._tool_service().provider_mediated_tools_for_agent(
+            agent.id,
+            built_in_tool_names=self.built_in_tool_names,
+        )
 
-    def _resolve_policy(self, provider_name: str) -> ProviderToolAccessPolicy:
+    def _resolve_policy(self, provider_name: str, agent_id: str) -> ProviderToolAccessPolicy:
         normalized = provider_name.strip()
-        policy = self.policies.get(normalized)
+        policy = self._tool_service().provider_policies_for_agent(agent_id).get(normalized)
         if policy is None:
             raise ProviderMediatedToolAccessDenied(
                 f"Provider-mediated tool call denied: unknown or unavailable provider {normalized!r}",
@@ -302,6 +315,18 @@ class ProviderMediatedToolInvocationService:
         from cli_agent_orchestrator.clients.database import get_terminal_metadata
 
         return get_terminal_metadata
+
+    def _tool_service(self) -> ToolService:
+        if self.tool_service is not None:
+            return self.tool_service
+        manager = self.agent_manager
+        if manager is None and self.agent_registry is not None:
+            manager = AgentManager(configured_agents=self.agent_registry)
+        return ToolService(
+            agent_manager=manager or default_agent_manager(),
+            terminal_metadata_resolver=self._terminal_metadata_resolver(),
+            provider_policy_loader=lambda _registry: self.policies,
+        )
 
 
 def _bounded_text(value: Any, *, limit: int) -> str:

@@ -134,7 +134,7 @@ class TestGeminiCliProviderInitialization:
 
         settings = json.loads(settings_file.read_text())
         assert "cao-mcp-server" in settings["mcpServers"]
-        assert settings["mcpServers"]["cao-mcp-server"]["command"] == "npx"
+        assert settings["mcpServers"]["cao-mcp-server"]["command"] == "cao-mcp-server"
         assert settings["mcpServers"]["cao-mcp-server"]["env"]["CAO_TERMINAL_ID"] == "term-1"
         # Command should be plain gemini launch (no chained mcp add)
         call_args = mock_tmux.send_keys.call_args_list[1]
@@ -862,7 +862,8 @@ class TestGeminiCliProviderBuildCommand:
         # Command should be plain gemini launch (no && chaining)
         assert command == "gemini --yolo --sandbox false"
         assert " && " not in command
-        assert len(provider._mcp_server_names) == 2
+        assert len(provider._mcp_server_names) == 3
+        assert "cao-mcp-server" in provider._mcp_server_names
         # Both servers written to settings.json
         import json
 

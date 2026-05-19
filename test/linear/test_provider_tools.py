@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from typing import Any, Mapping
 
 import pytest
@@ -68,6 +69,8 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     LinearWorkspaceProvider,
     LinearWorkspaceProviderConfigError,
 )
+from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.services.tool_service import ToolService
 from cli_agent_orchestrator.mcp_server.provider_tools import (
     register_provider_mediated_mcp_tools,
 )
@@ -226,13 +229,16 @@ def _mcp_for_provider(
     workspace_setup_enabled: bool = False,
 ):
     policy = provider.provider_tool_access()
+    agents = _agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None)
+    tool_service = _tool_service_for_test(policy, agents) if workspace_setup_enabled else None
     mcp = FastMCP(f"linear-tools-{terminal_id}", mask_error_details=False)
     registered = register_provider_mediated_mcp_tools(
         terminal_id=terminal_id,
         mcp_instance=mcp,
         policies={"linear": policy},
-        agent_registry=_agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None),
+        agent_registry=agents,
         terminal_metadata_resolver=_terminal_metadata,
+        tool_service=tool_service,
     )
     return mcp, registered
 
@@ -263,6 +269,7 @@ create_parent_issues = ["CAO-28"]
 allow_top_level_create = true
 update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
 """,
+        workspace_setup_enabled=True,
     )
     policy = provider.provider_tool_access()
 
@@ -685,11 +692,55 @@ def _service(
     *,
     workspace_setup_enabled: bool = False,
 ) -> ProviderMediatedToolInvocationService:
+    policy = provider.provider_tool_access()
+    agents = _agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None)
     return ProviderMediatedToolInvocationService(
-        policies={"linear": provider.provider_tool_access()},
-        agent_registry=_agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None),
+        policies={"linear": policy},
+        agent_registry=agents,
         terminal_metadata_resolver=_terminal_metadata,
+        tool_service=_tool_service_for_test(policy, agents) if workspace_setup_enabled else None,
     )
+
+
+def _tool_service_for_test(
+    policy,
+    agents: AgentRegistry,
+) -> ToolService:
+    team_policy = replace(
+        policy,
+        access=tuple(
+            replace(
+                access,
+                source_location=(
+                    f"workspace_team.cao_delivery.{access.source_location}"
+                ),
+            )
+            for access in policy.access
+        ),
+    )
+    return ToolService(
+        agent_manager=AgentManager(configured_agents=agents),
+        terminal_metadata_resolver=_terminal_metadata,
+        provider_policy_loader=lambda _registry: {"linear": team_policy},
+        collaboration_manager_factory=lambda _registry: _WorkspaceSetupManager(team_policy),
+    )
+
+
+class _WorkspaceSetupManager:
+    def __init__(self, policy) -> None:
+        self._policy = policy
+
+    def setup_for_agent(self, agent):
+        return _WorkspaceSetup()
+
+    def authorized_tool_access_locations(self, provider_name: str):
+        if provider_name != "linear":
+            return ()
+        return tuple(access.source_location for access in self._policy.access)
+
+
+class _WorkspaceSetup:
+    providers = ("linear",)
 
 
 @pytest.mark.asyncio
@@ -794,7 +845,6 @@ tools = ["{CREATE_ISSUE_TOOL}"]
 create_team_ids = ["CAO"]
 create_parent_issues = ["CAO-25", "parent-25"]
 """,
-        workspace_setup_enabled=True,
     )
     dispatcher = CaoEventDispatcher()
     register_linear_cao_events(dispatcher)
@@ -811,6 +861,19 @@ create_parent_issues = ["CAO-25", "parent-25"]
         "cli_agent_orchestrator.linear.workspace_context_tool_results."
         "publish_linear_issue_created_event",
         publish_once,
+    )
+    from cli_agent_orchestrator.linear.workspace_context_resolver import (
+        resolve_linear_workspace_event,
+    )
+
+    class _ContextResolver:
+        def resolve_event_context(self, agent, event):
+            return resolve_linear_workspace_event(event)
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.workspace_context_tool_results."
+        "default_workspace_collaboration_manager",
+        lambda: _ContextResolver(),
     )
 
     def fake_graphql(query, variables=None, *, access_token=None, app_key=None):
@@ -832,7 +895,7 @@ create_parent_issues = ["CAO-25", "parent-25"]
 
     monkeypatch.setattr(app_client, "linear_graphql", fake_graphql)
 
-    _service(provider, workspace_setup_enabled=True).invoke(
+    _service(provider).invoke(
         terminal_id="terminal-context",
         provider_name="linear",
         tool_name=CREATE_ISSUE_TOOL,

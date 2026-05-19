@@ -31,6 +31,7 @@ from cli_agent_orchestrator.providers.base import (
     ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
+from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
 from cli_agent_orchestrator.utils.claude_runtime import (
     CLAUDE_RUNTIME_MATERIALIZATION_SCHEMA_VERSION,
     CLAUDE_RUNTIME_STATE_SCHEMA_VERSION,
@@ -550,9 +551,14 @@ class ClaudeCodeProvider(BaseProvider):
                 # can identify the current terminal for handoff/assign operations.
                 # Claude Code does not automatically forward parent shell env vars
                 # to MCP subprocesses, so we inject it explicitly via the env field.
-                if agent.mcp_servers:
+                mcp_servers = tool_service_for_loaded_agent(
+                    agent,
+                    fallback_agent_id=self._agent_id,
+                    cli_provider="claude_code",
+                ).materialized_mcp_servers_for_agent(self._agent_id)
+                if mcp_servers:
                     mcp_config = {}
-                    for server_name, server_config in agent.mcp_servers.items():
+                    for server_name, server_config in mcp_servers.items():
                         if isinstance(server_config, dict):
                             mcp_config[server_name] = dict(server_config)
                         else:

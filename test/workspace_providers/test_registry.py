@@ -229,7 +229,7 @@ def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_ac
     assert policies == {}
 
 
-def test_provider_tool_policy_loading_prunes_linear_access_outside_workspace_setup(
+def test_provider_tool_policy_loading_makes_teamed_local_access_inactive(
     tmp_path, monkeypatch
 ):
     enabled = tmp_path / "workspace-providers.toml"
@@ -272,4 +272,4 @@ def test_provider_tool_policy_loading_prunes_linear_access_outside_workspace_set
         agents_config_path=agents,
     )
 
-    assert [entry.agent_id for entry in policies["linear"].access] == ["implementation_partner"]
+    assert [entry.agent_id for entry in policies["linear"].access] == ["discovery_partner"]

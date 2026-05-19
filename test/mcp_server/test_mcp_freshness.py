@@ -196,6 +196,7 @@ def test_provider_tool_cannot_occupy_reserved_hidden_builtin_name():
         agent=_agent(),
         built_in_tools=(("builtin_hidden", _builtin_hidden, {}),),
         built_in_tool_allowlist=[],
+        provider_tool_allowlist={"fake": ()},
         provider_policies={"fake": _policy(visible_tool=_provider_tool("builtin_hidden"))},
         baton_enabled=False,
     )

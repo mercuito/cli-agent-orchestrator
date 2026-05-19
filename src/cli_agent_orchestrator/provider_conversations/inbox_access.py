@@ -123,6 +123,7 @@ def read_inbox_message(
             delivery,
             caller_terminal_id=caller_terminal_id,
             provider=thread_row.provider,
+            operation="read",
             thread_metadata=_thread_metadata(thread_row),
             thread_raw_snapshot=_thread_raw_snapshot(thread_row),
             message_metadata=message_metadata,

@@ -11,6 +11,7 @@ from pydantic.dataclasses import dataclass
 from cli_agent_orchestrator.agent import (
     Agent,
     AgentConfigError,
+    AgentRegistry,
     AgentWorkspaceConfig,
     LinearConfig,
     LinearToolAccessConfig,
@@ -35,8 +36,14 @@ from cli_agent_orchestrator.runtime.events import (
     notification_delivery_event,
     workspace_runtime_event,
 )
-from cli_agent_orchestrator.services.agent_manager import AgentStatus
+from cli_agent_orchestrator.services.agent_manager import AgentManager, AgentStatus
+from cli_agent_orchestrator.services.tool_service import ToolService
 from cli_agent_orchestrator.utils.dashboard_links import create_agent_dashboard_token
+from cli_agent_orchestrator.workspace_providers.tool_access import (
+    ProviderMediatedToolDefinition,
+    ProviderToolAccess,
+    ProviderToolAccessPolicy,
+)
 from cli_agent_orchestrator.workspace_setups import WorkspaceSetup, WorkspaceSetupDiagnostic, WorkspaceTeam
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
@@ -201,6 +208,70 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
     assert body[0]["agent_dashboard_token"]
     assert body[0]["active_terminal_id"] == "abcd1234"
     assert body[1]["agent_id"] == "reviewer"
+
+
+def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monkeypatch):
+    agent = replace(_agent(), cao_tools=("send_message",))
+    policy = ProviderToolAccessPolicy(
+        provider_name="linear",
+        tools={
+            "assign": ProviderMediatedToolDefinition(
+                name="assign",
+                description="Conflicting provider tool",
+                input_schema={},
+                handler=lambda _context, _arguments: {"ok": True},
+            )
+        },
+        hooks={},
+        access=(
+            ProviderToolAccess(
+                provider_name="linear",
+                tool_name="assign",
+                agent_id=agent.id,
+                pre_hooks=(),
+                post_hooks=(),
+                source_location="agents.implementation_partner.linear.tool_access.conflict",
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.default_agent_manager",
+        lambda: _FakeAgentManager((_status(active=False),)),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main._build_mcp_surface_descriptor_for_agent",
+        lambda _agent: {
+            "schema_version": "cao-agent-mcp-surface.v1",
+            "tools": [
+                {
+                    "source": {"kind": "cao_builtin", "name": "cao"},
+                    "name": "send_message",
+                    "description": "Send a message to another CAO agent.",
+                    "input_schema": {"type": "object"},
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main._available_builtin_cao_tool_names_for_access",
+        lambda: ("send_message", "assign"),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.api.main.tool_service_for_loaded_agent",
+        lambda loaded_agent, *, fallback_agent_id, cli_provider: ToolService(
+            agent_manager=AgentManager(configured_agents=AgentRegistry({loaded_agent.id: loaded_agent})),
+            provider_policy_loader=lambda _registry: {"linear": policy},
+        ),
+    )
+
+    response = client.get("/agents")
+
+    assert response.status_code == 200
+    effective_access = response.json()[0]["effective_tool_access"]
+    assert effective_access["built_in_cao_tools"] == ["send_message"]
+    assert effective_access["provider_mediated_tools"] == {"linear": []}
+    assert effective_access["allowed_tools"] == ["send_message"]
 
 
 def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(client, monkeypatch):

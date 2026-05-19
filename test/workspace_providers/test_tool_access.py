@@ -16,8 +16,6 @@ from cli_agent_orchestrator.workspace_providers import (
     ProviderToolHookPhase,
     ProviderToolInvocationContext,
     ProviderToolPreCallResult,
-    WorkspaceProviderConfigError,
-    load_provider_tool_access_policies,
     normalize_provider_tool_access,
 )
 
@@ -195,7 +193,7 @@ def test_fake_provider_config_normalizes_to_agent_scoped_tool_access():
         }
     )
 
-    policy = load_provider_tool_access_policies([provider])["fake"]
+    policy = provider.provider_tool_access()
 
     agent_a = _agents().get("agent_a")
     agent_b = _agents().get("agent_b")
@@ -308,29 +306,3 @@ def test_access_entries_may_omit_pre_call_hooks():
     assert len(access) == 1
     assert access[0].pre_hooks == ()
     assert access[0].agent_id == "agent_a"
-
-
-def test_duplicate_provider_tool_access_policy_names_fail_clearly():
-    class StaticProvider:
-        name = "fake"
-
-        def __init__(self):
-            self._policy = _normalize(
-                (
-                    ProviderToolAccessRequest(
-                        tool_name="cao_fake.lookup",
-                        agent_id="agent_a",
-                        pre_hooks=("always_allow",),
-                        location="partners.discovery",
-                    ),
-                )
-            )
-
-        def initialize(self):
-            pass
-
-        def provider_tool_access(self):
-            return self._policy
-
-    with pytest.raises(WorkspaceProviderConfigError, match="Duplicate provider tool access policy"):
-        load_provider_tool_access_policies([StaticProvider(), StaticProvider()])

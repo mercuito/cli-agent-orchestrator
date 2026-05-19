@@ -29,7 +29,10 @@ from cli_agent_orchestrator.linear.provider_tools import (
 from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
 from cli_agent_orchestrator.utils.env import load_env_vars
 from cli_agent_orchestrator.workspace_providers.registry import WorkspaceProviderConfigError
-from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
+from cli_agent_orchestrator.workspace_providers.tool_access import (
+    ProviderConversationAccessRequirement,
+    ProviderToolAccessPolicy,
+)
 
 APP_KEY_PATTERN = re.compile(r"[^A-Za-z0-9]+")
 _default_linear_workspace_provider: Optional["LinearWorkspaceProvider"] = None
@@ -654,6 +657,31 @@ class LinearWorkspaceProvider:
             config=config,
             agent_registry=self._agent_registry,
         ).provider_tool_access()
+
+    def provider_conversation_access(self) -> tuple[ProviderConversationAccessRequirement, ...]:
+        """Return Linear provider-conversation operations CAO may authorize."""
+        return (
+            ProviderConversationAccessRequirement(
+                provider_name=self.name,
+                operation="preview",
+                required_identity="workspace_team_presence",
+            ),
+            ProviderConversationAccessRequirement(
+                provider_name=self.name,
+                operation="read",
+                required_identity="workspace_team_presence",
+            ),
+            ProviderConversationAccessRequirement(
+                provider_name=self.name,
+                operation="reply",
+                required_identity="workspace_team_presence",
+            ),
+            ProviderConversationAccessRequirement(
+                provider_name=self.name,
+                operation="activity",
+                required_identity="workspace_team_presence",
+            ),
+        )
 
     def _load_config(self) -> LinearProviderConfig:
         if self._config is None:

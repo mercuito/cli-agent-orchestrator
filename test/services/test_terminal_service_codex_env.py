@@ -269,7 +269,7 @@ def test_create_terminal_agent_launch_context_uses_resolved_launch_values(
 
     launch_context = prepare_runtime.call_args.kwargs["launch_context"]
     assert launch_context.session_name == "cao-implementation-partner"
-    assert launch_context.allowed_tools == ["fs_read"]
+    assert launch_context.allowed_tools == ["fs_read", "@cao-mcp-server"]
     assert launch_context.provider_data_dir == (
         tmp_path
         / "agents"

@@ -27,6 +27,7 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 from cli_agent_orchestrator.services import terminal_service
+from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.utils.codex_home import cleanup_codex_home, prepare_codex_home
 
 
@@ -229,9 +230,7 @@ def run_codex_diagnostics(
 
             server_names = _extract_mcp_server_names(payload)
 
-            expected: set[str] = {"cao-mcp-server"}
-            if isinstance(profile.mcp_servers, dict):
-                expected |= set(profile.mcp_servers.keys())
+            expected = set(default_tool_service().materialized_mcp_servers_for_agent(profile.id))
 
             missing = sorted([name for name in expected if name not in server_names])
             if missing:

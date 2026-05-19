@@ -141,6 +141,7 @@ export function AgentConfigTab({
   }
 
   const schemas = providerSchema.schemas
+  const inactiveLocalGrantNames = Object.keys(agent.effective_tool_access?.inactive_local_grants ?? {})
   const selectedWorkspaceTeam = teams.find(team => team.id === workspaceTeamDraft)
   const derivedWorkspaceSetup = editing
     ? workspaceTeamDraft
@@ -249,6 +250,11 @@ export function AgentConfigTab({
             <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200">
               Raw agent.toml (unstructured fields)
             </summary>
+            {!!inactiveLocalGrantNames.length && (
+              <p className="border-t border-amber-500/20 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                ToolService marks these agent-local tool grants inactive for this teamed agent: {inactiveLocalGrantNames.join(', ')}
+              </p>
+            )}
             <textarea
               aria-label={`${agent.agent_id} agent.toml`}
               value={tomlDraft}
@@ -282,6 +288,11 @@ export function AgentConfigTab({
             <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200">
               Raw agent.toml (unstructured fields)
             </summary>
+            {!!inactiveLocalGrantNames.length && (
+              <p className="border-t border-amber-500/20 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                ToolService marks these agent-local tool grants inactive for this teamed agent: {inactiveLocalGrantNames.join(', ')}
+              </p>
+            )}
             <pre className="max-h-[300px] overflow-auto rounded-b-lg border-t border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">
               {formatAgentTomlExcluding(agent.config, STRUCTURED_FIELD_KEYS)}
             </pre>

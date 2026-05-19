@@ -24,6 +24,7 @@ from cli_agent_orchestrator.provider_conversations.persistence import (
     upsert_thread,
     upsert_work_item,
 )
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
 from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 AUTHORIZED_AGENT_ID = "implementation_partner"
@@ -31,7 +32,17 @@ AUTHORIZED_RECEIVER_ID = f"agent:{AUTHORIZED_AGENT_ID}:context:default"
 
 
 @pytest.fixture
-def test_session(monkeypatch):
+def preview_tool_service(monkeypatch):
+    service = _PreviewToolService()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        lambda: service,
+    )
+    return service
+
+
+@pytest.fixture
+def test_session(monkeypatch, preview_tool_service):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -48,6 +59,16 @@ def test_session(monkeypatch):
     TestSession = sessionmaker(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", TestSession)
     return TestSession
+
+
+class _PreviewToolService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple, dict]] = []
+        self.decision = ToolAccessDecision.allow(reason="provider_conversation_allowed")
+
+    def provider_conversation_decision(self, *args, **kwargs) -> ToolAccessDecision:
+        self.calls.append((args, kwargs))
+        return self.decision
 
 
 def _persist_message(
@@ -84,8 +105,13 @@ def _persist_message(
     return work_item, thread, message
 
 
-def test_provider_conversation_notification_uses_thread_source_and_internal_thread_id(test_session):
-    _, thread, message = _persist_message()
+def test_provider_conversation_notification_uses_thread_source_and_internal_thread_id(
+    test_session, preview_tool_service
+):
+    _, thread, message = _persist_message(
+        provider="linear",
+        metadata={"linear_app_key": "implementation_partner"},
+    )
 
     result = create_notification_for_message(
         provider_message_id=message.id,
@@ -101,6 +127,35 @@ def test_provider_conversation_notification_uses_thread_source_and_internal_thre
     assert result.delivery.message.route_id == str(thread.id)
     assert result.delivery.notification.receiver_id == AUTHORIZED_RECEIVER_ID
     assert result.delivery.notification.status == MessageStatus.PENDING
+    assert preview_tool_service.calls == [
+        (
+            (AUTHORIZED_AGENT_ID,),
+            {
+                "provider": "linear",
+                "operation": "preview",
+                "source": f"provider_conversation_message:{message.id}",
+                "provider_identity": "implementation_partner",
+            },
+        )
+    ]
+
+
+def test_provider_conversation_notification_denies_preview_before_inbox_write(
+    test_session, preview_tool_service
+):
+    _, _, message = _persist_message()
+    preview_tool_service.decision = ToolAccessDecision.deny("provider_conversation_denied")
+
+    with pytest.raises(WorkspaceSetupConfigError, match="preview is not authorized"):
+        create_notification_for_message(
+            provider_message_id=message.id,
+            receiver_id=AUTHORIZED_RECEIVER_ID,
+            authorized_agent_id=AUTHORIZED_AGENT_ID,
+        )
+
+    with db_module.SessionLocal() as session:
+        assert session.query(db_module.InboxNotificationModel).count() == 0
+        assert session.query(db_module.InboxMessageModel).count() == 0
 
 
 def test_message_backed_notification_body_is_compact_and_message_body_is_durable(test_session):

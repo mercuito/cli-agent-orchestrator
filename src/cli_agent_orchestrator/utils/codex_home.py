@@ -17,8 +17,10 @@ from typing import Any, Dict, Iterable, Optional
 
 import tomli
 
-from cli_agent_orchestrator.agent import load_agent
+from cli_agent_orchestrator.agent import AgentRegistry, load_agent
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
+from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.services.tool_service import ToolService
 from cli_agent_orchestrator.utils.config_inheritance import (
     InheritPolicy,
     apply_inherit_policy,
@@ -261,6 +263,9 @@ def build_codex_home_materialization(
         (Path.home() / ".codex") if global_codex_home_dir is None else global_codex_home_dir
     )
     agent = load_agent(agent_id)
+    tool_service = ToolService(
+        agent_manager=AgentManager(configured_agents=AgentRegistry({agent.id: agent}))
+    )
     skill_names = _agent_skill_names(agent)
 
     # Start from a filtered slice of the user's global ~/.codex/config.toml.
@@ -279,7 +284,7 @@ def build_codex_home_materialization(
     if agent.model:
         base_config["model"] = agent.model
 
-    codex_config = agent.codex_config
+    codex_config = tool_service.codex_config_for_agent(agent.id)
     if isinstance(codex_config, dict):
         deep_merge(base_config, codex_config)
 
@@ -302,8 +307,9 @@ def build_codex_home_materialization(
     if isinstance(base_config.get("mcp_servers"), dict):
         mcp_servers = base_config["mcp_servers"]  # type: ignore[assignment]
 
-    if isinstance(agent.mcp_servers, dict):
-        for name, server in agent.mcp_servers.items():
+    effective_mcp_servers = tool_service.materialized_mcp_servers_for_agent(agent.id)
+    if isinstance(effective_mcp_servers, dict):
+        for name, server in effective_mcp_servers.items():
             if isinstance(server, dict):
                 entry: Dict[str, Any] = {}
                 if "command" in server:
@@ -317,13 +323,6 @@ def build_codex_home_materialization(
                 entry["enabled"] = bool(server.get("enabled", True))
                 mcp_servers[name] = entry
 
-    cao_existing = mcp_servers.get("cao-mcp-server")
-    cao_entry: Dict[str, Any] = {"command": "cao-mcp-server", "enabled": True}
-    if isinstance(cao_existing, dict):
-        for key in ("env", "cwd"):
-            if key in cao_existing:
-                cao_entry[key] = cao_existing[key]
-    mcp_servers["cao-mcp-server"] = cao_entry
     base_config["mcp_servers"] = mcp_servers
 
     return CodexHomeMaterialization(

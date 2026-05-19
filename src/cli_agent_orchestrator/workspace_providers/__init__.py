@@ -25,7 +25,6 @@ from cli_agent_orchestrator.workspace_providers.registry import (
     is_workspace_provider_enabled,
     load_enabled_provider_tool_access_policies,
     load_enabled_workspace_providers,
-    load_provider_tool_access_policies,
     resolve_agent_for_runtime,
     workspace_provider_config_exists,
 )
@@ -84,7 +83,6 @@ __all__ = [
     "is_workspace_provider_enabled",
     "load_enabled_workspace_providers",
     "load_enabled_provider_tool_access_policies",
-    "load_provider_tool_access_policies",
     "normalize_provider_tool_access",
     "resolve_agent_for_runtime",
     "workspace_provider_config_exists",

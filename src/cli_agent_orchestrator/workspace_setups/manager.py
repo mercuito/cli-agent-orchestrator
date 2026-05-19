@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol
 
@@ -549,25 +549,6 @@ class WorkspaceCollaborationManager:
                 if mapping.mapping_kind == "tool_access":
                     locations.add(mapping.provider_value)
         return frozenset(locations)
-
-    def team_bound_provider_tool_access_policies(self, policies):
-        """Prune provider tool policies to team-authorized access mappings."""
-        bound = {}
-        for provider_name, policy in policies.items():
-            normalized_provider = _normalize_provider(provider_name)
-            if normalized_provider not in self._provider_adapters:
-                bound[provider_name] = policy
-                continue
-            authorized_locations = self.authorized_tool_access_locations(normalized_provider)
-            bound[provider_name] = replace(
-                policy,
-                access=tuple(
-                    entry
-                    for entry in policy.access
-                    if entry.source_location in authorized_locations
-                ),
-            )
-        return bound
 
     def resolve_event_context(
         self, agent: Agent, event: CaoEvent

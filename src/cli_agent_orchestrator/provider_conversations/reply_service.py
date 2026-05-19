@@ -122,6 +122,7 @@ def reply_to_inbox_message(
         delivery,
         caller_terminal_id=caller_terminal_id,
         provider=thread.provider,
+        operation="reply",
         thread_metadata=thread.metadata,
         thread_raw_snapshot=thread.raw_snapshot,
         error=ProviderConversationReplyError,

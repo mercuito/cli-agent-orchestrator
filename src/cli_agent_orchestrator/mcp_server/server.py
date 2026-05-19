@@ -1,10 +1,12 @@
 """CLI Agent Orchestrator MCP Server implementation."""
 
 import asyncio
+import functools
+import inspect
 import logging
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 from urllib.parse import quote
 
 import requests  # type: ignore[import-untyped]
@@ -48,12 +50,12 @@ from cli_agent_orchestrator.provider_conversations.reply_service import (
     reply_to_inbox_message as route_provider_inbox_reply,
 )
 from cli_agent_orchestrator.services import baton_service
+from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
-from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
+from cli_agent_orchestrator.services.tool_service import ToolService, default_tool_service
 from cli_agent_orchestrator.utils.terminal import wait_until_terminal_status
 from cli_agent_orchestrator.workspace_providers.registry import (
     WorkspaceProviderConfigError,
-    load_enabled_provider_tool_access_policies,
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderToolAccessConfigError,
@@ -96,6 +98,21 @@ mcp = FastMCP(
 _PENDING_TOOLS: List[Tuple[str, Callable, Dict[str, Any]]] = []
 
 
+def built_in_cao_tool_names(
+    pending: Iterable[Tuple[str, Callable, Dict[str, Any]]] | None = None,
+    *,
+    include_disabled: bool = False,
+) -> tuple[str, ...]:
+    """Return currently available CAO-owned built-in MCP tool definition names."""
+    tools = _PENDING_TOOLS if pending is None else pending
+    baton_enabled = is_baton_enabled()
+    return tuple(
+        name
+        for name, _, _ in tools
+        if include_disabled or baton_enabled or name not in BATON_MCP_TOOL_NAMES
+    )
+
+
 def _deferred_tool(name: Optional[str] = None, **tool_kwargs: Any) -> Callable:
     """Drop-in replacement for FastMCP's @mcp.tool() that defers registration.
 
@@ -114,76 +131,94 @@ def _deferred_tool(name: Optional[str] = None, **tool_kwargs: Any) -> Callable:
 
 def _register_tools(
     pending: List[Tuple[str, Callable, Dict[str, Any]]],
-    allowlist: Optional[List[str]],
     mcp_instance: Any,
+    *,
+    terminal_id: str | None = None,
+    tool_service: ToolService | None = None,
 ) -> List[str]:
-    """Apply FastMCP's @mcp.tool() to each pending tool whose name is in the allowlist.
+    """Apply FastMCP's @mcp.tool() to tools registered by ToolService.
 
     Args:
         pending: Items from the deferred registry.
-        allowlist: Tool names to register. ``None`` = register all (permissive
-            fallback for agents without per-profile CAO MCP tool configuration).
-            ``[]`` = register nothing (explicit deny-all).
         mcp_instance: The FastMCP instance to register against.
 
     Returns:
         Names of tools actually registered, in the order they appeared.
     """
     registered: List[str] = []
-    allowed: Optional[set] = None if allowlist is None else set(allowlist)
-    baton_enabled = is_baton_enabled()
-    for tool_name, fn, kwargs in pending:
-        if tool_name in BATON_MCP_TOOL_NAMES and not baton_enabled:
-            logger.info(
-                "Tool '%s' belongs to disabled baton feature — skipping registration",
-                tool_name,
+    service = tool_service or default_tool_service()
+    built_in_names = built_in_cao_tool_names(pending)
+    if not terminal_id:
+        logger.warning(
+            "No CAO_TERMINAL_ID is available; ToolService cannot resolve MCP "
+            "tool registration, so built-in CAO MCP tools are not registered"
+        )
+        allowed: set[str] = set()
+    else:
+        try:
+            registration = service.registered_tools_for_terminal(
+                terminal_id,
+                built_in_tool_names=built_in_names,
             )
+            allowed = set(registration.built_in_tools)
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve ToolService registration for terminal %r: %s. "
+                "Registering no built-in CAO MCP tools.",
+                terminal_id,
+                exc,
+            )
+            allowed = set()
+    for tool_name, fn, kwargs in pending:
+        if tool_name not in allowed:
+            logger.info("Tool %r denied by ToolService registration decision", tool_name)
             continue
-        if allowed is not None and tool_name not in allowed:
-            logger.info(f"Tool '{tool_name}' not in allowlist — skipping registration")
-            continue
-        mcp_instance.tool(**kwargs)(fn)
+        mcp_instance.tool(**kwargs)(
+            _toolservice_authorized_callable(
+                tool_name=tool_name,
+                fn=fn,
+                terminal_id=terminal_id,
+                tool_service=service,
+                built_in_tool_names=lambda: built_in_cao_tool_names(pending),
+            )
+        )
         registered.append(tool_name)
     return registered
 
 
-# Hard budget for the HTTP call during MCP server startup. Provider MCP
-# clients commonly kill the stdio connection after ~30s with no handshake
-# response, so we must finish the whole startup (resolve + register +
-# mcp.run()) well under that. Keep this short; on failure we fall open
-# and register everything.
-_ALLOWLIST_RESOLVE_TIMEOUT_SEC = 3.0
+def _toolservice_authorized_callable(
+    *,
+    tool_name: str,
+    fn: Callable,
+    terminal_id: str | None,
+    tool_service: ToolService,
+    built_in_tool_names: Callable[[], Iterable[str]],
+) -> Callable:
+    """Wrap a FastMCP callable with per-invocation ToolService authorization."""
 
-
-def _resolve_allowlist_for_terminal(terminal_id: str) -> Optional[List[str]]:
-    """Ask cao-server which tools this terminal's agent permits.
-
-    Fail-open on any error: a None return means "don't filter, register all
-    tools." This keeps agents with no ``cao_tools`` allowlist working while
-    users opt in to filtering by configuring their agents. Fail-closed
-    behavior is a later, opt-in choice.
-
-    Any hang past the short budget also fails open — a slow API call at
-    startup would otherwise exceed the provider MCP client's handshake
-    timeout and kill the whole connection, which is strictly worse than
-    not filtering.
-    """
-    try:
-        response = requests.get(
-            f"{API_BASE_URL}/terminals/{terminal_id}",
-            timeout=_ALLOWLIST_RESOLVE_TIMEOUT_SEC,
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if not terminal_id:
+            raise PermissionError(
+                f"CAO MCP tool {tool_name!r} denied by ToolService: "
+                "missing terminal context"
+            )
+        decision = tool_service.can_invoke_for_terminal(
+            terminal_id,
+            tool_name,
+            built_in_tool_names=built_in_tool_names(),
         )
-        response.raise_for_status()
-        metadata = response.json()
-        agent_id = metadata["agent_id"]
-        agent = load_agent(agent_id)
-        return resolve_cao_tool_allowlist(agent)
-    except Exception as e:
-        logger.warning(
-            f"Failed to resolve tool allowlist for terminal {terminal_id!r}: {e}. "
-            "Registering all tools (permissive fallback)."
-        )
-        return None
+        if not decision.allowed:
+            raise PermissionError(
+                f"CAO MCP tool {tool_name!r} denied by ToolService: {decision.reason}"
+            )
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    wrapper.__signature__ = inspect.signature(fn)  # type: ignore[attr-defined]
+    return wrapper
 
 
 def build_mcp_surface_descriptor_for_agent(
@@ -193,18 +228,24 @@ def build_mcp_surface_descriptor_for_agent(
     provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
 ) -> Dict[str, Any]:
     """Build the stable MCP surface descriptor for one agent."""
-    built_in_allowlist = resolve_cao_tool_allowlist(agent)
+    service = ToolService(
+        agent_manager=AgentManager(
+            configured_agents=agent_registry or AgentRegistry({agent.id: agent})
+        )
+    )
+    access = service.tools_for_agent(agent.id, built_in_tool_names=built_in_cao_tool_names())
     policies = (
         provider_policies
         if provider_policies is not None
-        else _load_provider_policies_for_freshness(agent_registry)
+        else service.provider_policies_for_agent(agent.id)
     )
     return build_agent_mcp_surface_descriptor(
         agent=agent,
         built_in_tools=_PENDING_TOOLS,
-        built_in_tool_allowlist=built_in_allowlist,
+        built_in_tool_allowlist=list(access.built_in_cao_tools),
         provider_policies=policies,
-        baton_enabled=is_baton_enabled(),
+        baton_enabled=True,
+        provider_tool_allowlist=access.provider_mediated_tools,
     )
 
 
@@ -215,19 +256,25 @@ def build_mcp_runtime_generation_descriptor_for_agent(
     provider_policies: Optional[Dict[str, ProviderToolAccessPolicy]] = None,
 ) -> Dict[str, Any]:
     """Build runtime-generation material for one agent's visible MCP tools."""
-    built_in_allowlist = resolve_cao_tool_allowlist(agent)
+    service = ToolService(
+        agent_manager=AgentManager(
+            configured_agents=agent_registry or AgentRegistry({agent.id: agent})
+        )
+    )
+    access = service.tools_for_agent(agent.id, built_in_tool_names=built_in_cao_tool_names())
     policies = (
         provider_policies
         if provider_policies is not None
-        else _load_provider_policies_for_freshness(agent_registry)
+        else service.provider_policies_for_agent(agent.id)
     )
     return build_agent_mcp_runtime_generation_descriptor(
         agent=agent,
         built_in_tools=_PENDING_TOOLS,
-        built_in_tool_allowlist=built_in_allowlist,
+        built_in_tool_allowlist=list(access.built_in_cao_tools),
         provider_policies=policies,
-        baton_enabled=is_baton_enabled(),
+        baton_enabled=True,
         built_in_runtime_generation=_built_in_mcp_runtime_generation_material(),
+        provider_tool_allowlist=access.provider_mediated_tools,
     )
 
 
@@ -268,7 +315,9 @@ def _load_provider_policies_for_freshness(
 ) -> Dict[str, ProviderToolAccessPolicy]:
     registry = agent_registry or load_agent_registry()
     try:
-        return dict(load_enabled_provider_tool_access_policies(agent_registry=registry))
+        return dict(
+            ToolService(agent_manager=AgentManager(configured_agents=registry)).provider_policies()
+        )
     except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
         logger.exception("Provider-mediated MCP tool configuration is invalid")
         raise
@@ -1223,25 +1272,29 @@ def main():
     matching subset of tools with FastMCP, then starts the MCP loop.
 
     ``CAO_TERMINAL_ID`` is injected into this subprocess by the parent
-    provider (codex/claude/etc.) via the ``env_vars`` directive in its
-    MCP config. Without it (e.g. a developer invoking cao-mcp-server
-    directly outside of CAO for testing) we register all tools.
+    provider (codex/claude/etc.) via the ``env_vars`` directive in its MCP
+    config. Without it, ToolService cannot resolve agent access and startup
+    fails closed by registering no agent-facing MCP tools.
     """
     terminal_id = os.environ.get("CAO_TERMINAL_ID")
-    allowlist: Optional[List[str]] = None
-    if terminal_id:
-        allowlist = _resolve_allowlist_for_terminal(terminal_id)
-    registered = _register_tools(_PENDING_TOOLS, allowlist, mcp)
+    service = default_tool_service()
     provider_registered: list[str] = []
     if terminal_id:
         provider_registered = register_provider_mediated_mcp_tools_for_terminal(
             terminal_id=terminal_id,
             mcp_instance=mcp,
-            reserved_tool_names=[name for name, _, _ in _PENDING_TOOLS],
+            reserved_tool_names=built_in_cao_tool_names(),
+            tool_service=service,
         )
+    registered = _register_tools(
+        _PENDING_TOOLS,
+        mcp,
+        terminal_id=terminal_id,
+        tool_service=service,
+    )
     logger.info(
         f"Registered {len(registered)}/{len(_PENDING_TOOLS)} MCP tools "
-        f"(allowlist={'permissive' if allowlist is None else sorted(allowlist)}): "
+        f"(terminal_id={terminal_id or 'missing-terminal'}): "
         f"{sorted(registered)}; provider-mediated={sorted(provider_registered)}"
     )
     mcp.run()

@@ -40,6 +40,7 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -230,7 +231,12 @@ class KimiCliProvider(BaseProvider):
 
                 # Add MCP server configuration if present in the agent.
                 # Kimi accepts --mcp-config as a JSON string (repeatable flag).
-                if agent.mcp_servers:
+                mcp_servers = tool_service_for_loaded_agent(
+                    agent,
+                    fallback_agent_id=self._agent_id,
+                    cli_provider="kimi_cli",
+                ).materialized_mcp_servers_for_agent(self._agent_id)
+                if mcp_servers:
                     # Set MCP tool call timeout to 600s by modifying ~/.kimi/config.toml
                     # directly. We cannot use --config flag because it causes Kimi CLI
                     # to bypass its default config file, which breaks OAuth authentication
@@ -239,7 +245,7 @@ class KimiCliProvider(BaseProvider):
                     self._ensure_mcp_timeout()
 
                     mcp_config = {}
-                    for server_name, server_config in agent.mcp_servers.items():
+                    for server_name, server_config in mcp_servers.items():
                         if isinstance(server_config, dict):
                             mcp_config[server_name] = dict(server_config)
                         else:

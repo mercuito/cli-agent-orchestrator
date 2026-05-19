@@ -18,7 +18,10 @@ from cli_agent_orchestrator.workspace_providers.events import (
     WorkspaceProviderEvent,
     default_workspace_provider_event_dispatcher,
 )
-from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolAccessPolicy
+from cli_agent_orchestrator.workspace_providers.tool_access import (
+    ProviderConversationAccessRequirement,
+    ProviderToolAccessPolicy,
+)
 
 WORKSPACE_PROVIDERS_CONFIG_PATH = CAO_HOME_DIR / "workspace-providers.toml"
 
@@ -73,6 +76,14 @@ class ProviderToolAccessConfigurableWorkspaceProvider(
 
     def has_provider_tool_access_config(self) -> bool:
         """Return whether this provider has configured mediated tool access."""
+
+
+@runtime_checkable
+class ProviderConversationAccessWorkspaceProvider(WorkspaceProvider, Protocol):
+    """Optional provider surface for provider-conversation access descriptors."""
+
+    def provider_conversation_access(self) -> tuple[ProviderConversationAccessRequirement, ...]:
+        """Return provider-owned provider-conversation access requirements."""
 
 
 @runtime_checkable
@@ -204,23 +215,6 @@ def initialize_enabled_workspace_providers(
     return providers
 
 
-def load_provider_tool_access_policies(
-    providers: list[WorkspaceProvider],
-) -> dict[str, ProviderToolAccessPolicy]:
-    """Ask initialized providers for CAO-mediated tool access policies."""
-    policies: dict[str, ProviderToolAccessPolicy] = {}
-    for provider in providers:
-        if not isinstance(provider, ProviderToolAccessWorkspaceProvider):
-            continue
-        policy = provider.provider_tool_access()
-        if policy.provider_name in policies:
-            raise WorkspaceProviderConfigError(
-                f"Duplicate provider tool access policy: {policy.provider_name}"
-            )
-        policies[policy.provider_name] = policy
-    return policies
-
-
 def load_enabled_provider_tool_access_policies(
     *,
     enabled_config_path: Optional[Path] = None,
@@ -228,30 +222,24 @@ def load_enabled_provider_tool_access_policies(
     registry: Optional[WorkspaceProviderRegistry] = None,
     agent_registry: Optional[AgentRegistry] = None,
 ) -> dict[str, ProviderToolAccessPolicy]:
-    """Load provider-mediated tool access without initializing unrelated providers."""
-    enabled = load_enabled_workspace_providers(enabled_config_path)
+    """Load provider-mediated tool access through ToolService authority."""
     agents = agent_registry or load_agent_registry(agents_config_path)
-    provider_registry = registry or default_workspace_provider_registry()
+    from cli_agent_orchestrator.services.agent_manager import AgentManager
+    from cli_agent_orchestrator.services.tool_service import (
+        ToolService,
+        _load_raw_enabled_provider_tool_access_policies,
+    )
 
-    providers_with_tools: list[WorkspaceProvider] = []
-    for name in enabled:
-        provider = provider_registry.create(name, agents)
-        if not isinstance(provider, ProviderToolAccessWorkspaceProvider):
-            continue
-        if (
-            isinstance(provider, ProviderToolAccessConfigurableWorkspaceProvider)
-            and not provider.has_provider_tool_access_config()
-        ):
-            continue
-        provider.initialize()
-        _register_provider_events(provider)
-        providers_with_tools.append(provider)
-    policies = load_provider_tool_access_policies(providers_with_tools)
-    from cli_agent_orchestrator.workspace_setups import default_workspace_collaboration_manager
-
-    return default_workspace_collaboration_manager(
-        agent_registry=agents,
-    ).team_bound_provider_tool_access_policies(policies)
+    return dict(
+        ToolService(
+            agent_manager=AgentManager(configured_agents=agents),
+            provider_policy_loader=lambda registry_arg: _load_raw_enabled_provider_tool_access_policies(
+                agent_registry=registry_arg,
+                enabled_config_path=enabled_config_path,
+                registry=registry,
+            ),
+        ).provider_policies()
+    )
 
 
 def resolve_agent_for_runtime(

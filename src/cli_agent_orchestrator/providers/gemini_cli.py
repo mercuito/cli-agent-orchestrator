@@ -41,6 +41,7 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -266,8 +267,13 @@ class GeminiCliProvider(BaseProvider):
                 # but each invocation spawned a Node.js process (~2-3s each), making
                 # assign/handoff ~15s slower than other providers. Direct JSON write
                 # achieves the same result in <10ms (lesson #14).
-                if agent.mcp_servers:
-                    self._register_mcp_servers(agent.mcp_servers)
+                mcp_servers = tool_service_for_loaded_agent(
+                    agent,
+                    fallback_agent_id=self._agent_id,
+                    cli_provider="gemini_cli",
+                ).materialized_mcp_servers_for_agent(self._agent_id)
+                if mcp_servers:
+                    self._register_mcp_servers(mcp_servers)
 
             except Exception as e:
                 raise ProviderError(f"Failed to load agent '{self._agent_id}': {e}")

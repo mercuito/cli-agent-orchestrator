@@ -105,6 +105,15 @@ class ProviderMediatedToolRuntimeGenerationDescriptor:
 
 
 @dataclass(frozen=True)
+class ProviderConversationAccessRequirement:
+    """Provider-owned descriptor for provider-conversation access decisions."""
+
+    provider_name: str
+    operation: str
+    required_identity: str
+
+
+@dataclass(frozen=True)
 class ProviderToolInvocationContext:
     """CAO-neutral context for provider-mediated handlers and hooks."""
 
@@ -479,6 +488,7 @@ __all__ = [
     "ProviderMediatedToolDefinition",
     "ProviderMediatedToolRuntimeGenerationDescriptor",
     "ProviderMediatedToolSurfaceDescriptor",
+    "ProviderConversationAccessRequirement",
     "ProviderToolAccess",
     "ProviderToolAccessConfigError",
     "ProviderToolAccessIssue",

@@ -13,6 +13,7 @@ from cli_agent_orchestrator.services.agent_manager import (
     AgentManager,
     default_agent_manager,
 )
+from cli_agent_orchestrator.services.tool_service import ToolService, default_tool_service
 from cli_agent_orchestrator.workspace_providers.invocation import (
     ProviderMediatedToolAccessDenied,
     ProviderMediatedToolInvocationService,
@@ -20,7 +21,6 @@ from cli_agent_orchestrator.workspace_providers.invocation import (
 )
 from cli_agent_orchestrator.workspace_providers.registry import (
     WorkspaceProviderConfigError,
-    load_enabled_provider_tool_access_policies,
 )
 from cli_agent_orchestrator.workspace_providers.tool_access import (
     ProviderToolAccessConfigError,
@@ -68,6 +68,7 @@ def register_provider_mediated_mcp_tools_for_terminal(
     terminal_id: str,
     mcp_instance: Any,
     reserved_tool_names: Iterable[str] = (),
+    tool_service: ToolService | None = None,
 ) -> list[str]:
     """Load provider access and register agent-visible provider tools.
 
@@ -76,9 +77,10 @@ def register_provider_mediated_mcp_tools_for_terminal(
     while leaving built-in CAO MCP registration untouched.
     """
     try:
+        service = tool_service or default_tool_service()
         agent_manager = default_agent_manager()
         agent_registry = AgentRegistry({agent.id: agent for agent in agent_manager.list_agents()})
-        policies = load_enabled_provider_tool_access_policies(agent_registry=agent_registry)
+        policies = service.provider_policies()
     except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
         logger.exception("Provider-mediated MCP tool configuration is invalid")
         raise
@@ -96,6 +98,7 @@ def register_provider_mediated_mcp_tools_for_terminal(
         agent_registry=agent_registry,
         agent_manager=agent_manager,
         reserved_tool_names=reserved_tool_names,
+        tool_service=service,
     )
 
 
@@ -108,16 +111,33 @@ def register_provider_mediated_mcp_tools(
     agent_manager: AgentManager | None = None,
     reserved_tool_names: Iterable[str] = (),
     terminal_metadata_resolver: TerminalMetadataResolver | None = None,
+    tool_service: ToolService | None = None,
 ) -> list[str]:
     """Register provider-mediated tools visible to one MCP terminal."""
-    service = ProviderMediatedToolInvocationService(
+    if tool_service is None:
+        tool_service_kwargs: dict[str, Any] = {
+            "agent_manager": agent_manager or AgentManager(configured_agents=agent_registry),
+            "provider_policy_loader": lambda _registry: policies,
+        }
+        if terminal_metadata_resolver is not None:
+            tool_service_kwargs["terminal_metadata_resolver"] = terminal_metadata_resolver
+        tool_service_obj = ToolService(**tool_service_kwargs)
+    else:
+        tool_service_obj = tool_service
+    reserved_names = tuple(reserved_tool_names)
+    invocation_service = ProviderMediatedToolInvocationService(
         policies=policies,
         agent_registry=agent_registry,
         agent_manager=agent_manager,
         terminal_metadata_resolver=terminal_metadata_resolver,
+        tool_service=tool_service_obj,
+        built_in_tool_names=reserved_names,
     )
     try:
-        visible_tools = service.accessible_tools_for_terminal(terminal_id)
+        visible_tools = tool_service_obj.registered_tools_for_terminal(
+            terminal_id,
+            built_in_tool_names=reserved_names,
+        ).provider_mediated_tools
     except ProviderMediatedToolAccessDenied as exc:
         logger.info(
             "No provider-mediated MCP tools registered for terminal %r: %s",
@@ -133,25 +153,8 @@ def register_provider_mediated_mcp_tools(
         )
         return []
 
-    reserved = set(reserved_tool_names)
     registered: list[str] = []
-    seen_provider_tool_names: set[str] = set()
     for provider_name, tool in visible_tools:
-        if tool.name in reserved:
-            logger.error(
-                "Provider-mediated MCP tool %r from provider %r conflicts with a built-in "
-                "CAO MCP tool; skipping provider tool",
-                tool.name,
-                provider_name,
-            )
-            continue
-        if tool.name in seen_provider_tool_names:
-            logger.error(
-                "Provider-mediated MCP tool name %r is exposed by multiple provider policies; "
-                "skipping duplicate",
-                tool.name,
-            )
-            continue
         mcp_instance.add_tool(
             ProviderMediatedMCPTool(
                 name=tool.name,
@@ -160,10 +163,9 @@ def register_provider_mediated_mcp_tools(
                 terminal_id=terminal_id,
                 provider_name=provider_name,
                 tool_name=tool.name,
-                invocation_service=service,
+                invocation_service=invocation_service,
             )
         )
-        seen_provider_tool_names.add(tool.name)
         registered.append(tool.name)
     return registered
 

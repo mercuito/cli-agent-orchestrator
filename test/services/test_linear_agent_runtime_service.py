@@ -44,6 +44,7 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeNotifyResult,
     AgentRuntimeStatus,
 )
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
 
 
 @pytest.fixture
@@ -54,6 +55,13 @@ def test_db(runtime_inbox_db_session):
 @pytest.fixture(autouse=True)
 def _disable_agent_policies(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(runtime, "should_enable_linear_agent_policies", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _allow_linear_activity_tool_service(monkeypatch: pytest.MonkeyPatch):
+    service = _ActivityToolService()
+    monkeypatch.setattr(runtime, "default_tool_service", lambda: service)
+    return service
 
 
 @pytest.fixture
@@ -84,6 +92,18 @@ def resolved_presence(implementation_partner_agent_factory):
         )
 
     return _resolved_presence
+
+
+class _ActivityToolService:
+    def __init__(self, *, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def provider_conversation_decision(self, *args, **kwargs) -> ToolAccessDecision:
+        self.calls.append((args, kwargs))
+        if self.allowed:
+            return ToolAccessDecision.allow(reason="provider_conversation_allowed")
+        return ToolAccessDecision.deny("provider_conversation_denied")
 
 
 def _linear_provider_event(
@@ -226,6 +246,7 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
     test_db,
     monkeypatch,
     resolved_presence,
+    _allow_linear_activity_tool_service,
 ):
     event = _linear_provider_event(prompt_context="<issue/>")
     calls = []
@@ -257,6 +278,57 @@ def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
         app_key="implementation_partner",
     )
     create_activity.assert_called_once()
+    assert _allow_linear_activity_tool_service.calls == [
+        (
+            ("implementation_partner",),
+            {
+                "provider": "linear",
+                "operation": "activity",
+                "source": "linear_agent_session:session-1",
+                "provider_identity": "implementation_partner",
+            },
+        )
+    ]
+
+
+def test_handle_agent_session_event_denies_activity_before_linear_write(
+    test_db,
+    monkeypatch,
+    resolved_presence,
+):
+    event = _linear_provider_event(prompt_context="<issue/>")
+    handle = Mock()
+    handle.notify.return_value = Mock(
+        terminal_id="terminal-1",
+        status=Mock(value="idle"),
+        notification=Mock(created=True),
+    )
+    denied_service = _ActivityToolService(allowed=False)
+    monkeypatch.setattr(runtime, "default_tool_service", lambda: denied_service)
+    monkeypatch.setattr(runtime, "_resolve_linear_event", lambda event: resolved_presence())
+    monkeypatch.setattr(
+        runtime,
+        "_runtime_handle_for_resolved_presence",
+        lambda resolved, **_kwargs: handle,
+    )
+    monkeypatch.setattr(runtime.app_client, "update_agent_session_external_url", Mock())
+    create_activity = Mock()
+    monkeypatch.setattr(runtime.app_client, "create_agent_activity", create_activity)
+
+    assert runtime.handle_provider_event(event) == "terminal-1"
+
+    create_activity.assert_not_called()
+    assert denied_service.calls == [
+        (
+            ("implementation_partner",),
+            {
+                "provider": "linear",
+                "operation": "activity",
+                "source": "linear_agent_session:session-1",
+                "provider_identity": "implementation_partner",
+            },
+        )
+    ]
 
 
 def test_context_enabled_linear_event_starts_runtime_in_resolved_issue_context(

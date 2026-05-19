@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 
@@ -16,9 +17,11 @@ from cli_agent_orchestrator.agent import (
     write_agent,
 )
 from cli_agent_orchestrator.models.provider import ProviderType
+from cli_agent_orchestrator.mcp_server.server import built_in_cao_tool_names
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.services.agent_manager import default_agent_manager
+from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
 
 
 @click.group(name="agent")
@@ -46,6 +49,29 @@ def show_agent(agent_id: str) -> None:
         click.echo(f"terminal_id: {status.active_terminal_id}")
     click.echo(f"workspace_team: {status.workspace_team_id or 'none'}")
     click.echo(f"workspace_setup: {status.derived_workspace_setup_id or 'default'}")
+    tool_access = tool_service_for_loaded_agent(
+        agent,
+        fallback_agent_id=agent.id,
+        cli_provider=agent.cli_provider,
+    ).tools_for_agent(agent.id, built_in_tool_names=built_in_cao_tool_names())
+    click.echo("\neffective_tool_access:")
+    click.echo(f"registered_tools: {json.dumps(list(tool_access.registered_tools))}")
+    click.echo(f"allowed_tools: {json.dumps(list(tool_access.allowed_tools))}")
+    click.echo(
+        "runtime_capabilities: "
+        f"{json.dumps(list(tool_access.runtime_capabilities))}"
+    )
+    click.echo(
+        "materialized_mcp_servers: "
+        f"{json.dumps(tool_access.materialized_mcp_servers, sort_keys=True)}"
+    )
+    if tool_access.inactive_local_grants:
+        click.echo(
+            "inactive_local_grants: "
+            f"{json.dumps(tool_access.inactive_local_grants, sort_keys=True)}"
+        )
+    for diagnostic in tool_access.diagnostics:
+        click.echo(f"diagnostic: {diagnostic.code} {diagnostic.message}")
     config_path = agent_config.AGENTS_ROOT / agent.id / AGENT_CONFIG_FILENAME
     click.echo("\nagent.toml:")
     click.echo(config_path.read_text())

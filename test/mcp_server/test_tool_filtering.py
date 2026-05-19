@@ -1,22 +1,42 @@
-"""Tests for startup-time MCP tool filtering.
-
-The cao-mcp-server subprocess reads CAO_TERMINAL_ID, fetches the agent's
-configuration, resolves an allowlist, and only exposes the tools named in that
-allowlist. ``None`` allowlist (nothing configured) falls back to
-permissive — every deferred tool gets registered. This is the Phase 3
-wiring that makes Phase 2's resolver actually do something.
-"""
+"""Tests for ToolService-owned MCP tool registration."""
 
 from __future__ import annotations
 
-from test.support.agent_factory import Agent
 from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 
 from cli_agent_orchestrator.mcp_server import server
-from cli_agent_orchestrator.utils.cao_tool_allowlist import resolve_cao_tool_allowlist
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
+
+
+class _Registration:
+    def __init__(self, built_in_tools):
+        self.built_in_tools = tuple(built_in_tools)
+
+
+class _ToolService:
+    def __init__(self, built_in_tools=None, deny_invocations=()):
+        self.built_in_tools = None if built_in_tools is None else tuple(built_in_tools)
+        self.deny_invocations = set(deny_invocations)
+        self.invocation_checks = []
+        self.registration_checks = []
+
+    def registered_tools_for_terminal(self, terminal_id, *, built_in_tool_names=()):
+        candidates = tuple(built_in_tool_names)
+        self.registration_checks.append((terminal_id, candidates))
+        if self.built_in_tools is None:
+            allowed = candidates
+        else:
+            candidate_set = set(candidates)
+            allowed = tuple(name for name in self.built_in_tools if name in candidate_set)
+        return _Registration(allowed)
+
+    def can_invoke_for_terminal(self, terminal_id, tool_ref, **kwargs):
+        self.invocation_checks.append((terminal_id, tool_ref, kwargs))
+        if tool_ref in self.deny_invocations:
+            return ToolAccessDecision.deny("revoked")
+        return ToolAccessDecision.allow()
 
 
 class TestDeferredToolRegistry:
@@ -50,57 +70,82 @@ class TestRegisterTools:
         mock.tool.return_value = lambda f: f  # decorator returns the fn unchanged
         return mock
 
-    def test_none_allowlist_registers_every_pending_tool(self):
-        """Permissive default for agents that have no cao_tools configured."""
+    def test_without_terminal_registers_no_tools(self):
+        """Missing terminal context fails closed instead of registering locally."""
         pending = [("a", lambda: None, {}), ("b", lambda: None, {}), ("c", lambda: None, {})]
         mcp_instance = self._mock_mcp()
 
-        registered = server._register_tools(pending, None, mcp_instance)
-
-        assert set(registered) == {"a", "b", "c"}
-        assert mcp_instance.tool.call_count == 3
-
-    def test_explicit_allowlist_registers_only_matching_tools(self):
-        pending = [("a", lambda: None, {}), ("b", lambda: None, {}), ("c", lambda: None, {})]
-        mcp_instance = self._mock_mcp()
-
-        registered = server._register_tools(pending, ["a", "c"], mcp_instance)
-
-        assert set(registered) == {"a", "c"}
-        assert mcp_instance.tool.call_count == 2
-
-    def test_empty_allowlist_registers_nothing(self):
-        """Distinct from None — user explicitly said 'this agent may not
-        call any cao-mcp-server tool.'"""
-        pending = [("a", lambda: None, {}), ("b", lambda: None, {})]
-        mcp_instance = self._mock_mcp()
-
-        registered = server._register_tools(pending, [], mcp_instance)
+        registered = server._register_tools(pending, mcp_instance)
 
         assert registered == []
         assert mcp_instance.tool.call_count == 0
 
-    def test_allowlist_names_not_in_registry_are_silently_ignored(self):
-        """A typo in the allowlist doesn't crash startup. It just results
-        in that tool not being registered — which is what would happen
-        anyway if it existed in the allowlist but not the registry."""
+    def test_tool_service_registers_only_matching_tools_for_terminal(self):
+        pending = [("a", lambda: None, {}), ("b", lambda: None, {}), ("c", lambda: None, {})]
+        mcp_instance = self._mock_mcp()
+
+        registered = server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=_ToolService(("a", "c")),
+        )
+
+        assert set(registered) == {"a", "c"}
+        assert mcp_instance.tool.call_count == 2
+
+    def test_tool_service_empty_registration_registers_nothing(self):
+        pending = [("a", lambda: None, {}), ("b", lambda: None, {})]
+        mcp_instance = self._mock_mcp()
+
+        registered = server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=_ToolService(()),
+        )
+
+        assert registered == []
+        assert mcp_instance.tool.call_count == 0
+
+    def test_tool_service_registration_failure_registers_nothing(self):
+        pending = [("a", lambda: None, {}), ("b", lambda: None, {})]
+        mcp_instance = self._mock_mcp()
+        tool_service = MagicMock()
+        tool_service.registered_tools_for_terminal.side_effect = RuntimeError("boom")
+
+        registered = server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=tool_service,
+        )
+
+        assert registered == []
+        assert mcp_instance.tool.call_count == 0
+
+    def test_tool_service_names_not_in_registry_are_silently_ignored(self):
         pending = [("a", lambda: None, {})]
         mcp_instance = self._mock_mcp()
 
-        registered = server._register_tools(pending, ["a", "typo"], mcp_instance)
+        registered = server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=_ToolService(("a", "typo")),
+        )
 
         assert registered == ["a"]
 
-    def test_builtin_developer_allowlist_registers_provider_inbox_tools(self):
-        profile = Agent(
-            name="developer",
-            description="Developer",
-            cao_tools=["read_inbox_message", "reply_to_inbox_message"],
-        )
-        allowlist = resolve_cao_tool_allowlist(profile)
+    def test_tool_service_registration_includes_provider_inbox_tools(self):
         mcp_instance = self._mock_mcp()
 
-        registered = server._register_tools(server._PENDING_TOOLS, allowlist, mcp_instance)
+        registered = server._register_tools(
+            server._PENDING_TOOLS,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=_ToolService(("read_inbox_message", "reply_to_inbox_message")),
+        )
 
         assert "read_inbox_message" in registered
         assert "reply_to_inbox_message" in registered
@@ -111,9 +156,51 @@ class TestRegisterTools:
         pending = [("with_desc", lambda: None, {"description": "doc"})]
         mcp_instance = self._mock_mcp()
 
-        server._register_tools(pending, None, mcp_instance)
+        server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=_ToolService(("with_desc",)),
+        )
 
         mcp_instance.tool.assert_called_once_with(description="doc")
+
+    @pytest.mark.asyncio
+    async def test_registered_tool_rechecks_tool_service_at_invocation(self):
+        async def callable_tool():
+            return {"ok": True}
+
+        pending = [("a", callable_tool, {}), ("b", callable_tool, {})]
+        captured = []
+        mcp_instance = MagicMock()
+
+        def _decorator(**kwargs):
+            def _wrap(fn):
+                captured.append(fn)
+                return fn
+
+            return _wrap
+
+        mcp_instance.tool.side_effect = _decorator
+
+        tool_service = _ToolService(("a",), deny_invocations=("a",))
+        server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=tool_service,
+        )
+
+        registered_callable = captured[0]
+        with pytest.raises(PermissionError, match="revoked"):
+            await registered_callable()
+        assert tool_service.invocation_checks == [
+            (
+                "terminal-1",
+                "a",
+                {"built_in_tool_names": ("a", "b")},
+            )
+        ]
 
     def test_baton_tools_are_hidden_when_feature_disabled(self, monkeypatch):
         monkeypatch.setenv("CAO_BATON_ENABLED", "false")
@@ -123,10 +210,19 @@ class TestRegisterTools:
             ("pass_baton", lambda: None, {}),
         ]
         mcp_instance = self._mock_mcp()
+        tool_service = _ToolService(("send_message", "create_baton", "pass_baton"))
 
-        registered = server._register_tools(pending, None, mcp_instance)
+        registered = server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=tool_service,
+        )
 
         assert registered == ["send_message"]
+        assert tool_service.registration_checks == [
+            ("terminal-1", ("send_message",))
+        ]
         assert mcp_instance.tool.call_count == 1
 
     def test_baton_tools_register_when_feature_enabled(self, monkeypatch):
@@ -136,84 +232,20 @@ class TestRegisterTools:
             ("create_baton", lambda: None, {}),
         ]
         mcp_instance = self._mock_mcp()
+        tool_service = _ToolService(("send_message", "create_baton"))
 
-        registered = server._register_tools(pending, None, mcp_instance)
+        registered = server._register_tools(
+            pending,
+            mcp_instance,
+            terminal_id="terminal-1",
+            tool_service=tool_service,
+        )
 
         assert registered == ["send_message", "create_baton"]
+        assert tool_service.registration_checks == [
+            ("terminal-1", ("send_message", "create_baton"))
+        ]
         assert mcp_instance.tool.call_count == 2
-
-
-class TestResolveAllowlistForTerminal:
-    @patch("cli_agent_orchestrator.mcp_server.server.load_agent")
-    @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_happy_path(self, mock_get, mock_load_agent):
-        """Fetch terminal metadata, load the agent, delegate to resolver."""
-        mock_get.return_value.json.return_value = {"agent_id": "some_agent"}
-        mock_get.return_value.raise_for_status.return_value = None
-
-        fake_agent = MagicMock()
-        mock_load_agent.return_value = fake_agent
-
-        with patch(
-            "cli_agent_orchestrator.mcp_server.server.resolve_cao_tool_allowlist",
-            return_value=["send_message"],
-        ) as mock_resolve:
-            result = server._resolve_allowlist_for_terminal("abc123")
-
-        assert result == ["send_message"]
-        mock_load_agent.assert_called_once_with("some_agent")
-        mock_resolve.assert_called_once_with(fake_agent)
-
-    @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_api_unreachable_returns_none_permissive(self, mock_get):
-        """If cao-server can't be reached, we fail open in Phase 3 so
-        existing agents (without cao_tools configured) keep working. An
-        error is logged; flipping to fail-closed is a later, opt-in
-        choice (Phase 5)."""
-        mock_get.side_effect = requests.ConnectionError("refused")
-
-        result = server._resolve_allowlist_for_terminal("abc123")
-
-        assert result is None
-
-    @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_api_hang_is_bounded_and_fails_open(self, mock_get):
-        """A hung API call at startup would exceed the provider MCP client's
-        handshake timeout (codex kills after ~30s) and leave the agent with
-        no MCP connection. We must cut the request off well under that and
-        fail open, even though the filter won't apply for that spawn."""
-        mock_get.side_effect = requests.Timeout("read timed out")
-
-        result = server._resolve_allowlist_for_terminal("abc123")
-
-        assert result is None
-        # And we passed a short timeout, not 'no timeout'
-        _, kwargs = mock_get.call_args
-        assert kwargs.get("timeout") is not None
-        assert kwargs["timeout"] <= 10
-
-    @patch("cli_agent_orchestrator.mcp_server.server.load_agent")
-    @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_unknown_agent_returns_none_permissive(self, mock_get, mock_load_agent):
-        """If a stale DB row references a deleted agent, fall back to permissive."""
-        mock_get.return_value.json.return_value = {"agent_id": "missing"}
-        mock_get.return_value.raise_for_status.return_value = None
-        mock_load_agent.side_effect = FileNotFoundError("no such agent")
-
-        result = server._resolve_allowlist_for_terminal("abc123")
-
-        assert result is None
-
-    @patch("cli_agent_orchestrator.mcp_server.server.requests.get")
-    def test_missing_agent_id_field_returns_none(self, mock_get):
-        """Malformed API responses fail open but are not a supported terminal shape."""
-        mock_get.return_value.json.return_value = {}  # no agent_id key
-        mock_get.return_value.raise_for_status.return_value = None
-
-        result = server._resolve_allowlist_for_terminal("abc123")
-
-        assert result is None
-
 
 class TestMainStartupFiltering:
     """Integration of the pieces: main() reads CAO_TERMINAL_ID, resolves,
@@ -225,26 +257,25 @@ class TestMainStartupFiltering:
         "cli_agent_orchestrator.mcp_server.server.register_provider_mediated_mcp_tools_for_terminal"
     )
     @patch("cli_agent_orchestrator.mcp_server.server._register_tools")
-    @patch("cli_agent_orchestrator.mcp_server.server._resolve_allowlist_for_terminal")
-    def test_main_passes_resolved_allowlist_to_register(
-        self, mock_resolve, mock_register, mock_register_provider, mock_mcp, monkeypatch
+    def test_main_passes_terminal_context_to_toolservice_registration(
+        self, mock_register, mock_register_provider, mock_mcp, monkeypatch
     ):
         monkeypatch.setenv("CAO_TERMINAL_ID", "term-xyz")
-        mock_resolve.return_value = ["assign", "send_message"]
         mock_register.return_value = ["assign", "send_message"]
         mock_register_provider.return_value = []
 
         server.main()
 
-        mock_resolve.assert_called_once_with("term-xyz")
-        # First arg = pending registry, second = allowlist, third = mcp instance
         args = mock_register.call_args[0]
-        assert args[1] == ["assign", "send_message"]
+        assert args[0] == server._PENDING_TOOLS
+        assert args[1] == mock_mcp
+        assert mock_register.call_args.kwargs["terminal_id"] == "term-xyz"
+        assert mock_register.call_args.kwargs["tool_service"] is not None
         mock_register_provider.assert_called_once()
         assert mock_register_provider.call_args.kwargs["terminal_id"] == "term-xyz"
-        assert set(mock_register_provider.call_args.kwargs["reserved_tool_names"]) == {
-            name for name, _, _ in server._PENDING_TOOLS
-        }
+        assert mock_register_provider.call_args.kwargs[
+            "reserved_tool_names"
+        ] == server.built_in_cao_tool_names()
         mock_mcp.run.assert_called_once()
 
     @patch("cli_agent_orchestrator.mcp_server.server.mcp")
@@ -252,19 +283,18 @@ class TestMainStartupFiltering:
         "cli_agent_orchestrator.mcp_server.server.register_provider_mediated_mcp_tools_for_terminal"
     )
     @patch("cli_agent_orchestrator.mcp_server.server._register_tools")
-    def test_main_without_cao_terminal_id_registers_permissively(
+    def test_main_without_cao_terminal_id_fails_closed(
         self, mock_register, mock_register_provider, mock_mcp, monkeypatch
     ):
-        """If the server is started outside of CAO (developer invokes
-        directly to test, etc.) there's no terminal context. Register all
-        tools rather than erroring out."""
+        """If startup has no terminal context, registration remains fail-closed."""
         monkeypatch.delenv("CAO_TERMINAL_ID", raising=False)
         mock_register.return_value = []
 
         server.main()
 
         args = mock_register.call_args[0]
-        assert args[1] is None  # permissive
+        assert args[1] == mock_mcp
+        assert mock_register.call_args.kwargs["terminal_id"] is None
         mock_register_provider.assert_not_called()
         mock_mcp.run.assert_called_once()
 

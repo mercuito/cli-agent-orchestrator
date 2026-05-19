@@ -7,9 +7,7 @@ import logging
 import os
 import re
 import shlex
-import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -20,6 +18,7 @@ from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.services.tool_service import MANAGED_CAO_MCP_SERVER, default_tool_service
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
@@ -164,25 +163,17 @@ class CopilotCliProvider(BaseProvider):
 
     def _build_runtime_mcp_config(self) -> str:
         merged_servers: dict = {}
-        venv_script = Path(sys.executable).with_name("cao-mcp-server")
-        found_script = shutil.which("cao-mcp-server")
-        mcp_args: list[str]
-        if venv_script.exists():
-            mcp_command = str(venv_script)
-            mcp_args = []
-        elif found_script:
-            mcp_command = found_script
-            mcp_args = []
-        else:
-            mcp_command = sys.executable
-            mcp_args = ["-m", "cli_agent_orchestrator.mcp_server.server"]
+        if self._agent_id:
+            for name, config in default_tool_service().materialized_mcp_servers_for_agent(
+                self._agent_id
+            ).items():
+                entry = dict(config)
+                env = dict(entry.get("env", {}))
+                env["CAO_TERMINAL_ID"] = self.terminal_id
+                entry["env"] = env
+                entry["disabled"] = not bool(entry.pop("enabled", True))
+                merged_servers[name] = entry
 
-        merged_servers["cao-mcp-server"] = {
-            "command": mcp_command,
-            "args": mcp_args,
-            "disabled": False,
-            "env": {"CAO_TERMINAL_ID": self.terminal_id},
-        }
         return json.dumps({"mcpServers": merged_servers}, ensure_ascii=False)
 
     def _send_enter(self) -> None:

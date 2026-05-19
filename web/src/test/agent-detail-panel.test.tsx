@@ -225,6 +225,48 @@ describe('AgentDetailPanel', () => {
       expect(screen.queryByText('No MCP tools visible for this agent.')).not.toBeInTheDocument()
     })
 
+    it('renders actual ToolService allowed tools instead of only the count', () => {
+      const agent = agentStatus({
+        effective_tool_access: {
+          agent_id: 'aria',
+          team_id: null,
+          role_id: null,
+          registered_tools: ['send_message', 'cao_linear.get_issue', '@cao-mcp-server'],
+          allowed_tools: ['send_message', 'cao_linear.get_issue'],
+          blocked_tools: [],
+          built_in_cao_tools: ['send_message'],
+          provider_mediated_tools: { linear: ['cao_linear.get_issue'] },
+          materialized_mcp_servers: { 'cao-mcp-server': {} },
+          runtime_capabilities: ['fs_read', '@cao-mcp-server'],
+          source_markers: {
+            send_message: 'agent_config:cao_tools',
+            'cao_linear.get_issue': 'linear:tool_access.workflow',
+          },
+          inactive_local_grants: {},
+          provider_conversation_requirements: [],
+          diagnostics: [],
+        },
+      })
+
+      render(
+        <AgentDetailPanel
+          agent={agent}
+          onStartAgent={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onStopAgent={vi.fn()}
+          renderConfigTab={renderConfigTab}
+          renderTimelineTab={renderTimelineTab}
+        />,
+      )
+      fireEvent.click(screen.getByText('ToolService access'))
+
+      expect(screen.getByText('allowed:')).toBeInTheDocument()
+      expect(screen.getByText('send_message')).toBeInTheDocument()
+      expect(screen.getByText('cao_linear.get_issue')).toBeInTheDocument()
+      expect(screen.getByText('agent_config:cao_tools')).toBeInTheDocument()
+      expect(screen.getByText('linear:tool_access.workflow')).toBeInTheDocument()
+    })
+
     it('renders stopped agent header with a Start button that fires the provided handler', () => {
       // Given
       const agent = agentStatus()

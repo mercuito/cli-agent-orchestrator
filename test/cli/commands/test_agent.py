@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import datetime
 
 from click.testing import CliRunner
@@ -107,6 +108,9 @@ def test_agent_show_prints_agent_toml_and_status(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     assert "status: stopped" in result.output
+    assert "effective_tool_access:" in result.output
+    assert 'allowed_tools: ["send_message"]' in result.output
+    assert '"cao-mcp-server"' in result.output
     assert "agent.toml:" in result.output
     assert 'workdir = "/repo"' in result.output
     assert 'session_name = "developer"' in result.output
@@ -114,6 +118,26 @@ def test_agent_show_prints_agent_toml_and_status(tmp_path, monkeypatch):
     assert "[mcp_servers.cao]" in result.output
     assert 'cao_tools = ["send_message"]' in result.output
     assert "prompt.md:" in result.output
+
+
+def test_agent_show_uses_available_builtin_tool_candidates(tmp_path, monkeypatch):
+    _patch_agents_root(monkeypatch, tmp_path)
+    monkeypatch.setenv("CAO_BATON_ENABLED", "false")
+    agent = replace(_agent(), cao_tools=None)
+    write_agent(agent, agents_root=tmp_path)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.cli.commands.agent.default_agent_manager",
+        lambda: _Manager((_status(agent),)),
+    )
+
+    result = CliRunner().invoke(agent_command, ["show", "developer"])
+
+    assert result.exit_code == 0
+    allowed_line = next(
+        line for line in result.output.splitlines() if line.startswith("allowed_tools:")
+    )
+    assert "send_message" in allowed_line
+    assert "create_baton" not in allowed_line
 
 
 def test_agent_create_writes_valid_stub_agent(tmp_path, monkeypatch):

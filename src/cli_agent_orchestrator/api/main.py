@@ -103,6 +103,7 @@ from cli_agent_orchestrator.services.collaboration_policy import (
 )
 from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
+from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
 from cli_agent_orchestrator.utils import monitoring_formatter
 from cli_agent_orchestrator.utils.dashboard_links import (
     create_agent_dashboard_token,
@@ -380,6 +381,73 @@ class AgentConfigResponse(BaseModel):
         )
 
 
+class ToolAccessDiagnosticResponse(BaseModel):
+    code: str
+    message: str
+    source: str
+
+
+class EffectiveToolAccessResponse(BaseModel):
+    agent_id: str
+    team_id: Optional[str] = None
+    role_id: Optional[str] = None
+    registered_tools: List[str]
+    allowed_tools: List[str]
+    blocked_tools: List[str]
+    built_in_cao_tools: List[str]
+    provider_mediated_tools: Dict[str, List[str]]
+    materialized_mcp_servers: Dict[str, Any]
+    runtime_capabilities: List[str]
+    source_markers: Dict[str, str]
+    inactive_local_grants: Dict[str, Any]
+    provider_conversation_requirements: List[Dict[str, str]]
+    diagnostics: List[ToolAccessDiagnosticResponse]
+
+    @classmethod
+    def from_agent(cls, agent: Agent) -> "EffectiveToolAccessResponse":
+        access = tool_service_for_loaded_agent(
+            agent,
+            fallback_agent_id=agent.id,
+            cli_provider=agent.cli_provider,
+        ).tools_for_agent(
+            agent.id,
+            built_in_tool_names=_available_builtin_cao_tool_names_for_access(),
+        )
+        return cls(
+            agent_id=access.agent_id,
+            team_id=access.team_id,
+            role_id=access.role_id,
+            registered_tools=list(access.registered_tools),
+            allowed_tools=list(access.allowed_tools),
+            blocked_tools=list(access.blocked_tools),
+            built_in_cao_tools=list(access.built_in_cao_tools),
+            provider_mediated_tools={
+                provider: list(tools)
+                for provider, tools in access.provider_mediated_tools.items()
+            },
+            materialized_mcp_servers=dict(access.materialized_mcp_servers),
+            runtime_capabilities=list(access.runtime_capabilities),
+            source_markers=dict(access.source_markers),
+            inactive_local_grants=dict(access.inactive_local_grants),
+            provider_conversation_requirements=[
+                {
+                    "provider": item.provider_name,
+                    "operation": item.operation,
+                    "required_identity": item.required_identity,
+                }
+                for item in access.provider_conversation_requirements
+            ],
+            diagnostics=[
+                ToolAccessDiagnosticResponse(
+                    code=item.code,
+                    message=item.message,
+                    source=item.source,
+                )
+                for item in access.diagnostics
+            ],
+        )
+
+
 class McpToolSourceResponse(BaseModel):
     kind: str
     name: str
@@ -421,6 +489,12 @@ def _build_mcp_surface_descriptor_for_agent(agent: Agent) -> Dict[str, Any]:
     return build_mcp_surface_descriptor_for_agent(agent)
 
 
+def _available_builtin_cao_tool_names_for_access() -> tuple[str, ...]:
+    from cli_agent_orchestrator.mcp_server.server import built_in_cao_tool_names
+
+    return built_in_cao_tool_names()
+
+
 class AgentStatusResponse(BaseModel):
     """Current CAO agent config and runtime summary."""
 
@@ -438,6 +512,7 @@ class AgentStatusResponse(BaseModel):
     derived_workspace_setup_id: Optional[str] = None
     workspace_team_diagnostics: List[str] = []
     mcp_tool_surface: AgentMcpToolSurfaceResponse
+    effective_tool_access: EffectiveToolAccessResponse
     last_active_at: Optional[datetime] = None
 
     @classmethod
@@ -457,6 +532,7 @@ class AgentStatusResponse(BaseModel):
             derived_workspace_setup_id=status.derived_workspace_setup_id,
             workspace_team_diagnostics=list(status.workspace_team_diagnostics),
             mcp_tool_surface=AgentMcpToolSurfaceResponse.from_agent(status.agent),
+            effective_tool_access=EffectiveToolAccessResponse.from_agent(status.agent),
             last_active_at=status.last_active_at,
         )
 

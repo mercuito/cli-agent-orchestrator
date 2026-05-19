@@ -42,6 +42,7 @@ from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
 from cli_agent_orchestrator.utils.terminal import (
     generate_session_name,
     generate_terminal_id,
@@ -119,21 +120,15 @@ def resolve_terminal_runtime_inputs(
 ) -> TerminalRuntimeInputs:
     """Resolve launch inputs that affect terminal runtime behavior."""
     agent = load_agent(agent_id)
+    tool_service = tool_service_for_loaded_agent(
+        agent,
+        fallback_agent_id=agent_id,
+        cli_provider=agent.cli_provider,
+    )
 
     resolved_allowed_tools = allowed_tools
     if resolved_allowed_tools is None:
-        try:
-            from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
-
-            mcp_server_names = list(agent.mcp_servers.keys()) if agent.mcp_servers else None
-            runtime_capabilities = (
-                list(agent.runtime_capabilities) if agent.runtime_capabilities is not None else None
-            )
-            resolved_allowed_tools = resolve_runtime_capabilities(
-                runtime_capabilities, mcp_server_names
-            )
-        except FileNotFoundError:
-            pass
+        resolved_allowed_tools = list(tool_service.runtime_capabilities_for_agent(agent.id))
 
     return TerminalRuntimeInputs(
         allowed_tools=resolved_allowed_tools,
@@ -145,14 +140,12 @@ def resolve_terminal_runtime_inputs(
             "session_name": agent.session_name,
             "model": agent.model,
             "reasoning_effort": agent.reasoning_effort,
-            "mcp_servers": dict(agent.mcp_servers),
+            "mcp_servers": dict(tool_service.materialized_mcp_servers_for_agent(agent.id)),
             "tools": list(agent.tools),
-            "cao_tools": None if agent.cao_tools is None else list(agent.cao_tools),
+            "cao_tools": list(tool_service.tools_for_agent(agent.id).built_in_cao_tools),
             "skills": list(agent.skills),
-            "runtime_capabilities": (
-                None if agent.runtime_capabilities is None else list(agent.runtime_capabilities)
-            ),
-            "codex_config": dict(agent.codex_config),
+            "runtime_capabilities": list(tool_service.runtime_capabilities_for_agent(agent.id)),
+            "codex_config": dict(tool_service.codex_config_for_agent(agent.id)),
         },
     )
 

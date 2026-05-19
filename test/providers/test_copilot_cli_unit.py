@@ -384,11 +384,33 @@ class TestCopilotCliProviderMisc:
         provider = CopilotCliProvider("test1234", "test-session", "window-0")
         assert provider.exit_cli() == "/exit"
 
-    def test_build_runtime_mcp_config_includes_terminal_id(self):
-        provider = CopilotCliProvider("abc12345", "test-session", "window-0")
+    @patch("cli_agent_orchestrator.providers.copilot_cli.default_tool_service")
+    def test_build_runtime_mcp_config_includes_terminal_id(self, mock_tool_service):
+        mock_tool_service.return_value.materialized_mcp_servers_for_agent.return_value = {
+            "cao-mcp-server": {"command": "cao-mcp-server", "enabled": True}
+        }
+        provider = CopilotCliProvider(
+            "abc12345", "test-session", "window-0", agent_id="repo-agent"
+        )
         runtime_cfg = json.loads(provider._build_runtime_mcp_config())
         assert "cao-mcp-server" in runtime_cfg["mcpServers"]
         assert runtime_cfg["mcpServers"]["cao-mcp-server"]["env"]["CAO_TERMINAL_ID"] == "abc12345"
+        mock_tool_service.return_value.materialized_mcp_servers_for_agent.assert_called_once_with(
+            "repo-agent"
+        )
+
+    @patch("cli_agent_orchestrator.providers.copilot_cli.default_tool_service")
+    def test_build_runtime_mcp_config_does_not_add_managed_server_without_tool_service(
+        self, mock_tool_service
+    ):
+        mock_tool_service.return_value.materialized_mcp_servers_for_agent.return_value = {}
+        provider = CopilotCliProvider(
+            "abc12345", "test-session", "window-0", agent_id="repo-agent"
+        )
+
+        runtime_cfg = json.loads(provider._build_runtime_mcp_config())
+
+        assert "cao-mcp-server" not in runtime_cfg["mcpServers"]
 
     def test_cleanup_resets_initialized_state(self):
         provider = CopilotCliProvider("test1234", "test-session", "window-0")

@@ -44,6 +44,7 @@ export function AgentDetailPanel({
 }: AgentDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<AgentDetailTab>('config')
   const [mcpToolsOpen, setMcpToolsOpen] = useState(false)
+  const [toolAccessOpen, setToolAccessOpen] = useState(false)
 
   if (!agent) {
     return (
@@ -64,6 +65,10 @@ export function AgentDetailPanel({
   ].filter(diagnostic => !isNoisyPruningDiagnostic(diagnostic))
   const mcpToolSurfaceAvailable = !!agent.mcp_tool_surface
   const mcpTools = agent.mcp_tool_surface?.tools ?? []
+  const effectiveToolAccess = agent.effective_tool_access
+  const allowedTools = effectiveToolAccess?.allowed_tools ?? []
+  const inactiveGrantNames = Object.keys(effectiveToolAccess?.inactive_local_grants ?? {})
+  const materializedServers = Object.keys(effectiveToolAccess?.materialized_mcp_servers ?? {})
 
   return (
     <div className="rounded-lg border border-gray-700/50 bg-gray-800/60 min-w-0">
@@ -155,6 +160,66 @@ export function AgentDetailPanel({
                   </ul>
                 ) : (
                   <p className="text-xs text-gray-500">No MCP tools visible for this agent.</p>
+                )}
+              </div>
+            )}
+          </section>
+          <section className="mt-3 max-w-xl border-t border-gray-700/50 pt-3">
+            <button
+              type="button"
+              onClick={() => setToolAccessOpen(open => !open)}
+              aria-expanded={toolAccessOpen}
+              className="flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-gray-100"
+            >
+              <Wrench size={13} className="text-cyan-300" />
+              <span>ToolService access</span>
+              <span className="rounded-full bg-gray-700/70 px-1.5 py-0.5 font-mono text-[10px] text-gray-400">
+                {effectiveToolAccess ? effectiveToolAccess.allowed_tools.length : 'not loaded'}
+              </span>
+            </button>
+            {toolAccessOpen && (
+              <div className="mt-2 space-y-2 text-xs">
+                {!effectiveToolAccess ? (
+                  <p className="text-amber-300">ToolService access is unavailable from this dashboard response.</p>
+                ) : (
+                  <>
+                    <div className="grid gap-1 font-mono text-gray-400">
+                      <div className="flex flex-wrap gap-x-2 gap-y-1">
+                        <span>allowed:</span>
+                        {allowedTools.length ? (
+                          allowedTools.map(tool => (
+                            <span
+                              key={tool}
+                              className="inline-flex max-w-full flex-wrap gap-x-1 text-gray-300"
+                            >
+                              <span>{tool}</span>
+                              {effectiveToolAccess.source_markers[tool] && (
+                                <span className="text-gray-500">
+                                  {effectiveToolAccess.source_markers[tool]}
+                                </span>
+                              )}
+                            </span>
+                          ))
+                        ) : (
+                          <span>none</span>
+                        )}
+                      </div>
+                      <div>runtime: {effectiveToolAccess.runtime_capabilities.join(', ') || 'none'}</div>
+                      <div>mcp: {materializedServers.join(', ') || 'none'}</div>
+                    </div>
+                    {!!inactiveGrantNames.length && (
+                      <div className="rounded-md border border-amber-500/30 bg-amber-950/20 p-2 text-amber-200">
+                        Inactive agent-local grants: {inactiveGrantNames.join(', ')}
+                      </div>
+                    )}
+                    {!!effectiveToolAccess.diagnostics.length && (
+                      <ul className="space-y-1 text-amber-300">
+                        {effectiveToolAccess.diagnostics.map(item => (
+                          <li key={`${item.code}:${item.message}`}>{item.message}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
                 )}
               </div>
             )}

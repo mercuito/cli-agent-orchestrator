@@ -203,14 +203,12 @@ def test_provider_policy_loading_failure_hides_provider_tools(monkeypatch):
         "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_manager",
         lambda: _FakeAgentManager(_agents()),
     )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.mcp_server.provider_tools.load_enabled_provider_tool_access_policies",
-        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("provider config unavailable")),
-    )
+    service = _FailingProviderPolicyService(RuntimeError("provider config unavailable"))
 
     registered = register_provider_mediated_mcp_tools_for_terminal(
         terminal_id="terminal-a",
         mcp_instance=mcp,
+        tool_service=service,
     )
 
     assert registered == []
@@ -222,13 +220,19 @@ def test_provider_config_failure_is_surfaced(monkeypatch):
         "cli_agent_orchestrator.mcp_server.provider_tools.default_agent_manager",
         lambda: _FakeAgentManager(_agents()),
     )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.mcp_server.provider_tools.load_enabled_provider_tool_access_policies",
-        lambda **kwargs: (_ for _ in ()).throw(WorkspaceProviderConfigError("bad provider config")),
-    )
+    service = _FailingProviderPolicyService(WorkspaceProviderConfigError("bad provider config"))
 
     with pytest.raises(WorkspaceProviderConfigError, match="bad provider config"):
         register_provider_mediated_mcp_tools_for_terminal(
             terminal_id="terminal-a",
             mcp_instance=mcp,
+            tool_service=service,
         )
+
+
+class _FailingProviderPolicyService:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    def provider_policies(self):
+        raise self.exc

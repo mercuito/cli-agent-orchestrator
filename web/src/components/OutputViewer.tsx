@@ -77,7 +77,7 @@ export function OutputViewer({ terminalId, onClose }: OutputViewerProps) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/30 shrink-0">
           <div className="flex items-center gap-3">
             <FileText size={16} className="text-emerald-400" />
-            <span className="text-sm font-semibold text-white">Terminal Output</span>
+            <span className="text-sm font-semibold text-white">Operator Terminal Output</span>
             <span className="text-xs text-gray-500 font-mono bg-gray-800 px-2 py-0.5 rounded">{terminalId}</span>
           </div>
           <div className="flex items-center gap-2">

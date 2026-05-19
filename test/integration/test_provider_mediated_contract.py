@@ -194,11 +194,6 @@ async def test_provider_preflight_failure_stops_mcp_startup_before_serving_tools
     mcp = FastMCP("provider-contract-builtins", mask_error_details=False)
     monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-a")
     monkeypatch.setattr(server, "mcp", mcp)
-    monkeypatch.setattr(
-        server,
-        "_resolve_allowlist_for_terminal",
-        lambda terminal_id: ["send_message"],
-    )
     run = Mock()
     monkeypatch.setattr(mcp, "run", run)
     monkeypatch.setattr(
@@ -215,5 +210,5 @@ async def test_provider_preflight_failure_stops_mcp_startup_before_serving_tools
     with pytest.raises(ProviderToolAccessConfigError, match="bad provider config"):
         server.main()
 
-    assert await _registered_tool_names(mcp) == {"send_message"}
+    assert await _registered_tool_names(mcp) == set()
     run.assert_not_called()

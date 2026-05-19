@@ -117,6 +117,27 @@ export interface McpToolSurface {
   }>
 }
 
+export interface EffectiveToolAccess {
+  agent_id: string
+  team_id: string | null
+  role_id: string | null
+  registered_tools: string[]
+  allowed_tools: string[]
+  blocked_tools: string[]
+  built_in_cao_tools: string[]
+  provider_mediated_tools: Record<string, string[]>
+  materialized_mcp_servers: Record<string, unknown>
+  runtime_capabilities: string[]
+  source_markers: Record<string, string>
+  inactive_local_grants: Record<string, unknown>
+  provider_conversation_requirements: Array<{
+    provider: string
+    operation: string
+    required_identity: string
+  }>
+  diagnostics: Array<{ code: string; message: string; source: string }>
+}
+
 export interface AgentStatus {
   agent_id: string
   display_name: string
@@ -132,6 +153,7 @@ export interface AgentStatus {
   derived_workspace_setup_id?: string | null
   workspace_team_diagnostics?: string[]
   mcp_tool_surface?: McpToolSurface
+  effective_tool_access?: EffectiveToolAccess
   last_active_at: string | null
 }
 

@@ -12,10 +12,14 @@ from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+    provider_identity_from_metadata,
+)
 from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
+from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
 
 PROVIDER_CONVERSATION_INBOX_SOURCE_KIND = "provider_conversation_thread"
@@ -106,6 +110,13 @@ def create_notification_for_message(
                 .filter(db_module.ProviderWorkItemModel.id == thread_row.work_item_id)
                 .first()
             )
+        _require_provider_preview_authorized(
+            agent_id=authorized_agent_id,
+            provider=cast(str, thread_row.provider),
+            provider_message_id=provider_message_id,
+            thread_row=thread_row,
+            message_row=message_row,
+        )
 
         delivery = db_module.create_inbox_delivery(
             PROVIDER_CONVERSATION_INBOX_SENDER_ID,
@@ -183,6 +194,35 @@ def create_notification_for_message(
             )
         session.commit()
         return ProviderConversationInboxNotification(delivery=existing, created=False)
+
+
+def _require_provider_preview_authorized(
+    *,
+    agent_id: str,
+    provider: str,
+    provider_message_id: int,
+    thread_row: db_module.ProviderConversationThreadModel,
+    message_row: db_module.ProviderConversationMessageModel,
+) -> None:
+    provider_identity = provider_identity_from_metadata(
+        provider,
+        _load_json_object(cast(Optional[str], thread_row.metadata_json)),
+        _load_json_object(cast(Optional[str], thread_row.raw_snapshot_json)),
+        _load_json_object(cast(Optional[str], message_row.metadata_json)),
+        _load_json_object(cast(Optional[str], message_row.raw_snapshot_json)),
+    )
+    decision = default_tool_service().provider_conversation_decision(
+        agent_id,
+        provider=provider,
+        operation="preview",
+        source=f"provider_conversation_message:{provider_message_id}",
+        provider_identity=provider_identity,
+    )
+    if not decision.allowed:
+        raise WorkspaceSetupConfigError(
+            "Provider conversation preview is not authorized by ToolService: "
+            f"{decision.reason}"
+        )
 
 
 def _require_receiver_authorized_for_agent(

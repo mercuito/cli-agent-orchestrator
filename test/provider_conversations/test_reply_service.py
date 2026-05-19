@@ -28,6 +28,7 @@ from cli_agent_orchestrator.provider_conversations.reply_service import (
     ProviderConversationReplyUnsupportedSourceError,
     reply_to_inbox_message,
 )
+from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
 from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
 from cli_agent_orchestrator.workspace_setups import (
     DEFAULT_WORKSPACE_SETUP_ID,
@@ -67,10 +68,22 @@ def test_session(monkeypatch):
     TestSession = sessionmaker(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", TestSession)
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_workspace_collaboration_manager",
-        _provider_inbox_collaboration_manager,
+        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        lambda: _ProviderInboxToolService(),
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        lambda: _ProviderInboxToolService(),
     )
     return TestSession
+
+
+class _ProviderInboxToolService:
+    def provider_conversation_decision(self, *args, **kwargs) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
+
+    def provider_conversation_decision_for_inbox(self, *args, **kwargs) -> ToolAccessDecision:
+        return ToolAccessDecision.allow(reason="provider_conversation_allowed")
 
 
 def _provider_inbox_collaboration_manager() -> WorkspaceCollaborationManager:

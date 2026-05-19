@@ -31,6 +31,7 @@ from cli_agent_orchestrator.providers.base import (
     ProviderRuntimeStateCapability,
 )
 from cli_agent_orchestrator.providers.runtime_config import get_provider_runtime_config
+from cli_agent_orchestrator.services.tool_service import tool_service_for_loaded_agent
 from cli_agent_orchestrator.utils.codex_home import (
     CODEX_HOME_MATERIALIZATION_SCHEMA_VERSION,
     build_codex_home_materialization,
@@ -628,8 +629,13 @@ class CodexProvider(BaseProvider):
 
                 # Add MCP servers via -c config overrides (per-session, no global config changes).
                 # Each server field is set via dotted path: mcp_servers.<name>.<field>=<value>
-                if agent.mcp_servers:
-                    for server_name, server_config in agent.mcp_servers.items():
+                mcp_servers = tool_service_for_loaded_agent(
+                    agent,
+                    fallback_agent_id=self._agent_id,
+                    cli_provider="codex",
+                ).materialized_mcp_servers_for_agent(self._agent_id)
+                if mcp_servers:
+                    for server_name, server_config in mcp_servers.items():
                         prefix = f"mcp_servers.{server_name}"
                         if isinstance(server_config, dict):
                             cfg = server_config
