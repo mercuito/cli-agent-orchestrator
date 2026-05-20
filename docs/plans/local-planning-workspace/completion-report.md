@@ -1,7 +1,7 @@
 # Local Planning Workspace — Completion Report
 
 Single record of implementation progress and review findings across the
-13 tasks under [tasks/](tasks/).
+tasks under [tasks/](tasks/).
 
 ## Conventions
 
@@ -22,7 +22,7 @@ work progresses:
   reviewer identity and timestamp.
 
 A task is complete only after two successive clean review passes are
-recorded here for that task. The plan is complete when all 13 tasks are
+recorded here for that task. The plan is complete when all tasks are
 complete.
 
 ## Tasks

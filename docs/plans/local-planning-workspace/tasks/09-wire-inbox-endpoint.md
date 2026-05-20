@@ -23,6 +23,9 @@ message.
 - `src/cli_agent_orchestrator/services/inbox_service.py` — extend
   `check_and_send_pending_messages` to emit
   `AgentMessageReceivedEvent` on successful delivery.
+- `src/cli_agent_orchestrator/runtime/agent.py` — extend
+  `AgentRuntimeHandle.notify` / `_create_or_get_notification` to accept
+  and persist notification metadata needed for event correlation.
 - `test/api/` and `test/services/test_inbox_service.py` — extend.
 
 ## What to do
@@ -34,31 +37,57 @@ In `create_inbox_message_endpoint`:
    to a known terminal").
 2. Look up receiver's terminal metadata from path param. Resolve to a
    receiver `Agent` via `AgentManager.resolve_agent(receiver_metadata["agent_id"])`.
-3. Build `AgentMessageSentEvent(...)`. Publish via
-   `default_cao_event_dispatcher().publish(...)`.
-4. Call `manager.apply_outbound_resolution(receiver_agent, event)` →
+3. Preserve the existing same-team authorization by calling
+   `_require_inbox_message_policy(sender_id, receiver_id)` (or the exact
+   equivalent `WorkspaceCollaborationManager.require_same_team_collaboration`
+   using the resolved sender/receiver agents) before publishing or routing.
+   Cross-team sends must remain rejected even when context resolution could
+   otherwise produce a workspace context.
+4. Allocate `message_source_id` before persistence and build
+   `AgentMessageSentEvent(..., message_source_id=message_source_id)`.
+   Set a non-null `correlation_id` on the sent event (use
+   `message_source_id` or the sent event's own `event_id`, consistently).
+   Publish via `default_cao_event_dispatcher().publish(...)`.
+5. Call `manager.apply_outbound_resolution(receiver_agent, event)` →
    resolution. If the workspace flag enforces and resolution is None,
    the manager raises; surface that as 400.
-5. Construct `AgentRuntimeHandle(receiver_agent,
+6. Construct `AgentRuntimeHandle(receiver_agent,
    workspace_context_id=resolution.workspace_context_id if resolution
    else receiver_metadata["workspace_context_id"])` (fall back to
    receiver's existing context when the workspace doesn't enforce and
    resolver returned None).
-6. Call `handle.notify(message, sender_id=sender_id,
-   source_kind="cao_inbox", source_id=...)`. This both creates the
-   `agent:<id>:context:<resolved>` inbox notification AND triggers any
-   needed context switch.
-7. Return the notify result envelope (preserve existing response shape
-   for backward compatibility with the MCP `send_message` caller).
+7. Call `handle.notify(message, sender_id=sender_id,
+   source_kind="agent_collaboration_message",
+   source_id=message_source_id, causing_event=sent_event,
+   notification_metadata={"sent_event_id": str(sent_event.event_id),
+   "sent_correlation_id": str(sent_event.correlation_id)})`.
+   This both creates the `agent:<id>:context:<resolved>` inbox notification
+   AND triggers any needed context switch.
+8. Preserve the existing flat endpoint response shape for backward
+   compatibility with the MCP `send_message` caller. Do not return the
+   `AgentRuntimeNotifyResult` object directly. Map
+   `notify_result.notification.delivery` back to:
+   `success`, `notification_id`, `message_id`, `sender_id`, `receiver_id`,
+   `source_kind`, `source_id`, and `created_at`, matching today's response.
+   New status/freshness fields may be added only as backward-compatible
+   extras.
+
+In `AgentRuntimeHandle.notify`:
+
+9. Add an optional `notification_metadata` argument and thread it through
+   `_create_or_get_notification` into `db_module.create_inbox_delivery`.
+   Preserve existing callers by defaulting to `None`.
 
 In `inbox_service.check_and_send_pending_messages`:
 
-8. On the existing successful delivery path (after `terminal_service.send_input`
-   succeeds and notification status flips to DELIVERED), emit
+10. On the existing successful delivery path (after `terminal_service.send_input`
+   succeeds and notification status flips to DELIVERED), emit one
    `AgentMessageReceivedEvent(receiver_agent_id, receiver_terminal_id,
-   inbox_message_id)`. Use the correlation_id of the original sent event
-   if available via the notification metadata; otherwise generate a fresh
-   one. The pair-up convention is `correlation_id`-based.
+   inbox_message_id)` per delivered `InboxDelivery` in the batch. Use each
+   delivery notification's own `metadata["sent_correlation_id"]` for that
+   received event's `correlation_id` and `metadata["sent_event_id"]` for
+   `causation_id` when present; otherwise generate a fresh correlation for
+   that delivery. The pair-up convention is `correlation_id`-based.
 
 ## Out of scope
 
@@ -74,11 +103,27 @@ In `inbox_service.check_and_send_pending_messages`:
    delivery works, no context switch fires, `AgentMessageSentEvent` and
    `AgentMessageReceivedEvent` both published with matching
    `correlation_id`.
+1d. Batched inbox delivery emits one `AgentMessageReceivedEvent` per
+    delivered `InboxDelivery`, each using that delivery's own inbox id and
+    correlation metadata.
+1e. Endpoint response preserves the existing flat response shape
+    (`success`, `notification_id`, `message_id`, `sender_id`,
+    `receiver_id`, `source_kind`, `source_id`, `created_at`) by mapping from
+    `notify_result.notification.delivery`; it does not expose
+    `AgentRuntimeNotifyResult` directly.
+1a. Existing same-team collaboration authorization is preserved before
+    event publish/routing; a cross-team sender/receiver pair is rejected
+    and no inbox notification is created.
+1b. `AgentRuntimeHandle.notify` accepts optional `notification_metadata`
+    and persists it to the inbox notification without changing existing
+    callers.
+1c. Sent collaboration events built by this endpoint always have a non-null
+    `correlation_id`, and the received event reuses exactly that value.
 2. send_message from sender on plan A to a receiver on plan B:
    receiver context-switches to plan A via `handle.notify`. Inbox
-   notification lives under `agent:<id>:context:plan_A`. After the switch
-   lands and the message delivers, `AgentMessageReceivedEvent` fires
-   from `inbox_service`.
+   notification lives under `agent:<id>:context:<plan_A_context_id>`. After
+   the switch lands and the message delivers, `AgentMessageReceivedEvent`
+   fires from `inbox_service`.
 3. send_message from sender on the sentinel context on a
    `local_planning` team: rejected via the manager flag check from Task
    04. Sent event still published before rejection (so the timeline

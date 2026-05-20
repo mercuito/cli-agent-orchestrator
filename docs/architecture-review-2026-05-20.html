@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CAO Architecture Review · Synthesis · 2026-05-20</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose", themeVariables: { fontFamily: "ui-sans-serif, system-ui" } });
+  </script>
+  <style>
+    body { background: #f8f7f4; }
+    .grid-paper {
+      background-image:
+        linear-gradient(rgba(15,23,42,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15,23,42,0.05) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    .card-shadow { box-shadow: 0 1px 0 rgba(15,23,42,0.04), 0 28px 60px -36px rgba(15,23,42,0.22); }
+    .badge { display:inline-flex; align-items:center; gap:.35rem; padding:.2rem .6rem; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; border:1px solid transparent; }
+    .badge-strong { background:#d1fae5; color:#065f46; border-color:#34d399; }
+    .badge-worth  { background:#fef3c7; color:#92400e; border-color:#fbbf24; }
+    .module-box { border:1px solid #cbd5e1; background:#fff; border-radius:8px; padding:.5rem .7rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:#0f172a; }
+    .module-box.shallow { background:#f1f5f9; color:#64748b; border-style:dashed; }
+    .module-box.deep    { background: linear-gradient(135deg,#0f172a,#1e293b); color:#f8fafc; border:0; box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 8px 18px -10px rgba(15,23,42,.5); }
+    .deep-band { background: linear-gradient(135deg,#0f172a,#1e293b); color:#e2e8f0; border-radius:10px; border-left:8px solid #10b981; padding:1rem 1.1rem; }
+    .thin-band { border-left:5px solid #cbd5e1; background:#fff; border-radius:6px; padding:.4rem .7rem; font-size:12px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; color:#475569; }
+    .pkg-frame { border:1px dashed #94a3b8; border-radius:10px; padding:.6rem .75rem; background:rgba(255,255,255,.6); }
+    .pkg-tag { font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#475569; }
+    .pkg-frame.deep { border-style:solid; border-color:#10b981; background:rgba(16,185,129,.05); }
+    .pkg-frame.deep .pkg-tag { color:#047857; }
+    .small-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:#64748b; }
+    .filechip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; background:#0f172a; color:#e2e8f0; padding:.12rem .45rem; border-radius:4px; }
+    .leak { color:#dc2626; font-weight:700; letter-spacing:.04em; }
+    .mass-iface { background:#fee2e2; border:1px solid #fca5a5; border-radius:6px 6px 0 0; padding:.4rem .55rem; font-size:11px; color:#7f1d1d; }
+    .mass-impl  { background:#e0f2fe; border:1px solid #7dd3fc; border-top:0; border-radius:0 0 6px 6px; padding:.4rem .55rem; font-size:11px; color:#075985; }
+    .diagram-panel { min-height: 280px; }
+    h2.section-rule { position:relative; display:flex; align-items:center; }
+    h2.section-rule::after { content:""; flex:1; height:1px; background:#cbd5e1; margin-left:1rem; }
+    .anchor-link { color:#0f766e; text-decoration:none; border-bottom:1px dotted #0f766e; }
+    .anchor-link:hover { border-bottom-style:solid; }
+    .source-tag { font-size:10px; font-weight:700; padding:.1rem .4rem; border-radius:4px; letter-spacing:.04em; }
+    .source-r1 { background:#ede9fe; color:#5b21b6; }
+    .source-r2 { background:#dbeafe; color:#1e40af; }
+    .source-both { background:#fce7f3; color:#9d174d; }
+  </style>
+</head>
+<body class="text-slate-900 font-sans">
+  <main class="max-w-6xl mx-auto px-6 py-12 space-y-12">
+
+    <!-- ========================= Header ========================= -->
+    <header class="space-y-5">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-wider text-slate-500">2026-05-20 · Synthesis</p>
+          <h1 class="font-serif text-4xl text-slate-950 leading-tight max-w-3xl">Nine deepening opportunities for CAO.</h1>
+          <p class="mt-4 text-slate-700 max-w-3xl leading-relaxed">
+            Synthesised from two independent architecture reviews. Both agents converged on the
+            <strong>Agent</strong> concept and on <strong>Provider</strong> duplication — from different angles — and each found things the other missed.
+            Twelve candidates between them collapse into nine here, after merging the overlapping ones into deeper proposals.
+          </p>
+        </div>
+        <div class="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600 space-y-1.5 shrink-0">
+          <div><span class="inline-block w-3 h-3 rounded-sm border border-slate-400 bg-white align-middle"></span> module &nbsp;
+               <span class="inline-block w-3 h-3 rounded-sm bg-slate-100 border border-slate-400 border-dashed align-middle"></span> shallow</div>
+          <div><span class="inline-block w-6 h-3 rounded-sm bg-slate-900 align-middle"></span> deep module &nbsp;
+               <span class="leak ml-2">red</span> leakage</div>
+          <div><span class="source-tag source-r1">R1</span> from report 1 ·
+               <span class="source-tag source-r2">R2</span> from report 2 ·
+               <span class="source-tag source-both">R1+R2</span> merged</div>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 pt-2">
+        <span class="badge badge-strong">Strong · 5</span>
+        <span class="badge badge-worth">Worth exploring · 4</span>
+      </div>
+    </header>
+
+    <!-- ========================= Map ========================= -->
+    <section class="grid-paper rounded-2xl border border-slate-200 p-6">
+      <p class="small-label mb-2">Where the friction lives</p>
+      <p class="text-slate-700 text-sm max-w-3xl mb-5">
+        Candidates plotted onto the layers from <code>CODEBASE.md</code>. Pill darkness ≈ recommendation strength;
+        size ≈ scope. Bright pills are the ones to tackle first.
+      </p>
+      <div class="grid grid-cols-[120px_1fr] gap-y-3 text-xs items-center">
+
+        <div class="small-label text-right pr-3">Entry</div>
+        <div class="flex flex-wrap gap-2">
+          <span class="module-box deep">api/main.py · 2,860 lines / 60 routes &nbsp;<a href="#api-routers" class="badge badge-strong" style="font-size:10px;">#4</a></span>
+        </div>
+
+        <div class="small-label text-right pr-3">Services</div>
+        <div class="flex flex-wrap gap-2">
+          <span class="module-box deep">inbox · 8 files / ~2,880 lines &nbsp;<a href="#inbox" class="badge badge-strong" style="font-size:10px;">#1</a></span>
+          <span class="module-box deep">terminal_service.create · 7 bands &nbsp;<a href="#terminal-launch" class="badge badge-strong" style="font-size:10px;">#5</a></span>
+          <span class="module-box shallow">baton_watchdog · 332 <a href="#readiness" class="badge badge-worth" style="font-size:10px;">#6</a></span>
+        </div>
+
+        <div class="small-label text-right pr-3">Runtime</div>
+        <div class="flex flex-wrap gap-2">
+          <span class="module-box deep">agent.py · 1,257 + runtime/agent.py · 1,397 &nbsp;<a href="#agent" class="badge badge-strong" style="font-size:10px;">#2</a></span>
+        </div>
+
+        <div class="small-label text-right pr-3">Providers</div>
+        <div class="flex flex-wrap gap-2">
+          <span class="module-box deep">base.py · 373 + 7 adapter files &nbsp;<a href="#providers" class="badge badge-strong" style="font-size:10px;">#3</a></span>
+        </div>
+
+        <div class="small-label text-right pr-3">Web</div>
+        <div class="flex flex-wrap gap-2">
+          <span class="module-box shallow">web/src/api.ts <a href="#dashboard" class="badge badge-worth" style="font-size:10px;">#8</a></span>
+          <span class="module-box shallow">WorkspaceTeamsPanel <a href="#teams" class="badge badge-worth" style="font-size:10px;">#9</a></span>
+        </div>
+
+        <div class="small-label text-right pr-3">Cross-cut</div>
+        <div class="flex flex-wrap gap-2">
+          <span class="module-box shallow">CAO_BATON_ENABLED · CAO_ENABLE_WORKING_DIRECTORY <a href="#features" class="badge badge-worth" style="font-size:10px;">#7</a></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================= Convergence note ========================= -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 card-shadow">
+      <p class="small-label mb-2">Where the two agents converged</p>
+      <div class="grid md:grid-cols-2 gap-6 text-sm text-slate-700">
+        <div>
+          <div class="font-semibold text-slate-900 mb-1">On the <em>Agent</em> concept</div>
+          <p><span class="source-tag source-r1">R1</span> noticed <code>cli_agent_orchestrator/agent.py</code> (durable config) and <code>runtime/agent.py</code> (live state) compete, while <code>models/</code> conspicuously lacks an <code>agent.py</code>.
+             <span class="source-tag source-r2">R2</span> noticed <code>AgentRuntimeHandle</code> leaks freshness, restart, inbox-rehome, and workspace-switch facts. These are the same architectural fault from two altitudes — synthesised as candidate <a href="#agent" class="anchor-link">#2</a>.</p>
+        </div>
+        <div>
+          <div class="font-semibold text-slate-900 mb-1">On <em>Provider</em> duplication</div>
+          <p><span class="source-tag source-r1">R1</span> saw <code>get_status()</code> copy-pasted across 7 adapters.
+             <span class="source-tag source-r2">R2</span> saw JSON state persistence duplicated in Claude/Codex and transcript parsing duplicated in Q/Kiro. Three faces of the same shallow base — synthesised as candidate <a href="#providers" class="anchor-link">#3</a>, where <code>BaseProvider</code> grows three private collaborators.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- ========================= STRONG CANDIDATES ========================= -->
+    <!-- ===================================================================== -->
+    <h2 class="font-serif text-2xl section-rule">Strong</h2>
+
+    <!-- ============== #1 Inbox =============== -->
+    <article id="inbox" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #1 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Give the <em>Inbox</em> concept a deep home.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-strong">Strong</span>
+          <span class="source-tag source-r1">R1 #1</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        <code>Inbox</code> is a domain noun in <code>CODEBASE.md</code> and <code>docs/api.md</code>, but inside <code>src/</code> it splits into
+        eight shallow modules across three packages — each thin, each with its own interface. The deletion test concentrates: collapse them, complexity doesn't reappear at callers.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">services/inbox_service.py</span> · 176</li>
+            <li><span class="filechip">clients/inbox_store.py</span> · 605</li>
+            <li><span class="filechip">provider_conversations/inbox_access.py</span> · 430</li>
+            <li><span class="filechip">…/inbox_authorization.py</span> · 173</li>
+            <li><span class="filechip">…/inbox_bridge.py</span> · 493</li>
+            <li><span class="filechip">…/inbox_read_presentation.py</span> · 35</li>
+            <li><span class="filechip">…/persistence.py</span> · 557</li>
+            <li><span class="filechip">…/reply_service.py</span> · 445</li>
+          </ul>
+          <p class="text-xs text-slate-500 mt-3">~2,880 lines · 8 modules · 3 packages.</p>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> Each Inbox module is <em>shallow</em> — interface nearly as wide as implementation. <code>inbox_read_presentation.py</code> is 35 lines of formatting; <code>inbox_authorization.py</code> is a pass-through. Together they fragment one concept across three packages, forcing every caller to learn which package owns which concern.</div>
+          <div><strong>Solution.</strong> Collapse into one <code>inbox/</code> package exposing one deep <code>Inbox</code> interface: <code>send · read · deliver_when_ready · authorize</code>. Persistence, authorization, presentation, bridge, and watchdog become <em>private collaborators</em> — internal seams, not external ones. Pairs with candidate <a href="#readiness" class="anchor-link">#6</a> (TerminalReadinessMonitor as a private collaborator).</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> delivery, auth, formatting bugs land in one place</li>
+              <li><strong>leverage:</strong> workflow patterns (handoff, baton, future review loops) call one Inbox interface, not seven</li>
+              <li><strong>the interface is the test surface:</strong> exercise end-to-end against real SQLite + fake provider, not 6 directories mocking 5 collaborators each</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-4">
+          <p class="small-label mb-3">Before — 8 shallow modules in 3 packages</p>
+          <div class="space-y-2.5">
+            <div class="pkg-frame">
+              <div class="pkg-tag mb-1.5">services/</div>
+              <div class="flex"><span class="module-box shallow">inbox_service</span></div>
+            </div>
+            <div class="pkg-frame">
+              <div class="pkg-tag mb-1.5">clients/</div>
+              <div class="flex"><span class="module-box shallow">inbox_store</span></div>
+            </div>
+            <div class="pkg-frame">
+              <div class="pkg-tag mb-1.5">provider_conversations/</div>
+              <div class="flex flex-wrap gap-1.5">
+                <span class="module-box shallow">inbox_access</span>
+                <span class="module-box shallow">inbox_authorization</span>
+                <span class="module-box shallow">inbox_bridge</span>
+                <span class="module-box shallow">inbox_read_presentation</span>
+                <span class="module-box shallow">persistence</span>
+                <span class="module-box shallow">reply_service</span>
+              </div>
+            </div>
+            <p class="text-xs text-slate-500 italic">Callers learn three packages and eight interfaces.</p>
+          </div>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-4">
+          <p class="small-label mb-3">After — one deep Inbox</p>
+          <div class="pkg-frame deep mb-3">
+            <div class="pkg-tag mb-2">inbox/</div>
+            <div class="module-box deep text-center p-4" style="font-size:14px;">
+              <div class="font-semibold">Inbox</div>
+              <div class="text-xs mt-1 text-emerald-200">send · read · deliver_when_ready · authorize</div>
+            </div>
+            <div class="flex flex-wrap gap-1.5 justify-center mt-3 text-[10px] text-slate-500">
+              <span>↳ private: <em>Store</em></span>
+              <span>↳ private: <em>Authorizer</em></span>
+              <span>↳ private: <em>Bridge</em></span>
+              <span>↳ private: <em>ReadinessMonitor</em></span>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 italic">Callers say <code>inbox.send(...)</code>. One interface; depth absorbs the rest.</p>
+        </div>
+      </div>
+    </article>
+
+    <!-- ============== #2 Agent =============== -->
+    <article id="agent" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #2 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Consolidate the <em>Agent</em> concept across model and runtime.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-strong">Strong</span>
+          <span class="source-tag source-both">R1 #3 + R2 #1</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        Per your stated mental model (<em>agent → instance</em>, ≤1 live terminal): the code carries the bones but not the depth.
+        Both agents flagged this — from different layers. Tackle in two steps: first move the model, then deepen the runtime.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">cli_agent_orchestrator/agent.py</span> · 1,257 <span class="text-slate-500">(durable config)</span></li>
+            <li><span class="filechip">runtime/agent.py</span> · 1,397 <span class="text-slate-500">(handle + freshness)</span></li>
+            <li><span class="filechip">services/terminal_service.py</span></li>
+            <li><span class="filechip">services/inbox_service.py</span></li>
+            <li><span class="filechip">models/</span> · has terminal, session, inbox, flow — <span class="leak">no agent.py</span></li>
+          </ul>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem (Step A — R1).</strong> Top-level <code>agent.py</code> owns <code>FrozenConfigDict</code>, <code>AgentConfigError</code>, <code>AGENTS_ROOT</code>, validation. <code>runtime/agent.py</code> imports from it. Meanwhile <code>models/</code> already holds Terminal, Session, Inbox, Flow — Agent is the conspicuous absentee. Deletion test: erasing top-level <code>agent.py</code> would force its contents into <code>models/agent.py</code>, alongside its peers.</div>
+          <div><strong>Problem (Step B — R2).</strong> <code>AgentRuntimeHandle</code> leaks freshness, restart, inbox-rehome, workspace-switch, and state-file ordering across its seam — tests cross private boundaries and inspect raw DB rows.</div>
+          <div><strong>Solution.</strong> (A) Move durable-config code from <code>cli_agent_orchestrator/agent.py</code> into <code>models/agent.py</code>. (B) Deepen <code>runtime/agent.py</code> so <code>AgentRuntimeHandle</code> stays small and the implementation absorbs restart, rehome, freshness, event facts.</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> "what is an agent" lives in one model file; restart/rehome rules concentrate in one runtime</li>
+              <li><strong>leverage:</strong> one seam for callers and tests; future workflow patterns compose on a clean handle</li>
+              <li><strong>AI-navigability:</strong> an agent reading the repo finds <code>models/agent.py</code> adjacent to its peers, not at the package root</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-4 diagram-panel">
+          <p class="small-label mb-3">Before — split brain + leaky handle</p>
+          <svg viewBox="0 0 460 270" class="w-full">
+            <!-- top-level agent.py -->
+            <rect x="20" y="20" width="200" height="56" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+            <text x="120" y="42" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#7f1d1d">cli_agent_orchestrator/</text>
+            <text x="120" y="60" text-anchor="middle" font-family="ui-monospace" font-size="13" font-weight="700" fill="#7f1d1d">agent.py · 1,257</text>
+            <!-- runtime/agent.py -->
+            <rect x="240" y="20" width="200" height="56" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+            <text x="340" y="42" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#7f1d1d">runtime/</text>
+            <text x="340" y="60" text-anchor="middle" font-family="ui-monospace" font-size="13" font-weight="700" fill="#7f1d1d">agent.py · 1,397</text>
+            <path d="M 220 50 L 240 50" stroke="#dc2626" stroke-width="2" marker-end="url(#ar-red)"/>
+            <text x="230" y="40" text-anchor="middle" font-size="10" fill="#dc2626">imports</text>
+            <!-- leaks from runtime -->
+            <text x="240" y="100" font-size="10" fill="#7f1d1d" font-family="ui-monospace">AgentRuntimeHandle leaks:</text>
+            <g font-family="ui-monospace" font-size="11" fill="#7f1d1d">
+              <text x="250" y="118">→ freshness facts</text>
+              <text x="250" y="134">→ restart ordering</text>
+              <text x="250" y="150">→ inbox rehome timing</text>
+              <text x="250" y="166">→ workspace-switch state</text>
+            </g>
+            <!-- models row -->
+            <rect x="20" y="200" width="420" height="50" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="4 3"/>
+            <text x="230" y="222" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#475569">models/ — terminal · session · inbox · flow</text>
+            <text x="230" y="240" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">…no agent.py here</text>
+            <defs>
+              <marker id="ar-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-4 diagram-panel">
+          <p class="small-label mb-3">After — one model, one deep runtime</p>
+          <svg viewBox="0 0 460 270" class="w-full">
+            <rect x="20" y="20" width="420" height="60" rx="8" fill="#dcfce7" stroke="#15803d"/>
+            <text x="230" y="42" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#14532d">models/</text>
+            <text x="230" y="62" text-anchor="middle" font-family="ui-monospace" font-size="13" font-weight="700" fill="#14532d">agent.py — config · validation · FrozenConfigDict</text>
+
+            <rect x="20" y="130" width="420" height="120" rx="10" fill="#0f172a" stroke="#10b981" stroke-width="2"/>
+            <text x="230" y="152" text-anchor="middle" font-family="ui-monospace" font-size="11" fill="#a7f3d0">runtime/</text>
+            <text x="230" y="174" text-anchor="middle" font-family="ui-monospace" font-size="14" font-weight="700" fill="#f8fafc">agent.py — deep reconciliation</text>
+            <g font-family="ui-monospace" font-size="11" fill="#cbd5e1">
+              <text x="60"  y="210">freshness</text>
+              <text x="170" y="210">restart</text>
+              <text x="260" y="210">inbox rehome</text>
+              <text x="370" y="210">events</text>
+              <text x="120" y="232">workspace switch</text>
+              <text x="280" y="232">state files</text>
+            </g>
+
+            <path d="M 230 80 L 230 130" stroke="#0f766e" stroke-width="2" marker-end="url(#ar-green)"/>
+            <defs>
+              <marker id="ar-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+      </div>
+    </article>
+
+    <!-- ============== #3 Providers =============== -->
+    <article id="providers" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #3 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Deepen <em>BaseProvider</em>: three private collaborators absorb the duplication.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-strong">Strong</span>
+          <span class="source-tag source-both">R1 #2 + R2 #3 + R2 #5</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        Three separate findings, one root: <code>providers/base.py</code> declares abstracts but owns no behaviour, so every adapter re-implements control flow.
+        R1 flagged <code>get_status()</code> copy-pasted in 7 files; R2 flagged JSON state persistence duplicated in Claude/Codex, and ANSI/prompt/permission parsing duplicated in Q/Kiro.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">providers/base.py</span> · 373</li>
+            <li><span class="filechip">codex.py</span> · 995</li>
+            <li><span class="filechip">claude_code.py</span> · 873</li>
+            <li><span class="filechip">gemini_cli.py</span> · 792</li>
+            <li><span class="filechip">kimi_cli.py</span> · 651</li>
+            <li><span class="filechip">copilot_cli.py</span> · 472</li>
+            <li><span class="filechip">kiro_cli.py</span> · 449</li>
+            <li><span class="filechip">q_cli.py</span></li>
+          </ul>
+          <p class="text-xs text-slate-500 mt-3">7 adapters duplicating control flow.</p>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> <code>BaseProvider</code> is <em>shallow</em> — its interface declares <code>get_status</code>, <code>get_idle_pattern_for_log</code>, <code>extract_last_message_from_script</code> as abstract, but the implementation of each ships inside every adapter. A bug in tail-capture or escape-sequence handling lives in 7 files (<code>inbox_service</code> already warns the pattern is "insufficient"). Persistence has the same shape — two adapters, two copies. Transcript parsing — two adapters, two copies.</div>
+          <div><strong>Solution.</strong> Deepen <code>BaseProvider</code> by introducing three <em>internal seams</em>, each with one deep collaborator:
+            <ol class="list-decimal pl-6 mt-1 space-y-0.5">
+              <li><code>PromptStateMachine</code> — consumes a <code>ProviderPromptSpec</code> per adapter; owns tail / scan / classify</li>
+              <li><code>RuntimeStateStore</code> — owns JSON persistence, schema envelope, load/save/clear</li>
+              <li><code>TranscriptParser</code> — owns ANSI strip, prompt positions, permission detection, response slice</li>
+            </ol>
+            Adapters declare <em>data</em> (regexes, escape rules, transcript shape) — not control flow.
+          </div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> escape-handling, schema, parser bugs each fix in one place</li>
+              <li><strong>leverage:</strong> 7 adapters share one deep implementation; new adapter = a spec, not a loop</li>
+              <li><strong>two adapters make a real seam:</strong> the seam exists today but is being re-derived inside each — make it carry weight</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-4">
+          <p class="small-label mb-3">Before — patterns + logic per adapter</p>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div class="module-box shallow"><div class="text-slate-400">codex</div>get_status() · 60 lines<br/>load/save JSON · 40<br/>extract_last · 30</div>
+            <div class="module-box shallow"><div class="text-slate-400">claude_code</div>get_status() · 50<br/>load/save JSON · 40<br/>extract_last · 30</div>
+            <div class="module-box shallow"><div class="text-slate-400">gemini_cli</div>get_status() · 70<br/>extract_last · 35</div>
+            <div class="module-box shallow"><div class="text-slate-400">kimi_cli</div>get_status() · 55<br/>extract_last · 28</div>
+            <div class="module-box shallow"><div class="text-slate-400">q_cli</div>get_status() · 60<br/>ANSI/prompt/perm · 80</div>
+            <div class="module-box shallow"><div class="text-slate-400">kiro_cli</div>get_status() · 60<br/>ANSI/prompt/perm · 90</div>
+          </div>
+          <p class="text-xs text-slate-500 italic mt-3">Same shape, 6–7× the surface for bugs.</p>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-4">
+          <p class="small-label mb-3">After — three deep collaborators + data per adapter</p>
+          <div class="grid grid-cols-3 gap-2 mb-3">
+            <div class="module-box deep p-2 text-center"><div class="text-xs font-semibold">PromptStateMachine</div><div class="text-[10px] text-emerald-300 mt-1">tail · scan · classify</div></div>
+            <div class="module-box deep p-2 text-center"><div class="text-xs font-semibold">RuntimeStateStore</div><div class="text-[10px] text-emerald-300 mt-1">json · envelope · lifecycle</div></div>
+            <div class="module-box deep p-2 text-center"><div class="text-xs font-semibold">TranscriptParser</div><div class="text-[10px] text-emerald-300 mt-1">ansi · prompt · permission</div></div>
+          </div>
+          <div class="grid grid-cols-3 gap-1.5 text-[11px]">
+            <div class="module-box">codex · spec</div>
+            <div class="module-box">claude · spec</div>
+            <div class="module-box">gemini · spec</div>
+            <div class="module-box">kimi · spec</div>
+            <div class="module-box">q · spec</div>
+            <div class="module-box">kiro · spec</div>
+          </div>
+          <p class="text-xs text-slate-500 italic mt-3">Adding the next adapter = a <code>ProviderPromptSpec</code>, not another loop.</p>
+        </div>
+      </div>
+    </article>
+
+    <!-- ============== #4 api/main.py routers =============== -->
+    <article id="api-routers" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #4 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1"><code>api/main.py</code> is a 2,860-line shop with 60 routes.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-strong">Strong</span>
+          <span class="source-tag source-r1">R1 #4</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        Sessions, terminals, agents, workspaces, workspace-teams, batons, monitoring, providers, and tool descriptors all share one file. Decorators, request models, error handlers, and dependency wiring mix freely. Tests in <code>test/api/</code> already split by domain — the seam exists in your head, not in the directory.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">api/main.py</span> · 2,860 lines · 60 routes</li>
+          </ul>
+          <p class="small-label mt-4 mb-1">Routes per domain</p>
+          <ul class="text-xs space-y-0.5 text-slate-600">
+            <li>workspaces · 7</li>
+            <li>workspace-teams · 8</li>
+            <li>agents · 9</li>
+            <li>sessions / terminals · 12</li>
+            <li>batons · 8 <span class="leak">(feature-gated inline)</span></li>
+            <li>monitoring · 6</li>
+            <li>providers / tools · 10</li>
+          </ul>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> Touching one domain forces a scroll past the others. Feature-flagged routes (baton) get inline <code>if CAO_BATON_ENABLED</code> guards. The deletion test fails clearly here: deleting the file concentrates nothing — it just relocates 60 routes, which is the whole point.</div>
+          <div><strong>Solution.</strong> Split into FastAPI <code>APIRouter</code>s by domain noun: <code>api/routers/{sessions,terminals,agents,workspaces,workspace_teams,batons,monitoring,providers,tools}.py</code>. <code>main.py</code> shrinks to app construction, middleware, exception handlers, router inclusion. Each router file owns its request models, error mapping, dependency wiring. Pairs with candidate <a href="#features" class="anchor-link">#7</a> — the whole baton router gets included or skipped at app build, no inline flag checks.</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> a baton-routing bug lives entirely in <code>routers/batons.py</code></li>
+              <li><strong>leverage:</strong> each router gets exercised against a real <code>TestClient</code> in its own file — matches what the tests want to be</li>
+              <li><strong>cleaner feature gating:</strong> wire-time, not call-time</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">Before — one shop, 60 routes</p>
+          <div class="flex items-center justify-center" style="min-height:240px;">
+            <div style="width: 240px; height: 200px; background:#fee2e2; border:2px solid #dc2626; border-radius:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:1rem; text-align:center;">
+              <div style="font-family:ui-monospace; font-size:13px; font-weight:700; color:#7f1d1d;">api/main.py</div>
+              <div style="font-size:11px; color:#7f1d1d; margin-top:.25rem;">2,860 lines · 60 routes</div>
+              <div style="font-size:10px; color:#991b1b; margin-top:.75rem; line-height:1.5;">
+                sessions · terminals · agents<br/>workspaces · teams · batons*<br/>monitoring · providers · tools
+              </div>
+              <div style="font-size:10px; color:#991b1b; margin-top:.5rem; font-style:italic;">* gated inline at 4 call sites</div>
+            </div>
+          </div>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">After — main.py wires; routers per domain</p>
+          <div class="flex flex-col items-center gap-2" style="min-height:240px;">
+            <div class="module-box deep px-3 py-2 text-[12px]">api/main.py — app · middleware · exception handlers</div>
+            <svg viewBox="0 0 320 28" class="w-full" style="max-width:340px;">
+              <line x1="160" y1="0" x2="30"  y2="28" stroke="#10b981"/>
+              <line x1="160" y1="0" x2="90"  y2="28" stroke="#10b981"/>
+              <line x1="160" y1="0" x2="160" y2="28" stroke="#10b981"/>
+              <line x1="160" y1="0" x2="230" y2="28" stroke="#10b981"/>
+              <line x1="160" y1="0" x2="290" y2="28" stroke="#10b981"/>
+            </svg>
+            <div class="grid grid-cols-3 gap-1.5 w-full text-[10px] font-mono">
+              <div class="module-box text-center">routers/sessions</div>
+              <div class="module-box text-center">routers/terminals</div>
+              <div class="module-box text-center">routers/agents</div>
+              <div class="module-box text-center">routers/workspaces</div>
+              <div class="module-box text-center">routers/teams</div>
+              <div class="module-box text-center" style="background:#fef3c7;">routers/batons*</div>
+              <div class="module-box text-center">routers/monitoring</div>
+              <div class="module-box text-center">routers/providers</div>
+              <div class="module-box text-center">routers/tools</div>
+            </div>
+            <div class="text-[10px] text-slate-500 italic mt-1">* batons included only when feature enabled — no inline checks.</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ============== #5 Terminal launch choreography =============== -->
+    <article id="terminal-launch" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #5 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Collapse terminal launch choreography into one deep module.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-strong">Strong</span>
+          <span class="source-tag source-r2">R2 #2</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        <code>terminal_service.create_terminal_for_agent</code> advertises a generic create-path, but the real flow requires an agent launch and exposes 7 ordered steps to tests. The cleanup ordering between tmux, DB, and provider leaks across the seam.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">services/terminal_service.py</span> · 665</li>
+            <li><span class="filechip">providers/manager.py</span></li>
+            <li><span class="filechip">clients/tmux.py</span></li>
+            <li><span class="filechip">test/services/test_terminal_service_*.py</span></li>
+          </ul>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> Seven thin bands — generate ids, resolve agent material, prepare provider runtime, create tmux session, write terminal row, initialize provider, pipe log file — each visible to tests via patching. The interface is wide because every band is exposed; the implementation is thin because each band does one thing. Shallow on both ends.</div>
+          <div><strong>Solution.</strong> Deepen launch around the agent-terminal workflow. <code>launch_agent_terminal</code> becomes one deep module owning launch order, rollback, logging, and provider preparation. tmux / DB / provider become <em>internal</em> seams (private adapters), not points tests patch through.</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> cleanup rules live once — no more "did I roll back the tmux session if DB write fails?"</li>
+              <li><strong>leverage:</strong> fewer launch patches in tests; the seam matches the implementation</li>
+              <li><strong>generic create-path either becomes real or disappears</strong></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">Before — 7 thin bands, all visible</p>
+          <div class="space-y-1.5">
+            <div class="thin-band">1 · generate ids</div>
+            <div class="thin-band">2 · resolve agent material</div>
+            <div class="thin-band">3 · prepare provider runtime</div>
+            <div class="thin-band">4 · create tmux session/window</div>
+            <div class="thin-band">5 · write terminal row</div>
+            <div class="thin-band">6 · initialize provider</div>
+            <div class="thin-band">7 · pipe log file</div>
+            <div class="mt-3 rounded border border-red-200 bg-red-50 p-2 text-[11px] text-red-700">Tests patch every band; cleanup order leaks.</div>
+          </div>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">After — one deep launch module</p>
+          <div class="deep-band">
+            <div class="font-semibold text-emerald-100">launch_agent_terminal</div>
+            <div class="text-xs mt-2 text-slate-300">Owns ordering · rollback · logging · provider prep.</div>
+            <div class="mt-4 grid grid-cols-3 gap-1.5 text-[10px]">
+              <div class="rounded bg-white/10 p-1.5 text-center">tmux adapter</div>
+              <div class="rounded bg-white/10 p-1.5 text-center">db adapter</div>
+              <div class="rounded bg-white/10 p-1.5 text-center">provider adapter</div>
+            </div>
+            <div class="text-[10px] mt-2 text-slate-400 italic">…internal seams. Tests don't cross them.</div>
+          </div>
+          <div class="mt-3 rounded border border-emerald-200 bg-emerald-50 p-2 text-[11px] text-emerald-700">One seam from tests' POV: did the agent terminal come up?</div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ===================================================================== -->
+    <!-- ======================== WORTH-EXPLORING ============================ -->
+    <!-- ===================================================================== -->
+    <h2 class="font-serif text-2xl section-rule">Worth exploring</h2>
+
+    <!-- ============== #6 TerminalReadinessMonitor =============== -->
+    <article id="readiness" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #6 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Inbox watchdog and baton watchdog solve the same problem twice.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-worth">Worth exploring</span>
+          <span class="source-tag source-r1">R1 #5</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        Both watchers ask: "is this terminal ready to receive something now?" Inbox uses <code>watchdog.Observer</code> on the log file; baton uses an async scan loop. Same concern, two mechanisms, two failure surfaces. Best landed <em>after</em> Inbox (#1) — as a private collaborator of the deep Inbox module.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">services/inbox_service.py:39</span> · <code>watchdog</code> Observer</li>
+            <li><span class="filechip">services/baton_watchdog_service.py:312</span> · async scan loop</li>
+            <li><span class="filechip">services/baton_service.py</span></li>
+          </ul>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> Both consume <em>terminal readiness</em>, but neither names that concept. Adding a new TUI provider means changing both. Tests mock both layers separately.</div>
+          <div><strong>Solution.</strong> Introduce a <code>TerminalReadinessMonitor</code> seam: <code>subscribe(terminal_id, callback)</code>. Inbox and baton register callbacks; one deep implementation owns "how do I know this terminal is idle" (file-watching, polling, or a future push-based provider hook).</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>two adapters justify the seam:</strong> Inbox + baton both consume it — real, not hypothetical</li>
+              <li><strong>leverage:</strong> future push-based provider hooks plug in here</li>
+              <li><strong>locality:</strong> "watcher missed an event" has one place to debug</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-4">
+          <p class="small-label mb-3">Before — two readiness mechanisms</p>
+          <pre class="mermaid">
+flowchart LR
+  T[Terminal log file]
+  T -->|file change| W1[inbox_service<br/>LogFileHandler]
+  T -.->|tail scan| W2[baton_watchdog<br/>async loop]
+  W1 --> D1[deliver inbox messages]
+  W2 --> D2[nudge / orphan baton]
+  classDef leak fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+  class W1,W2 leak
+          </pre>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-4">
+          <p class="small-label mb-3">After — one TerminalReadinessMonitor</p>
+          <pre class="mermaid">
+flowchart LR
+  T[Terminal log file]
+  T --> M[TerminalReadinessMonitor<br/><i>subscribe(id, cb)</i>]
+  M -->|ready| D1[Inbox delivery]
+  M -->|ready| D2[Baton nudge / orphan]
+  M -.->|future| D3[Other workflow patterns]
+  classDef deep fill:#0f172a,stroke:#10b981,color:#f8fafc;
+  class M deep
+          </pre>
+        </div>
+      </div>
+    </article>
+
+    <!-- ============== #7 FeatureRegistry =============== -->
+    <article id="features" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #7 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Feature flags are checked inline at every site.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-worth">Worth exploring</span>
+          <span class="source-tag source-r1">R1 #6</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        <code>CAO_BATON_ENABLED</code> and <code>CAO_ENABLE_WORKING_DIRECTORY</code> are checked across HTTP routes, MCP server registration, CLI command attachment, and watchdog startup. The next experimental feature will repeat the pattern — and your stated preference is enforcement via automation, not multi-site discipline.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">services/baton_feature.py</span></li>
+            <li><span class="filechip">api/main.py:2394</span></li>
+            <li><span class="filechip">mcp_server/server.py:72</span></li>
+            <li><span class="filechip">cli/commands/agent.py</span></li>
+            <li><span class="filechip">services/baton_watchdog_service.py</span></li>
+          </ul>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> 4 sites for baton, 2 for working-directory. Graduating baton means deleting 4 inline checks in coordination — a multi-site discipline.</div>
+          <div><strong>Solution.</strong> One <code>FeatureRegistry</code>. Routers, MCP tools, CLI commands, watchdogs each declare a feature requirement at registration. The registry decides once at startup whether to wire them. Pairs naturally with candidate <a href="#api-routers" class="anchor-link">#4</a>.</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> graduating a feature = removing one registry entry</li>
+              <li><strong>leverage:</strong> next experimental feature drops into the same shape</li>
+              <li><strong>tests flip the registry, not 4 env-var reads</strong></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">Before — gated at every site</p>
+          <div class="space-y-1.5 text-[11px] font-mono">
+            <div class="module-box shallow"><span class="leak">✗</span> api/main.py · <code>if CAO_BATON_ENABLED</code></div>
+            <div class="module-box shallow"><span class="leak">✗</span> mcp_server/server.py · <code>if CAO_BATON_ENABLED</code></div>
+            <div class="module-box shallow"><span class="leak">✗</span> cli/commands/agent.py · <code>if CAO_BATON_ENABLED</code></div>
+            <div class="module-box shallow"><span class="leak">✗</span> baton_watchdog_service.py · <code>if CAO_BATON_ENABLED</code></div>
+            <div class="module-box shallow"><span class="leak">✗</span> mcp_server · <code>if ENABLE_WORKING_DIRECTORY</code></div>
+            <div class="module-box shallow"><span class="leak">✗</span> handoff/assign tools · <code>if ENABLE_WORKING_DIRECTORY</code></div>
+          </div>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">After — declared once, wired automatically</p>
+          <div class="module-box deep p-3 text-center mb-3" style="font-size:13px;">
+            <div class="font-semibold">FeatureRegistry</div>
+            <div class="text-xs mt-1 text-emerald-200">baton: off · working_dir: off · …</div>
+          </div>
+          <div class="space-y-1.5 text-[11px] font-mono">
+            <div class="module-box">✓ routers/batons · <code>requires("baton")</code></div>
+            <div class="module-box">✓ mcp tools · <code>@requires("baton")</code></div>
+            <div class="module-box">✓ cli command · <code>@requires("baton")</code></div>
+            <div class="module-box">✓ watchdog start · <code>@requires("baton")</code></div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ============== #8 Dashboard HTTP shape =============== -->
+    <article id="dashboard" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #8 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Deepen the dashboard HTTP-shape adapter.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-worth">Worth exploring</span>
+          <span class="source-tag source-r2">R2 #4</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        <code>web/src/api.ts</code> hand-copies large server shapes, endpoint strings, encoding rules, and timeouts. Both the TS adapter and the Pydantic route are <em>shallow</em> — interface nearly matches implementation because both encode the same shape twice.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">web/src/api.ts</span></li>
+            <li><span class="filechip">api/main.py</span></li>
+            <li><span class="filechip">web/src/test/api.test.ts</span></li>
+          </ul>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> Shape lives twice — once as Pydantic, once as TypeScript. Every server-side change is a multi-site discipline. Tests verify shape, not behaviour.</div>
+          <div><strong>Solution.</strong> Make the server the source of shape (generated TS types from Pydantic, or OpenAPI client codegen). <code>api.ts</code> shrinks to fetch behaviour: policy, errors, timeouts. The interface gets short; the implementation absorbs network reality.</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> shape changes once</li>
+              <li><strong>leverage:</strong> fewer brittle mocks</li>
+              <li><strong>tests verify fetch behaviour, not shape</strong></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">Before — shape duplicated, both shallow</p>
+          <div class="flex items-end gap-4">
+            <div class="w-1/2">
+              <div class="mass-iface" style="height:96px;">TypeScript interface surface<br/><span class="text-[10px] opacity-70">~equal height ≈ shallow</span></div>
+              <div class="mass-impl" style="height:110px;">fetch implementation</div>
+            </div>
+            <div class="w-1/2">
+              <div class="mass-iface" style="height:96px;">Pydantic response surface</div>
+              <div class="mass-impl" style="height:110px;">route implementation</div>
+            </div>
+          </div>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">After — one shape, deep fetch adapter</p>
+          <div class="module-box deep p-3 mb-3">
+            <div class="font-semibold text-sm">Server-owned dashboard shape</div>
+            <div class="text-[11px] mt-1 text-emerald-200">Pydantic source · generated TS types</div>
+          </div>
+          <div>
+            <div class="mass-iface" style="height:32px;">api.ts interface shrinks</div>
+            <div class="mass-impl" style="height:110px; background:#d1fae5; border-color:#34d399; color:#065f46;">fetch policy · errors · timeouts</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ============== #9 Workspace teams =============== -->
+    <article id="teams" class="rounded-2xl border border-slate-200 bg-white p-8 card-shadow">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="small-label">Candidate #9 · Deepening opportunity</p>
+          <h3 class="font-serif text-2xl mt-1">Deepen workspace-teams UI state into a controller module.</h3>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <span class="badge badge-worth">Worth exploring</span>
+          <span class="source-tag source-r2">R2 #6</span>
+        </div>
+      </div>
+      <p class="text-slate-700 max-w-3xl mb-6">
+        Workspace-team loading, selection repair, optimistic mutation, rollback, and snackbar policy spread across panel + hook + utils + store. The seam between presentation and state is shallow — every test mocks 10 calls and state facts.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-6 mb-6">
+        <div>
+          <p class="small-label mb-2">Files</p>
+          <ul class="text-xs space-y-1.5">
+            <li><span class="filechip">WorkspaceTeamsPanel.tsx</span></li>
+            <li><span class="filechip">teams/useTeamMutations.ts</span></li>
+            <li><span class="filechip">teams/teamUtils.ts</span></li>
+            <li><span class="filechip">workspace-teams-panel.test.tsx</span></li>
+          </ul>
+        </div>
+        <div class="md:col-span-2 grid gap-3 text-sm text-slate-700">
+          <div><strong>Problem.</strong> State logic leaks through several thin modules. Presentational modules know too much about selection repair and optimistic rollback.</div>
+          <div><strong>Solution.</strong> Deepen into a controller that owns loading, selection repair, optimistic apply, rollback, and snackbar emission. Panel, rail, drawer become presentational — they call commands and render selected data.</div>
+          <div>
+            <p class="font-semibold mb-1">Benefits</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li><strong>locality:</strong> state rules concentrate</li>
+              <li><strong>leverage:</strong> UI tests shrink to render assertions</li>
+              <li><strong>one mutation surface</strong></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">Before — spread across thin modules</p>
+          <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div class="module-box shallow">Panel<br/>selection repair</div>
+            <div class="module-box shallow">useTeamMutations<br/>raw setters</div>
+            <div class="module-box shallow">teamUtils<br/>tool options</div>
+            <div class="module-box shallow">store<br/>snackbar</div>
+          </div>
+          <div class="mt-3 rounded border border-red-200 bg-red-50 p-2 text-[11px] text-red-700">Test mocks 10 calls and state facts.</div>
+        </div>
+        <div class="grid-paper rounded-xl border border-slate-200 p-5">
+          <p class="small-label mb-3">After — one controller, three views</p>
+          <div class="module-box deep p-3 mb-3">
+            <div class="font-semibold text-sm">workspaceTeamsController</div>
+            <div class="text-[11px] mt-1 text-emerald-200">load · repair · optimistic · rollback · emit</div>
+          </div>
+          <div class="grid grid-cols-3 gap-1.5 text-[11px]">
+            <div class="module-box">Panel</div>
+            <div class="module-box">Team rail</div>
+            <div class="module-box">Role drawer</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- ========================= Top recommendation ========================= -->
+    <section class="rounded-2xl p-8" style="background: linear-gradient(135deg, #0f172a, #1e293b); color:#e2e8f0;">
+      <p class="small-label" style="color:#94a3b8;">Top recommendation</p>
+      <h2 class="font-serif text-3xl mt-2 mb-4 text-white">Start with <a href="#inbox" class="underline decoration-emerald-400 underline-offset-4">#1 — Give Inbox a deep home</a>.</h2>
+      <p class="max-w-3xl text-slate-300 leading-relaxed mb-3">
+        Both source agents converged on the Agent concept as a top concern, but Inbox sprawl is the higher-leverage move <em>first</em>. The workflow construction phase (per your memory) will compose every pattern — handoff, baton, future review loops — on Inbox delivery. Building those patterns on eight shallow Inbox modules will spread workflow logic across the same three packages.
+      </p>
+      <ul class="list-disc pl-6 max-w-3xl text-slate-300 space-y-1.5 mb-3">
+        <li>Collapses the largest concept-sprawl in the codebase (~2,880 lines · 8 modules · 3 packages).</li>
+        <li>Unlocks <a href="#readiness" class="underline decoration-emerald-400 underline-offset-4">#6</a> cleanly — TerminalReadinessMonitor becomes a private collaborator of Inbox, not a sibling.</li>
+        <li>Strips noise from <code>tool_service.py</code> and <code>mcp_server/server.py</code>, making <a href="#api-routers" class="underline decoration-emerald-400 underline-offset-4">#4</a> simpler.</li>
+        <li>Matches the <em>agent → instance</em> model: each instance has <em>an</em> Inbox, not eight files implementing parts of one.</li>
+      </ul>
+      <p class="max-w-3xl text-slate-300 leading-relaxed">
+        After Inbox lands: <a href="#agent" class="underline decoration-emerald-400 underline-offset-4">#2</a> (Agent consolidation) and <a href="#providers" class="underline decoration-emerald-400 underline-offset-4">#3</a> (Provider depth) are independent and can run in parallel. <a href="#api-routers" class="underline decoration-emerald-400 underline-offset-4">#4</a> and <a href="#terminal-launch" class="underline decoration-emerald-400 underline-offset-4">#5</a> become natural follow-ups once Inbox has shown what a deep module looks like in this codebase.
+      </p>
+    </section>
+
+    <footer class="text-xs text-slate-500 text-center pb-6">
+      Synthesis of two independent reviews · sources:
+      <code>architecture-review-20260520-153447.html</code> ·
+      <code>architecture-review-20260520-153609.html</code>.<br/>
+      Vocabulary: <em>module · interface · implementation · depth · shallow · seam · adapter · leverage · locality · deletion test</em> — see the skill's <code>LANGUAGE.md</code>.
+    </footer>
+
+  </main>
+</body>
+</html>

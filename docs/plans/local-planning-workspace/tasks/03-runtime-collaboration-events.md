@@ -33,29 +33,44 @@ these events.
 1. Define the 16 collaboration events. Each must satisfy
    `_EVENT_TYPE_REQUIRED_FIELDS` from `events/__init__.py:120-126` (event_id,
    source, occurred_at, correlation_id, causation_id) and declare its own
-   `event_name` class var. Each carries the standard envelope plus
-   `sender_agent_id: str` and `sender_workspace_context_id: str` (or
-   originator equivalents for baton). Per-event additional fields:
+   `event_name` class var. Sent / initiated events carry the standard
+   envelope plus `sender_agent_id: str` and `sender_workspace_context_id:
+   str`. Sent / initiated events may also carry `sender_terminal_id:
+   str | None` when the caller runtime is known. Receiver terminal ids are
+   not required on pre-routing events; at that point the receiver may only be
+   known as an agent, and routing/notify may start or replace the terminal.
+   Received side observability events do not need those sender fields unless
+   the emitting call site already has them; they rely on correlation/causation
+   plus `agent_participants` for timeline linkage. Baton sent events use the
+   current actor/originator/holder as the sender depending on the transition,
+   but still expose these exact sender fields for the resolver. Each event
+   also declares `kind: Literal["..."] = "..."` and `agent_participants` for
+   timeline indexing. Per-event additional fields:
 
    Sent side (8):
    - `AgentMessageSentEvent` — `receiver_terminal_id: str`,
-     `receiver_agent_id: str`, `inbox_message_id: int`.
+     `receiver_agent_id: str`, `message_source_id: str`.
    - `AgentHandoffInitiatedEvent` — `receiver_agent_id: str`,
-     `message: str`.
+     no receiver terminal id required before start.
    - `AgentAssignInitiatedEvent` — `receiver_agent_id: str`,
-     `message: str`.
-   - `BatonCreatedEvent` — `baton_id: str`, `holder_agent_id: str`,
-     `title: str`, `message: str`.
+     no receiver terminal id required before start.
+   - `BatonCreatedEvent` — `baton_id: str`,
+     `holder_agent_id: str`, `holder_terminal_id: str | None`, `title:
+     str`, `message: str`.
    - `BatonPassedEvent` — `baton_id: str`,
-     `from_holder_agent_id: str`, `to_holder_agent_id: str`,
+     `from_holder_agent_id: str`, `from_holder_terminal_id: str`,
+     `to_holder_agent_id: str`, `to_holder_terminal_id: str | None`,
      `message: str`.
    - `BatonReturnedEvent` — `baton_id: str`,
-     `from_holder_agent_id: str`, `to_holder_agent_id: str` (the previous
-     holder being returned to), `message: str`.
+     `from_holder_agent_id: str`, `from_holder_terminal_id: str`,
+     `to_holder_agent_id: str`, `to_holder_terminal_id: str | None` (the
+     previous holder being returned to), `message: str`.
    - `BatonCompletedEvent` — `baton_id: str`,
-     `originator_agent_id: str`, `message: str`.
+     `originator_agent_id: str`, `originator_terminal_id: str | None`,
+     `message: str`.
    - `BatonBlockedEvent` — `baton_id: str`,
-     `originator_agent_id: str`, `reason: str`.
+     `originator_agent_id: str`, `originator_terminal_id: str | None`,
+     `reason: str`.
 
    Received side (8):
    - `AgentMessageReceivedEvent` — `receiver_agent_id: str`,
@@ -66,15 +81,15 @@ these events.
    - `AgentAssignAcceptedEvent` — `receiver_agent_id: str`,
      `receiver_terminal_id: str`.
    - `BatonCreationReceivedEvent` — `baton_id: str`,
-     `holder_agent_id: str`.
+     `holder_agent_id: str`, `holder_terminal_id: str`.
    - `BatonPassReceivedEvent` — `baton_id: str`,
-     `to_holder_agent_id: str`.
+     `to_holder_agent_id: str`, `to_holder_terminal_id: str`.
    - `BatonReturnReceivedEvent` — `baton_id: str`,
-     `to_holder_agent_id: str`.
+     `to_holder_agent_id: str`, `to_holder_terminal_id: str`.
    - `BatonCompletionReceivedEvent` — `baton_id: str`,
-     `originator_agent_id: str`.
+     `originator_agent_id: str`, `originator_terminal_id: str`.
    - `BatonBlockReceivedEvent` — `baton_id: str`,
-     `originator_agent_id: str`.
+     `originator_agent_id: str`, `originator_terminal_id: str`.
 
 2. Define `AgentTerminalStatusChangeEvent` with fields: `agent_id: str`,
    `terminal_id: str`, `previous_status: str`, `new_status: str`.
@@ -106,7 +121,8 @@ these events.
    `default_cao_event_dispatcher().published_events()`.
 2. Each event satisfies `_EVENT_TYPE_REQUIRED_FIELDS` from
    `events/__init__.py:120-126` and declares its own `event_name` class
-   var.
+   var plus the required `kind: Literal["..."] = "..."` serializer
+   discriminator.
 3. Each event round-trips through
    `events.serialization.register_cao_event_serializers()` (called
    automatically by `register_events`).

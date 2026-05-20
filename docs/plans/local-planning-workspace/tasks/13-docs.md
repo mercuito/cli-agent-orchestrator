@@ -33,9 +33,14 @@ projected behavior).
      activate → complete), where plan files live
      (`<agent.workdir>/docs/plans/<slug>/plan.md`), and the
      deferred-on-idle context-switch semantic.
+   - States that all members of a `local_planning` team must share the same
+     normalized `workdir`; plan identity is scoped to that shared local
+     file tree with an internal `boundary_object_id=<workdir_scope>:<slug>`
+     while the user-facing plan id remains `<slug>`.
    - Notes that `local_planning` requires an active plan for outbound
      collaboration (the `require_active_workspace_context` flag).
-   - Provides one minimal example team config that uses it.
+   - Provides one minimal example team config plus the matching agent-side
+     `workspace.team` membership configuration that uses it.
 
 2. Update `CODEBASE.md` to mention the new package.
 
@@ -58,7 +63,10 @@ projected behavior).
    deferred-on-idle context-switch semantic.
 3. The doc notes the `require_active_workspace_context` flag on
    `local_planning` and gives one minimal example team config that uses
-   the workspace.
+   the workspace, including the shared-workdir invariant and agent-side
+   team membership configuration. It also explains that the internal
+   workspace-context boundary includes the workdir scope, while users refer
+   to plans by slug inside that shared workdir.
 4. `CODEBASE.md` directory tree includes
    `src/cli_agent_orchestrator/local_planning/`.
 5. Rendered Markdown reviewed — links resolve, headings sensible, no

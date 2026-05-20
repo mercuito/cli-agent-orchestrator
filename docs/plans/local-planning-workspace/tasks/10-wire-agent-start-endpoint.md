@@ -51,10 +51,17 @@ In API `start_agent_endpoint`:
 5. When `sender_terminal_id` is present:
    - Look up sender terminal metadata. If missing, reject with 400.
    - Resolve sender_agent_id, sender_workspace_context_id.
+   - Preserve existing same-team collaboration authorization before
+     publishing/routing. The target agent must still be in the sender's
+     workspace team; context resolution does not authorize cross-team
+     handoff or assign.
    - Build the appropriate event based on `trigger_action`:
      - `"handoff"` → `AgentHandoffInitiatedEvent`.
      - `"assign"` → `AgentAssignInitiatedEvent`.
      - Anything else → 400.
+   - The initiated event uses `receiver_agent_id=target_agent.id`; it does
+     not require `receiver_terminal_id`, because the target terminal does not
+     exist until after the start flow succeeds.
    - Publish the event.
    - Call `manager.apply_outbound_resolution(target_agent, event)` →
      resolution. If the workspace flag enforces and resolution is None,
@@ -93,8 +100,9 @@ In API `start_agent_endpoint`:
    `trigger_action` query params.
 3. With sender info present and a valid `trigger_action`: API builds
    `AgentHandoffInitiatedEvent` or `AgentAssignInitiatedEvent`,
-   publishes it, calls `manager.apply_outbound_resolution`, applies
-   the resolution to the `AgentRuntimeHandle`.
+   publishes it with `receiver_agent_id` but no required
+   `receiver_terminal_id`, calls `manager.apply_outbound_resolution`, and
+   applies the resolution to the `AgentRuntimeHandle`.
 4. Dashboard direct start (no sender info): existing sentinel default
    behavior preserved; no sent event published.
 5. After successful terminal start with sender info: matching
@@ -107,9 +115,12 @@ In API `start_agent_endpoint`:
    with the sent event published before rejection.
 8. Invalid `trigger_action` value: 400.
 9. Invalid `sender_terminal_id` (no matching terminal): 400.
-10. Tests cover MCP handoff, MCP assign, dashboard direct, 409,
-    sentinel + flag, invalid trigger_action, invalid sender_terminal_id.
-11. Correlation-id pairing test: received event's `correlation_id`
+10. Cross-team sender/target handoff or assign is rejected before routing,
+    preserving existing same-team authorization.
+11. Tests cover MCP handoff, MCP assign, dashboard direct, 409,
+    sentinel + flag, cross-team rejection, invalid trigger_action, invalid
+    sender_terminal_id.
+12. Correlation-id pairing test: received event's `correlation_id`
     references sent event's `event_id`.
 
 ## Review Gate

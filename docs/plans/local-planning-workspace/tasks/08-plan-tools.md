@@ -14,21 +14,22 @@ Implement the five plan-lifecycle tool handlers exposed by the
 - `complete_plan(plan_id)`
 
 Includes the deferred-switch arming (`pending_for_agent_id` and
-`promote_from_context_id` metadata fields) on the workspace contexts they
-register.
+`promote_from_context_id` metadata fields) on the caller's agent-local
+context workspace row for the target plan.
 
 ## Dependencies
 
 - Task 02 (`WORKSPACE_CONTEXT_STATUS_COMPLETED` exists for `complete_plan`).
+- Task 02a (workspace-context lookup/list/metadata helpers exist).
 - Task 03 (events) — `LocalPlanningPlanActivatedEvent` exists.
 - Task 04 (`apply_outbound_resolution` — though plan tools call
   `resolve_event_context` directly for the activation event, they don't
   need flag-enforced consultation since they emit their own activation
   events).
-- Task 05 (promote helper exists; arming reads `promote_from_context_id`
-  metadata).
+- Task 05 (promote helper exists; arming reads agent-scoped
+  `promote_from_context_id` metadata).
 - Task 06 (deferred-switch firing exists; arming reads
-  `pending_for_agent_id` metadata).
+  agent-scoped `pending_for_agent_id` metadata).
 - Task 07 (package skeleton exists; tools get wired into the provider's
   policy).
 
@@ -59,48 +60,69 @@ lookup. Use the appropriate `db_module` helpers for context store.
 ### `create_plan(title, body)`
 
 1. Generate slug from title (kebab-case; alphanumeric + hyphen only).
-2. Validate slug uniqueness: query workspace contexts where
-   `resolver_id == "local_planning"` and `object_id == slug`. If exists,
-   reject with a clear error.
-3. Create directory `<agent.workdir>/docs/plans/<slug>/` (mkdir -p).
-4. Write `plan.md` containing `body`.
-5. Call `ensure_workspace_context_for_boundary(resolver_id="local_planning",
-   provider_id="local_planning", object_type="plan", object_id=slug,
-   metadata={"promote_from_context_id": caller_current_context_id,
-   "pending_for_agent_id": caller_agent_id})`.
-6. Build `LocalPlanningPlanActivatedEvent` and publish it via the default
+2. Compute `workdir_scope = sha256(normalized agent.workdir)[:16]` (or a
+   similarly stable deterministic scope) and
+   `plan_object_id = f"{workdir_scope}:{slug}"`.
+3. Validate slug uniqueness in the caller's shared workdir: query workspace
+   contexts where `resolver_id == "local_planning"` and
+   `object_id == plan_object_id`. If exists, reject with a clear error.
+4. Create directory `<agent.workdir>/docs/plans/<slug>/` (mkdir -p).
+5. Write `plan.md` containing `body`.
+6. Call `ensure_workspace_context_for_boundary(resolver_id="local_planning",
+   provider_id="local_planning", object_type="plan",
+   object_id=plan_object_id, metadata={"plan_slug": slug,
+   "workdir_scope": workdir_scope, "workdir": normalized_workdir})`,
+   ensure the caller's context workspace row exists, then set
+   `promote_from_context_id` and `pending_for_agent_id` with the
+   context-workspace metadata patch helper. Do not store these fields on the
+   global workspace context row.
+7. Build `LocalPlanningPlanActivatedEvent(plan_slug=slug,
+   workdir_scope=workdir_scope, ...)` and publish it via the default
    dispatcher (so the event hits the persistence layer and any listeners).
-7. Call `manager.resolve_event_context(caller_agent, event)` for protocol
+8. Call `manager.resolve_event_context(caller_agent, event)` for protocol
    consistency (resolver returns the new plan's context); use this result
    to construct `AgentRuntimeHandle(caller_agent,
    workspace_context_id=resolution.workspace_context_id)` and call
-   `ensure_started()` once. The handle will defer if BUSY (it is — the
-   tool is mid-call); the watchdog will drive the actual switch later.
-8. Return `{"plan_id": slug, "status": "queued", "message": "Plan
-   created. Context switch will take effect on your next idle moment."}`.
+   `ensure_fresh_started(causing_event=event)` once. Do not use
+   `ensure_started()` for this path because it raises when the context
+   switch is deferred. Map `AgentRuntimeFreshnessAction.DEFERRED` to queued
+   success; map `STARTED`, `REUSED`, and `RESTARTED` to active success. The
+   watchdog will drive the actual switch later only for DEFERRED.
+9. Return `{"plan_id": slug, "status": "queued" | "active", "message": ...}`:
+   queued message when deferred, active message when the runtime switch
+   already landed.
 
 ### `activate_plan(plan_id)`
 
-1. Look up the plan's workspace context by `(resolver_id="local_planning",
-   object_type="plan", object_id=plan_id)`. If missing, reject.
+1. Compute the caller's `workdir_scope` and
+   `plan_object_id = f"{workdir_scope}:{plan_id}"`; look up the plan's
+   workspace context by `(resolver_id="local_planning", object_type="plan",
+   object_id=plan_object_id)`. If missing, reject.
 2. If the target plan's provider data dir is empty AND the caller has a
    non-sentinel current context (i.e., they're transitioning from another
    plan), set `promote_from_context_id = caller_current_context_id` on
-   the target's metadata. If the target already has prior state, skip
-   this (the target's own history resumes).
-3. Always set `pending_for_agent_id = caller_agent_id` on the target. If
-   the target already had a `pending_for_agent_id` set (e.g., a stale
-   prior arm that hasn't fired yet), overwrite it. "Latest arm wins" —
-   idempotent.
-4. Build and publish `LocalPlanningPlanActivatedEvent`.
-5. Call resolve + `AgentRuntimeHandle.ensure_started` once. Same
-   deferred-on-busy semantics.
+   the caller's target context-workspace metadata. If the target already
+   has prior state, clear any stale `promote_from_context_id` on that
+   caller/context instead (the target's own history resumes).
+3. Always set `pending_for_agent_id = caller_agent_id` on the caller's
+   target context-workspace metadata. If that same agent/context already had
+   a `pending_for_agent_id` set (e.g., a stale prior arm that hasn't fired
+   yet), overwrite it. "Latest arm wins" — idempotent.
+4. Build and publish
+   `LocalPlanningPlanActivatedEvent(plan_slug=plan_id,
+   workdir_scope=workdir_scope, ...)`.
+5. Call resolve + `AgentRuntimeHandle.ensure_fresh_started(causing_event=event)`
+   once. Same deferred-on-busy semantics: map
+   `AgentRuntimeFreshnessAction.DEFERRED` to queued success and
+   STARTED/REUSED/RESTARTED to active success rather than surfacing an
+   exception.
 6. Return acknowledgment dict.
 
 ### `list_plans()`
 
-1. Query workspace contexts where `resolver_id == "local_planning"` and
-   `object_type == "plan"`.
+1. Compute the caller's `workdir_scope`, then query workspace contexts where
+   `resolver_id == "local_planning"` and `object_type == "plan"` and filter
+   to `boundary_object_id` values prefixed by `f"{workdir_scope}:"`.
 2. Return a list of `{plan_id (slug), display_name (slug as fallback),
    status, created_at, updated_at}`.
 3. May include completed plans; the caller filters.
@@ -109,12 +131,14 @@ lookup. Use the appropriate `db_module` helpers for context store.
 
 1. Read caller terminal's `workspace_context_id` from metadata.
 2. Look up the workspace context. If it's a `local_planning` plan
-   (`resolver_id == "local_planning"`), return its details. Otherwise
-   return `{"active_plan": null}`.
+   (`resolver_id == "local_planning"`) and its `boundary_object_id` belongs
+   to the caller's `workdir_scope`, return its details. Otherwise return
+   `{"active_plan": null}`.
 
 ### `complete_plan(plan_id)`
 
-1. Look up the plan's workspace context. Reject if missing.
+1. Compute the caller's `workdir_scope` and look up the plan context by
+   `object_id=f"{workdir_scope}:{plan_id}"`. Reject if missing.
 2. Call `mark_workspace_context_completed(context_id)` (from Task 02).
 3. Return `{"plan_id": plan_id, "status": "completed"}`.
 4. Do **not** transition the caller off the plan. The agent stays on the
@@ -132,25 +156,36 @@ lookup. Use the appropriate `db_module` helpers for context store.
 
 1. `create_plan(title, body)` writes
    `<agent.workdir>/docs/plans/<slug>/plan.md` with the body, registers
-   the workspace context with both `promote_from_context_id` and
-   `pending_for_agent_id` metadata fields set, publishes
-   `LocalPlanningPlanActivatedEvent`, calls `ensure_started` once on a
-   handle bound to the new context, returns the queued ack dict.
+   the workspace context with `boundary_object_id=<workdir_scope>:<slug>`
+   and metadata containing `plan_slug` / `workdir_scope`, registers the
+   caller's agent-local context-workspace row with both
+   `promote_from_context_id` and `pending_for_agent_id` metadata fields set,
+   publishes `LocalPlanningPlanActivatedEvent`, calls `ensure_fresh_started`
+   once on a handle bound to the new context, maps DEFERRED to queued
+   success and STARTED/REUSED/RESTARTED to active success, and returns an
+   ack dict whose `status` is `"queued"` or `"active"` accordingly.
 2. `activate_plan(plan_id)` re-arms an existing plan with
-   `pending_for_agent_id` (overwriting any prior stale arm — "latest arm
-   wins"), conditionally sets `promote_from_context_id` only when the
+   `pending_for_agent_id` on the caller's target context-workspace row
+   (overwriting any prior stale arm for that same agent/context — "latest
+   arm wins"), conditionally sets `promote_from_context_id` only when the
    target dir is empty, publishes the activation event, calls
-   `ensure_started` once.
-3. `list_plans()` enumerates all `local_planning` workspace contexts
-   including completed ones, returning slug, display name, status,
-   created_at, updated_at.
+   `ensure_fresh_started` once and maps DEFERRED to queued success.
+   STARTED/REUSED/RESTARTED map to active success.
+   When the target dir already has prior state, it clears any stale
+   `promote_from_context_id` for that caller/context instead of leaving an
+   old promotion arm behind.
+3. `list_plans()` enumerates only `local_planning` workspace contexts for
+   the caller's `workdir_scope`, including completed ones, returning slug,
+   display name, status, created_at, updated_at.
 4. `get_active_plan()` returns the caller terminal's current plan
    details or `{"active_plan": null}` for sentinel.
 5. `complete_plan(plan_id)` calls
    `mark_workspace_context_completed` and returns
    `{"plan_id": plan_id, "status": "completed"}` without transitioning
    the caller off the plan.
-6. `create_plan` rejects on slug collision with a clear error.
+6. `create_plan` rejects on slug collision within the caller's
+   `workdir_scope` with a clear error, while the same slug in another
+   workdir scope is allowed.
 7. Plan directory creation is idempotent — pre-existing `docs/plans/`
    does not cause failure.
 8. All handlers reject with a clear error when the calling terminal
@@ -162,6 +197,9 @@ lookup. Use the appropriate `db_module` helpers for context store.
     missing terminal context).
 12. End-to-end test: create → activate (already active no-op) →
     complete → list shows completed.
+13. Two agents sharing the same plan context can arm create/activate
+    independently; one agent's arm does not overwrite or clear the other's
+    metadata.
 
 ## Review Gate
 
