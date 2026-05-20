@@ -88,7 +88,10 @@ lookup. Use the appropriate `db_module` helpers for context store.
    plan), set `promote_from_context_id = caller_current_context_id` on
    the target's metadata. If the target already has prior state, skip
    this (the target's own history resumes).
-3. Always set `pending_for_agent_id = caller_agent_id` on the target.
+3. Always set `pending_for_agent_id = caller_agent_id` on the target. If
+   the target already had a `pending_for_agent_id` set (e.g., a stale
+   prior arm that hasn't fired yet), overwrite it. "Latest arm wins" —
+   idempotent.
 4. Build and publish `LocalPlanningPlanActivatedEvent`.
 5. Call resolve + `AgentRuntimeHandle.ensure_started` once. Same
    deferred-on-busy semantics.

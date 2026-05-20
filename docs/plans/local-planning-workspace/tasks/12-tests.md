@@ -71,10 +71,20 @@ Implement integration coverage per the plan's Tests bullet list:
 ## Acceptance
 
 - All listed scenarios have at least one passing test.
-- `uv run pytest test/` green.
-- `uv run python scripts/catalog_criteria.py` — for each criterion whose
-  `when` clause matches the actual diff, document evaluation in the
-  completion report (Task 13 / DoD).
+- The plan's "Required backend checks" run green:
+  - `uv run pytest test/workspaces` — registry, manager, flag enforcement.
+  - `uv run pytest test/local_planning` — new suite.
+  - `uv run pytest test/api` — endpoint changes including resolver flow.
+  - `uv run pytest test/services/test_baton_service.py` — baton resolver wiring.
+  - `uv run pytest test/runtime` — context-switch + promote helper.
+  - `uv run pytest test/linear` — confirm no regressions.
+- **Criteria-catalog gate (blocking)**: run
+  `uv run python scripts/catalog_criteria.py`. For each criterion whose
+  `when` clause matches the implementation diff, evaluate and document.
+  No applicable criterion may be violated — this is the plan's
+  Definition of Done item #15, and treating it as merely "after the fact"
+  paperwork is wrong. The implementation is not done until the catalog
+  evaluation passes.
 
 ## Out of scope
 

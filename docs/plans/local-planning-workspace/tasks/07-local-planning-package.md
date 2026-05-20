@@ -120,7 +120,12 @@ New tests under `test/local_planning/`.
 - Resolver returns expected resolutions for the eight sent-side
   collaboration events (the 8 from Task 03), the plan activation event,
   and `None` for unrecognized events.
-- Existing `linear_delivery` workspace flows untouched.
+- Existing `linear_delivery` workspace flows untouched. **Verify
+  explicitly**: existing Linear resolver tests still pass without
+  modification (the new local_planning resolver doesn't accidentally
+  claim Linear event types), and Linear's `LinearWorkspaceAdapter`
+  remains the registered adapter for `provider_name="linear"` in
+  `default_workspace_collaboration_manager`.
 
 ## Tests
 
