@@ -121,34 +121,63 @@ lookup. Use the appropriate `db_module` helpers for context store.
    (now completed) context until they explicitly transition via
    `create_plan` or `activate_plan`.
 
-## Acceptance
-
-- `create_plan("My Plan", "Body...")`: file at
-  `<workdir>/docs/plans/my-plan/plan.md` exists with body; workspace
-  context registered with both metadata fields set; tool returns "queued"
-  dict.
-- `activate_plan("existing-plan")`: existing workspace context is
-  re-armed; tool returns "queued" dict.
-- `activate_plan("does-not-exist")`: rejects cleanly.
-- `list_plans()`: enumerates registered plans, including completed.
-- `get_active_plan()`: returns the current plan, or null for sentinel.
-- `complete_plan(slug)`: flips status; subsequent `list_plans` reflects.
-- All handlers reject when the calling terminal lacks an agent_id (i.e.,
-  invariant violation) with a clear error.
-
-## Tests
-
-- Each handler with success cases.
-- Validation/error cases per handler.
-- End-to-end: create → activate (already active so no-op) → complete →
-  list shows completed.
-- Slug collision rejection.
-- Plan directory creation idempotence (don't fail if `docs/plans/` exists
-  already from a prior run).
-
 ## Out of scope
 
 - Auto-deletion or archival of completed plans.
 - Sub-plans / nested plans.
 - Plan metadata beyond the title and body (e.g., owner, tags) — can be
   added in followup.
+
+## Definition of Done
+
+1. `create_plan(title, body)` writes
+   `<agent.workdir>/docs/plans/<slug>/plan.md` with the body, registers
+   the workspace context with both `promote_from_context_id` and
+   `pending_for_agent_id` metadata fields set, publishes
+   `LocalPlanningPlanActivatedEvent`, calls `ensure_started` once on a
+   handle bound to the new context, returns the queued ack dict.
+2. `activate_plan(plan_id)` re-arms an existing plan with
+   `pending_for_agent_id` (overwriting any prior stale arm — "latest arm
+   wins"), conditionally sets `promote_from_context_id` only when the
+   target dir is empty, publishes the activation event, calls
+   `ensure_started` once.
+3. `list_plans()` enumerates all `local_planning` workspace contexts
+   including completed ones, returning slug, display name, status,
+   created_at, updated_at.
+4. `get_active_plan()` returns the caller terminal's current plan
+   details or `{"active_plan": null}` for sentinel.
+5. `complete_plan(plan_id)` calls
+   `mark_workspace_context_completed` and returns
+   `{"plan_id": plan_id, "status": "completed"}` without transitioning
+   the caller off the plan.
+6. `create_plan` rejects on slug collision with a clear error.
+7. Plan directory creation is idempotent — pre-existing `docs/plans/`
+   does not cause failure.
+8. All handlers reject with a clear error when the calling terminal
+   lacks an `agent_id` (invariant violation).
+9. Provider tool policy from Task 07 is updated to wire the real
+   handlers in place of the stub `NotImplementedError` ones.
+10. Per-handler success tests for each of the five tools.
+11. Per-handler validation/error tests (collisions, missing plans,
+    missing terminal context).
+12. End-to-end test: create → activate (already active no-op) →
+    complete → list shows completed.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

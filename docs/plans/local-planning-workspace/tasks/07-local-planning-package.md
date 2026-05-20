@@ -110,31 +110,58 @@ New tests under `test/local_planning/`.
                        "local_planning": LocalPlanningWorkspaceAdapter()}
    ```
 
-## Acceptance
-
-- `default_workspace_registry().get("local_planning")` returns the new
-  workspace.
-- `default_workspace_tool_provider_registry()` can create the provider.
-- `LocalPlanningWorkspaceToolProvider.provider_tool_access()` returns a
-  valid `ProviderToolAccessPolicy` declaring the five plan tools.
-- Resolver returns expected resolutions for the eight sent-side
-  collaboration events (the 8 from Task 03), the plan activation event,
-  and `None` for unrecognized events.
-- Existing `linear_delivery` workspace flows untouched. **Verify
-  explicitly**: existing Linear resolver tests still pass without
-  modification (the new local_planning resolver doesn't accidentally
-  claim Linear event types), and Linear's `LinearWorkspaceAdapter`
-  remains the registered adapter for `provider_name="linear"` in
-  `default_workspace_collaboration_manager`.
-
-## Tests
-
-- Registry returns the workspace and the provider.
-- Resolver tests (one per event family).
-- Tool access policy structure (five tools declared with stub handlers).
-
 ## Out of scope
 
 - Real tool handlers — Task 08 fills them in.
 - Tool gating via role grants — relies on existing team role machinery,
   no new work here.
+
+## Definition of Done
+
+1. `default_workspace_registry().get("local_planning")` returns the new
+   workspace with the correct id, display_name, providers tuple,
+   resolver, and `require_active_workspace_context=True`.
+2. `default_workspace_tool_provider_registry()` can construct
+   `LocalPlanningWorkspaceToolProvider`.
+3. `LocalPlanningWorkspaceToolProvider.provider_tool_access()` returns a
+   valid `ProviderToolAccessPolicy` declaring the five plan tools with
+   stub `NotImplementedError` handlers (Task 08 fills them in).
+4. `LocalPlanningWorkspaceAdapter` returns empty candidate mappings, a
+   provider view with `value=None`, and raises on
+   `resolve_event_agent_id`.
+5. `resolve_local_planning_event` returns context resolutions for the
+   eight sent-side collaboration events and for
+   `LocalPlanningPlanActivatedEvent`; returns `None` for the eight
+   received-side events and for any unrecognized event type.
+6. Existing `linear_delivery` flows untouched. Linear resolver tests
+   pass unchanged (the new local_planning resolver doesn't claim Linear
+   event types), and Linear's `LinearWorkspaceAdapter` remains the
+   registered adapter for `provider_name="linear"` in
+   `default_workspace_collaboration_manager`.
+7. `LocalPlanningWorkspaceAdapter` is registered alongside
+   `LinearWorkspaceAdapter` under `provider_name="local_planning"` in
+   the default collaboration manager.
+8. Registry tests assert workspace + provider visibility.
+9. Resolver tests (parametrized, one per event family).
+10. Tool access policy structure test (five tools declared with stubs).
+11. Linear non-regression: Linear resolver still returns its expected
+    resolutions for Linear events when consulted directly.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

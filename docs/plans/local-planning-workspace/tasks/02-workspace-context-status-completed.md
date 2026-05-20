@@ -34,22 +34,44 @@ None. Foundational.
 3. Add the symbol to the `__all__` / re-export list in `database.py` if
    that's how the rest of the consumers reach context-store helpers.
 
-## Acceptance
-
-- `WORKSPACE_CONTEXT_STATUS_COMPLETED == "completed"`.
-- `mark_workspace_context_completed(id)` flips the row's status.
-- Calling it on an already-completed row is idempotent (no error, returns
-  `True`).
-- Calling it on a missing context id returns `False` or raises — pick one
-  and stay consistent with the rest of the store's surface.
-
-## Tests
-
-- Round trip: create context, mark completed, read back, status == completed.
-- Idempotence: mark twice, second call doesn't error.
-- Missing id: clear behavior asserted.
-
 ## Out of scope
 
 - `complete_plan` itself (Task 08).
 - Any UI surface for completed contexts.
+
+## Definition of Done
+
+1. `WORKSPACE_CONTEXT_STATUS_COMPLETED == "completed"` defined in
+   `workspace_context_store.py`.
+2. `mark_workspace_context_completed(context_id)` flips the row's
+   `status` column and updates `updated_at`.
+3. Calling it on an already-completed row is idempotent (no error,
+   returns `True`).
+4. Calling it on a missing context id has clear, documented behavior
+   (returns `False` or raises) consistent with the rest of the store's
+   surface.
+5. Symbol re-exported through `clients/database.py` if the existing
+   re-export pattern is in use for similar names.
+6. Round-trip test: create context, mark completed, read back, status
+   `== "completed"`.
+7. Idempotence test: mark twice, second call doesn't error.
+8. Missing id test: behavior asserted matches the choice in item 4.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

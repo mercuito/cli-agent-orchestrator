@@ -93,30 +93,55 @@ these events.
 5. Wire both helpers into runtime startup (wherever
    `register_runtime_cao_events()` is currently called from).
 
-## Acceptance
-
-- All 17 events registered and discoverable through
-  `default_cao_event_dispatcher().published_events()`.
-- Each event round-trips through
-  `events.serialization.register_cao_event_serializers()` (this is called
-  automatically by `register_events`).
-- `event_involves_agent(event, agent_id)` returns `True` for events where
-  the agent is sender or receiver, given that the events expose
-  `agent_participants` via the existing facet (apply the
-  `WithAgentParticipants` facet to the events for timeline integration).
-- Existing runtime tests still pass.
-
-## Tests
-
-- Parametrized publish/round-trip test for each event type.
-- `event_involves_agent` returns True for both sender and receiver
-  identities on each collaboration event.
-- Negative test: publishing an event before
-  `register_agent_collaboration_events` runs raises
-  `UnknownCaoEventError`.
-
 ## Out of scope
 
 - Emitting these events from real call sites (Tasks 09, 10, 11).
 - The resolver consuming them (Task 07).
 - Wrappers like `apply_outbound_resolution` (Task 04).
+
+## Definition of Done
+
+1. All 17 events declared and registered with the default dispatcher so
+   they appear in
+   `default_cao_event_dispatcher().published_events()`.
+2. Each event satisfies `_EVENT_TYPE_REQUIRED_FIELDS` from
+   `events/__init__.py:120-126` and declares its own `event_name` class
+   var.
+3. Each event round-trips through
+   `events.serialization.register_cao_event_serializers()` (called
+   automatically by `register_events`).
+4. Collaboration events expose `agent_participants` via the
+   `WithAgentParticipants` facet so timeline queries via
+   `event_involves_agent` find them for both sender and receiver
+   identities.
+5. `register_agent_collaboration_events(dispatcher)` and
+   `register_agent_terminal_status_change_event(dispatcher)` helpers
+   exist and are wired into runtime startup alongside
+   `register_runtime_cao_events()`.
+6. Existing runtime tests still pass.
+7. Parametrized publish + round-trip test exists for each of the 17
+   event types.
+8. `event_involves_agent` returns True for both sender and receiver
+   identities on each collaboration event.
+9. Negative test: publishing an event before
+   `register_agent_collaboration_events` runs raises
+   `UnknownCaoEventError`.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

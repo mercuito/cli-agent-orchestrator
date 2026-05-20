@@ -41,18 +41,44 @@ projected behavior).
 
 3. Don't rewrite historical / completed plan docs.
 
-## Acceptance
-
-- A reader landing on `docs/workspaces.md` (or the new section) can
-  understand what `local_planning` is and how to use it from a team
-  config without reading any code.
-- `CODEBASE.md` reflects the new directory.
-
-## Tests
-
-- No automated test required. Confirm rendered Markdown looks right.
-
 ## Out of scope
 
 - Long-form tutorials, migration guides, or dashboard docs (deferred to
   a future plan that ships the dashboard surface for plans).
+
+## Definition of Done
+
+1. A reader landing on `docs/workspaces.md` (or the chosen alternative
+   section) can understand what `local_planning` is and how to use it
+   from a team config without reading any code.
+2. The doc lists the two shipped workspaces (`linear_delivery`,
+   `local_planning`), explains the plan lifecycle
+   (create → activate → complete), states where plan files live
+   (`<agent.workdir>/docs/plans/<slug>/plan.md`), and describes the
+   deferred-on-idle context-switch semantic.
+3. The doc notes the `require_active_workspace_context` flag on
+   `local_planning` and gives one minimal example team config that uses
+   the workspace.
+4. `CODEBASE.md` directory tree includes
+   `src/cli_agent_orchestrator/local_planning/`.
+5. Rendered Markdown reviewed — links resolve, headings sensible, no
+   broken references.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

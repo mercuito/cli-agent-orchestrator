@@ -54,24 +54,47 @@ call.
 3. The error type stays `WorkspaceConfigError` to fit the rest of the
    workspace module's error vocabulary.
 
-## Acceptance
-
-- Workspace with `require_active_workspace_context=False`: sentinel sender
-  → returns `None` (existing semantics preserved).
-- Workspace with `require_active_workspace_context=True`: sentinel sender
-  → raises `WorkspaceConfigError` with actionable message.
-- Both: resolved sender → returns a `WorkspaceContextResolution`.
-- Method works when the agent has no workspace team (no team membership →
-  resolver returns None → behaves like `require_active_workspace_context=False`
-  unless the workspace flag is set; document the edge case).
-
-## Tests
-
-- Parametrized over the four combinations: flag True/False × sentinel/active sender.
-- Edge: agent with no team membership.
-- Edge: workspace not in registry (existing error path should still fire).
-
 ## Out of scope
 
 - Wiring this into the inbox/start/baton call sites (Tasks 09–11).
 - Changing `resolve_event_context` itself.
+
+## Definition of Done
+
+1. `WorkspaceCollaborationManager.apply_outbound_resolution(agent,
+   event)` exists with documented semantics.
+2. Workspace with `require_active_workspace_context=False`: sentinel
+   sender → returns `None` (existing semantics preserved).
+3. Workspace with `require_active_workspace_context=True`: sentinel
+   sender → raises `WorkspaceConfigError` with an actionable message
+   ("sender has no active plan; create or activate one before
+   collaborating" or equivalent).
+4. Both flag states: resolved sender → returns a
+   `WorkspaceContextResolution`.
+5. Agent without workspace team membership: documented edge-case
+   behavior (resolver returns None → matches
+   `require_active_workspace_context=False` semantics unless the
+   workspace flag is set).
+6. Workspace not in registry: existing error path still fires.
+7. Parametrized tests cover the four combinations: flag True/False
+   × sentinel/active sender.
+8. Edge tests cover agent without team and workspace not in registry.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

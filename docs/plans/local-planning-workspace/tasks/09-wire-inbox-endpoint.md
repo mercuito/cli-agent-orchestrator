@@ -60,41 +60,62 @@ In `inbox_service.check_and_send_pending_messages`:
    if available via the notification metadata; otherwise generate a fresh
    one. The pair-up convention is `correlation_id`-based.
 
-## Acceptance
-
-- send_message from sender on plan A to a receiver on plan A: delivery
-  works, no context switch fires, sent + received events both published
-  with matching correlation_id.
-- send_message from sender on plan A to a receiver on plan B: receiver
-  context-switches to plan A (handle.notify drives it). Notification
-  lives under `agent:<id>:context:A`. After switch lands and message
-  delivers, `AgentMessageReceivedEvent` fires from inbox_service.
-- send_message from sender on sentinel on a `local_planning` team: rejected
-  via the manager flag. Sent event still published before rejection (so
-  the timeline shows the attempt).
-- send_message from sender on sentinel on a `linear_delivery` team:
-  delivers as before (flag is False).
-- send_message with missing/invalid `sender_id`: 400 with clear message.
-- Receiver is BUSY: notification queued in
-  `agent:<id>:context:<resolved>` inbox; switch DEFERRED; watchdog
-  eventually drives the switch + delivery (Task 06 mechanism).
-
-## Tests
-
-- Same-plan path: assert no switch, both events fire.
-- Cross-plan path: assert switch fires, receiver_id metadata reflects
-  new terminal, both events fire with matching correlation_id.
-- Sentinel sender + flag enforced: 400, sent event present.
-- Sentinel sender + flag not enforced: delivery succeeds.
-- Bad sender_id: 400.
-- BUSY receiver: assert notification persists in new-context inbox;
-  simulate idle transition (Task 06 path); assert delivery completes and
-  received event fires.
-
 ## Out of scope
 
 - The `mcp_server/server.py` MCP-side `_send_to_inbox` doesn't need
   changes for this task — the API receives sender_id from the query
-  param the MCP already passes. The API does the lookup. (Task 13
+  param the MCP already passes. The API does the lookup. (Task 10
   propagates the `trigger_action` discriminator for the *start* endpoint,
   not for inbox.)
+
+## Definition of Done
+
+1. send_message from sender on plan A to a receiver on plan A:
+   delivery works, no context switch fires, `AgentMessageSentEvent` and
+   `AgentMessageReceivedEvent` both published with matching
+   `correlation_id`.
+2. send_message from sender on plan A to a receiver on plan B:
+   receiver context-switches to plan A via `handle.notify`. Inbox
+   notification lives under `agent:<id>:context:plan_A`. After the switch
+   lands and the message delivers, `AgentMessageReceivedEvent` fires
+   from `inbox_service`.
+3. send_message from sender on the sentinel context on a
+   `local_planning` team: rejected via the manager flag check from Task
+   04. Sent event still published before rejection (so the timeline
+   shows the attempt).
+4. send_message from sender on the sentinel context on a
+   `linear_delivery` team: delivers as before (flag is `False`).
+5. send_message with missing/invalid `sender_id` query param: 400 with
+   actionable error text.
+6. Receiver is BUSY at send time: notification queued in
+   `agent:<id>:context:<resolved>` inbox; switch DEFERRED; Task 06
+   watchdog mechanism eventually fires the switch and delivers.
+7. Same-plan path test: assert no switch, both events fire.
+8. Cross-plan path test: assert switch fires, receiver terminal
+   metadata reflects new terminal, both events fire with matching
+   `correlation_id`.
+9. Sentinel sender + flag enforced test: 400 with sent event present.
+10. Sentinel sender + flag not enforced test: delivery succeeds.
+11. Bad `sender_id` test: 400.
+12. BUSY receiver test: assert notification persists in new-context
+    inbox; simulate idle transition (Task 06 path); assert delivery
+    completes and received event fires.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

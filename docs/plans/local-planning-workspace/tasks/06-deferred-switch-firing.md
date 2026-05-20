@@ -73,34 +73,67 @@ Three sub-pieces:
    - Then proceed with existing
      `check_and_send_pending_messages(terminal_id)`.
 
-## Acceptance
-
-- Agent on context A with `pending_for_agent_id` set on context P: when
-  the agent's terminal transitions to IDLE, the helper finds P, fires
-  `ensure_fresh_started`, terminal restarts in P (with promote applied if
-  armed), metadata cleared.
-- Same agent without armed contexts: helper queries DB once, returns
-  immediately, no switch attempted.
-- Agent with two armed contexts (unexpected): only one switch lands per
-  idle cycle. Second armed context remains until next idle.
-- `AgentTerminalStatusChangeEvent` published only on actual transitions
-  (not on every log change).
-- Subscribers of the status change event see post-switch state
-  (terminal_id field reflects the *current* terminal after any switch).
-
-## Tests
-
-- Mocked watchdog flow: arm a context, simulate IDLE transition, assert
-  `ensure_fresh_started` is called and metadata cleared.
-- Multiple armings: assert one-switch-per-cycle behavior.
-- Status not IDLE: helper exits without DB query (assert no calls).
-- `previous_status == new_status`: no event published, no switch attempt.
-- Linear coexistence: with Linear's monitor also running, no duplicate
-  switches (the runtime handle's existing `_deactivate_other_context_terminal_for_switch`
-  serialization handles this; assert no errors).
-
 ## Out of scope
 
 - The arming itself (Task 08).
 - Subscribers of `AgentTerminalStatusChangeEvent` (not in scope for v1;
   this task just publishes it).
+
+## Definition of Done
+
+1. `list_workspace_contexts_pending_for_agent(agent_id)` exists in
+   `workspace_context_store.py` and returns contexts where
+   `metadata_json.pending_for_agent_id == agent_id`.
+2. `apply_pending_workspace_context_switches(agent_id, new_status)`
+   exists, returns early when `new_status` is not in `{IDLE, COMPLETED}`,
+   and otherwise drives `ensure_fresh_started` on each armed context for
+   the agent.
+3. On successful switch, `pending_for_agent_id` is cleared from the
+   workspace context metadata. (`promote_from_context_id` clearing is
+   handled by the promote helper in Task 05.)
+4. `LogFileHandler._handle_log_change` is extended to: detect status
+   transition via a per-terminal `_previous_status` cache, call
+   `apply_pending_workspace_context_switches` inline before publishing,
+   then publish `AgentTerminalStatusChangeEvent` with settled state.
+5. The existing `check_and_send_pending_messages(terminal_id)` call
+   continues to run after the new logic (against the current
+   terminal_id, which may have changed if a switch landed).
+6. Agent with `pending_for_agent_id` set on context P: when the agent's
+   terminal transitions to IDLE, the helper finds P, terminal restarts
+   in P (with promote from Task 05 applied if armed), metadata cleared.
+7. Agent without armed contexts: helper returns immediately with no
+   switch attempted.
+8. Agent with two armed contexts (unexpected): only one switch lands per
+   idle cycle; second armed context remains armed until next idle.
+9. `AgentTerminalStatusChangeEvent` published only on actual
+   transitions, not on every log change.
+10. Subscribers see post-switch state (`terminal_id` field reflects the
+    *current* terminal after any switch).
+11. Mocked watchdog test: arm a context, simulate IDLE transition,
+    assert `ensure_fresh_started` is called and metadata cleared.
+12. Multiple armings test: assert one-switch-per-cycle behavior.
+13. Status not IDLE test: helper exits without DB query.
+14. `previous_status == new_status` test: no event published, no switch
+    attempt.
+15. Linear coexistence test: with Linear's monitor also running, no
+    duplicate switches and no errors from
+    `_deactivate_other_context_terminal_for_switch` serialization.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

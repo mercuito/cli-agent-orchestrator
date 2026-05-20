@@ -75,30 +75,58 @@ In API `start_agent_endpoint`:
    shows the attempt), then 409 propagates. Received event does NOT
    publish in the 409 case.
 
-## Acceptance
-
-- MCP handoff: API receives sender_terminal_id + trigger_action="handoff",
-  emits Handoff sent + accepted events, worker terminal lands in sender's
-  plan context.
-- MCP assign: same with assign events.
-- Dashboard direct start: no sender info, sentinel default, no events
-  emitted (existing behavior).
-- 409 on already-running target: sent event published, 409 returned, no
-  received event.
-- Sender on sentinel + workspace flag enforced: 400 with sender event
-  published.
-- Invalid `trigger_action`: 400.
-- Invalid `sender_terminal_id`: 400.
-
-## Tests
-
-- All four paths above with assertions on emitted events and runtime
-  handle construction args.
-- Correlation id pairing: assert received event references sent event's
-  event_id.
-
 ## Out of scope
 
 - handoff to already-running target on a different plan: stays as 409
   per the plan's design (out of scope for v1).
 - The MCP `send_message` path (Task 09) — separate endpoint.
+
+## Definition of Done
+
+1. MCP `_create_terminal` reads `os.environ["CAO_TERMINAL_ID"]` and
+   passes it as `sender_terminal_id` query param. `_handoff_impl` and
+   `_assign_impl` pass `trigger_action="handoff"` and
+   `trigger_action="assign"` respectively. If the env var is missing,
+   neither param is passed (defensive fallback to dashboard-direct
+   behavior).
+2. API `start_agent_endpoint` accepts optional `sender_terminal_id` and
+   `trigger_action` query params.
+3. With sender info present and a valid `trigger_action`: API builds
+   `AgentHandoffInitiatedEvent` or `AgentAssignInitiatedEvent`,
+   publishes it, calls `manager.apply_outbound_resolution`, applies
+   the resolution to the `AgentRuntimeHandle`.
+4. Dashboard direct start (no sender info): existing sentinel default
+   behavior preserved; no sent event published.
+5. After successful terminal start with sender info: matching
+   `AgentHandoffAcceptedEvent` / `AgentAssignAcceptedEvent` published
+   with the new `terminal_id` and `correlation_id` referencing the sent
+   event's `event_id`.
+6. 409 on already-running target: sent event still published (timeline
+   shows attempt), 409 returned, received event NOT published.
+7. Sender on sentinel + `require_active_workspace_context=True`: 400
+   with the sent event published before rejection.
+8. Invalid `trigger_action` value: 400.
+9. Invalid `sender_terminal_id` (no matching terminal): 400.
+10. Tests cover MCP handoff, MCP assign, dashboard direct, 409,
+    sentinel + flag, invalid trigger_action, invalid sender_terminal_id.
+11. Correlation-id pairing test: received event's `correlation_id`
+    references sent event's `event_id`.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

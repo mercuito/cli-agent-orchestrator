@@ -60,29 +60,51 @@ Runtime-side; workspace-agnostic. Does not import `local_planning`.
 3. The helper must be idempotent — re-running after a successful copy is
    a no-op because the metadata field is cleared.
 
-## Acceptance
-
-- For Claude Code/Codex agents with armed metadata: copy happens, target
-  dir contains source's state files, metadata cleared.
-- For Kiro/Q/Copilot/Gemini/Kimi agents with armed metadata: no copy
-  (no capability), metadata cleared, function returns False without
-  error.
-- Armed metadata but target dir already populated: no overwrite, metadata
-  cleared, returns False.
-- Armed metadata but source dir empty: no copy, metadata cleared, returns
-  False.
-- No armed metadata: returns False quickly, no I/O.
-- Second invocation after success: returns False (no double-promote).
-
-## Tests
-
-- Parametrized over the cases above using temp dirs + the existing
-  `workspace_context_store` fixtures.
-- Test that `terminal_service._create_terminal_core` calls the helper
-  before runtime state load (via mock or behavior assertion).
-
 ## Out of scope
 
 - The arming itself — Tasks 08 (`create_plan` / `activate_plan` set the
   metadata field).
 - The deferred-switch trigger — Task 06.
+
+## Definition of Done
+
+1. `apply_promote_if_armed(agent, target_context_id) -> bool` helper
+   exists and is invoked from
+   `terminal_service._create_terminal_core` immediately before the
+   existing runtime-state load at lines 268-277.
+2. Claude Code / Codex agents with armed metadata: copy happens, target
+   dir contains source's state files, metadata cleared after copy.
+3. Kiro / Q / Copilot / Gemini / Kimi agents with armed metadata: no
+   copy (no capability), metadata cleared, function returns `False`
+   without raising.
+4. Armed metadata but target dir already populated: no overwrite,
+   metadata cleared, returns `False`.
+5. Armed metadata but source dir empty: no copy, metadata cleared,
+   returns `False`.
+6. No armed metadata: returns `False` quickly with no I/O.
+7. Second invocation after a successful copy: returns `False` (one-shot
+   semantics — no double-promote).
+8. Parametrized tests cover all six branches above using temp dirs and
+   existing `workspace_context_store` fixtures.
+9. Test asserts `terminal_service._create_terminal_core` invokes the
+   helper before the existing runtime-state load (via mock or behavior
+   assertion).
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.

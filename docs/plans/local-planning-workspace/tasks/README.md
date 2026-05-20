@@ -65,8 +65,15 @@ last.
 
 ## Definition of Done
 
-Each task carries its own acceptance criteria. The master plan's overall
+Each task carries its own concentrated Definition of Done section listing
+behavior + test acceptance criteria. The master plan's overall
 Definition of Done remains authoritative — when all tasks complete, the
-plan-level DoD should be satisfied. Run
-`scripts/catalog_criteria.py` and evaluate the completed diff against
-applicable criteria before declaring the plan done.
+plan-level DoD should be satisfied.
+
+## Review Gate
+
+Each task carries its own Review Gate. Two successive clean review
+passes are required to mark a task complete; review findings are
+recorded under the task's heading in
+[../completion-report.md](../completion-report.md). The plan as a whole
+is complete only when all 13 tasks have completed their Review Gates.

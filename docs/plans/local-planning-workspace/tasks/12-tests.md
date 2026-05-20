@@ -68,26 +68,83 @@ Implement integration coverage per the plan's Tests bullet list:
     with settled state.
 15. **No Linear regression** — existing Linear suites pass unchanged.
 
-## Acceptance
-
-- All listed scenarios have at least one passing test.
-- The plan's "Required backend checks" run green:
-  - `uv run pytest test/workspaces` — registry, manager, flag enforcement.
-  - `uv run pytest test/local_planning` — new suite.
-  - `uv run pytest test/api` — endpoint changes including resolver flow.
-  - `uv run pytest test/services/test_baton_service.py` — baton resolver wiring.
-  - `uv run pytest test/runtime` — context-switch + promote helper.
-  - `uv run pytest test/linear` — confirm no regressions.
-- **Criteria-catalog gate (blocking)**: run
-  `uv run python scripts/catalog_criteria.py`. For each criterion whose
-  `when` clause matches the implementation diff, evaluate and document.
-  No applicable criterion may be violated — this is the plan's
-  Definition of Done item #15, and treating it as merely "after the fact"
-  paperwork is wrong. The implementation is not done until the catalog
-  evaluation passes.
-
 ## Out of scope
 
 - Manual browser verification (covered in Required Verification at
   plan level).
 - Performance / load tests.
+
+## Definition of Done
+
+1. Workspace + provider registration scenario passes: both registries
+   return the new entries; existing `linear_delivery` still present.
+2. Event-type discovery scenario passes: all 18 events listed by
+   `dispatcher.published_events()` after framework startup; parametrized
+   publish + round-trip assertion succeeds.
+3. Resolver matrix scenario passes: one resolution per recognized event
+   type, `None` for unrecognized. Sent-side recognized; received-side
+   returns `None`; Linear events return `None`.
+4. `create_plan` from sentinel scenario passes: file written, context
+   registered with both metadata fields, deferred switch triggered,
+   after idle the terminal has restarted in the new context with
+   promoted state for Claude Code + Codex.
+5. `create_plan` from existing plan A scenario passes: target dir
+   receives A's state after the switch.
+6. Promote helper matrix scenario passes: Claude Code/Codex copy,
+   no-op for other providers, no-op when target populated, no-op when
+   source empty, no-op when arming absent; metadata cleared after copy.
+7. `complete_plan` + `list_plans` scenario passes: completed plans
+   appear in list with `status="completed"`; agent stays on the (now
+   completed) plan context.
+8. Sender guardrail scenario passes for all four actions and five
+   baton transitions: sentinel sender on `local_planning` rejected with
+   sent event still published; sentinel sender on `linear_delivery`
+   succeeds.
+9. Handoff inheritance scenario passes: worker lands in sender's plan
+   context; sent + received events match on `correlation_id`.
+10. send_message receiver-side switch scenario passes: cross-plan
+    notification keyed `agent:<id>:context:plan_A`; receiver
+    restarts in plan A; no message loss; both events fire.
+11. send_message with stale `sender_id` scenario passes: 400 with
+    actionable error.
+12. Baton cross-plan scenario passes for all five transitions.
+13. handoff target already running on different plan scenario passes:
+    409 preserved; sent event published, no received event, no
+    force-switch.
+14. Deferred-switch idle-fire scenario passes: BUSY-at-create →
+    finish-turn → IDLE → watchdog drives switch + promote → new
+    terminal in new context; `AgentTerminalStatusChangeEvent` published
+    with settled state.
+15. No Linear regression: existing Linear suites pass unchanged.
+16. The plan's "Required backend checks" run green:
+    - `uv run pytest test/workspaces`
+    - `uv run pytest test/local_planning`
+    - `uv run pytest test/api`
+    - `uv run pytest test/services/test_baton_service.py`
+    - `uv run pytest test/runtime`
+    - `uv run pytest test/linear`
+17. **Criteria-catalog gate (blocking)**: `uv run python
+    scripts/catalog_criteria.py` evaluated against the full
+    implementation diff. For each criterion whose `when` clause matches,
+    document evaluation in the completion report. No applicable
+    criterion may be violated. This is plan-level DoD #15 enforced here
+    as a blocking acceptance gate for the test task.
+
+## Review Gate
+
+After implementing this task, run a review loop. The reviewer compares
+the landed implementation against each item in Definition of Done above
+plus all applicable entries in the `docs/criteria` catalog (run
+`uv run python scripts/catalog_criteria.py` and load any criterion whose
+`when` clause matches the task's actual diff).
+
+Any valid finding confirmed by the implementer must be fixed, then the
+review loop restarts with a fresh reviewer. For every review finding
+that requires an implementation change, the implementer updates
+[../completion-report.md](../completion-report.md) under this task's
+heading, recording what the reviewer found, why it was accepted as
+valid, how it was fixed, and what evidence verifies the fix.
+
+This task is complete only after two successive review loops report zero
+valid findings for this task, and those two clean review passes are
+recorded in the completion report.
