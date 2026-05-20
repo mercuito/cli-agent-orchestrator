@@ -9,7 +9,7 @@ import pytest
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.workspace_providers import (
+from cli_agent_orchestrator.workspace_tool_providers import (
     ProviderMediatedToolDefinition,
     ProviderToolAccess,
     ProviderToolAccessPolicy,
@@ -20,7 +20,7 @@ from cli_agent_orchestrator.workspace_providers import (
     ProviderToolPreCallResult,
     normalize_provider_tool_access,
 )
-from cli_agent_orchestrator.workspace_providers.invocation import (
+from cli_agent_orchestrator.workspace_tool_providers.invocation import (
     ProviderMediatedToolAccessDenied,
     ProviderMediatedToolHandlerError,
     ProviderMediatedToolInvocationService,

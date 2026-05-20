@@ -13,7 +13,7 @@ from cli_agent_orchestrator.services.agent_manager import (
     default_agent_manager,
 )
 from cli_agent_orchestrator.services.tool_service import ToolService
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderMediatedToolDefinition,
     ProviderToolAccess,
     ProviderToolAccessPolicy,

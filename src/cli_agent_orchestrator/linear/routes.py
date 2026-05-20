@@ -9,24 +9,24 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, s
 from pydantic import BaseModel
 
 from cli_agent_orchestrator.linear import app_client, runtime
-from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
+from cli_agent_orchestrator.linear import workspace_tool_provider as linear_workspace_tool_provider
 from cli_agent_orchestrator.linear.webhook_ingestion import parse_linear_webhook_packet
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.workspace_providers import WorkspaceProviderConfigError
+from cli_agent_orchestrator.workspace_tool_providers import WorkspaceToolProviderConfigError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/linear", tags=["linear"])
 
 
-def _require_linear_workspace_provider_enabled() -> None:
-    """Honor explicit workspace-provider enablement while preserving no-config compatibility."""
+def _require_linear_workspace_tool_provider_enabled() -> None:
+    """Honor explicit workspace-tool-provider enablement."""
     try:
-        enabled = linear_workspace_provider.should_enable_linear_routes()
-    except WorkspaceProviderConfigError as exc:
+        enabled = linear_workspace_tool_provider.should_enable_linear_routes()
+    except WorkspaceToolProviderConfigError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
@@ -34,7 +34,7 @@ def _require_linear_workspace_provider_enabled() -> None:
     if not enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Linear workspace provider is not enabled",
+            detail="Linear workspace tool provider is not enabled",
         )
 
 
@@ -76,7 +76,7 @@ def oauth_callback(
     error_description: Optional[str] = Query(default=None),
 ) -> LinearOAuthCallbackResponse:
     """Complete Linear app actor OAuth installation."""
-    _require_linear_workspace_provider_enabled()
+    _require_linear_workspace_tool_provider_enabled()
     if error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -113,7 +113,7 @@ async def agent_webhook(
     background_tasks: BackgroundTasks,
 ) -> LinearWebhookResponse:
     """Receive Linear agent/session webhooks."""
-    _require_linear_workspace_provider_enabled()
+    _require_linear_workspace_tool_provider_enabled()
     raw_body = await request.body()
     signature = request.headers.get("Linear-Signature")
     delivery = request.headers.get("Linear-Delivery")

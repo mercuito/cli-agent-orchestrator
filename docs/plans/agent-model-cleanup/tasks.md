@@ -96,7 +96,7 @@ the forbidden patterns, raise back to the operator rather than improvising.
     keys within a named TOML section without rewriting the rest of the file
     — preserves comments, ordering, and unrelated keys (port the existing
     `_patch_toml_section_values` logic from
-    `src/cli_agent_orchestrator/linear/workspace_provider.py`)
+    `src/cli_agent_orchestrator/linear/workspace_tool_provider.py`)
   - unit tests including round-trip (write → load → equal), patch with
     preserved formatting, atomic-write crash safety
 - acceptance:
@@ -205,7 +205,7 @@ the forbidden patterns, raise back to the operator rather than improvising.
 - dispatch_mode: handoff
 - depends_on: [T05]
 - deliverables:
-  - `LinearWorkspaceProvider` rewritten to source presence bindings and
+  - `LinearWorkspaceToolProvider` rewritten to source presence bindings and
     tool access policies from each agent's `agent.toml [linear]` section
     instead of `linear.toml`
   - Linear OAuth callback writer updated to call `patch_agent_section`
@@ -249,8 +249,8 @@ the forbidden patterns, raise back to the operator rather than improvising.
     `_load_legacy_linear_config`, `has_legacy_linear_provider_config`,
     every `LINEAR_DISCOVERY_*` env var lookup, the `config.source ==
     "legacy_env"` branches
-  - delete `~/.aws/cli-agent-orchestrator/agents.toml`,
-    `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml`,
+  - delete `~/.aws/cli-agent-orchestrator/agents.toml`, any old
+    provider-specific Linear config backup/source, and
     `~/.aws/cli-agent-orchestrator/agent-store/` on the developer machine
   - test suite passes with all old code removed
 - acceptance:

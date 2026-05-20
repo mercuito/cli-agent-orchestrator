@@ -154,9 +154,7 @@ class WorkspaceTeam:
         roles = dict(self.roles)
         roles.pop(normalized, None)
         assignments = {
-            agent_id: (
-                DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE if assigned == normalized else assigned
-            )
+            agent_id: (DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE if assigned == normalized else assigned)
             for agent_id, assigned in self.role_assignments.items()
         }
         return WorkspaceTeam(
@@ -169,7 +167,7 @@ class WorkspaceTeam:
 
 
 @dataclass(frozen=True)
-class WorkspaceProviderCandidateMapping:
+class WorkspaceToolProviderCandidateMapping:
     """Provider-owned candidate mapping before team authorization."""
 
     provider_name: str
@@ -195,7 +193,7 @@ class WorkspaceTeamAuthorizedMapping:
 
 
 @dataclass(frozen=True)
-class WorkspaceProviderView:
+class WorkspaceToolProviderView:
     """Team-filtered projection built by a provider adapter."""
 
     team_id: str
@@ -205,14 +203,14 @@ class WorkspaceProviderView:
 
 
 @dataclass(frozen=True)
-class WorkspaceProviderEventResolution:
+class WorkspaceToolProviderEventResolution:
     """Resolved team-bound provider event identity."""
 
     team: WorkspaceTeam
     setup: WorkspaceSetup
     agent: Agent
     provider_name: str
-    provider_view: WorkspaceProviderView
+    provider_view: WorkspaceToolProviderView
     provider_payload: Any
 
 
@@ -235,7 +233,7 @@ class WorkspaceSetupProviderAdapter(Protocol):
 
     def build_candidate_mappings(
         self, agent_registry: AgentRegistry
-    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+    ) -> tuple[WorkspaceToolProviderCandidateMapping, ...]:
         """Return provider-native candidate mappings for all configured agents."""
 
     def build_provider_view(
@@ -245,13 +243,13 @@ class WorkspaceSetupProviderAdapter(Protocol):
         setup: WorkspaceSetup,
         authorized_mappings: tuple[WorkspaceTeamAuthorizedMapping, ...],
         agent_registry: AgentRegistry,
-    ) -> WorkspaceProviderView:
+    ) -> WorkspaceToolProviderView:
         """Return a team-filtered provider-native view."""
 
     def resolve_event_agent_id(
         self,
         *,
-        provider_view: WorkspaceProviderView,
+        provider_view: WorkspaceToolProviderView,
         event: CaoEvent,
     ) -> tuple[str, Any]:
         """Return the team-addressable agent id and provider payload for an event."""
@@ -263,8 +261,8 @@ class WorkspaceSetupProviderAdapter(Protocol):
         self,
         *,
         event: CaoEvent,
-        candidates: tuple[WorkspaceProviderCandidateMapping, ...],
-    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+        candidates: tuple[WorkspaceToolProviderCandidateMapping, ...],
+    ) -> tuple[WorkspaceToolProviderCandidateMapping, ...]:
         """Return candidate mappings that match the provider-native event identity."""
 
 
@@ -424,8 +422,7 @@ class WorkspaceTeamStore:
                     "display_name": team.display_name,
                     "workspace_setup": team.workspace_setup,
                     "roles": {
-                        role_id: _role_to_json(role)
-                        for role_id, role in sorted(team.roles.items())
+                        role_id: _role_to_json(role) for role_id, role in sorted(team.roles.items())
                     },
                     "role_assignments": dict(sorted(team.role_assignments.items())),
                 }
@@ -857,7 +854,7 @@ class WorkspaceCollaborationManager:
             diagnostics.extend(self._pruned_mapping_diagnostics(team, setup))
         return tuple(diagnostics)
 
-    def provider_view(self, team_id: str, provider_name: str) -> WorkspaceProviderView:
+    def provider_view(self, team_id: str, provider_name: str) -> WorkspaceToolProviderView:
         team = self._team_registry.get(team_id)
         setup = self._setup_registry.get(team.workspace_setup)
         normalized_provider = _normalize_provider(provider_name)
@@ -924,10 +921,10 @@ class WorkspaceCollaborationManager:
 
     def resolve_provider_event(
         self, provider_name: str, event: CaoEvent
-    ) -> WorkspaceProviderEventResolution:
+    ) -> WorkspaceToolProviderEventResolution:
         normalized_provider = _normalize_provider(provider_name)
         adapter = self._adapter(normalized_provider)
-        matches: list[WorkspaceProviderEventResolution] = []
+        matches: list[WorkspaceToolProviderEventResolution] = []
         errors: list[str] = []
         for team in self._team_registry.all():
             try:
@@ -944,7 +941,7 @@ class WorkspaceCollaborationManager:
                     event=event,
                 )
                 matches.append(
-                    WorkspaceProviderEventResolution(
+                    WorkspaceToolProviderEventResolution(
                         team=team,
                         setup=setup,
                         agent=self._agent_registry.get(agent_id),
@@ -1007,7 +1004,7 @@ class WorkspaceCollaborationManager:
             return self._provider_adapters[provider_name]
         except KeyError as exc:
             raise WorkspaceSetupConfigError(
-                f"Unavailable workspace provider: {provider_name}"
+                f"Unavailable workspace tool provider: {provider_name}"
             ) from exc
 
     def _pruned_mapping_diagnostics(
@@ -1070,7 +1067,7 @@ class WorkspaceCollaborationManager:
         self,
         *,
         provider_name: str,
-        candidate: WorkspaceProviderCandidateMapping,
+        candidate: WorkspaceToolProviderCandidateMapping,
     ) -> str:
         try:
             agent = self._agent_registry.get(candidate.agent_id)
@@ -1165,7 +1162,9 @@ def default_workspace_team_service(
 ) -> WorkspaceTeamService:
     from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
 
-    resolved_agents_root = Path(agents_root) if agents_root is not None else agent_config.AGENTS_ROOT
+    resolved_agents_root = (
+        Path(agents_root) if agents_root is not None else agent_config.AGENTS_ROOT
+    )
     registry = agent_registry or load_agent_registry(agents_root=resolved_agents_root)
     setup_registry = default_workspace_setup_registry()
     adapters = {"linear": LinearWorkspaceSetupAdapter()}
@@ -1210,7 +1209,7 @@ def _required_json_token(raw: Mapping[str, Any], key: str, label: str) -> str:
 
 
 def _normalize_provider(value: str) -> str:
-    return _required_token(value, "workspace provider name").lower()
+    return _required_token(value, "workspace tool provider name").lower()
 
 
 def _str_tuple(value: Any, label: str) -> tuple[str, ...]:

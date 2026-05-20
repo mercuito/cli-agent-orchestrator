@@ -1,6 +1,6 @@
 """Provider-mediated MCP tool access contract.
 
-Workspace providers own provider-specific configuration and vocabulary. This
+Workspace tool providers own provider-specific configuration and vocabulary. This
 module owns the CAO-neutral contract providers use after parsing that config:
 declared tools, declared hooks, requested access targets, and preflight
 normalization into agent-scoped access.

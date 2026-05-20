@@ -405,9 +405,9 @@ export const api = {
   listWorkspaceSetups: () => fetchJSON<WorkspaceSetup[]>('/workspace-setups'),
   listWorkspaceTeams: () => fetchJSON<WorkspaceTeam[]>('/workspace-teams'),
   listCaoToolDescriptors: () => fetchJSON<ToolDescriptor[]>('/cao-tools/descriptors'),
-  getWorkspaceProviderRoleAccessSchema: (provider: string) =>
+  getWorkspaceToolProviderRoleAccessSchema: (provider: string) =>
     fetchJSON<ProviderRoleAccessSchema>(
-      `/workspace-providers/${encodeURIComponent(provider)}/role-access-schema`,
+      `/workspace-tool-providers/${encodeURIComponent(provider)}/role-access-schema`,
     ),
   createWorkspaceTeam: (team: { id: string; display_name: string; workspace_setup: string }) =>
     fetchJSON<WorkspaceTeam>('/workspace-teams', {

@@ -12,31 +12,31 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.services.agent_manager import AgentManager, default_agent_manager
 from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
-from cli_agent_orchestrator.workspace_providers.registry import (
-    ProviderConversationAccessWorkspaceProvider,
-    ProviderRoleToolAccessWorkspaceProvider,
-    ProviderToolAccessConfigurableWorkspaceProvider,
-    ProviderToolAccessWorkspaceProvider,
-    WORKSPACE_PROVIDERS_CONFIG_PATH,
-    WorkspaceProviderConfigError,
-    WorkspaceProviderRegistry,
-    default_workspace_provider_registry,
-    load_enabled_workspace_providers,
-    workspace_provider_config_exists,
+from cli_agent_orchestrator.workspace_setups import (
+    DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
+    WorkspaceCollaborationManager,
+    WorkspaceSetupConfigError,
+    default_workspace_collaboration_manager,
 )
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.registry import (
+    WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH,
+    ProviderConversationAccessWorkspaceToolProvider,
+    ProviderRoleToolAccessWorkspaceToolProvider,
+    ProviderToolAccessConfigurableWorkspaceToolProvider,
+    ProviderToolAccessWorkspaceToolProvider,
+    WorkspaceToolProviderConfigError,
+    WorkspaceToolProviderRegistry,
+    default_workspace_tool_provider_registry,
+    load_enabled_workspace_tool_providers,
+    workspace_tool_provider_config_exists,
+)
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderConversationAccessRequirement,
     ProviderMediatedToolDefinition,
     ProviderRoleToolAccessGrant,
     ProviderToolAccess,
     ProviderToolAccessConfigError,
     ProviderToolAccessPolicy,
-)
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
-    WorkspaceCollaborationManager,
-    WorkspaceSetupConfigError,
-    default_workspace_collaboration_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,10 +168,7 @@ class StandaloneAgentToolAccessSource:
             provider_conversation_requirements=(),
             runtime_capabilities=_runtime_capabilities_input(self._agent),
             source_markers={
-                **{
-                    name: "agent_config:cao_tools"
-                    for name in tuple(self._agent.cao_tools or ())
-                },
+                **{name: "agent_config:cao_tools" for name in tuple(self._agent.cao_tools or ())},
                 **{
                     f"@{name}": "agent_config:mcp_servers"
                     for name in _local_mcp_servers_from_agent(self._agent)
@@ -357,6 +354,7 @@ class TeamRoleToolAccessSource:
             diagnostics=tuple(diagnostics),
         )
 
+
 class ToolAccessResolver:
     """Choose the single active tool access source for one agent."""
 
@@ -372,9 +370,9 @@ class ToolAccessResolver:
         agent: Agent,
         agent_registry: AgentRegistry,
         *,
-        provider_conversation_requirements: Mapping[
-            str, tuple[ProviderConversationAccessRequirement, ...]
-        ] | None = None,
+        provider_conversation_requirements: (
+            Mapping[str, tuple[ProviderConversationAccessRequirement, ...]] | None
+        ) = None,
     ) -> ToolAccessSourceResult:
         if agent.workspace.team is None:
             return StandaloneAgentToolAccessSource(agent).resolve()
@@ -558,7 +556,9 @@ class ToolService:
             )
         )
         allowed = tuple(dict.fromkeys((*built_in_effective, *provider_tool_names)))
-        registered = tuple(dict.fromkeys((*allowed, *(f"@{name}" for name in materialized_mcp_servers))))
+        registered = tuple(
+            dict.fromkeys((*allowed, *(f"@{name}" for name in materialized_mcp_servers)))
+        )
         source_markers = {
             **source_result.source_markers,
             **{
@@ -614,7 +614,9 @@ class ToolService:
             built_in_tools=access.built_in_cao_tools,
             provider_mediated_tools=provider_tools,
             registered_tools=tuple(
-                dict.fromkeys((*access.built_in_cao_tools, *(tool.name for _, tool in provider_tools)))
+                dict.fromkeys(
+                    (*access.built_in_cao_tools, *(tool.name for _, tool in provider_tools))
+                )
             ),
             diagnostics=access.diagnostics,
         )
@@ -645,9 +647,7 @@ class ToolService:
                 effective[provider_name] = replace(policy, access=merged_access)
         return effective
 
-    def provider_policies_for_agent(
-        self, agent_id: str
-    ) -> Mapping[str, ProviderToolAccessPolicy]:
+    def provider_policies_for_agent(self, agent_id: str) -> Mapping[str, ProviderToolAccessPolicy]:
         """Return provider policies scoped to one agent's effective access."""
         agent = self._agent_manager.resolve_agent(agent_id)
         source_result = self._resolver.resolve(
@@ -788,9 +788,7 @@ class ToolService:
             },
         )
 
-    def materialized_mcp_servers_for_agent(
-        self, agent_id: str
-    ) -> Mapping[str, Mapping[str, Any]]:
+    def materialized_mcp_servers_for_agent(self, agent_id: str) -> Mapping[str, Mapping[str, Any]]:
         """Return effective direct/custom MCP servers to materialize."""
         agent = self._agent_manager.resolve_agent(agent_id)
         source_result = self._resolver.resolve(agent, self._agent_registry())
@@ -799,7 +797,10 @@ class ToolService:
         managed = self._managed_cao_mcp_server(agent)
         existing = servers.get(MANAGED_CAO_MCP_SERVER)
         if isinstance(existing, Mapping):
-            managed = {**managed, **{key: existing[key] for key in ("env", "cwd") if key in existing}}
+            managed = {
+                **managed,
+                **{key: existing[key] for key in ("env", "cwd") if key in existing},
+            }
         servers[MANAGED_CAO_MCP_SERVER] = managed
         return {name: _copy_jsonish_mapping(config) for name, config in sorted(servers.items())}
 
@@ -1054,7 +1055,7 @@ class ToolService:
             _agent_cache_token(agent),
             _source_result_cache_token(source_result),
             _agent_registry_cache_token(self._agent_registry()),
-            _workspace_provider_config_cache_token(),
+            _workspace_tool_provider_config_cache_token(),
         )
         if cache_key in self._role_provider_policy_cache:
             return self._role_provider_policy_cache[cache_key]
@@ -1064,18 +1065,18 @@ class ToolService:
         if not grants_by_provider:
             return {}, ()
 
-        provider_registry = default_workspace_provider_registry()
+        provider_registry = default_workspace_tool_provider_registry()
         policies: dict[str, ProviderToolAccessPolicy] = {}
         diagnostics: list[ToolAccessDiagnostic] = []
         for provider_name, grants in sorted(grants_by_provider.items()):
             try:
                 provider = provider_registry.create(provider_name, self._agent_registry())
-                if not isinstance(provider, ProviderRoleToolAccessWorkspaceProvider):
+                if not isinstance(provider, ProviderRoleToolAccessWorkspaceToolProvider):
                     diagnostics.append(
                         ToolAccessDiagnostic(
                             code="provider_role_access_unsupported",
                             message=(
-                                f"Workspace provider {provider_name} does not support "
+                                f"Workspace tool provider {provider_name} does not support "
                                 "team-role-owned tool access."
                             ),
                             source=f"workspace_team.providers.{provider_name}",
@@ -1088,7 +1089,7 @@ class ToolService:
                     ToolAccessDiagnostic(
                         code="provider_role_access_invalid",
                         message=(
-                            f"Workspace provider {provider_name} rejected team role tool "
+                            f"Workspace tool provider {provider_name} rejected team role tool "
                             f"access for agent {agent.id}: {exc}"
                         ),
                         source=f"workspace_team.providers.{provider_name}",
@@ -1102,7 +1103,7 @@ class ToolService:
         cache_key = (
             "raw_provider_policies",
             _agent_registry_cache_token(self._standalone_provider_agent_registry()),
-            _workspace_provider_config_cache_token(),
+            _workspace_tool_provider_config_cache_token(),
         )
         if cache_key in self._raw_provider_policies_cache:
             return self._raw_provider_policies_cache[cache_key]
@@ -1116,7 +1117,7 @@ class ToolService:
             )
             self._raw_provider_policies_cache[cache_key] = policies
             return policies
-        except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
+        except (ProviderToolAccessConfigError, WorkspaceToolProviderConfigError):
             raise
         except Exception:
             logger.exception("Provider-mediated tool access loading failed")
@@ -1128,14 +1129,12 @@ class ToolService:
         cache_key = (
             "provider_conversation_requirements",
             _agent_registry_cache_token(self._agent_registry()),
-            _workspace_provider_config_cache_token(),
+            _workspace_tool_provider_config_cache_token(),
         )
         if cache_key in self._provider_conversation_requirements_cache:
             return self._provider_conversation_requirements_cache[cache_key]
         if self._provider_conversation_requirement_loader is not None:
-            requirements = self._provider_conversation_requirement_loader(
-                self._agent_registry()
-            )
+            requirements = self._provider_conversation_requirement_loader(self._agent_registry())
             self._provider_conversation_requirements_cache[cache_key] = requirements
             return requirements
         try:
@@ -1144,7 +1143,7 @@ class ToolService:
             )
             self._provider_conversation_requirements_cache[cache_key] = requirements
             return requirements
-        except WorkspaceProviderConfigError:
+        except WorkspaceToolProviderConfigError:
             raise
         except Exception:
             logger.exception("Provider-conversation requirement loading failed")
@@ -1174,26 +1173,26 @@ def _load_raw_enabled_provider_tool_access_policies(
     *,
     agent_registry: AgentRegistry | None = None,
     enabled_config_path: Any = None,
-    registry: WorkspaceProviderRegistry | None = None,
+    registry: WorkspaceToolProviderRegistry | None = None,
 ) -> Mapping[str, ProviderToolAccessPolicy]:
     """Load provider-owned tool definitions/access as ToolService input."""
-    enabled = load_enabled_workspace_providers(enabled_config_path)
+    enabled = load_enabled_workspace_tool_providers(enabled_config_path)
     agents = agent_registry or load_agent_registry()
-    provider_registry = registry or default_workspace_provider_registry()
+    provider_registry = registry or default_workspace_tool_provider_registry()
     policies: dict[str, ProviderToolAccessPolicy] = {}
     for name in enabled:
         provider = provider_registry.create(name, agents)
-        if not isinstance(provider, ProviderToolAccessWorkspaceProvider):
+        if not isinstance(provider, ProviderToolAccessWorkspaceToolProvider):
             continue
         if (
-            isinstance(provider, ProviderToolAccessConfigurableWorkspaceProvider)
+            isinstance(provider, ProviderToolAccessConfigurableWorkspaceToolProvider)
             and not provider.has_provider_tool_access_config()
         ):
             continue
         provider.initialize()
         policy = provider.provider_tool_access()
         if policy.provider_name in policies:
-            raise WorkspaceProviderConfigError(
+            raise WorkspaceToolProviderConfigError(
                 f"Duplicate provider tool access policy: {policy.provider_name}"
             )
         policies[policy.provider_name] = policy
@@ -1204,19 +1203,19 @@ def _load_raw_enabled_provider_conversation_requirements(
     *,
     agent_registry: AgentRegistry | None = None,
     enabled_config_path: Any = None,
-    registry: WorkspaceProviderRegistry | None = None,
+    registry: WorkspaceToolProviderRegistry | None = None,
 ) -> Mapping[str, tuple[ProviderConversationAccessRequirement, ...]]:
     """Load provider-owned provider-conversation descriptors as ToolService input."""
-    if workspace_provider_config_exists(enabled_config_path):
-        enabled = load_enabled_workspace_providers(enabled_config_path)
+    if workspace_tool_provider_config_exists(enabled_config_path):
+        enabled = load_enabled_workspace_tool_providers(enabled_config_path)
     else:
         enabled = ("linear",)
     agents = agent_registry or load_agent_registry()
-    provider_registry = registry or default_workspace_provider_registry()
+    provider_registry = registry or default_workspace_tool_provider_registry()
     requirements: dict[str, tuple[ProviderConversationAccessRequirement, ...]] = {}
     for name in enabled:
         provider = provider_registry.create(name, agents)
-        if not isinstance(provider, ProviderConversationAccessWorkspaceProvider):
+        if not isinstance(provider, ProviderConversationAccessWorkspaceToolProvider):
             continue
         declared = tuple(
             ProviderConversationAccessRequirement(
@@ -1231,7 +1230,7 @@ def _load_raw_enabled_provider_conversation_requirements(
             continue
         provider_name = declared[0].provider_name
         if provider_name in requirements:
-            raise WorkspaceProviderConfigError(
+            raise WorkspaceToolProviderConfigError(
                 f"Duplicate provider conversation access requirements: {provider_name}"
             )
         requirements[provider_name] = tuple(
@@ -1263,10 +1262,14 @@ def tool_service_for_loaded_agent(
     else:
         resolved = Agent(
             id=fallback_agent_id,
-            display_name=str(getattr(agent, "display_name", fallback_agent_id) or fallback_agent_id),
+            display_name=str(
+                getattr(agent, "display_name", fallback_agent_id) or fallback_agent_id
+            ),
             cli_provider=cli_provider,
             workdir=str(getattr(agent, "workdir", "/tmp") or "/tmp"),
-            session_name=str(getattr(agent, "session_name", fallback_agent_id) or fallback_agent_id),
+            session_name=str(
+                getattr(agent, "session_name", fallback_agent_id) or fallback_agent_id
+            ),
             prompt=str(getattr(agent, "prompt", "") or ""),
             mcp_servers=_mapping_or_empty(getattr(agent, "mcp_servers", {})),
             cao_tools=_optional_tuple(getattr(agent, "cao_tools", None)),
@@ -1396,8 +1399,8 @@ def _source_result_cache_token(source_result: ToolAccessSourceResult) -> tuple[A
     )
 
 
-def _workspace_provider_config_cache_token() -> tuple[str, int | None, int | None]:
-    path = WORKSPACE_PROVIDERS_CONFIG_PATH
+def _workspace_tool_provider_config_cache_token() -> tuple[str, int | None, int | None]:
+    path = WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH
     try:
         stat = path.stat()
     except OSError:

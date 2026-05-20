@@ -16,15 +16,15 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.events import CaoEventDispatcher
 from cli_agent_orchestrator.linear import app_client, monitor, monitor_store, runtime
-from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
+from cli_agent_orchestrator.linear import workspace_tool_provider as linear_workspace_tool_provider
 from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
     register_linear_cao_events,
 )
-from cli_agent_orchestrator.linear.workspace_provider import (
-    LinearWorkspaceProvider,
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
+    LinearWorkspaceToolProvider,
 )
 from cli_agent_orchestrator.provider_conversations.persistence import (
     get_message,
@@ -137,12 +137,14 @@ def linear_monitor_world(
         workspace=AgentWorkspaceConfig(team="cao_delivery"),
     )
     registry = AgentRegistry({agent.id: agent})
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=registry,
         preflight_credentials=False,
     )
     provider.initialize()
-    monkeypatch.setattr(linear_workspace_provider, "_default_linear_workspace_provider", provider)
+    monkeypatch.setattr(
+        linear_workspace_tool_provider, "_default_linear_workspace_tool_provider", provider
+    )
     tool_service = _ProviderConversationToolService()
     monkeypatch.setattr(
         "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
@@ -237,7 +239,7 @@ def test_linear_monitor_duplicate_webhook_and_monitor_overlap_does_not_duplicate
 ):
     _store_watermark()
     monkeypatch.setattr(
-        linear_workspace_provider,
+        linear_workspace_tool_provider,
         "should_enable_linear_routes",
         lambda: True,
     )
@@ -529,10 +531,13 @@ def test_linear_monitor_policy_denial_does_not_advance_watermark(
     assert result.events_recovered == 0
     assert _watermark_value() == "2026-05-09T11:59:58Z"
     assert "delivery_not_routed" in {diag.code for diag in result.diagnostics}
-    assert get_processed_event(
-        "linear",
-        "linear-monitor:implementation_partner:activity-denied",
-    ) is None
+    assert (
+        get_processed_event(
+            "linear",
+            "linear-monitor:implementation_partner:activity-denied",
+        )
+        is None
+    )
 
 
 def test_linear_monitor_skips_no_team_presences_before_query(
@@ -544,12 +549,14 @@ def test_linear_monitor_skips_no_team_presences_before_query(
         implementation_partner_agent_factory(),
         linear=LinearConfig(app_key="implementation_partner", access_token="test-token"),
     )
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=AgentRegistry({agent.id: agent}),
         preflight_credentials=False,
     )
     provider.initialize()
-    monkeypatch.setattr(linear_workspace_provider, "_default_linear_workspace_provider", provider)
+    monkeypatch.setattr(
+        linear_workspace_tool_provider, "_default_linear_workspace_tool_provider", provider
+    )
     monkeypatch.setattr(
         app_client,
         "list_recent_agent_sessions",
@@ -559,10 +566,13 @@ def test_linear_monitor_skips_no_team_presences_before_query(
     result = monitor.run_linear_monitor(now=NOW)
 
     assert result.presences_checked == 0
-    assert monitor_store.get_watermark(
-        presence_id="implementation_partner",
-        app_key="implementation_partner",
-    ) is None
+    assert (
+        monitor_store.get_watermark(
+            presence_id="implementation_partner",
+            app_key="implementation_partner",
+        )
+        is None
+    )
 
 
 def test_linear_monitor_credential_failure_is_bounded_and_sanitized(
@@ -653,9 +663,11 @@ def test_linear_monitor_unsupported_states_and_shapes_are_diagnosed(
 def test_linear_monitor_missing_config_is_bounded_and_diagnosable(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(linear_workspace_provider, "_default_linear_workspace_provider", None)
     monkeypatch.setattr(
-        linear_workspace_provider,
+        linear_workspace_tool_provider, "_default_linear_workspace_tool_provider", None
+    )
+    monkeypatch.setattr(
+        linear_workspace_tool_provider,
         "load_linear_provider_config",
         lambda **_kwargs: None,
     )

@@ -5,9 +5,9 @@ from __future__ import annotations
 from cli_agent_orchestrator.agent import AgentRegistry
 from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.linear.workspace_events import LinearIssueContextEvent
-from cli_agent_orchestrator.linear.workspace_provider import (
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearProviderConfig,
-    LinearWorkspaceProviderConfigError,
+    LinearWorkspaceToolProviderConfigError,
     _extract_app_key,
     _extract_app_user_id,
     _extract_app_user_name,
@@ -16,12 +16,12 @@ from cli_agent_orchestrator.linear.workspace_provider import (
     validate_linear_provider_config,
 )
 from cli_agent_orchestrator.workspace_setups import (
-    WorkspaceProviderCandidateMapping,
-    WorkspaceProviderView,
     WorkspaceSetup,
     WorkspaceSetupConfigError,
     WorkspaceTeam,
     WorkspaceTeamAuthorizedMapping,
+    WorkspaceToolProviderCandidateMapping,
+    WorkspaceToolProviderView,
 )
 
 
@@ -32,13 +32,13 @@ class LinearWorkspaceSetupAdapter:
 
     def build_candidate_mappings(
         self, agent_registry: AgentRegistry
-    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
-        mappings: list[WorkspaceProviderCandidateMapping] = []
+    ) -> tuple[WorkspaceToolProviderCandidateMapping, ...]:
+        mappings: list[WorkspaceToolProviderCandidateMapping] = []
         for agent in agent_registry.all().values():
             presence = _linear_presence_from_agent(agent)
             if presence is not None:
                 mappings.append(
-                    WorkspaceProviderCandidateMapping(
+                    WorkspaceToolProviderCandidateMapping(
                         provider_name=self.provider_name,
                         agent_id=agent.id,
                         mapping_kind="presence",
@@ -49,7 +49,7 @@ class LinearWorkspaceSetupAdapter:
                 )
                 if presence.app_user_id:
                     mappings.append(
-                        WorkspaceProviderCandidateMapping(
+                        WorkspaceToolProviderCandidateMapping(
                             provider_name=self.provider_name,
                             agent_id=agent.id,
                             mapping_kind="presence_alias",
@@ -60,7 +60,7 @@ class LinearWorkspaceSetupAdapter:
                     )
                 if presence.app_user_name:
                     mappings.append(
-                        WorkspaceProviderCandidateMapping(
+                        WorkspaceToolProviderCandidateMapping(
                             provider_name=self.provider_name,
                             agent_id=agent.id,
                             mapping_kind="presence_alias",
@@ -78,7 +78,7 @@ class LinearWorkspaceSetupAdapter:
         setup: WorkspaceSetup,
         authorized_mappings: tuple[WorkspaceTeamAuthorizedMapping, ...],
         agent_registry: AgentRegistry,
-    ) -> WorkspaceProviderView:
+    ) -> WorkspaceToolProviderView:
         presences = {
             mapping.payload.presence_id: mapping.payload
             for mapping in authorized_mappings
@@ -93,9 +93,9 @@ class LinearWorkspaceSetupAdapter:
         )
         try:
             validate_linear_provider_config(config, agent_registry=agent_registry)
-        except LinearWorkspaceProviderConfigError as exc:
+        except LinearWorkspaceToolProviderConfigError as exc:
             raise WorkspaceSetupConfigError(str(exc)) from exc
-        return WorkspaceProviderView(
+        return WorkspaceToolProviderView(
             team_id=team.id,
             setup_id=setup.id,
             provider_name=self.provider_name,
@@ -105,7 +105,7 @@ class LinearWorkspaceSetupAdapter:
     def resolve_event_agent_id(
         self,
         *,
-        provider_view: WorkspaceProviderView,
+        provider_view: WorkspaceToolProviderView,
         event: CaoEvent,
     ) -> tuple[str, object]:
         config = provider_view.value
@@ -115,7 +115,7 @@ class LinearWorkspaceSetupAdapter:
             raise WorkspaceSetupConfigError("Linear setup can only resolve Linear issue events")
         try:
             presence = _resolve_presence_from_config(config, event)
-        except LinearWorkspaceProviderConfigError as exc:
+        except LinearWorkspaceToolProviderConfigError as exc:
             raise WorkspaceSetupConfigError(str(exc)) from exc
         return presence.agent_id, presence
 
@@ -123,8 +123,8 @@ class LinearWorkspaceSetupAdapter:
         self,
         *,
         event: CaoEvent,
-        candidates: tuple[WorkspaceProviderCandidateMapping, ...],
-    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+        candidates: tuple[WorkspaceToolProviderCandidateMapping, ...],
+    ) -> tuple[WorkspaceToolProviderCandidateMapping, ...]:
         identities = _event_identity_values(event)
         return tuple(
             candidate
@@ -181,15 +181,15 @@ def _resolve_presence_from_config(config: LinearProviderConfig, event: LinearIss
     if event.app_key:
         presence = config.presence_by_app_key(event.app_key)
         if presence is None:
-            raise LinearWorkspaceProviderConfigError(f"Unknown Linear app key: {event.app_key}")
+            raise LinearWorkspaceToolProviderConfigError(f"Unknown Linear app key: {event.app_key}")
     if event.app_user_id:
         by_user = config.presence_by_app_user_id(event.app_user_id)
         if by_user is None and presence is None:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Unknown Linear app user id: {event.app_user_id}"
             )
         if by_user is not None and presence is not None and presence != by_user:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 "Linear app key and app user id resolve to different CAO identities"
             )
         if by_user is not None:
@@ -197,13 +197,13 @@ def _resolve_presence_from_config(config: LinearProviderConfig, event: LinearIss
     if event.app_user_name:
         by_name = config.presence_by_app_user_name(event.app_user_name)
         if by_name is not None and presence is not None and presence != by_name:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 "Linear app key and app user name resolve to different CAO identities"
             )
         if presence is None:
             presence = by_name
     if presence is None:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             "Linear presence could not be resolved from app key or app user id"
         )
     return presence

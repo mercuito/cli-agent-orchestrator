@@ -459,7 +459,7 @@ class AgentRuntimeHandle:
         self,
         message: str,
         *,
-        sender_id: str = "workspace-provider",
+        sender_id: str = "workspace-tool-provider",
         source_kind: Optional[str] = None,
         source_id: Optional[str] = None,
         ensure_started: bool = True,

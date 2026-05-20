@@ -85,7 +85,7 @@ export function buildToolOptions(
       options.set(`provider:${provider}:${tool.name}`, {
         key: `provider:${provider}:${tool.name}`,
         name: tool.name,
-        description: tool.description || `${titleize(provider)} workspace provider`,
+        description: tool.description || `${titleize(provider)} workspace tool provider`,
         category: 'provider',
         pill: titleize(provider),
         provider,

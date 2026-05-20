@@ -53,7 +53,7 @@ The approved mockup establishes this target:
   a read-only list plus a single-form editor. Role assignments are edited as raw
   JSON and membership is not directly manageable.
 - The component already loads teams, workspace setups, CAO tool descriptors, and
-  workspace provider role access schemas.
+  workspace tool provider role access schemas.
 - The frontend must use the granular team CRUD endpoints added by the backend
   plans instead of the old whole-team upsert flow.
 - `WorkspaceTeam` in `web/src/api.ts` must include `member_details` so the UI
@@ -74,7 +74,7 @@ This redesign does not change the backend model.
   special default badge in the UI.
 - Tool access is configured through team roles. A role's tools are presented as
   one searchable list, regardless of whether a tool is CAO-owned, MCP-server
-  backed, or workspace-provider backed.
+  backed, or workspace-tool-provider backed.
 
 ## Non-Goals
 

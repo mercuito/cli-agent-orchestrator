@@ -26,7 +26,7 @@ The desired model is higher level:
 
 - an agent belongs to one named workspace team,
 - a team points at one workspace setup,
-- a setup defines the workspace providers and resolver available to that team,
+- a setup defines the workspace tool providers and resolver available to that team,
 - a setup owns exactly one resolver,
 - the resolver may consult multiple providers, but it is the only authority for
   deriving workspace context IDs,
@@ -39,7 +39,7 @@ The desired model is higher level:
 The implementation pieces already exist, but they are not grouped into a single
 concept:
 
-- Global provider enablement lives in `workspace-providers.toml`.
+- Global provider enablement lives in `workspace-tool-providers.toml`.
 - `AgentWorkspaceContextConfig` lives on each agent and stores
   `enabled/resolver_id`.
 - `resolve_workspace_context_for_agent(agent, event)` skips resolution when the
@@ -226,7 +226,7 @@ possible.
 
 The boundary should be:
 
-- a workspace provider owns provider-native vocabulary, credentials, API calls,
+- a workspace tool provider owns provider-native vocabulary, credentials, API calls,
   webhook parsing, tool implementations, and candidate provider-to-agent
   mappings;
 - a workspace team owns which candidate mappings are authorized for that team;
@@ -338,10 +338,10 @@ The subsystem owns these public concepts:
 - `WorkspaceTeamProviderCapability`: the effective provider/tool capability for
   one agent inside a team, computed from team workflow availability and
   agent-specific provider grants.
-- `WorkspaceProviderAdapter`: provider-owned code that can build a provider view
+- `WorkspaceToolProviderAdapter`: provider-owned code that can build a provider view
   from authorized provider mappings while keeping provider-specific parsing and
   API behavior inside the provider package.
-- `WorkspaceProviderCandidateMapping`: provider-owned candidate mapping from a
+- `WorkspaceToolProviderCandidateMapping`: provider-owned candidate mapping from a
   provider-native identity or access grant to a CAO agent before team
   authorization.
 - `WorkspaceTeamAuthorizedMapping`: team-owned decision that a candidate
@@ -558,13 +558,13 @@ Owned areas:
 
 - `src/cli_agent_orchestrator/workspace_setups/`
 - `src/cli_agent_orchestrator/linear/workspace_setup_adapter.py`
-- `src/cli_agent_orchestrator/workspace_providers/registry.py`
-- `src/cli_agent_orchestrator/workspace_providers/events.py`
+- `src/cli_agent_orchestrator/workspace_tool_providers/registry.py`
+- `src/cli_agent_orchestrator/workspace_tool_providers/events.py`
 - `src/cli_agent_orchestrator/mcp_server/freshness.py`
 - `src/cli_agent_orchestrator/mcp_server/provider_tools.py`
 - `src/cli_agent_orchestrator/services/terminal_service.py`
 - provider and setup tests under `test/linear/`, `test/workspace_setups/`, and
-  `test/workspace_providers/`.
+  `test/workspace_tool_providers/`.
 
 Required changes:
 
@@ -573,7 +573,7 @@ Required changes:
 - Preserve provider-owned candidate extraction and provider-native domain logic.
 - Preserve agent-specific provider tool permissions; team membership must not
   expand tool access.
-- Classify legacy `workspace_providers` protocols and dispatchers. Retire them,
+- Classify legacy workspace tool provider protocols and dispatchers. Retire them,
   constrain them to telemetry-only behavior with no CAO recipient semantics, or
   require provider-published events and provider-backed agent listings that can
   address agents to flow through team-authorized provider views.
@@ -653,7 +653,7 @@ Owned areas:
 - `src/cli_agent_orchestrator/agent.py`
 - `src/cli_agent_orchestrator/linear/app_client.py`
 - `src/cli_agent_orchestrator/linear/routes.py`
-- `src/cli_agent_orchestrator/linear/workspace_provider.py`
+- `src/cli_agent_orchestrator/linear/workspace_tool_provider.py`
 - `src/cli_agent_orchestrator/linear/workspace_events.py`
 - Linear provider tests under `test/linear/`
 - Linear app service and route tests.
@@ -911,7 +911,7 @@ Required coverage:
     team-bound views,
   - provider-agnostic ambiguity behavior is tested independently of Linear's
     duplicate-identity policy.
-- Legacy workspace-provider surfaces:
+- Legacy workspace-tool-provider surfaces:
   - provider registry protocols and event dispatchers cannot publish
     agent-addressing events or listings outside team-authorized provider views,
   - any retained legacy dispatcher behavior is telemetry-only and covered by
@@ -987,7 +987,7 @@ contract.
 | Workspace context identity is setup/resolver-scoped | Workspace context store and migration tests prove different setup/resolver namespaces cannot silently share one provider-object context, while two teams sharing a setup can intentionally share the same resolved context. |
 | Linear candidate mapping still owns Linear domain details | Linear tests build candidate mappings from real temporary agent configs containing `[linear]` fields and assert `app_key`, `app_user_id`, tool access, and validation behavior come from Linear-owned code. |
 | Linear identity uniqueness is explicit | Linear tests classify `app_key`, `oauth_state`, `webhook_secret`, `app_user_id`, and `app_user_name` uniqueness behavior and prove manager-level ambiguity coverage does not depend on Linear duplicate identities being allowed. |
-| Legacy workspace-provider surfaces are classified | Static search and `test/workspace_providers/` coverage prove retained registry protocols/event dispatchers cannot address agents outside team-authorized provider views, or are documented/tested as telemetry-only. |
+| Legacy workspace-tool-provider surfaces are classified | Static search and `test/workspace_tool_providers/` coverage prove retained registry protocols/event dispatchers cannot address agents outside team-authorized provider views, or are documented/tested as telemetry-only. |
 | Linear pruning works | With Agent A and Agent B both having valid Linear config but only Agent A in team `cao_delivery`, team-bound Linear lookup resolves A and does not resolve B by app key, app user id, or app user name. |
 | Provider tool access is pruned | With out-of-team Linear tool access configured for Agent B, the team-bound provider tool surface does not expose B's tools in `cao_delivery`. |
 | Runtime resolution uses authorized mappings | A Linear issue event for Agent A resolves through the collaboration manager and creates/uses an `AgentRuntimeHandle` with the resolved workspace context id. |
@@ -1100,7 +1100,7 @@ The work is done only when all of the following are true:
   collision prevention.
 - Providers create candidate mappings using provider-owned domain logic; team
   authorization decides which candidates become CAO-addressable.
-- Legacy workspace-provider registry protocols and event dispatchers are
+- Legacy workspace-tool-provider registry protocols and event dispatchers are
   retired, telemetry-only, or routed through team-authorized provider views
   before they can address agents.
 - Linear provider identity uniqueness is explicitly classified and tested; the

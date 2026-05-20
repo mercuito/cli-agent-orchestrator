@@ -96,7 +96,7 @@ after three consecutive fresh audits return no valid findings.
      membership, derived setup metadata, diagnostics, and standalone no-team
      behavior.
 
-2. Legacy workspace provider registry/event protocols could preserve global
+2. Legacy workspace tool provider registry/event protocols could preserve global
    routing.
    - Disposition: valid.
    - Plan coverage: legacy provider registry protocols and event dispatchers

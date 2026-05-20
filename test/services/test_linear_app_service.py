@@ -19,7 +19,7 @@ from cli_agent_orchestrator.agent import (
     write_agent,
 )
 from cli_agent_orchestrator.linear import app_client
-from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+from cli_agent_orchestrator.linear import workspace_tool_provider as linear_provider
 
 
 def _future_token_expires_at() -> str:

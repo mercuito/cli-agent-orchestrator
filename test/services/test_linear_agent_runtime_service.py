@@ -23,10 +23,11 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.linear.workspace_provider import (
+from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearPresence,
     LinearResolvedPresence,
-    LinearWorkspaceProvider,
+    LinearWorkspaceToolProvider,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.provider_conversations.models import (
@@ -46,9 +47,6 @@ from cli_agent_orchestrator.runtime.agent import (
 )
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.tool_service import ToolAccessDecision, ToolService
-from cli_agent_orchestrator.workspace_providers.tool_access import (
-    ProviderConversationAccessRequirement,
-)
 from cli_agent_orchestrator.workspace_setups import (
     DEFAULT_WORKSPACE_SETUP_ID,
     WorkspaceCollaborationManager,
@@ -57,7 +55,9 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceTeamRole,
     default_workspace_setup_registry,
 )
-from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
+    ProviderConversationAccessRequirement,
+)
 
 
 @pytest.fixture
@@ -270,7 +270,7 @@ def test_ensure_discovery_terminal_reuses_existing_terminal(monkeypatch, resolve
     provider = Mock()
     provider.resolve_presence.return_value = resolved.presence
     provider.resolve_agent_for_presence.return_value = resolved.agent
-    monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: provider)
+    monkeypatch.setattr(runtime, "get_linear_workspace_tool_provider", lambda: provider)
     monkeypatch.setattr(
         runtime,
         "_runtime_handle_for_resolved_presence",
@@ -304,9 +304,7 @@ def test_agent_without_workspace_setup_gets_default_runtime_context(test_db, res
         ),
     )
 
-    assert handle.workspace_context_id == db_module.default_workspace_context_id(
-        resolved.agent.id
-    )
+    assert handle.workspace_context_id == db_module.default_workspace_context_id(resolved.agent.id)
 
 
 def test_handle_agent_session_event_updates_linear_and_sends_terminal_input(
@@ -470,7 +468,7 @@ def test_context_enabled_linear_event_fails_closed_for_unknown_setup(
     monkeypatch.setattr(runtime.app_client, "create_agent_activity", Mock())
 
     with pytest.raises(
-        runtime.LinearWorkspaceProviderConfigError,
+        runtime.LinearWorkspaceToolProviderConfigError,
         match="Unknown workspace team",
     ):
         runtime.handle_provider_event(event)
@@ -777,12 +775,14 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
     registry = AgentRegistry({agent.id: agent})
     agents_root = tmp_path / "agents"
     write_agent(agent, agents_root=agents_root)
-    workspace_provider = LinearWorkspaceProvider(
+    workspace_tool_provider = LinearWorkspaceToolProvider(
         agent_registry=registry,
         preflight_credentials=False,
     )
     tool_service = _provider_conversation_tool_service(registry)
-    monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: workspace_provider)
+    monkeypatch.setattr(
+        runtime, "get_linear_workspace_tool_provider", lambda: workspace_tool_provider
+    )
     monkeypatch.setattr(
         "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
         lambda: tool_service,
@@ -877,11 +877,11 @@ def test_out_of_setup_linear_event_rejects_before_runtime_or_inbox_creation(
         workspace=AgentWorkspaceConfig(),
         linear=LinearConfig(app_key="agent-b", app_user_id="linear-user-b"),
     )
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=AgentRegistry({agent_a.id: agent_a, agent_b.id: agent_b}),
         preflight_credentials=False,
     )
-    monkeypatch.setattr(runtime, "get_linear_workspace_provider", lambda: provider)
+    monkeypatch.setattr(runtime, "get_linear_workspace_tool_provider", lambda: provider)
     handle = Mock()
     bridge = Mock()
     monkeypatch.setattr(runtime, "AgentRuntimeHandle", handle)

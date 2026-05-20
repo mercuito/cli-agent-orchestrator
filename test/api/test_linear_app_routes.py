@@ -21,11 +21,11 @@ from cli_agent_orchestrator.linear.workspace_events import (
     publish_linear_provider_event,
     register_linear_cao_events,
 )
-from cli_agent_orchestrator.linear.workspace_provider import (
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearPresence,
     LinearResolvedPresence,
-    LinearWorkspaceProvider,
-    LinearWorkspaceProviderConfigError,
+    LinearWorkspaceToolProvider,
+    LinearWorkspaceToolProviderConfigError,
 )
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
@@ -324,14 +324,14 @@ def _resolved_discovery_presence() -> LinearResolvedPresence:
 def _install_linear_provider_for_agent(
     monkeypatch: pytest.MonkeyPatch,
     agent: Agent,
-) -> LinearWorkspaceProvider:
-    provider = LinearWorkspaceProvider(
+) -> LinearWorkspaceToolProvider:
+    provider = LinearWorkspaceToolProvider(
         agent_registry=AgentRegistry({agent.id: agent}),
         preflight_credentials=False,
     )
     provider.initialize()
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider._default_linear_workspace_provider",
+        "cli_agent_orchestrator.linear.workspace_tool_provider._default_linear_workspace_tool_provider",
         provider,
     )
     return provider
@@ -404,13 +404,13 @@ def _delegated_discovery_payload() -> dict:
 
 @pytest.fixture(autouse=True)
 def _legacy_linear_route_compatibility(tmp_path, monkeypatch):
-    config_path = tmp_path / "workspace-providers.toml"
+    config_path = tmp_path / "workspace-tool-providers.toml"
     monkeypatch.setattr(
-        "cli_agent_orchestrator.workspace_providers.registry.WORKSPACE_PROVIDERS_CONFIG_PATH",
+        "cli_agent_orchestrator.workspace_tool_providers.registry.WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH",
         config_path,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.should_enable_linear_routes",
+        "cli_agent_orchestrator.linear.workspace_tool_provider.should_enable_linear_routes",
         lambda: True,
     )
     monkeypatch.setattr(
@@ -467,7 +467,7 @@ def test_linear_oauth_callback_surfaces_linear_error(client):
 
 def test_linear_routes_require_agent_owned_linear_config(client, monkeypatch):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.should_enable_linear_routes",
+        "cli_agent_orchestrator.linear.workspace_tool_provider.should_enable_linear_routes",
         lambda: False,
     )
 
@@ -478,17 +478,17 @@ def test_linear_routes_require_agent_owned_linear_config(client, monkeypatch):
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Linear workspace provider is not enabled"
+    assert response.json()["detail"] == "Linear workspace tool provider is not enabled"
 
 
 def test_linear_routes_require_agent_owned_provider_config(client, tmp_path, monkeypatch):
-    config_path = tmp_path / "missing-workspace-providers.toml"
+    config_path = tmp_path / "missing-workspace-tool-providers.toml"
     monkeypatch.setattr(
-        "cli_agent_orchestrator.workspace_providers.registry.WORKSPACE_PROVIDERS_CONFIG_PATH",
+        "cli_agent_orchestrator.workspace_tool_providers.registry.WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH",
         config_path,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider.should_enable_linear_routes",
+        "cli_agent_orchestrator.linear.workspace_tool_provider.should_enable_linear_routes",
         lambda: False,
     )
 
@@ -499,7 +499,7 @@ def test_linear_routes_require_agent_owned_provider_config(client, tmp_path, mon
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Linear workspace provider is not enabled"
+    assert response.json()["detail"] == "Linear workspace tool provider is not enabled"
 
 
 def test_linear_agent_webhook_accepts_event(client, monkeypatch):
@@ -681,7 +681,7 @@ def test_linear_agent_webhook_unknown_mapping_is_not_routed(client, monkeypatch)
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.linear.routes.runtime._resolve_linear_event",
-        Mock(side_effect=LinearWorkspaceProviderConfigError("Unknown Linear app key: unknown")),
+        Mock(side_effect=LinearWorkspaceToolProviderConfigError("Unknown Linear app key: unknown")),
     )
     handle_factory = Mock()
     monkeypatch.setattr(

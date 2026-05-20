@@ -8,7 +8,7 @@ from typing import Any, Mapping
 import pytest
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry
-from cli_agent_orchestrator.workspace_providers import (
+from cli_agent_orchestrator.workspace_tool_providers import (
     ProviderMediatedToolDefinition,
     ProviderToolAccessConfigError,
     ProviderToolAccessRequest,

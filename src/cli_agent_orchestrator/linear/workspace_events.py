@@ -25,7 +25,9 @@ from cli_agent_orchestrator.events import (
     CaoEventSourceType,
     default_cao_event_dispatcher,
 )
-from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolInvocationContext
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
+    ProviderToolInvocationContext,
+)
 
 LINEAR_PROVIDER_NAME = "linear"
 LINEAR_CAO_SOURCE_TYPE = CaoEventSourceType(LINEAR_PROVIDER_NAME)
@@ -161,7 +163,7 @@ class LinearAgentSessionStopRequestedEvent(LinearIssueContextEvent):
 
 @dataclass(frozen=True, kw_only=True)
 class LinearIssueCreatedEvent:
-    """Linear create_issue tool result published by the Linear workspace provider."""
+    """Linear create_issue tool result published by the Linear workspace tool provider."""
 
     provider_name: ClassVar[str] = LINEAR_PROVIDER_NAME
     event_name: ClassVar[str] = "issue_created"
@@ -565,7 +567,7 @@ def _normalize_app_key(value: Any) -> str | None:
     text = _string_value(value)
     if not text:
         return None
-    from cli_agent_orchestrator.linear.workspace_provider import normalize_app_key
+    from cli_agent_orchestrator.linear.workspace_tool_provider import normalize_app_key
 
     return normalize_app_key(text)
 

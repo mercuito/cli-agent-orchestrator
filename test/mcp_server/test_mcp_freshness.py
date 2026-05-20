@@ -13,7 +13,7 @@ from cli_agent_orchestrator.mcp_server.freshness import (
     callable_runtime_fingerprint,
     fingerprint_agent_mcp_surface,
 )
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderMediatedToolDefinition,
     ProviderToolAccessRequest,
     ProviderToolHookDefinition,

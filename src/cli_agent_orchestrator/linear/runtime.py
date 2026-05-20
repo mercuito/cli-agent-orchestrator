@@ -22,10 +22,10 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.linear.workspace_provider import (
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearResolvedPresence,
-    LinearWorkspaceProviderConfigError,
-    get_linear_workspace_provider,
+    LinearWorkspaceToolProviderConfigError,
+    get_linear_workspace_tool_provider,
     normalize_app_key,
     should_enable_linear_agent_policies,
 )
@@ -37,8 +37,8 @@ from cli_agent_orchestrator.provider_conversations.models import (
     ProcessedProviderEventRecord,
 )
 from cli_agent_orchestrator.provider_conversations.persistence import (
-    get_processed_event,
     get_message,
+    get_processed_event,
     get_thread,
     mark_processed_event,
     upsert_message,
@@ -51,8 +51,8 @@ from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeNotifyResult,
     AgentRuntimeTerminal,
 )
-from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
 )
@@ -343,15 +343,17 @@ def _persisted_external_url_was_published(thread_id: str) -> bool:
 
 
 def _resolve_linear_event(event: LinearIssueContextEvent) -> LinearResolvedPresence:
-    provider = get_linear_workspace_provider()
+    provider = get_linear_workspace_tool_provider()
     manager = default_workspace_collaboration_manager(agent_registry=provider.agent_registry)
     try:
         resolution = manager.resolve_provider_event("linear", event)
     except WorkspaceSetupConfigError as exc:
-        raise LinearWorkspaceProviderConfigError(str(exc)) from exc
+        raise LinearWorkspaceToolProviderConfigError(str(exc)) from exc
     presence = resolution.provider_payload
     if not hasattr(presence, "agent_id"):
-        raise LinearWorkspaceProviderConfigError("Linear workspace setup resolved invalid presence")
+        raise LinearWorkspaceToolProviderConfigError(
+            "Linear workspace setup resolved invalid presence"
+        )
     return LinearResolvedPresence(
         presence=presence,
         agent=resolution.agent,
@@ -404,7 +406,7 @@ def _runtime_handle_for_resolved_presence(
     if resolved.agent.workspace.team is None:
         return AgentRuntimeHandle(agent, agent_manager=agent_manager)
     if workspace_context_resolution is None:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             "Linear event did not contain an issue that can resolve workspace context"
         )
     return AgentRuntimeHandle(
@@ -437,19 +439,19 @@ def _resolve_workspace_context_for_event(
     try:
         return manager.resolve_event_context(resolved.agent, event)
     except WorkspaceSetupConfigError as exc:
-        raise LinearWorkspaceProviderConfigError(str(exc)) from exc
+        raise LinearWorkspaceToolProviderConfigError(str(exc)) from exc
 
 
 def _require_linear_issue_context_event(
     provider_event: CaoEvent,
 ) -> LinearIssueContextEvent:
     if getattr(provider_event, "provider_name", None) != "linear":
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             "Linear notification received non-Linear CAO event: "
             f"{getattr(provider_event, 'provider_name', 'unknown')}"
         )
     if not isinstance(provider_event, LinearIssueContextEvent):
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             "Linear notification provider event must be a Linear issue context event"
         )
     return provider_event
@@ -461,7 +463,7 @@ def _terminal_for_resolved_presence(resolved: LinearResolvedPresence) -> AgentRu
 
 def ensure_discovery_terminal(*, app_key: Optional[str] = None) -> AgentRuntimeTerminal:
     """Start or reuse the Linear-mapped CAO agent terminal."""
-    provider = get_linear_workspace_provider()
+    provider = get_linear_workspace_tool_provider()
     presence = provider.resolve_presence(app_key=normalize_app_key(app_key) if app_key else None)
     return _terminal_for_resolved_presence(
         LinearResolvedPresence(
@@ -665,7 +667,7 @@ def resolve_linear_event_for_notification(
     event = _require_linear_issue_context_event(provider_event)
     try:
         resolved = _resolve_linear_event(event)
-    except LinearWorkspaceProviderConfigError as exc:
+    except LinearWorkspaceToolProviderConfigError as exc:
         logger.warning("Linear AgentSession notification was not routed: %s", exc)
         return None
     if resolved.agent.workspace.team is None:
@@ -712,7 +714,7 @@ def notify_agent_for_persisted_event(
 
     try:
         handle = _runtime_handle_for_resolved_event(resolved, provider_event)
-    except LinearWorkspaceProviderConfigError as exc:
+    except LinearWorkspaceToolProviderConfigError as exc:
         logger.warning("Linear AgentSession notification was not routed: %s", exc)
         return None
     notification = create_notification_for_persisted_event(

@@ -18,7 +18,7 @@ from fastmcp.tools.base import Tool
 
 from cli_agent_orchestrator.agent import Agent
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderMediatedToolRuntimeGenerationDescriptor,
     ProviderMediatedToolSurfaceDescriptor,
     ProviderToolAccessPolicy,
@@ -444,9 +444,8 @@ def _visible_provider_tool_entries(
         descriptors.extend(policies[provider_name].surface_descriptors_for_agent(agent))
 
     for descriptor in sorted(descriptors, key=lambda item: (item.provider_name, item.name)):
-        if (
-            allowed_by_provider is not None
-            and descriptor.name not in allowed_by_provider.get(descriptor.provider_name, set())
+        if allowed_by_provider is not None and descriptor.name not in allowed_by_provider.get(
+            descriptor.provider_name, set()
         ):
             continue
         entries.append(
@@ -479,9 +478,8 @@ def _visible_provider_runtime_generation_entries(
         descriptors.extend(policies[provider_name].runtime_generation_descriptors_for_agent(agent))
 
     for descriptor in sorted(descriptors, key=lambda item: (item.provider_name, item.name)):
-        if (
-            allowed_by_provider is not None
-            and descriptor.name not in allowed_by_provider.get(descriptor.provider_name, set())
+        if allowed_by_provider is not None and descriptor.name not in allowed_by_provider.get(
+            descriptor.provider_name, set()
         ):
             continue
         entries.append(

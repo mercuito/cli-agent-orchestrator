@@ -12,8 +12,9 @@ The motivating problems are:
 - Two parallel "what is an agent" tracks exist today. `AgentProfile` (markdown
   in `agent_store/`) and `AgentIdentity` (TOML entries in `agents.toml`) carry
   overlapping concerns with a live link between them.
-- A third config file (`workspace-providers/linear.toml`) holds per-agent
-  Linear OAuth bindings and tool access policies, with its own keying.
+- The old Linear provider config file held per-agent Linear OAuth bindings and
+  tool access policies with its own keying instead of storing them in each
+  agent's `agent.toml`.
 - Terminals can be spawned anonymously (`POST /sessions`, `cao launch`, web
   "Spawn Agent" modal) — these terminals have `agent_identity_id = None` and
   never appear in the Agents tab timeline.
@@ -78,9 +79,8 @@ For each existing agent:
 
 1. Read the entry in `~/.aws/cli-agent-orchestrator/agents.toml` and the
    referenced `agent_profile` markdown in `agent_store/`.
-2. Read the corresponding `[presences.<id>]` and any matching
-   `[tool_access.<id>]` blocks in
-   `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml`.
+2. Read the corresponding provider-specific Linear presence and tool-access
+   blocks from the old pre-agent-directory config backup/source.
 3. Hand-write `~/.aws/cli-agent-orchestrator/agents/<id>/agent.toml`
    containing the merged config (workdir, session_name, provider, plus
    profile-level config — MCP servers, tools allowlist, model, etc. —
@@ -105,7 +105,7 @@ After manual migration and the T05/T06/T07 landings, the following files
 no longer exist on the developer machine:
 
 - `~/.aws/cli-agent-orchestrator/agents.toml`
-- `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml`
+- any old provider-specific Linear config backup/source
 - `~/.aws/cli-agent-orchestrator/agent-store/` (templates moved to repo
   `examples/`)
 
@@ -138,8 +138,9 @@ raise back to the operator rather than improvising.
   `AgentProfile` and `AgentIdentity`.
 - One on-disk shape per agent: directory with `agent.toml` + `prompt.md`.
 - Provider-specific config (currently Linear, future GitHub/Slack/etc.) lives
-  as a sub-section inside the agent's own config — no separate
-  `workspace-providers/<name>.toml` files.
+  as a sub-section inside the agent's own config. The only workspace tool
+  provider config outside agent directories is the flat global enablement file
+  `workspace-tool-providers.toml`.
 - All terminal creation goes through an agent instance. No anonymous spawn.
 - ≤1 live instance per agent, enforced at spawn time.
 - New `cao agent <subcmd>` CLI namespace covers both config and runtime

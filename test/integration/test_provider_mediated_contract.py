@@ -22,20 +22,20 @@ from cli_agent_orchestrator.agent import load_agent_registry, write_agent
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.mcp_server import server
 from cli_agent_orchestrator.mcp_server.provider_tools import register_provider_mediated_mcp_tools
-from cli_agent_orchestrator.workspace_providers import (
+from cli_agent_orchestrator.workspace_tool_providers import (
     ProviderToolAccessConfigError,
     ProviderToolAccessIssue,
-    WorkspaceProviderRegistry,
+    WorkspaceToolProviderRegistry,
     load_enabled_provider_tool_access_policies,
 )
-from cli_agent_orchestrator.workspace_providers.invocation import (
+from cli_agent_orchestrator.workspace_tool_providers.invocation import (
     ProviderMediatedToolAccessDenied,
     ProviderMediatedToolInvocationService,
 )
 
 
-def _write_workspace_provider_files(tmp_path):
-    enabled_config = tmp_path / "workspace-providers.toml"
+def _write_workspace_tool_provider_files(tmp_path):
+    enabled_config = tmp_path / "workspace-tool-providers.toml"
     enabled_config.write_text('enabled = ["fake"]\n')
     agents_root = tmp_path / "agents"
     for agent in fake_agents().values():
@@ -46,8 +46,8 @@ def _write_workspace_provider_files(tmp_path):
 def _fake_provider_registry(
     recorder: FakeProviderRecorder,
     provider_config,
-) -> WorkspaceProviderRegistry:
-    registry = WorkspaceProviderRegistry()
+) -> WorkspaceToolProviderRegistry:
+    registry = WorkspaceToolProviderRegistry()
     registry.register(
         FAKE_PROVIDER_NAME,
         lambda agents: FakeProvider(provider_config, agents, recorder),
@@ -91,7 +91,7 @@ async def test_fake_provider_contract_runs_through_mcp_registration_and_invocati
     tmp_path,
     runtime_inbox_db_session,
 ):
-    enabled_config, agents_config = _write_workspace_provider_files(tmp_path)
+    enabled_config, agents_config = _write_workspace_tool_provider_files(tmp_path)
     recorder = FakeProviderRecorder(mutate_post_result=True)
     agent_registry = load_agent_registry(agents_config)
     policies = load_enabled_provider_tool_access_policies(
@@ -175,7 +175,7 @@ async def test_provider_preflight_failure_stops_mcp_startup_before_serving_tools
     runtime_inbox_db_session,
     monkeypatch,
 ):
-    enabled_config, agents_config = _write_workspace_provider_files(tmp_path)
+    enabled_config, agents_config = _write_workspace_tool_provider_files(tmp_path)
     recorder = FakeProviderRecorder()
     _persist_contract_terminals()
 

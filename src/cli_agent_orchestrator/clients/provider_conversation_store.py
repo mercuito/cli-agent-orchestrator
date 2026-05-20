@@ -22,7 +22,7 @@ class MonitoringSessionModel(Base):
 
 
 class ProviderWorkItemModel(Base):
-    """Work item reference owned by an external workspace provider."""
+    """Work item reference owned by an external workspace tool provider."""
 
     __tablename__ = "provider_work_items"
     __table_args__ = (UniqueConstraint("provider", "external_id"),)
@@ -41,7 +41,7 @@ class ProviderWorkItemModel(Base):
 
 
 class ProviderConversationThreadModel(Base):
-    """Conversation surface owned by an external workspace provider."""
+    """Conversation surface owned by an external workspace tool provider."""
 
     __tablename__ = "provider_conversation_threads"
     __table_args__ = (UniqueConstraint("provider", "external_id"),)
@@ -63,7 +63,7 @@ class ProviderConversationThreadModel(Base):
 
 
 class ProviderConversationMessageModel(Base):
-    """Message or activity inside an external workspace-provider conversation surface."""
+    """Message or activity inside an external workspace-tool-provider conversation surface."""
 
     __tablename__ = "provider_conversation_messages"
     __table_args__ = (UniqueConstraint("provider", "external_id"),)

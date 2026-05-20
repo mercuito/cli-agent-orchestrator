@@ -156,7 +156,7 @@ class TestAgentRuntimeTerminalEndpoint:
         assert response.status_code == 403
         agent_manager.status_for_agent.assert_not_called()
 
-    def test_resolves_agent_from_workspace_provider_mapping(self, client, monkeypatch):
+    def test_resolves_agent_from_workspace_tool_provider_mapping(self, client, monkeypatch):
         from cli_agent_orchestrator.api import main
 
         agent_manager = MagicMock()

@@ -9,7 +9,7 @@ separate when writing agents or provider integrations.
 |---------|----------------------|---------|
 | Runtime capabilities | `runtime_capabilities` | Coarse provider-native actions such as reading files, writing files, listing files, and executing shell commands. |
 | CAO MCP tools | `cao_tools` | Named tools exposed by `cao-mcp-server`, such as `assign`, `send_message`, `read_inbox_message`, and `reply_to_inbox_message`. |
-| Provider-mediated MCP tools | Provider config, such as Linear tool access config | Named tools supplied by a workspace provider and mediated through CAO. |
+| Provider-mediated MCP tools | Provider config, such as Linear tool access config | Named tools supplied by a workspace tool provider and mediated through CAO. |
 | External provider schema fields | Provider-specific config | Fields CAO writes for an external CLI provider. These names are not CAO agent vocabulary. |
 
 `role` is not an agent access-control field. Agents should express their
@@ -123,7 +123,7 @@ appropriate agent.
 |--------------|---------|
 | Limit native filesystem/shell access | Set `runtime_capabilities`. |
 | Allow or deny CAO orchestration/inbox tools | Set `cao_tools`. |
-| Configure Linear or another workspace provider's MCP tools | Use that provider's access config. |
+| Configure Linear or another workspace tool provider's MCP tools | Use that provider's access config. |
 | Change runtime access | Edit `runtime_capabilities` in `agent.toml`. |
 | Skip provider-specific confirmations | Configure the provider-specific approval setting. |
 | Remove native runtime restrictions | Set unrestricted runtime capabilities in `agent.toml`. |

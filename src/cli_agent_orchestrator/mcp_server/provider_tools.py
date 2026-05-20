@@ -14,15 +14,15 @@ from cli_agent_orchestrator.services.agent_manager import (
     default_agent_manager,
 )
 from cli_agent_orchestrator.services.tool_service import ToolService, default_tool_service
-from cli_agent_orchestrator.workspace_providers.invocation import (
+from cli_agent_orchestrator.workspace_tool_providers.invocation import (
     ProviderMediatedToolAccessDenied,
     ProviderMediatedToolInvocationService,
     TerminalMetadataResolver,
 )
-from cli_agent_orchestrator.workspace_providers.registry import (
-    WorkspaceProviderConfigError,
+from cli_agent_orchestrator.workspace_tool_providers.registry import (
+    WorkspaceToolProviderConfigError,
 )
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderToolAccessConfigError,
     ProviderToolAccessPolicy,
 )
@@ -81,7 +81,7 @@ def register_provider_mediated_mcp_tools_for_terminal(
         agent_manager = default_agent_manager()
         agent_registry = AgentRegistry({agent.id: agent for agent in agent_manager.list_agents()})
         policies = service.provider_policies()
-    except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
+    except (ProviderToolAccessConfigError, WorkspaceToolProviderConfigError):
         logger.exception("Provider-mediated MCP tool configuration is invalid")
         raise
     except Exception:

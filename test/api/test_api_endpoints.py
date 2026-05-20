@@ -43,6 +43,23 @@ class TestRemovedAgentTemplateEndpoints:
         assert response.status_code == 404
 
 
+class TestWorkspaceToolProviderRoutes:
+    """Workspace tool provider dashboard API routes."""
+
+    def test_role_access_schema_uses_workspace_tool_provider_route(self, client):
+        response = client.get("/workspace-tool-providers/linear/role-access-schema")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["provider"] == "linear"
+        assert {tool["name"] for tool in data["tools"]} >= {"cao_linear.get_issue"}
+
+    def test_old_workspace_provider_route_is_not_registered(self, client):
+        response = client.get("/workspace-providers/linear/role-access-schema")
+
+        assert response.status_code == 404
+
+
 # ── Skills endpoint ──────────────────────────────────────────────────
 
 
@@ -617,7 +634,7 @@ class TestLifespan:
             patch("cli_agent_orchestrator.api.main.init_db"),
             patch("cli_agent_orchestrator.api.main.cleanup_old_data"),
             patch(
-                "cli_agent_orchestrator.api.main.initialize_enabled_workspace_providers",
+                "cli_agent_orchestrator.api.main.initialize_enabled_workspace_tool_providers",
                 return_value=[],
             ),
             patch(
@@ -643,10 +660,10 @@ class TestLifespan:
             mock_observer.join.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_lifespan_keeps_api_running_when_workspace_provider_startup_fails(self):
-        """lifespan disables workspace providers instead of taking down the API."""
+    async def test_lifespan_keeps_api_running_when_workspace_tool_provider_startup_fails(self):
+        """lifespan disables workspace tool providers instead of taking down the API."""
         from cli_agent_orchestrator.api.main import lifespan
-        from cli_agent_orchestrator.workspace_providers import WorkspaceProviderConfigError
+        from cli_agent_orchestrator.workspace_tool_providers import WorkspaceToolProviderConfigError
 
         async def stub_background_loop():
             await asyncio.Event().wait()
@@ -658,8 +675,8 @@ class TestLifespan:
             patch("cli_agent_orchestrator.api.main.init_db"),
             patch("cli_agent_orchestrator.api.main.cleanup_old_data"),
             patch(
-                "cli_agent_orchestrator.api.main.initialize_enabled_workspace_providers",
-                side_effect=WorkspaceProviderConfigError("bad Linear credentials"),
+                "cli_agent_orchestrator.api.main.initialize_enabled_workspace_tool_providers",
+                side_effect=WorkspaceToolProviderConfigError("bad Linear credentials"),
             ),
             patch(
                 "cli_agent_orchestrator.api.main.PollingObserver",
@@ -675,7 +692,7 @@ class TestLifespan:
             ),
         ):
             async with lifespan(app):
-                assert app.state.workspace_providers == []
+                assert app.state.workspace_tool_providers == []
                 mock_observer.start.assert_called_once()
 
             mock_observer.stop.assert_called_once()

@@ -32,13 +32,13 @@ from cli_agent_orchestrator.linear.provider_tools import (
     LIST_COMMENTS_TOOL,
     UPDATE_ISSUE_TOOL,
 )
+from cli_agent_orchestrator.linear.workspace_context_resolver import resolve_issue_context_event
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.linear.workspace_context_resolver import resolve_issue_context_event
-from cli_agent_orchestrator.linear.workspace_provider import LinearWorkspaceProvider
 from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.linear.workspace_tool_provider import LinearWorkspaceToolProvider
 from cli_agent_orchestrator.mcp_server.provider_tools import register_provider_mediated_mcp_tools
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import (
@@ -225,7 +225,9 @@ class _TeamStore:
         return tuple(self._teams.values())
 
 
-def _linear_role_collaboration_manager(agent_registry: AgentRegistry) -> WorkspaceCollaborationManager:
+def _linear_role_collaboration_manager(
+    agent_registry: AgentRegistry,
+) -> WorkspaceCollaborationManager:
     team = WorkspaceTeam(
         id="cao_delivery",
         display_name="CAO Delivery",
@@ -412,12 +414,12 @@ def _linear_agent_session_payload(
     }
 
 
-def _install_linear_workspace_provider(
+def _install_linear_workspace_tool_provider(
     *,
     agent: Agent,
     config_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> LinearWorkspaceProvider:
+) -> LinearWorkspaceToolProvider:
     configured_agent = replace(
         agent,
         linear=LinearConfig(
@@ -427,7 +429,7 @@ def _install_linear_workspace_provider(
         ),
     )
     write_agent(configured_agent)
-    workspace_provider = LinearWorkspaceProvider(
+    workspace_tool_provider = LinearWorkspaceToolProvider(
         agent_registry=AgentRegistry({configured_agent.id: configured_agent}),
         preflight_credentials=False,
     )
@@ -447,10 +449,10 @@ def _install_linear_workspace_provider(
     )
     monkeypatch.setattr(
         linear_runtime,
-        "get_linear_workspace_provider",
-        lambda: workspace_provider,
+        "get_linear_workspace_tool_provider",
+        lambda: workspace_tool_provider,
     )
-    return workspace_provider
+    return workspace_tool_provider
 
 
 def _history_contains(session_name: str, window_name: str, expected: str) -> bool:
@@ -660,7 +662,7 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
     if not shutil.which("tmux"):
         pytest.skip("tmux not installed")
 
-    _install_linear_workspace_provider(
+    _install_linear_workspace_tool_provider(
         agent=integration_agent,
         config_path=tmp_path / "linear.toml",
         monkeypatch=monkeypatch,
@@ -777,7 +779,7 @@ async def test_linear_agent_session_terminal_uses_provider_mediated_linear_mcp_t
         "cli_agent_orchestrator.services.tool_service.default_workspace_collaboration_manager",
         lambda *, agent_registry: _linear_role_collaboration_manager(agent_registry),
     )
-    provider = _install_linear_workspace_provider(
+    provider = _install_linear_workspace_tool_provider(
         agent=integration_agent,
         config_path=tmp_path / "linear.toml",
         monkeypatch=monkeypatch,

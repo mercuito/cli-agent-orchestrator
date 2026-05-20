@@ -1,4 +1,4 @@
-"""Tests for workspace-provider event publication."""
+"""Tests for workspace-tool-provider event publication."""
 
 from __future__ import annotations
 
@@ -7,26 +7,26 @@ from typing import ClassVar
 
 import pytest
 
-from cli_agent_orchestrator.workspace_providers.events import (
-    UnknownWorkspaceProviderEventError,
-    WorkspaceProviderEvent,
-    WorkspaceProviderEventConfigError,
-    WorkspaceProviderEventDispatcher,
+from cli_agent_orchestrator.workspace_tool_providers.events import (
+    UnknownWorkspaceToolProviderEventError,
+    WorkspaceToolProviderEvent,
+    WorkspaceToolProviderEventConfigError,
+    WorkspaceToolProviderEventDispatcher,
 )
 
 
 @dataclass(frozen=True)
-class ExampleEvent(WorkspaceProviderEvent):
+class ExampleEvent(WorkspaceToolProviderEvent):
     provider_name: ClassVar[str] = "example"
     event_name: ClassVar[str] = "created"
 
     value: str
 
 
-def test_workspace_provider_event_dispatcher_requires_declared_events():
-    dispatcher = WorkspaceProviderEventDispatcher()
+def test_workspace_tool_provider_event_dispatcher_requires_declared_events():
+    dispatcher = WorkspaceToolProviderEventDispatcher()
 
-    with pytest.raises(UnknownWorkspaceProviderEventError):
+    with pytest.raises(UnknownWorkspaceToolProviderEventError):
         dispatcher.subscribe(
             event_type=ExampleEvent,
             handler=lambda event: None,
@@ -47,9 +47,9 @@ def test_workspace_provider_event_dispatcher_requires_declared_events():
     assert publication.handler_results[0].result == "handled"
 
 
-def test_workspace_provider_event_dispatcher_requires_event_instances():
-    dispatcher = WorkspaceProviderEventDispatcher()
+def test_workspace_tool_provider_event_dispatcher_requires_event_instances():
+    dispatcher = WorkspaceToolProviderEventDispatcher()
     dispatcher.register_events((ExampleEvent,))
 
-    with pytest.raises(WorkspaceProviderEventConfigError, match="must extend"):
+    with pytest.raises(WorkspaceToolProviderEventConfigError, match="must extend"):
         dispatcher.publish(object())  # type: ignore[arg-type]

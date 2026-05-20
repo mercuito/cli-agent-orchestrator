@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 const listWorkspaceTeams = vi.hoisted(() => vi.fn())
 const listWorkspaceSetups = vi.hoisted(() => vi.fn())
 const listCaoToolDescriptors = vi.hoisted(() => vi.fn())
-const getWorkspaceProviderRoleAccessSchema = vi.hoisted(() => vi.fn())
+const getWorkspaceToolProviderRoleAccessSchema = vi.hoisted(() => vi.fn())
 const listAgents = vi.hoisted(() => vi.fn())
 const createWorkspaceTeam = vi.hoisted(() => vi.fn())
 const updateWorkspaceTeamMetadata = vi.hoisted(() => vi.fn())
@@ -19,7 +19,7 @@ vi.mock('../api', () => ({
     listWorkspaceTeams,
     listWorkspaceSetups,
     listCaoToolDescriptors,
-    getWorkspaceProviderRoleAccessSchema,
+    getWorkspaceToolProviderRoleAccessSchema,
     listAgents,
     createWorkspaceTeam,
     updateWorkspaceTeamMetadata,
@@ -128,7 +128,7 @@ function seedDashboard(initialTeams = [team()]) {
     { name: 'read_inbox_message', description: 'Read inbox message' },
     { name: 'send_message', description: 'Send message' },
   ])
-  getWorkspaceProviderRoleAccessSchema.mockResolvedValue({
+  getWorkspaceToolProviderRoleAccessSchema.mockResolvedValue({
     provider: 'linear',
     tools: [
       { name: 'cao_linear.get_issue', description: 'Read Linear issue' },

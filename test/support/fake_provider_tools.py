@@ -1,4 +1,4 @@
-"""Shared fake workspace provider for provider-mediated MCP contract tests."""
+"""Shared fake workspace tool provider for provider-mediated MCP contract tests."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry
-from cli_agent_orchestrator.workspace_providers import (
+from cli_agent_orchestrator.workspace_tool_providers import (
     ProviderMediatedToolDefinition,
     ProviderToolAccessPolicy,
     ProviderToolAccessRequest,

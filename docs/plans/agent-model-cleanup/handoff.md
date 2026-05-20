@@ -80,7 +80,7 @@ explicitly; do not infer.
   contains a valid `agent.toml` (0600 perms) and `prompt.md` (0644 perms).
 - The following files no longer exist on the developer machine:
   - `~/.aws/cli-agent-orchestrator/agents.toml`
-  - `~/.aws/cli-agent-orchestrator/workspace-providers/linear.toml`
+  - any old provider-specific Linear config backup/source
   - `~/.aws/cli-agent-orchestrator/agent-store/`
 - `src/cli_agent_orchestrator/agent_store/` has been moved to `examples/`
   (or equivalent path under the repo, not packaged with the distribution).
@@ -104,7 +104,7 @@ explicitly; do not infer.
   - `src/cli_agent_orchestrator/models/agent_profile.py`
   - `src/cli_agent_orchestrator/utils/agent_profiles.py`
   - `src/cli_agent_orchestrator/cli/commands/launch.py`
-  - Any `legacy_env` helpers in `src/cli_agent_orchestrator/linear/workspace_provider.py`
+  - Any `legacy_env` helpers in `src/cli_agent_orchestrator/linear/workspace_tool_provider.py`
 - The following HTTP endpoints are removed:
   - `GET /agents/profiles`
   - `GET /settings/agent-dirs` (and its PUT counterpart)

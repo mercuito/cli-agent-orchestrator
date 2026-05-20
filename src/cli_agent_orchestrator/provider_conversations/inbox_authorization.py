@@ -69,8 +69,7 @@ def require_provider_inbox_authorization(
     )
     if not decision.allowed:
         raise error(
-            "Provider inbox notification is not authorized by ToolService: "
-            f"{decision.reason}"
+            "Provider inbox notification is not authorized by ToolService: " f"{decision.reason}"
         )
 
 
@@ -123,9 +122,7 @@ def default_tool_service() -> ToolService:
     return provider_conversation_tool_service()
 
 
-def provider_identity_from_metadata(
-    provider: str, *values: Mapping[str, Any] | None
-) -> str | None:
+def provider_identity_from_metadata(provider: str, *values: Mapping[str, Any] | None) -> str | None:
     """Return the provider identity used for ToolService conversation decisions."""
     if provider.strip().lower() == "linear":
         return _linear_app_key(*values)
@@ -140,7 +137,7 @@ def _provider_conversation_manager(registry: Any):
 
 
 def _linear_app_key(*values: Mapping[str, Any] | None) -> str | None:
-    from cli_agent_orchestrator.linear.workspace_provider import normalize_app_key
+    from cli_agent_orchestrator.linear.workspace_tool_provider import normalize_app_key
 
     for value in values:
         found = _linear_app_key_from_nested(value)

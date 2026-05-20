@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Literal, Mapping, Optional
 
 from cli_agent_orchestrator.linear import app_client
-from cli_agent_orchestrator.linear.workspace_provider import LinearPresence
+from cli_agent_orchestrator.linear.workspace_tool_provider import LinearPresence
 
 LinearPolicyDirection = Literal["incoming", "outgoing"]
 LinearPolicyAction = Literal[

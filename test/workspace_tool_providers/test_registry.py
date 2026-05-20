@@ -1,4 +1,4 @@
-"""Tests for workspace-provider startup and registry behavior."""
+"""Tests for workspace-tool-provider startup and registry behavior."""
 
 from __future__ import annotations
 
@@ -15,17 +15,20 @@ from cli_agent_orchestrator.agent import (
     LinearToolAccessConfig,
     write_agent,
 )
-from cli_agent_orchestrator.linear.workspace_provider import (
-    LinearWorkspaceProvider,
-    get_linear_workspace_provider,
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
+    LinearWorkspaceToolProvider,
+    get_linear_workspace_tool_provider,
 )
-from cli_agent_orchestrator.workspace_providers import (
-    UnknownWorkspaceProviderError,
-    WorkspaceProviderEvent,
-    WorkspaceProviderEventDispatcher,
-    WorkspaceProviderRegistry,
-    initialize_enabled_workspace_providers,
+from cli_agent_orchestrator.workspace_tool_providers import (
+    UnknownWorkspaceToolProviderError,
+    WorkspaceToolProviderConfigError,
+    WorkspaceToolProviderEvent,
+    WorkspaceToolProviderEventDispatcher,
+    WorkspaceToolProviderRegistry,
+    initialize_enabled_workspace_tool_providers,
     load_enabled_provider_tool_access_policies,
+    load_enabled_workspace_tool_providers,
+    workspace_tool_provider_config_exists,
 )
 
 
@@ -77,20 +80,92 @@ def _write_agent(
     )
 
 
-def test_unknown_enabled_workspace_provider_fails_clearly(tmp_path):
-    enabled = tmp_path / "workspace-providers.toml"
+def test_unknown_enabled_workspace_tool_provider_fails_clearly(tmp_path):
+    enabled = tmp_path / "workspace-tool-providers.toml"
     enabled.write_text('enabled = ["jira"]\n')
     agents = _agents_root(tmp_path)
 
-    with pytest.raises(UnknownWorkspaceProviderError, match="jira"):
-        initialize_enabled_workspace_providers(
+    with pytest.raises(UnknownWorkspaceToolProviderError, match="jira"):
+        initialize_enabled_workspace_tool_providers(
             enabled_config_path=enabled,
             agents_config_path=agents,
         )
 
 
-def test_initialize_enabled_workspace_providers_loads_linear_provider(tmp_path, monkeypatch):
-    enabled = tmp_path / "workspace-providers.toml"
+def test_default_config_migrates_old_workspace_provider_file(tmp_path, monkeypatch):
+    old_config = tmp_path / "workspace-providers.toml"
+    new_config = tmp_path / "workspace-tool-providers.toml"
+    old_config.write_text('enabled = ["linear"]\n')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_tool_providers.registry._OLD_WORKSPACE_PROVIDERS_CONFIG_PATH",
+        old_config,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_tool_providers.registry.WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH",
+        new_config,
+    )
+
+    enabled = load_enabled_workspace_tool_providers()
+
+    assert enabled == ["linear"]
+    assert not old_config.exists()
+    assert new_config.read_text() == 'enabled = ["linear"]\n'
+
+
+def test_default_config_fails_when_old_and_new_files_both_exist(tmp_path, monkeypatch):
+    old_config = tmp_path / "workspace-providers.toml"
+    new_config = tmp_path / "workspace-tool-providers.toml"
+    old_config.write_text('enabled = ["linear"]\n')
+    new_config.write_text('enabled = ["linear"]\n')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_tool_providers.registry._OLD_WORKSPACE_PROVIDERS_CONFIG_PATH",
+        old_config,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_tool_providers.registry.WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH",
+        new_config,
+    )
+
+    with pytest.raises(WorkspaceToolProviderConfigError, match="Both default"):
+        load_enabled_workspace_tool_providers()
+
+
+def test_explicit_old_config_path_is_not_migrated(tmp_path, monkeypatch):
+    old_config = tmp_path / "workspace-providers.toml"
+    default_new_config = tmp_path / "workspace-tool-providers.toml"
+    old_config.write_text('enabled = ["linear"]\n')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_tool_providers.registry.WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH",
+        default_new_config,
+    )
+
+    enabled = load_enabled_workspace_tool_providers(old_config)
+
+    assert enabled == ["linear"]
+    assert old_config.exists()
+    assert not default_new_config.exists()
+
+
+def test_default_config_exists_migrates_old_workspace_provider_file(tmp_path, monkeypatch):
+    old_config = tmp_path / "workspace-providers.toml"
+    new_config = tmp_path / "workspace-tool-providers.toml"
+    old_config.write_text('enabled = ["linear"]\n')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_tool_providers.registry._OLD_WORKSPACE_PROVIDERS_CONFIG_PATH",
+        old_config,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.workspace_tool_providers.registry.WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH",
+        new_config,
+    )
+
+    assert workspace_tool_provider_config_exists()
+    assert not old_config.exists()
+    assert new_config.exists()
+
+
+def test_initialize_enabled_workspace_tool_providers_loads_linear_provider(tmp_path, monkeypatch):
+    enabled = tmp_path / "workspace-tool-providers.toml"
     enabled.write_text('enabled = ["linear"]\n')
     agents = _agents_root(tmp_path)
     _write_agent(
@@ -103,28 +178,28 @@ def test_initialize_enabled_workspace_providers_loads_linear_provider(tmp_path, 
         token_expires_at=_future_token_expires_at(),
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        "cli_agent_orchestrator.linear.workspace_tool_provider._default_check_linear_presence_credentials",
         lambda presence: {"id": presence.app_user_id, "name": presence.app_user_name},
     )
 
-    providers = initialize_enabled_workspace_providers(
+    providers = initialize_enabled_workspace_tool_providers(
         enabled_config_path=enabled,
         agents_config_path=agents,
     )
 
     assert len(providers) == 1
-    assert isinstance(providers[0], LinearWorkspaceProvider)
-    resolved = get_linear_workspace_provider().resolve_event(
+    assert isinstance(providers[0], LinearWorkspaceToolProvider)
+    resolved = get_linear_workspace_tool_provider().resolve_event(
         {"_cao_linear_app_key": "implementation_partner"}
     )
     assert resolved.presence.app_user_id == "app-user-impl"
     assert resolved.agent.session_name == "implementation-partner"
 
 
-def test_initialize_enabled_workspace_providers_defers_linear_credential_preflight(
+def test_initialize_enabled_workspace_tool_providers_defers_linear_credential_preflight(
     tmp_path, monkeypatch
 ):
-    enabled = tmp_path / "workspace-providers.toml"
+    enabled = tmp_path / "workspace-tool-providers.toml"
     enabled.write_text('enabled = ["linear"]\n')
     agents = _agents_root(tmp_path)
     _write_agent(
@@ -137,29 +212,29 @@ def test_initialize_enabled_workspace_providers_defers_linear_credential_preflig
         token_expires_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        "cli_agent_orchestrator.linear.workspace_tool_provider._default_check_linear_presence_credentials",
         lambda presence: (_ for _ in ()).throw(AssertionError("credential preflight called")),
     )
 
-    providers = initialize_enabled_workspace_providers(
+    providers = initialize_enabled_workspace_tool_providers(
         enabled_config_path=enabled,
         agents_config_path=agents,
     )
 
     assert len(providers) == 1
-    assert isinstance(providers[0], LinearWorkspaceProvider)
+    assert isinstance(providers[0], LinearWorkspaceToolProvider)
 
 
-def test_initialize_enabled_workspace_providers_registers_declared_provider_events(
+def test_initialize_enabled_workspace_tool_providers_registers_declared_provider_events(
     tmp_path, monkeypatch
 ):
-    enabled = tmp_path / "workspace-providers.toml"
+    enabled = tmp_path / "workspace-tool-providers.toml"
     enabled.write_text('enabled = ["example"]\n')
     agents = _agents_root(tmp_path)
-    dispatcher = WorkspaceProviderEventDispatcher()
+    dispatcher = WorkspaceToolProviderEventDispatcher()
 
     @dataclass(frozen=True)
-    class ExampleEvent(WorkspaceProviderEvent):
+    class ExampleEvent(WorkspaceToolProviderEvent):
         provider_name: ClassVar[str] = "example"
         event_name: ClassVar[str] = "created"
 
@@ -172,13 +247,13 @@ def test_initialize_enabled_workspace_providers_registers_declared_provider_even
         def published_events(self):
             return (ExampleEvent,)
 
-    registry = WorkspaceProviderRegistry({"example": lambda agent_registry: ExampleProvider()})
+    registry = WorkspaceToolProviderRegistry({"example": lambda agent_registry: ExampleProvider()})
     monkeypatch.setattr(
-        "cli_agent_orchestrator.workspace_providers.registry.default_workspace_provider_event_dispatcher",
+        "cli_agent_orchestrator.workspace_tool_providers.registry.default_workspace_tool_provider_event_dispatcher",
         lambda: dispatcher,
     )
 
-    initialize_enabled_workspace_providers(
+    initialize_enabled_workspace_tool_providers(
         enabled_config_path=enabled,
         agents_config_path=agents,
         registry=registry,
@@ -187,14 +262,14 @@ def test_initialize_enabled_workspace_providers_registers_declared_provider_even
     assert dispatcher.published_events("example") == (ExampleEvent,)
 
 
-def test_initialize_workspace_providers_does_not_start_linear_when_unconfigured(
+def test_initialize_workspace_tool_providers_does_not_start_linear_when_unconfigured(
     tmp_path,
 ):
-    enabled = tmp_path / "missing-workspace-providers.toml"
+    enabled = tmp_path / "missing-workspace-tool-providers.toml"
     agents = _agents_root(tmp_path)
     initialized = []
 
-    providers = initialize_enabled_workspace_providers(
+    providers = initialize_enabled_workspace_tool_providers(
         enabled_config_path=enabled,
         agents_config_path=agents,
     )
@@ -205,7 +280,7 @@ def test_initialize_workspace_providers_does_not_start_linear_when_unconfigured(
 def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_access(
     tmp_path, monkeypatch
 ):
-    enabled = tmp_path / "workspace-providers.toml"
+    enabled = tmp_path / "workspace-tool-providers.toml"
     enabled.write_text('enabled = ["linear"]\n')
     agents = _agents_root(tmp_path)
     _write_agent(
@@ -217,7 +292,7 @@ def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_ac
         access_token="access-token",
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        "cli_agent_orchestrator.linear.workspace_tool_provider._default_check_linear_presence_credentials",
         lambda presence: (_ for _ in ()).throw(AssertionError("credential preflight called")),
     )
 
@@ -229,10 +304,8 @@ def test_provider_tool_policy_loading_does_not_initialize_linear_without_tool_ac
     assert policies == {}
 
 
-def test_provider_tool_policy_loading_makes_teamed_local_access_inactive(
-    tmp_path, monkeypatch
-):
-    enabled = tmp_path / "workspace-providers.toml"
+def test_provider_tool_policy_loading_makes_teamed_local_access_inactive(tmp_path, monkeypatch):
+    enabled = tmp_path / "workspace-tool-providers.toml"
     enabled.write_text('enabled = ["linear"]\n')
     agents = _agents_root(tmp_path)
     _write_agent(
@@ -263,7 +336,7 @@ def test_provider_tool_policy_loading_makes_teamed_local_access_inactive(
         ),
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.linear.workspace_provider._default_check_linear_presence_credentials",
+        "cli_agent_orchestrator.linear.workspace_tool_provider._default_check_linear_presence_credentials",
         lambda presence: (_ for _ in ()).throw(AssertionError("credential preflight called")),
     )
 

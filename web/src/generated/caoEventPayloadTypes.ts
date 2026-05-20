@@ -903,7 +903,7 @@ export interface components {
         };
         /**
          * LinearIssueCreatedEvent
-         * @description Linear create_issue tool result published by the Linear workspace provider.
+         * @description Linear create_issue tool result published by the Linear workspace tool provider.
          */
         LinearIssueCreatedEvent: {
             /** Agent Id */

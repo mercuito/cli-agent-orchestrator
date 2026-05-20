@@ -10,7 +10,9 @@ from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
 )
 from cli_agent_orchestrator.workspace_setups import default_workspace_collaboration_manager
-from cli_agent_orchestrator.workspace_providers.tool_access import ProviderToolInvocationContext
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
+    ProviderToolInvocationContext,
+)
 
 
 def resolve_linear_tool_result_workspace_context(

@@ -22,9 +22,9 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueCreatedEvent,
     LinearIssueDelegatedToAgentEvent,
 )
-from cli_agent_orchestrator.linear.workspace_provider import (
-    LinearWorkspaceProvider,
-    LinearWorkspaceProviderConfigError,
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
+    LinearWorkspaceToolProvider,
+    LinearWorkspaceToolProviderConfigError,
     configured_app_keys,
     linear_app_env,
     load_linear_provider_config,
@@ -70,7 +70,7 @@ def test_configured_linear_app_key_resolves_to_cao_agent():
             app_user_name="Implementation Partner",
         ),
     )
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(agent),
         preflight_credentials=False,
     )
@@ -82,8 +82,8 @@ def test_configured_linear_app_key_resolves_to_cao_agent():
     assert resolved.agent.session_name == "implementation-partner"
 
 
-def test_linear_workspace_provider_declares_subscribable_cao_events():
-    provider = LinearWorkspaceProvider(
+def test_linear_workspace_tool_provider_declares_subscribable_cao_events():
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(_agent()),
         preflight_credentials=False,
     )
@@ -111,7 +111,7 @@ def test_configured_linear_app_user_id_resolves_to_cao_agent():
     agent = _agent(
         linear=LinearConfig(app_key="implementation_partner", app_user_id="app-user-impl")
     )
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(agent),
         preflight_credentials=False,
     )
@@ -124,7 +124,7 @@ def test_configured_linear_app_user_id_resolves_to_cao_agent():
 
 
 def test_configured_linear_app_key_tolerates_unstored_app_user_id():
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(_agent()),
         preflight_credentials=False,
     )
@@ -142,7 +142,7 @@ def test_configured_linear_app_key_tolerates_unstored_app_user_id():
 
 
 def test_configured_linear_app_key_rejects_conflicting_app_user_id():
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(
             _agent(
                 "implementation_partner",
@@ -158,7 +158,7 @@ def test_configured_linear_app_key_rejects_conflicting_app_user_id():
     provider.initialize()
 
     with pytest.raises(
-        LinearWorkspaceProviderConfigError,
+        LinearWorkspaceToolProviderConfigError,
         match="app key and app user id resolve to different CAO identities",
     ):
         provider.resolve_event(
@@ -170,18 +170,18 @@ def test_configured_linear_app_key_rejects_conflicting_app_user_id():
 
 
 def test_unknown_linear_app_key_is_rejected():
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(_agent()),
         preflight_credentials=False,
     )
     provider.initialize()
 
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="Unknown Linear app key"):
+    with pytest.raises(LinearWorkspaceToolProviderConfigError, match="Unknown Linear app key"):
         provider.resolve_event({"_cao_linear_app_key": "unknown"})
 
 
 def test_duplicate_linear_app_key_mapping_is_rejected():
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear app_key"):
+    with pytest.raises(LinearWorkspaceToolProviderConfigError, match="Duplicate Linear app_key"):
         load_linear_provider_config(
             agent_registry=_registry(
                 _agent("implementation_partner", linear=LinearConfig(app_key="same")),
@@ -191,7 +191,9 @@ def test_duplicate_linear_app_key_mapping_is_rejected():
 
 
 def test_duplicate_linear_app_user_id_mapping_is_rejected():
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear app_user_id"):
+    with pytest.raises(
+        LinearWorkspaceToolProviderConfigError, match="Duplicate Linear app_user_id"
+    ):
         load_linear_provider_config(
             agent_registry=_registry(
                 _agent(
@@ -207,7 +209,9 @@ def test_duplicate_linear_app_user_id_mapping_is_rejected():
 
 
 def test_duplicate_linear_app_user_name_mapping_is_rejected():
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear app_user_name"):
+    with pytest.raises(
+        LinearWorkspaceToolProviderConfigError, match="Duplicate Linear app_user_name"
+    ):
         load_linear_provider_config(
             agent_registry=_registry(
                 _agent(
@@ -223,7 +227,9 @@ def test_duplicate_linear_app_user_name_mapping_is_rejected():
 
 
 def test_duplicate_linear_oauth_state_mapping_is_rejected():
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="Duplicate Linear oauth_state"):
+    with pytest.raises(
+        LinearWorkspaceToolProviderConfigError, match="Duplicate Linear oauth_state"
+    ):
         load_linear_provider_config(
             agent_registry=_registry(
                 _agent(
@@ -275,23 +281,23 @@ def test_agent_linear_config_missing_field_does_not_fall_back_to_legacy_env(tmp_
 
 
 def test_enabled_linear_provider_requires_config(tmp_path):
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agents_root=tmp_path / "agents", env_reader=lambda name: None
     )
 
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="no Linear config"):
+    with pytest.raises(LinearWorkspaceToolProviderConfigError, match="no Linear config"):
         provider.initialize()
 
 
 def test_linear_provider_preflight_rejects_missing_access_token():
-    provider = LinearWorkspaceProvider(agent_registry=_registry(_agent()))
+    provider = LinearWorkspaceToolProvider(agent_registry=_registry(_agent()))
 
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="missing access_token"):
+    with pytest.raises(LinearWorkspaceToolProviderConfigError, match="missing access_token"):
         provider.initialize()
 
 
 def test_linear_provider_preflight_rejects_expired_access_token():
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(
             _agent(
                 linear=LinearConfig(
@@ -303,12 +309,12 @@ def test_linear_provider_preflight_rejects_expired_access_token():
         )
     )
 
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="access token expired"):
+    with pytest.raises(LinearWorkspaceToolProviderConfigError, match="access token expired"):
         provider.initialize()
 
 
 def test_linear_provider_preflight_rejects_authenticated_app_user_mismatch():
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(
             _agent(
                 linear=LinearConfig(
@@ -322,13 +328,13 @@ def test_linear_provider_preflight_rejects_authenticated_app_user_mismatch():
         credential_checker=lambda presence: {"id": "other-app-user", "name": "Wrong App"},
     )
 
-    with pytest.raises(LinearWorkspaceProviderConfigError, match="app_user_id does not match"):
+    with pytest.raises(LinearWorkspaceToolProviderConfigError, match="app_user_id does not match"):
         provider.initialize()
 
 
 def test_linear_provider_preflight_accepts_authenticated_credentials():
     checked = []
-    provider = LinearWorkspaceProvider(
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_registry(
             _agent(
                 linear=LinearConfig(

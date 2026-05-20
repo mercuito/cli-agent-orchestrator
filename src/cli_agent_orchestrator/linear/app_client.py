@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 import requests
 
-from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+from cli_agent_orchestrator.linear import workspace_tool_provider as linear_provider
 from cli_agent_orchestrator.utils.dashboard_links import (
     create_agent_dashboard_token,
     create_terminal_dashboard_token,
@@ -79,7 +79,7 @@ def normalize_app_key(app_key: str) -> str:
     """Return a stable CAO app key for env lookup and routing."""
     try:
         return linear_provider.normalize_app_key(app_key)
-    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+    except linear_provider.LinearWorkspaceToolProviderConfigError as exc:
         raise LinearConfigError(str(exc)) from exc
 
 
@@ -92,14 +92,14 @@ def linear_app_env(app_key: Optional[str], name: str) -> Optional[str]:
     """Read a Linear app-specific variable from agent-owned config."""
     try:
         return linear_provider.linear_app_env(app_key, name, env_reader=linear_env)
-    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+    except linear_provider.LinearWorkspaceToolProviderConfigError as exc:
         raise LinearConfigError(str(exc)) from exc
 
 
 def required_linear_app_env(app_key: Optional[str], name: str) -> str:
     try:
         return linear_provider.required_linear_app_env(app_key, name, env_reader=linear_env)
-    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+    except linear_provider.LinearWorkspaceToolProviderConfigError as exc:
         raise LinearConfigError(str(exc)) from exc
 
 
@@ -107,7 +107,7 @@ def configured_app_keys() -> list[str]:
     """Return configured Linear app keys from agent-owned config."""
     try:
         return linear_provider.configured_app_keys(env_reader=linear_env)
-    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+    except linear_provider.LinearWorkspaceToolProviderConfigError as exc:
         raise LinearConfigError(str(exc)) from exc
 
 
@@ -663,7 +663,7 @@ def create_comment_on_issue(
 
 
 def get_agent_session(agent_session_id: str) -> Dict[str, Any]:
-    """Fetch Linear AgentSession fields used by workspace provider event handling."""
+    """Fetch Linear AgentSession fields used by workspace tool provider event handling."""
     payload = linear_graphql(
         """
         query AgentSession($id: String!) {
@@ -942,7 +942,7 @@ def verify_webhook_source(
     """Verify a Linear webhook and identify the configured app key when possible."""
     try:
         presences = list(linear_provider.webhook_secret_presences(env_reader=linear_env))
-    except linear_provider.LinearWorkspaceProviderConfigError as exc:
+    except linear_provider.LinearWorkspaceToolProviderConfigError as exc:
         raise LinearWebhookVerificationError(str(exc)) from exc
 
     if not presences:

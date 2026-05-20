@@ -14,13 +14,13 @@ from cli_agent_orchestrator.agent import (
 from cli_agent_orchestrator.constants import DEFAULT_RUNTIME_CAPABILITIES
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.tool_service import ToolService, tool_service_for_loaded_agent
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_setups import WorkspaceTeam, WorkspaceTeamRole
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderConversationAccessRequirement,
     ProviderMediatedToolDefinition,
     ProviderToolAccess,
     ProviderToolAccessPolicy,
 )
-from cli_agent_orchestrator.workspace_setups import WorkspaceTeam, WorkspaceTeamRole
 
 
 def _agent(
@@ -136,9 +136,7 @@ def test_teamed_omitted_runtime_capabilities_preserve_agent_owned_defaults():
         "@cao-mcp-server",
     )
     assert "custom" not in access.materialized_mcp_servers
-    assert access.inactive_local_grants["mcp_servers"] == {
-        "custom": {"command": "custom-mcp"}
-    }
+    assert access.inactive_local_grants["mcp_servers"] == {"custom": {"command": "custom-mcp"}}
 
 
 def test_switching_agent_into_team_changes_active_source_to_team_role():
@@ -217,9 +215,9 @@ def test_registered_tools_for_terminal_uses_current_tool_service_decision():
     agent = _agent(cao_tools=("send_message",))
     service = ToolService(
         agent_manager=_manager(agent, terminals=[{"id": "terminal-1", "agent_id": agent.id}]),
-        terminal_metadata_resolver=lambda terminal_id: {"agent_id": agent.id}
-        if terminal_id == "terminal-1"
-        else None,
+        terminal_metadata_resolver=lambda terminal_id: (
+            {"agent_id": agent.id} if terminal_id == "terminal-1" else None
+        ),
     )
 
     registration = service.registered_tools_for_terminal(
@@ -236,9 +234,9 @@ def test_teamed_builtin_cao_tools_are_not_widened_without_team_source():
     agent = _agent(team="delivery", cao_tools=("send_message",))
     service = ToolService(
         agent_manager=_manager(agent, terminals=[{"id": "terminal-1", "agent_id": agent.id}]),
-        terminal_metadata_resolver=lambda terminal_id: {"agent_id": agent.id}
-        if terminal_id == "terminal-1"
-        else None,
+        terminal_metadata_resolver=lambda terminal_id: (
+            {"agent_id": agent.id} if terminal_id == "terminal-1" else None
+        ),
     )
 
     registration = service.registered_tools_for_terminal(
@@ -353,12 +351,8 @@ def test_agent_tool_view_reuses_provider_policy_metadata_for_same_inputs():
         built_in_tool_names=("send_message",),
     )
 
-    assert first.effective_access.provider_mediated_tools == {
-        "linear": ("cao_linear.get_issue",)
-    }
-    assert second.effective_access.provider_mediated_tools == {
-        "linear": ("cao_linear.get_issue",)
-    }
+    assert first.effective_access.provider_mediated_tools == {"linear": ("cao_linear.get_issue",)}
+    assert second.effective_access.provider_mediated_tools == {"linear": ("cao_linear.get_issue",)}
     assert calls == 1
 
 
@@ -398,7 +392,7 @@ def test_agent_tool_view_recomputes_provider_policy_when_provider_config_changes
         }
 
     monkeypatch.setattr(
-        "cli_agent_orchestrator.services.tool_service._workspace_provider_config_cache_token",
+        "cli_agent_orchestrator.services.tool_service._workspace_tool_provider_config_cache_token",
         lambda: ("providers", version, 1),
     )
     service = ToolService(
@@ -441,9 +435,7 @@ def test_agent_tool_view_recomputes_when_agent_tool_inputs_change():
             assert agent_id == self.agent.id
             return self.agent
 
-    manager = MutableAgentManager(
-        _agent(agent_id="agent", cao_tools=("send_message",))
-    )
+    manager = MutableAgentManager(_agent(agent_id="agent", cao_tools=("send_message",)))
     service = ToolService(agent_manager=manager)
 
     before = service.agent_tool_view(
@@ -564,7 +556,7 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
             return FakeRoleProvider()
 
     monkeypatch.setattr(
-        "cli_agent_orchestrator.services.tool_service.default_workspace_provider_registry",
+        "cli_agent_orchestrator.services.tool_service.default_workspace_tool_provider_registry",
         lambda: FakeProviderRegistry(),
     )
     service = ToolService(
@@ -590,9 +582,7 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
         built_in_tool_names=("read_inbox_message",),
     )
 
-    assert view.effective_access.provider_mediated_tools == {
-        "linear": ("cao_linear.get_issue",)
-    }
+    assert view.effective_access.provider_mediated_tools == {"linear": ("cao_linear.get_issue",)}
     assert view.mcp_surface_descriptor["tools"][0]["name"] == "cao_linear.get_issue"
     assert calls == 1
 
@@ -623,9 +613,9 @@ def test_provider_mediated_registration_skips_builtin_name_conflicts():
     )
     service = ToolService(
         agent_manager=_manager(agent, terminals=[{"id": "terminal-1", "agent_id": agent.id}]),
-        terminal_metadata_resolver=lambda terminal_id: {"agent_id": agent.id}
-        if terminal_id == "terminal-1"
-        else None,
+        terminal_metadata_resolver=lambda terminal_id: (
+            {"agent_id": agent.id} if terminal_id == "terminal-1" else None
+        ),
         provider_policy_loader=lambda _registry: {"linear": policy},
     )
 
@@ -692,9 +682,9 @@ def test_provider_mediated_registration_deduplicates_names_in_tool_service():
     )
     service = ToolService(
         agent_manager=_manager(agent, terminals=[{"id": "terminal-1", "agent_id": agent.id}]),
-        terminal_metadata_resolver=lambda terminal_id: {"agent_id": agent.id}
-        if terminal_id == "terminal-1"
-        else None,
+        terminal_metadata_resolver=lambda terminal_id: (
+            {"agent_id": agent.id} if terminal_id == "terminal-1" else None
+        ),
         provider_policy_loader=lambda _registry: {
             "alpha": first_policy,
             "beta": second_policy,
@@ -760,9 +750,7 @@ def test_teamed_missing_team_diagnostic_is_actionable():
     access = service.tools_for_agent(agent.id)
 
     assert access.built_in_cao_tools == ()
-    assert [diagnostic.code for diagnostic in access.diagnostics] == [
-        "invalid_workspace_team"
-    ]
+    assert [diagnostic.code for diagnostic in access.diagnostics] == ["invalid_workspace_team"]
     assert "invalid team" in access.diagnostics[0].message
     assert access.diagnostics[0].source == "workspace_team"
 
@@ -777,9 +765,7 @@ def test_teamed_missing_setup_diagnostic_is_actionable():
     access = service.tools_for_agent(agent.id)
 
     assert access.built_in_cao_tools == ()
-    assert [diagnostic.code for diagnostic in access.diagnostics] == [
-        "invalid_workspace_team"
-    ]
+    assert [diagnostic.code for diagnostic in access.diagnostics] == ["invalid_workspace_team"]
     assert "workspace team delivery has no setup" in access.diagnostics[0].message
 
 
@@ -893,9 +879,10 @@ def test_teamed_provider_access_requires_workspace_setup_authorized_location():
 
     assert access.provider_mediated_tools == {"linear": ("cao_linear.list_teams",)}
     assert service.can_invoke(agent.id, "cao_linear.list_teams", provider_name="linear").allowed
-    assert service.can_invoke(
-        agent.id, "cao_linear.create_issue", provider_name="linear"
-    ).allowed is False
+    assert (
+        service.can_invoke(agent.id, "cao_linear.create_issue", provider_name="linear").allowed
+        is False
+    )
     assert "role_provider_not_in_workspace_setup" in {
         diagnostic.code for diagnostic in access.diagnostics
     }

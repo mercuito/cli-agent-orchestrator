@@ -54,16 +54,16 @@ from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
 from cli_agent_orchestrator.services.tool_service import ToolService, default_tool_service
 from cli_agent_orchestrator.utils.terminal import wait_until_terminal_status
-from cli_agent_orchestrator.workspace_providers.registry import (
-    WorkspaceProviderConfigError,
-)
-from cli_agent_orchestrator.workspace_providers.tool_access import (
-    ProviderToolAccessConfigError,
-    ProviderToolAccessPolicy,
-)
 from cli_agent_orchestrator.workspace_setups import (
     WorkspaceSetupConfigError,
     default_workspace_collaboration_manager,
+)
+from cli_agent_orchestrator.workspace_tool_providers.registry import (
+    WorkspaceToolProviderConfigError,
+)
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
+    ProviderToolAccessConfigError,
+    ProviderToolAccessPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -218,15 +218,13 @@ def _toolservice_authorized_callable(
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not terminal_id:
             raise PermissionError(
-                f"CAO MCP tool {tool_name!r} denied by ToolService: "
-                "missing terminal context"
+                f"CAO MCP tool {tool_name!r} denied by ToolService: " "missing terminal context"
             )
         if tool_name == "terminate":
             target_terminal_id = _bound_tool_argument(fn, args, kwargs, "terminal_id")
             if not isinstance(target_terminal_id, str) or not target_terminal_id.strip():
                 raise PermissionError(
-                    "CAO MCP tool 'terminate' denied by ToolService: "
-                    "missing target terminal"
+                    "CAO MCP tool 'terminate' denied by ToolService: " "missing target terminal"
                 )
             decision = tool_service.can_invoke_for_terminal_target(
                 terminal_id,
@@ -253,7 +251,9 @@ def _toolservice_authorized_callable(
     return wrapper
 
 
-def _bound_tool_argument(fn: Callable, args: tuple[Any, ...], kwargs: dict[str, Any], name: str) -> Any:
+def _bound_tool_argument(
+    fn: Callable, args: tuple[Any, ...], kwargs: dict[str, Any], name: str
+) -> Any:
     try:
         bound = inspect.signature(fn).bind_partial(*args, **kwargs)
     except TypeError:
@@ -367,7 +367,7 @@ def _load_provider_policies_for_freshness(
         return dict(
             ToolService(agent_manager=AgentManager(configured_agents=registry)).provider_policies()
         )
-    except (ProviderToolAccessConfigError, WorkspaceProviderConfigError):
+    except (ProviderToolAccessConfigError, WorkspaceToolProviderConfigError):
         logger.exception("Provider-mediated MCP tool configuration is invalid")
         raise
     except Exception:
@@ -936,7 +936,9 @@ def _terminal_can_invoke_builtin(terminal_id: str, tool_name: str) -> bool:
 
 @_deferred_tool()
 async def send_message(
-    receiver_id: str = Field(description="Target terminal ID to send message to, subject to same-workspace-team policy"),
+    receiver_id: str = Field(
+        description="Target terminal ID to send message to, subject to same-workspace-team policy"
+    ),
     message: str = Field(description="Message content to send"),
 ) -> Dict[str, Any]:
     """Send a message to another terminal's inbox.

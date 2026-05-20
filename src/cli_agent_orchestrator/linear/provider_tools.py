@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping, cast
 
 from cli_agent_orchestrator.linear import provider_tool_queries as linear_queries
 from cli_agent_orchestrator.mcp_server.freshness import callable_runtime_fingerprint
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderMediatedToolDefinition,
     ProviderToolAccessConfigError,
     ProviderToolAccessIssue,
@@ -220,7 +220,7 @@ LinearRuntimeDependency = tuple[str, Callable[..., Any], bool]
 
 def _linear_runtime_dependency_modules() -> Mapping[str, ModuleType]:
     from cli_agent_orchestrator.linear import app_client
-    from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+    from cli_agent_orchestrator.linear import workspace_tool_provider as linear_provider
 
     return {
         "app_client": app_client,
@@ -281,7 +281,7 @@ def _linear_runtime_dependency_callables(
         SEARCH_DOCUMENTS_TOOL: linear_queries.search_documents,
     }
     from cli_agent_orchestrator.linear import app_client
-    from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+    from cli_agent_orchestrator.linear import workspace_tool_provider as linear_provider
 
     issue_read_dependencies: tuple[LinearRuntimeDependency, ...] = (
         ("LinearToolProvider._authorize_before_call", provider._authorize_before_call, False),
@@ -548,7 +548,7 @@ def _linear_runtime_constant_material(tool_name: str) -> Mapping[str, Any]:
     if tool_name in LINEAR_PROVIDER_TOOLS:
         values["DEFAULT_LINEAR_POLICY_REASON"] = DEFAULT_LINEAR_POLICY_REASON
         from cli_agent_orchestrator.linear import app_client
-        from cli_agent_orchestrator.linear import workspace_provider as linear_provider
+        from cli_agent_orchestrator.linear import workspace_tool_provider as linear_provider
 
         values["LINEAR_GRAPHQL_URL"] = app_client.LINEAR_GRAPHQL_URL
         values["LINEAR_TOKEN_URL"] = app_client.LINEAR_TOKEN_URL

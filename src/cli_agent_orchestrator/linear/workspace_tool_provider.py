@@ -1,4 +1,4 @@
-"""Linear workspace-provider config, presence mapping, and lifecycle."""
+"""Linear workspace-tool-provider config, presence mapping, and lifecycle."""
 
 from __future__ import annotations
 
@@ -28,19 +28,21 @@ from cli_agent_orchestrator.linear.provider_tools import (
 )
 from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
 from cli_agent_orchestrator.utils.env import load_env_vars
-from cli_agent_orchestrator.workspace_providers.registry import WorkspaceProviderConfigError
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.registry import (
+    WorkspaceToolProviderConfigError,
+)
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderConversationAccessRequirement,
     ProviderRoleToolAccessGrant,
     ProviderToolAccessPolicy,
 )
 
 APP_KEY_PATTERN = re.compile(r"[^A-Za-z0-9]+")
-_default_linear_workspace_provider: Optional["LinearWorkspaceProvider"] = None
+_default_linear_workspace_tool_provider: Optional["LinearWorkspaceToolProvider"] = None
 
 
-class LinearWorkspaceProviderConfigError(WorkspaceProviderConfigError):
-    """Raised when Linear workspace-provider configuration is invalid."""
+class LinearWorkspaceToolProviderConfigError(WorkspaceToolProviderConfigError):
+    """Raised when Linear workspace-tool-provider configuration is invalid."""
 
 
 @dataclass(frozen=True)
@@ -67,7 +69,7 @@ LinearCredentialChecker = Callable[[LinearPresence], Mapping[str, Any]]
 
 @dataclass(frozen=True)
 class LinearProviderConfig:
-    """Linear workspace-provider config loaded from durable agent configs."""
+    """Linear workspace-tool-provider config loaded from durable agent configs."""
 
     public_url: Optional[str]
     presences: dict[str, LinearPresence]
@@ -130,7 +132,7 @@ def normalize_app_key(app_key: str) -> str:
     """Return a stable provider-native app key for Linear presence lookup."""
     normalized = APP_KEY_PATTERN.sub("_", app_key.strip().lower()).strip("_")
     if not normalized:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             "Linear app key must contain at least one letter or digit"
         )
     return normalized
@@ -207,8 +209,10 @@ def required_linear_app_env(
     if value:
         return value
     if app_key:
-        raise LinearWorkspaceProviderConfigError(f"{app_env_prefix(app_key)}_{name} is required")
-    raise LinearWorkspaceProviderConfigError(f"LINEAR_{name} is required")
+        raise LinearWorkspaceToolProviderConfigError(
+            f"{app_env_prefix(app_key)}_{name} is required"
+        )
+    raise LinearWorkspaceToolProviderConfigError(f"LINEAR_{name} is required")
 
 
 def _presence_field(presence: LinearPresence, env_name: str) -> Optional[str]:
@@ -224,7 +228,7 @@ def _presence_field(presence: LinearPresence, env_name: str) -> Optional[str]:
 def _require_str(table: Mapping[str, Any], key: str, *, presence_id: str) -> str:
     value = table.get(key)
     if not isinstance(value, str) or not value.strip():
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             f"presences.{presence_id}.{key} must be a non-empty string"
         )
     return value.strip()
@@ -235,7 +239,7 @@ def _optional_str(table: Mapping[str, Any], key: str) -> Optional[str]:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise LinearWorkspaceProviderConfigError(f"{key} must be a string")
+        raise LinearWorkspaceToolProviderConfigError(f"{key} must be a string")
     value = value.strip()
     return value or None
 
@@ -289,17 +293,17 @@ def _validate_linear_tool_access(agent: Agent, access: Any) -> None:
     location = f"agents.{agent.id}.linear.tool_access.{access.access_id}"
     for index, tool in enumerate(access.tools):
         if tool not in LINEAR_PROVIDER_TOOLS:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"{location}.tools[{index}] unknown Linear tool: {tool}"
             )
     if any(tool in ISSUE_TARGETING_TOOLS for tool in access.tools) and not access.issues:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             f"{location}.issues must be a non-empty string list"
         )
     if (
         CREATE_ISSUE_TOOL in access.tools or CREATE_PROJECT_TOOL in access.tools
     ) and not access.create_team_ids:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             f"{location}.create_team_ids must be a non-empty string list"
         )
     if (
@@ -307,17 +311,17 @@ def _validate_linear_tool_access(agent: Agent, access: Any) -> None:
         and not access.allow_top_level_create
         and not access.create_parent_issues
     ):
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             f"{location} must allow top-level issue creation or configure "
             "create_parent_issues for cao_linear.create_issue"
         )
     if UPDATE_ISSUE_TOOL in access.tools and not access.update_fields:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             f"{location}.update_fields must be a non-empty string list"
         )
     for index, field in enumerate(access.update_fields):
         if field not in UPDATE_ISSUE_FIELDS:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"{location}.update_fields[{index}] unknown Linear update field: {field}"
             )
 
@@ -329,7 +333,7 @@ def load_linear_provider_config(
     env_reader: Callable[[str], Optional[str]] = linear_env,
     include_tool_access: bool = True,
 ) -> Optional[LinearProviderConfig]:
-    """Load Linear workspace-provider config from durable agent directories."""
+    """Load Linear workspace-tool-provider config from durable agent directories."""
     registry = agent_registry or load_agent_registry(agents_root)
     agents = registry.all()
     presences: dict[str, LinearPresence] = {}
@@ -369,37 +373,39 @@ def validate_linear_provider_config(
 
     for presence in config.presences.values():
         if presence.app_key in app_keys:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Duplicate Linear app_key mapping: {presence.app_key}"
             )
         app_keys.add(presence.app_key)
 
         if presence.app_user_id:
             if presence.app_user_id in app_user_ids:
-                raise LinearWorkspaceProviderConfigError(
+                raise LinearWorkspaceToolProviderConfigError(
                     f"Duplicate Linear app_user_id mapping: {presence.app_user_id}"
                 )
             app_user_ids.add(presence.app_user_id)
 
         if presence.app_user_name:
             if presence.app_user_name in app_user_names:
-                raise LinearWorkspaceProviderConfigError(
+                raise LinearWorkspaceToolProviderConfigError(
                     f"Duplicate Linear app_user_name mapping: {presence.app_user_name}"
                 )
             app_user_names.add(presence.app_user_name)
 
         if presence.oauth_state:
             if presence.oauth_state in oauth_states:
-                raise LinearWorkspaceProviderConfigError("Duplicate Linear oauth_state mapping")
+                raise LinearWorkspaceToolProviderConfigError("Duplicate Linear oauth_state mapping")
             oauth_states.add(presence.oauth_state)
 
         if presence.webhook_secret:
             if presence.webhook_secret in webhook_secrets:
-                raise LinearWorkspaceProviderConfigError("Duplicate Linear webhook_secret mapping")
+                raise LinearWorkspaceToolProviderConfigError(
+                    "Duplicate Linear webhook_secret mapping"
+                )
             webhook_secrets.add(presence.webhook_secret)
 
         if presence.agent_id in agent_ids:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Duplicate Linear CAO agent_id mapping: {presence.agent_id}"
             )
         agent_ids.add(presence.agent_id)
@@ -408,14 +414,14 @@ def validate_linear_provider_config(
             try:
                 agent_registry.get(presence.agent_id)
             except AgentConfigError as exc:
-                raise LinearWorkspaceProviderConfigError(
+                raise LinearWorkspaceToolProviderConfigError(
                     f"Linear presence {presence.presence_id} references missing CAO agent "
                     f"agent: {presence.agent_id}"
                 ) from exc
 
     for access in config.tool_access.values():
         if access.agent_id and access.agent_id not in agent_ids:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"{access.location}.agent_id references missing Linear presence: {access.agent_id}"
             )
 
@@ -427,7 +433,7 @@ def parse_linear_token_expires_at(presence: LinearPresence) -> Optional[datetime
     try:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             f"Linear presence {presence.presence_id} token_expires_at is not a valid ISO datetime"
         ) from exc
     if parsed.tzinfo is None:
@@ -442,7 +448,7 @@ def _default_check_linear_presence_credentials(presence: LinearPresence) -> Mapp
         access_token = app_client.access_token_for_presence(presence)
         viewer = app_client.fetch_viewer(access_token)
     except app_client.LinearOAuthError as exc:
-        raise LinearWorkspaceProviderConfigError(
+        raise LinearWorkspaceToolProviderConfigError(
             f"Linear presence {presence.presence_id} could not obtain a valid access token; "
             "reauthorize the Linear app if token refresh is unavailable"
         ) from exc
@@ -457,7 +463,7 @@ def preflight_linear_provider_credentials(
     """Verify configured Linear app credentials before the provider accepts traffic."""
     for presence in config.presences.values():
         if not presence.access_token and not presence.refresh_token:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Linear presence {presence.presence_id} is missing access_token and "
                 "refresh_token; reauthorize the Linear app before starting the provider"
             )
@@ -467,7 +473,7 @@ def preflight_linear_provider_credentials(
             and expires_at <= datetime.now(timezone.utc)
             and not presence.refresh_token
         ):
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Linear presence {presence.presence_id} access token expired at "
                 f"{expires_at.isoformat()} and no refresh_token is configured; reauthorize the "
                 "Linear app before starting the provider"
@@ -475,12 +481,12 @@ def preflight_linear_provider_credentials(
         viewer = credential_checker(presence)
         viewer_id = viewer.get("id")
         if not viewer_id:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Linear presence {presence.presence_id} credential check did not return a "
                 "viewer id"
             )
         if presence.app_user_id and presence.app_user_id != str(viewer_id):
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Linear presence {presence.presence_id} app_user_id does not match the "
                 "authenticated Linear app user"
             )
@@ -588,11 +594,11 @@ def _extract_app_key(payload: Mapping[str, Any]) -> Optional[str]:
 
 def _role_str_tuple(value: Any, location: str) -> tuple[str, ...]:
     if not isinstance(value, (tuple, list)):
-        raise LinearWorkspaceProviderConfigError(f"{location} must be a string list")
+        raise LinearWorkspaceToolProviderConfigError(f"{location} must be a string list")
     result: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"{location} must contain only non-empty strings"
             )
         result.append(item.strip())
@@ -602,11 +608,11 @@ def _role_str_tuple(value: Any, location: str) -> tuple[str, ...]:
 def _role_bool(value: Any, location: str) -> bool:
     if isinstance(value, bool):
         return value
-    raise LinearWorkspaceProviderConfigError(f"{location} must be a boolean")
+    raise LinearWorkspaceToolProviderConfigError(f"{location} must be a boolean")
 
 
-class LinearWorkspaceProvider:
-    """Linear workspace-provider lifecycle and presence resolver."""
+class LinearWorkspaceToolProvider:
+    """Linear workspace-tool-provider lifecycle and presence resolver."""
 
     name = "linear"
 
@@ -643,7 +649,7 @@ class LinearWorkspaceProvider:
                 agent_registry=self._agent_registry,
                 env_reader=self._env_reader,
             )
-        except LinearWorkspaceProviderConfigError:
+        except LinearWorkspaceToolProviderConfigError:
             return True
         return bool(config and config.tool_access)
 
@@ -663,8 +669,8 @@ class LinearWorkspaceProvider:
             env_reader=self._env_reader,
         )
         if self._config is None:
-            raise LinearWorkspaceProviderConfigError(
-                "Linear workspace provider is enabled but no Linear config was found"
+            raise LinearWorkspaceToolProviderConfigError(
+                "Linear workspace tool provider is enabled but no Linear config was found"
             )
         if self._preflight_credentials:
             preflight_linear_provider_credentials(
@@ -691,8 +697,8 @@ class LinearWorkspaceProvider:
             include_tool_access=False,
         )
         if config is None:
-            raise LinearWorkspaceProviderConfigError(
-                "Linear workspace provider is enabled but no Linear config was found"
+            raise LinearWorkspaceToolProviderConfigError(
+                "Linear workspace tool provider is enabled but no Linear config was found"
             )
         tool_access: dict[str, LinearToolAccess] = {}
         for grant in grants:
@@ -727,9 +733,11 @@ class LinearWorkspaceProvider:
                     spec.get("update_fields", ()),
                     f"{grant.source_location}.update_fields",
                 ),
-                reason=str(spec["reason"]).strip()
-                if isinstance(spec.get("reason"), str) and str(spec["reason"]).strip()
-                else None,
+                reason=(
+                    str(spec["reason"]).strip()
+                    if isinstance(spec.get("reason"), str) and str(spec["reason"]).strip()
+                    else None
+                ),
                 source_location=grant.source_location,
             )
             _validate_linear_tool_access(self._agent_registry.get(grant.agent_id), access)
@@ -775,7 +783,9 @@ class LinearWorkspaceProvider:
         if self._config is None:
             self.initialize()
         if self._config is None:
-            raise LinearWorkspaceProviderConfigError("Linear workspace provider is not configured")
+            raise LinearWorkspaceToolProviderConfigError(
+                "Linear workspace tool provider is not configured"
+            )
         return self._config
 
     def resolve_presence(
@@ -790,15 +800,15 @@ class LinearWorkspaceProvider:
         if app_key:
             presence = config.presence_by_app_key(app_key)
             if presence is None:
-                raise LinearWorkspaceProviderConfigError(f"Unknown Linear app key: {app_key}")
+                raise LinearWorkspaceToolProviderConfigError(f"Unknown Linear app key: {app_key}")
         if app_user_id:
             by_user = config.presence_by_app_user_id(app_user_id)
             if by_user is None and presence is None:
-                raise LinearWorkspaceProviderConfigError(
+                raise LinearWorkspaceToolProviderConfigError(
                     f"Unknown Linear app user id: {app_user_id}"
                 )
             if by_user is not None and presence is not None and presence != by_user:
-                raise LinearWorkspaceProviderConfigError(
+                raise LinearWorkspaceToolProviderConfigError(
                     "Linear app key and app user id resolve to different CAO identities"
                 )
             if by_user is not None:
@@ -806,13 +816,13 @@ class LinearWorkspaceProvider:
         if app_user_name:
             by_name = config.presence_by_app_user_name(app_user_name)
             if by_name is not None and presence is not None and presence != by_name:
-                raise LinearWorkspaceProviderConfigError(
+                raise LinearWorkspaceToolProviderConfigError(
                     "Linear app key and app user name resolve to different CAO identities"
                 )
             if presence is None:
                 presence = by_name
         if presence is None:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 "Linear presence could not be resolved from app key or app user id"
             )
         return presence
@@ -839,7 +849,7 @@ class LinearWorkspaceProvider:
             None,
         )
         if presence is None:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"Linear provider has no presence for CAO agent: {agent_id}"
             )
         return self.resolve_agent_for_presence(presence)
@@ -868,24 +878,24 @@ def canonical_session_name(session_name: str) -> str:
     return f"{SESSION_PREFIX}{session_name}"
 
 
-def set_default_linear_workspace_provider(provider: LinearWorkspaceProvider) -> None:
+def set_default_linear_workspace_tool_provider(provider: LinearWorkspaceToolProvider) -> None:
     """Set the startup-validated Linear provider used by routes/runtime."""
-    global _default_linear_workspace_provider
-    _default_linear_workspace_provider = provider
+    global _default_linear_workspace_tool_provider
+    _default_linear_workspace_tool_provider = provider
 
 
-def get_linear_workspace_provider() -> LinearWorkspaceProvider:
-    """Return the startup provider when available, else a lazy compatibility provider."""
-    if _default_linear_workspace_provider is not None:
-        return _default_linear_workspace_provider
-    return LinearWorkspaceProvider()
+def get_linear_workspace_tool_provider() -> LinearWorkspaceToolProvider:
+    """Return the startup provider when available, else a lazy provider instance."""
+    if _default_linear_workspace_tool_provider is not None:
+        return _default_linear_workspace_tool_provider
+    return LinearWorkspaceToolProvider()
 
 
 def should_enable_linear_agent_policies() -> bool:
     """Return whether Linear's WIP agent-presence policy guardrails should run."""
     try:
-        return get_linear_workspace_provider().agent_policies_enabled()
-    except LinearWorkspaceProviderConfigError:
+        return get_linear_workspace_tool_provider().agent_policies_enabled()
+    except LinearWorkspaceToolProviderConfigError:
         return False
 
 
@@ -911,7 +921,7 @@ def should_enable_linear_routes() -> bool:
     """
     try:
         return load_linear_provider_config() is not None
-    except LinearWorkspaceProviderConfigError:
+    except LinearWorkspaceToolProviderConfigError:
         raise
     except Exception:
         return False

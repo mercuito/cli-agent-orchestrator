@@ -65,21 +65,21 @@ from cli_agent_orchestrator.linear.workspace_events import (
     publish_linear_issue_created_event,
     register_linear_cao_events,
 )
-from cli_agent_orchestrator.linear.workspace_provider import (
-    LinearWorkspaceProvider,
-    LinearWorkspaceProviderConfigError,
+from cli_agent_orchestrator.linear.workspace_tool_provider import (
+    LinearWorkspaceToolProvider,
+    LinearWorkspaceToolProviderConfigError,
 )
-from cli_agent_orchestrator.services.agent_manager import AgentManager
-from cli_agent_orchestrator.services.tool_service import ToolService
 from cli_agent_orchestrator.mcp_server.provider_tools import (
     register_provider_mediated_mcp_tools,
 )
-from cli_agent_orchestrator.workspace_providers.invocation import (
+from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.services.tool_service import ToolService
+from cli_agent_orchestrator.workspace_tool_providers.invocation import (
     ProviderMediatedToolAccessDenied,
     ProviderMediatedToolHandlerError,
     ProviderMediatedToolInvocationService,
 )
-from cli_agent_orchestrator.workspace_providers.tool_access import (
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderToolAccessConfigError,
 )
 
@@ -88,7 +88,7 @@ from cli_agent_orchestrator.workspace_providers.tool_access import (
 # beside the production queries in ``linear.provider_tools``.
 
 
-def test_provider_tools_imports_without_workspace_provider_import_order():
+def test_provider_tools_imports_without_workspace_tool_provider_import_order():
     result = subprocess.run(
         [
             sys.executable,
@@ -149,17 +149,17 @@ def _tool_access_from_body(body: str) -> dict[str, tuple[LinearToolAccessConfig,
         value = raw.get(key)
         if value is None:
             if required:
-                raise LinearWorkspaceProviderConfigError(
+                raise LinearWorkspaceToolProviderConfigError(
                     f"tool_access.{access_id}.{key} must be a non-empty string list"
                 )
             return ()
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"tool_access.{access_id}.{key} must be a non-empty string list"
             )
         result = tuple(item.strip() for item in value if item.strip())
         if required and not result:
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"tool_access.{access_id}.{key} must be a non-empty string list"
             )
         return result
@@ -167,7 +167,7 @@ def _tool_access_from_body(body: str) -> dict[str, tuple[LinearToolAccessConfig,
     for access_id, raw_access in parsed.get("tool_access", {}).items():
         agent_id = raw_access.get("agent_id")
         if not isinstance(agent_id, str) or not agent_id.strip():
-            raise LinearWorkspaceProviderConfigError(
+            raise LinearWorkspaceToolProviderConfigError(
                 f"tool_access.{access_id} must configure agent_id"
             )
         grouped.setdefault(agent_id.strip(), []).append(
@@ -191,8 +191,8 @@ def _provider(
     tool_access_body: str,
     *,
     workspace_setup_enabled: bool = False,
-) -> LinearWorkspaceProvider:
-    provider = LinearWorkspaceProvider(
+) -> LinearWorkspaceToolProvider:
+    provider = LinearWorkspaceToolProvider(
         agent_registry=_agents(
             workspace_setup="cao_delivery" if workspace_setup_enabled else None,
             tool_access_by_agent=_tool_access_from_body(tool_access_body),
@@ -223,7 +223,7 @@ def _terminal_metadata(terminal_id: str) -> Mapping[str, Any] | None:
 
 
 def _mcp_for_provider(
-    provider: LinearWorkspaceProvider,
+    provider: LinearWorkspaceToolProvider,
     terminal_id: str,
     *,
     workspace_setup_enabled: bool = False,
@@ -349,7 +349,7 @@ update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
         "refresh_access_token",
     ) in list_teams_refresh_entries
     assert (
-        "cli_agent_orchestrator.linear.workspace_provider",
+        "cli_agent_orchestrator.linear.workspace_tool_provider",
         "persist_linear_oauth_install",
     ) in list_teams_refresh_entries
     assert (
@@ -362,7 +362,7 @@ update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
         ]
     }
     assert (
-        "cli_agent_orchestrator.linear.workspace_provider",
+        "cli_agent_orchestrator.linear.workspace_tool_provider",
         "required_linear_app_env",
     ) in {
         (entry["module"], entry["qualname"])
@@ -387,7 +387,7 @@ update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
         "linear_provider.LinearProviderConfig.presence_by_app_key",
     }.issubset(list_teams_material["dependencies"])
     assert (
-        "cli_agent_orchestrator.linear.workspace_provider",
+        "cli_agent_orchestrator.linear.workspace_tool_provider",
         "linear_app_env",
     ) in {
         (entry["module"], entry["qualname"])
@@ -396,7 +396,7 @@ update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
         ]
     }
     assert (
-        "cli_agent_orchestrator.linear.workspace_provider",
+        "cli_agent_orchestrator.linear.workspace_tool_provider",
         "update_linear_presence_tokens",
     ) in {
         (entry["module"], entry["qualname"])
@@ -688,7 +688,7 @@ def _mutated_project_payload(
 
 
 def _service(
-    provider: LinearWorkspaceProvider,
+    provider: LinearWorkspaceToolProvider,
     *,
     workspace_setup_enabled: bool = False,
 ) -> ProviderMediatedToolInvocationService:
@@ -711,9 +711,7 @@ def _tool_service_for_test(
         access=tuple(
             replace(
                 access,
-                source_location=(
-                    f"workspace_team.cao_delivery.{access.source_location}"
-                ),
+                source_location=(f"workspace_team.cao_delivery.{access.source_location}"),
             )
             for access in policy.access
         ),
@@ -2907,7 +2905,7 @@ def test_linear_tool_access_config_rejects_malformed_entries(
     tool_access_body,
     expected,
 ):
-    with pytest.raises(LinearWorkspaceProviderConfigError) as exc_info:
+    with pytest.raises(LinearWorkspaceToolProviderConfigError) as exc_info:
         _provider(tmp_path, tool_access_body)
 
     assert expected in str(exc_info.value)

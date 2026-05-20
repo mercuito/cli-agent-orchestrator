@@ -18,8 +18,6 @@ from cli_agent_orchestrator.workspace_setups import (
     DEFAULT_WORKSPACE_SETUP_ID,
     DEFAULT_WORKSPACE_TEAM_ID,
     WorkspaceCollaborationManager,
-    WorkspaceProviderCandidateMapping,
-    WorkspaceProviderView,
     WorkspaceSetup,
     WorkspaceSetupConfigError,
     WorkspaceSetupRegistry,
@@ -29,6 +27,8 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceTeamRole,
     WorkspaceTeamService,
     WorkspaceTeamStore,
+    WorkspaceToolProviderCandidateMapping,
+    WorkspaceToolProviderView,
     default_workspace_team_service,
 )
 
@@ -55,9 +55,9 @@ class RecordingProviderAdapter:
 
     def build_candidate_mappings(
         self, agent_registry: AgentRegistry
-    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+    ) -> tuple[WorkspaceToolProviderCandidateMapping, ...]:
         return (
-            WorkspaceProviderCandidateMapping(
+            WorkspaceToolProviderCandidateMapping(
                 provider_name="test",
                 agent_id="agent_a",
                 mapping_kind="presence",
@@ -65,7 +65,7 @@ class RecordingProviderAdapter:
                 provider_value="provider-a",
                 payload={"agent": "agent_a"},
             ),
-            WorkspaceProviderCandidateMapping(
+            WorkspaceToolProviderCandidateMapping(
                 provider_name="test",
                 agent_id="agent_b",
                 mapping_kind="presence",
@@ -82,8 +82,8 @@ class RecordingProviderAdapter:
         setup: WorkspaceSetup,
         authorized_mappings: tuple[WorkspaceTeamAuthorizedMapping, ...],
         agent_registry: AgentRegistry,
-    ) -> WorkspaceProviderView:
-        return WorkspaceProviderView(
+    ) -> WorkspaceToolProviderView:
+        return WorkspaceToolProviderView(
             team_id=team.id,
             setup_id=setup.id,
             provider_name="test",
@@ -91,7 +91,7 @@ class RecordingProviderAdapter:
         )
 
     def resolve_event_agent_id(
-        self, *, provider_view: WorkspaceProviderView, event
+        self, *, provider_view: WorkspaceToolProviderView, event
     ) -> tuple[str, object]:
         try:
             return provider_view.value[event.agent_key], event.agent_key
@@ -102,8 +102,8 @@ class RecordingProviderAdapter:
         self,
         *,
         event,
-        candidates: tuple[WorkspaceProviderCandidateMapping, ...],
-    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+        candidates: tuple[WorkspaceToolProviderCandidateMapping, ...],
+    ) -> tuple[WorkspaceToolProviderCandidateMapping, ...]:
         return tuple(
             candidate
             for candidate in candidates
@@ -118,9 +118,9 @@ class RecordingProviderAdapter:
 class DuplicateIdentityProviderAdapter(RecordingProviderAdapter):
     def build_candidate_mappings(
         self, agent_registry: AgentRegistry
-    ) -> tuple[WorkspaceProviderCandidateMapping, ...]:
+    ) -> tuple[WorkspaceToolProviderCandidateMapping, ...]:
         return (
-            WorkspaceProviderCandidateMapping(
+            WorkspaceToolProviderCandidateMapping(
                 provider_name="test",
                 agent_id="agent_a",
                 mapping_kind="presence",
@@ -128,7 +128,7 @@ class DuplicateIdentityProviderAdapter(RecordingProviderAdapter):
                 provider_value="shared-provider-user",
                 payload={"agent": "agent_a"},
             ),
-            WorkspaceProviderCandidateMapping(
+            WorkspaceToolProviderCandidateMapping(
                 provider_name="test",
                 agent_id="agent_b",
                 mapping_kind="presence",
@@ -342,9 +342,7 @@ def test_reused_default_root_team_service_rejects_delete_after_member_assignment
         service.delete_team("delivery")
 
 
-def test_default_team_service_uses_injected_agents_root_for_member_writes(
-    tmp_path, monkeypatch
-):
+def test_default_team_service_uses_injected_agents_root_for_member_writes(tmp_path, monkeypatch):
     # Given
     explicit_root = _write_agents(tmp_path / "explicit", _agent("agent_a"))
     global_root = _write_agents(tmp_path / "global", _agent("agent_a"))

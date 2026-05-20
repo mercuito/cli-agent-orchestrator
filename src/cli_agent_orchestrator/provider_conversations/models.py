@@ -24,7 +24,7 @@ ThreadState = Literal["active", "awaiting_input", "complete", "stale", "error", 
 
 @dataclass(frozen=True)
 class ExternalRef:
-    """A stable reference to an object owned by an external workspace provider."""
+    """A stable reference to an object owned by an external workspace tool provider."""
 
     provider: str
     id: str
@@ -141,7 +141,7 @@ class ProcessedProviderEventRecord:
 
 @dataclass(frozen=True)
 class PersistedProviderEventRecords:
-    """Records touched while storing a typed workspace provider event."""
+    """Records touched while storing a typed workspace tool provider event."""
 
     processed_event: Optional[ProcessedProviderEventRecord]
     work_item: Optional[WorkItemRecord]

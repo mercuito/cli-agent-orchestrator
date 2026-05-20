@@ -122,10 +122,6 @@ from cli_agent_orchestrator.utils.skills import (
     load_skill_content,
     validate_skill_name,
 )
-from cli_agent_orchestrator.workspace_providers import (
-    WorkspaceProviderConfigError,
-    initialize_enabled_workspace_providers,
-)
 from cli_agent_orchestrator.workspace_setups import (
     DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
     WorkspaceSetupConfigError,
@@ -134,6 +130,10 @@ from cli_agent_orchestrator.workspace_setups import (
     default_workspace_collaboration_manager,
     default_workspace_setup_registry,
     default_workspace_team_service,
+)
+from cli_agent_orchestrator.workspace_tool_providers import (
+    WorkspaceToolProviderConfigError,
+    initialize_enabled_workspace_tool_providers,
 )
 
 logger = logging.getLogger(__name__)
@@ -421,8 +421,7 @@ class EffectiveToolAccessResponse(BaseModel):
             blocked_tools=list(access.blocked_tools),
             built_in_cao_tools=list(access.built_in_cao_tools),
             provider_mediated_tools={
-                provider: list(tools)
-                for provider, tools in access.provider_mediated_tools.items()
+                provider: list(tools) for provider, tools in access.provider_mediated_tools.items()
             },
             materialized_mcp_servers=dict(access.materialized_mcp_servers),
             runtime_capabilities=list(access.runtime_capabilities),
@@ -607,9 +606,7 @@ class WorkspaceTeamRoleResponse(BaseModel):
     deletable: bool = True
 
     @classmethod
-    def from_role(
-        cls, role_id: str, role: WorkspaceTeamRole
-    ) -> "WorkspaceTeamRoleResponse":
+    def from_role(cls, role_id: str, role: WorkspaceTeamRole) -> "WorkspaceTeamRoleResponse":
         return cls(
             display_name=role.display_name,
             cao_tools=list(role.cao_tools),
@@ -1235,10 +1232,10 @@ async def lifespan(app: FastAPI):
     setup_logging()
     init_db()
     try:
-        app.state.workspace_providers = initialize_enabled_workspace_providers()
-    except WorkspaceProviderConfigError as exc:
-        logger.error("Workspace providers disabled after startup failure: %s", exc)
-        app.state.workspace_providers = []
+        app.state.workspace_tool_providers = initialize_enabled_workspace_tool_providers()
+    except WorkspaceToolProviderConfigError as exc:
+        logger.error("Workspace tool providers disabled after startup failure: %s", exc)
+        app.state.workspace_tool_providers = []
 
     # Run cleanup in background
     asyncio.create_task(asyncio.to_thread(cleanup_old_data))
@@ -1450,10 +1447,10 @@ async def list_cao_tool_descriptors_endpoint() -> List[ToolDescriptorResponse]:
 
 
 @app.get(
-    "/workspace-providers/{provider}/role-access-schema",
+    "/workspace-tool-providers/{provider}/role-access-schema",
     response_model=ProviderRoleAccessSchemaResponse,
 )
-async def workspace_provider_role_access_schema_endpoint(
+async def workspace_tool_provider_role_access_schema_endpoint(
     provider: str,
 ) -> ProviderRoleAccessSchemaResponse:
     """Return provider-owned role access descriptors for dashboard editing."""
@@ -1461,7 +1458,7 @@ async def workspace_provider_role_access_schema_endpoint(
     if normalized != "linear":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"unknown workspace provider role access schema: {normalized}",
+            detail=f"unknown workspace tool provider role access schema: {normalized}",
         )
     from cli_agent_orchestrator.linear.provider_tools import linear_role_access_schema
 
@@ -1556,7 +1553,9 @@ async def upsert_workspace_team_endpoint(
 async def delete_workspace_team_endpoint(team_id: str) -> WorkspaceTeamResponse:
     """Delete an empty workspace team."""
     try:
-        return WorkspaceTeamResponse.from_team(default_workspace_team_service().delete_team(team_id))
+        return WorkspaceTeamResponse.from_team(
+            default_workspace_team_service().delete_team(team_id)
+        )
     except (AgentConfigError, AgentPathError, ValueError) as e:
         raise _workspace_team_error(e)
 

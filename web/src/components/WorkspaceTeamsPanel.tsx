@@ -40,7 +40,7 @@ export function WorkspaceTeamsPanel() {
 
       const providers = Array.from(new Set(nextSetups.flatMap(setup => setup.providers)))
       void Promise.all(providers.map(provider =>
-        api.getWorkspaceProviderRoleAccessSchema(provider)
+        api.getWorkspaceToolProviderRoleAccessSchema(provider)
           .then(schema => [provider, schema] as const)
           .catch(() => null),
       )).then(schemas => {

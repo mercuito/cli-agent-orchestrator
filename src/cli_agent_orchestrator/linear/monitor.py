@@ -18,7 +18,7 @@ from cli_agent_orchestrator.agent import AgentConfigError
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.linear import app_client, monitor_store
 from cli_agent_orchestrator.linear import runtime as linear_runtime
-from cli_agent_orchestrator.linear import workspace_provider as linear_workspace_provider
+from cli_agent_orchestrator.linear import workspace_tool_provider as linear_workspace_tool_provider
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
@@ -115,11 +115,11 @@ def run_linear_monitor(
         )
 
     try:
-        provider = _monitor_workspace_provider()
+        provider = _monitor_workspace_tool_provider()
         config = provider.config
         if config is None:
-            raise linear_workspace_provider.LinearWorkspaceProviderConfigError(
-                "Linear workspace provider is not configured"
+            raise linear_workspace_tool_provider.LinearWorkspaceToolProviderConfigError(
+                "Linear workspace tool provider is not configured"
             )
     except Exception as exc:
         completed_at = _utc()
@@ -176,21 +176,25 @@ def run_linear_monitor(
     )
 
 
-def _monitor_workspace_provider() -> linear_workspace_provider.LinearWorkspaceProvider:
-    configured = linear_workspace_provider.get_linear_workspace_provider()
+def _monitor_workspace_tool_provider() -> (
+    linear_workspace_tool_provider.LinearWorkspaceToolProvider
+):
+    configured = linear_workspace_tool_provider.get_linear_workspace_tool_provider()
     if configured.config is not None:
         return configured
-    provider = linear_workspace_provider.LinearWorkspaceProvider(preflight_credentials=False)
+    provider = linear_workspace_tool_provider.LinearWorkspaceToolProvider(
+        preflight_credentials=False
+    )
     provider.initialize()
     return provider
 
 
 def _team_authorized_monitor_presences(
-    provider: linear_workspace_provider.LinearWorkspaceProvider,
+    provider: linear_workspace_tool_provider.LinearWorkspaceToolProvider,
     diagnostics: list[LinearMonitorDiagnostic],
-) -> list[linear_workspace_provider.LinearPresence]:
+) -> list[linear_workspace_tool_provider.LinearPresence]:
     manager = default_workspace_collaboration_manager(agent_registry=provider.agent_registry)
-    presences: dict[str, linear_workspace_provider.LinearPresence] = {}
+    presences: dict[str, linear_workspace_tool_provider.LinearPresence] = {}
     seen_teams: set[str] = set()
     for agent in sorted(provider.agent_registry.all().values(), key=lambda item: item.id):
         try:
@@ -209,7 +213,7 @@ def _team_authorized_monitor_presences(
             )
             continue
         config = view.value
-        if not isinstance(config, linear_workspace_provider.LinearProviderConfig):
+        if not isinstance(config, linear_workspace_tool_provider.LinearProviderConfig):
             diagnostics.append(
                 _diagnostic(
                     "monitor_presence_not_team_authorized",
@@ -224,8 +228,8 @@ def _team_authorized_monitor_presences(
 
 
 def _run_presence_monitor(
-    provider: linear_workspace_provider.LinearWorkspaceProvider,
-    presence: linear_workspace_provider.LinearPresence,
+    provider: linear_workspace_tool_provider.LinearWorkspaceToolProvider,
+    presence: linear_workspace_tool_provider.LinearPresence,
     *,
     started_at: datetime,
     diagnostics: list[LinearMonitorDiagnostic],
@@ -362,7 +366,7 @@ def _run_presence_monitor(
 
 
 def _recover_session_events(
-    presence: linear_workspace_provider.LinearPresence,
+    presence: linear_workspace_tool_provider.LinearPresence,
     session: Mapping[str, Any],
     *,
     lower_bound: datetime,
@@ -472,7 +476,7 @@ def _recover_session_events(
 
 
 def _synthesize_and_deliver(
-    presence: linear_workspace_provider.LinearPresence,
+    presence: linear_workspace_tool_provider.LinearPresence,
     session: Mapping[str, Any],
     *,
     action: str,
@@ -547,7 +551,7 @@ def _synthesize_and_deliver(
 
 
 def _synthetic_agent_session_event(
-    presence: linear_workspace_provider.LinearPresence,
+    presence: linear_workspace_tool_provider.LinearPresence,
     session: Mapping[str, Any],
     *,
     action: str,
@@ -576,8 +580,8 @@ def _synthetic_agent_session_event(
 
 
 def _retry_pending_delivery(
-    provider: linear_workspace_provider.LinearWorkspaceProvider,
-    presence: linear_workspace_provider.LinearPresence,
+    provider: linear_workspace_tool_provider.LinearWorkspaceToolProvider,
+    presence: linear_workspace_tool_provider.LinearPresence,
     diagnostics: list[LinearMonitorDiagnostic],
 ) -> int:
     try:
@@ -646,7 +650,7 @@ def _workspace_context_id_from_receiver_id(agent_id: str, receiver_id: str) -> s
 
 
 def _diagnose_session_state(
-    presence: linear_workspace_provider.LinearPresence,
+    presence: linear_workspace_tool_provider.LinearPresence,
     session: Mapping[str, Any],
     diagnostics: list[LinearMonitorDiagnostic],
 ) -> None:
@@ -672,7 +676,7 @@ def _diagnose_session_state(
 
 def _session_belongs_to_presence(
     session: Mapping[str, Any],
-    presence: linear_workspace_provider.LinearPresence,
+    presence: linear_workspace_tool_provider.LinearPresence,
     diagnostics: list[LinearMonitorDiagnostic],
 ) -> bool:
     if not presence.app_user_id:
@@ -756,7 +760,7 @@ def _max_datetime(left: Optional[datetime], right: datetime) -> datetime:
 def _failure_code(exc: Exception) -> str:
     if (
         isinstance(exc, app_client.LinearConfigError)
-        or isinstance(exc, linear_workspace_provider.LinearWorkspaceProviderConfigError)
+        or isinstance(exc, linear_workspace_tool_provider.LinearWorkspaceToolProviderConfigError)
         or isinstance(exc, AgentConfigError)
     ):
         message = str(exc).lower()
@@ -778,7 +782,7 @@ def _diagnostic(
     severity: str,
     message: str,
     *,
-    presence: Optional[linear_workspace_provider.LinearPresence] = None,
+    presence: Optional[linear_workspace_tool_provider.LinearPresence] = None,
     session_id: Optional[str] = None,
     object_id: Optional[str] = None,
     details: Optional[Mapping[str, Any]] = None,

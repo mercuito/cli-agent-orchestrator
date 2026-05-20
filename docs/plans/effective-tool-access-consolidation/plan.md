@@ -21,7 +21,7 @@ behind one `ToolService` before implementing team-role-owned access.
 Introduce a backend-owned Tool Service that answers these questions for every
 agent:
 
-- Which tools are available from CAO and registered workspace providers?
+- Which tools are available from CAO and registered workspace tool providers?
 - Which tools are registered for a terminal/runtime?
 - Which tools is an agent allowed to use?
 - Which tools is an agent blocked from using?
@@ -39,7 +39,7 @@ The Tool Service owns the tool catalog boundary, MCP tool registration, MCP
 tool access, and provider-mediated tool access decisions.
 
 It does not author every tool definition. Built-in CAO tool definitions remain
-owned by CAO MCP code, and workspace providers continue to define their own
+owned by CAO MCP code, and workspace tool providers continue to define their own
 provider-mediated tools, schemas, handlers, and vocabulary. Tool Service
 collects those provider-owned definitions into one catalog and decides which
 registered tools each agent may use.
@@ -177,7 +177,7 @@ or leaked. Treat this inventory as the initial migration checklist for
 - Team role CRUD.
 - Team metadata updates preserving roles/assignments.
 - Built-in CAO tool descriptor API.
-- Workspace-provider role-access schema API.
+- Workspace-tool-provider role-access schema API.
 - Namespace separation from CLI provider/model catalog `/providers`.
 - Vite dev proxy coverage for new dashboard API prefixes.
 - Agent detail effective tool display.
@@ -400,7 +400,7 @@ The verification must show:
 - unteamed local access still editable/effective;
 - raw transcript/operator surfaces labeled according to policy;
 - no dashboard route relies on old provider/model catalog APIs for
-  workspace-provider role access schemas.
+  workspace-tool-provider role access schemas.
 
 ### Gate 7 - Final Acceptance Review Loop
 

@@ -43,11 +43,6 @@ from cli_agent_orchestrator.runtime.events import (
 from cli_agent_orchestrator.services.agent_manager import AgentManager, AgentStatus
 from cli_agent_orchestrator.services.tool_service import ToolService
 from cli_agent_orchestrator.utils.dashboard_links import create_agent_dashboard_token
-from cli_agent_orchestrator.workspace_providers.tool_access import (
-    ProviderMediatedToolDefinition,
-    ProviderToolAccess,
-    ProviderToolAccessPolicy,
-)
 from cli_agent_orchestrator.workspace_setups import (
     WorkspaceSetup,
     WorkspaceSetupDiagnostic,
@@ -56,6 +51,11 @@ from cli_agent_orchestrator.workspace_setups import (
     WorkspaceTeamRole,
     WorkspaceTeamService,
     WorkspaceTeamStore,
+)
+from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
+    ProviderMediatedToolDefinition,
+    ProviderToolAccess,
+    ProviderToolAccessPolicy,
 )
 
 OCCURRED_AT = CaoEventOccurredAt(datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
@@ -324,9 +324,7 @@ def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monk
         def __init__(self, *, agent_manager):
             assert agent_manager is manager
             self._service = ToolService(
-                agent_manager=AgentManager(
-                    configured_agents=AgentRegistry({agent.id: agent})
-                ),
+                agent_manager=AgentManager(configured_agents=AgentRegistry({agent.id: agent})),
                 provider_policy_loader=lambda _registry: {"linear": policy},
             )
 
@@ -648,9 +646,9 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
 
     assert create_response.status_code == 201
     assert role_response.status_code == 200
-    assert role_response.json()["roles"]["reviewer"]["providers"]["linear"]["reads"][
-        "issues"
-    ] == ["*"]
+    assert role_response.json()["roles"]["reviewer"]["providers"]["linear"]["reads"]["issues"] == [
+        "*"
+    ]
     assert list_response.status_code == 200
     assert list_response.json()[0]["role_assignments"] == {}
     assert stored.roles["reviewer"] == WorkspaceTeamRole(
@@ -934,9 +932,9 @@ def test_workspace_team_member_api_moves_agent_and_returns_member_detail(
             "role_explicitly_assigned": True,
         }
     ]
-    assert WorkspaceTeamStore(tmp_path / "workspace-teams.json").get(
-        "delivery"
-    ).role_assignments == {}
+    assert (
+        WorkspaceTeamStore(tmp_path / "workspace-teams.json").get("delivery").role_assignments == {}
+    )
 
 
 def test_workspace_team_member_remove_api_clears_membership_and_assignment(
@@ -996,9 +994,9 @@ def test_workspace_team_member_remove_api_clears_membership_and_assignment(
     assert response.status_code == 200
     assert load_agent("aria", agents_root=agents_root).workspace.team is None
     assert response.json()["members"] == []
-    assert WorkspaceTeamStore(tmp_path / "workspace-teams.json").get(
-        "delivery"
-    ).role_assignments == {}
+    assert (
+        WorkspaceTeamStore(tmp_path / "workspace-teams.json").get("delivery").role_assignments == {}
+    )
 
 
 def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monkeypatch):

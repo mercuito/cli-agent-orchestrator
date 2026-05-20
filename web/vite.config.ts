@@ -28,7 +28,7 @@ export default defineConfig({
       '/monitoring': { target: 'http://localhost:9889', changeOrigin: true },
       '/workspace-setups': { target: 'http://localhost:9889', changeOrigin: true },
       '/workspace-teams': { target: 'http://localhost:9889', changeOrigin: true },
-      '/workspace-providers': { target: 'http://localhost:9889', changeOrigin: true },
+      '/workspace-tool-providers': { target: 'http://localhost:9889', changeOrigin: true },
     },
   },
 })
