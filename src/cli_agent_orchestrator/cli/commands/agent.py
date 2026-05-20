@@ -35,8 +35,11 @@ def list_agents() -> None:
         state = "running" if status.active else "stopped"
         terminal = f" {status.active_terminal_id}" if status.active_terminal_id else ""
         team = status.workspace_team_id or "none"
-        setup = status.derived_workspace_setup_id or "default"
-        click.echo(f"{status.agent_id}\t{status.cli_provider}\t{state}\tteam={team}\tsetup={setup}{terminal}")
+        workspace = status.derived_workspace_id or "default"
+        click.echo(
+            f"{status.agent_id}\t{status.cli_provider}\t{state}\t"
+            f"team={team}\tworkspace={workspace}{terminal}"
+        )
 
 
 @agent_command.command("show")
@@ -48,7 +51,7 @@ def show_agent(agent_id: str) -> None:
     if status.active_terminal_id:
         click.echo(f"terminal_id: {status.active_terminal_id}")
     click.echo(f"workspace_team: {status.workspace_team_id or 'none'}")
-    click.echo(f"workspace_setup: {status.derived_workspace_setup_id or 'default'}")
+    click.echo(f"workspace: {status.derived_workspace_id or 'default'}")
     tool_access = tool_service_for_loaded_agent(
         agent,
         fallback_agent_id=agent.id,

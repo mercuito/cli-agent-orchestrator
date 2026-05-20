@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 const listWorkspaceTeams = vi.hoisted(() => vi.fn())
-const listWorkspaceSetups = vi.hoisted(() => vi.fn())
+const listWorkspaces = vi.hoisted(() => vi.fn())
 const listCaoToolDescriptors = vi.hoisted(() => vi.fn())
 const getWorkspaceToolProviderRoleAccessSchema = vi.hoisted(() => vi.fn())
 const listAgents = vi.hoisted(() => vi.fn())
@@ -17,7 +17,7 @@ const showSnackbar = vi.hoisted(() => vi.fn())
 vi.mock('../api', () => ({
   api: {
     listWorkspaceTeams,
-    listWorkspaceSetups,
+    listWorkspaces,
     listCaoToolDescriptors,
     getWorkspaceToolProviderRoleAccessSchema,
     listAgents,
@@ -54,7 +54,7 @@ function team(overrides = {}) {
   return {
     id: 'safari_review_team',
     display_name: 'Safari Review Team',
-    workspace_setup: 'linear_delivery_setup',
+    workspace: 'linear_delivery',
     roles: {
       member: memberRole,
       reviewer: reviewerRole,
@@ -71,7 +71,7 @@ function team(overrides = {}) {
     ],
     diagnostics: [
       'Workspace team safari_review_team pruned linear app_user_id U1 for out-of-team agent discovery',
-      'Workspace team safari_review_team setup linear_delivery_setup requires unavailable provider linear',
+      'Workspace team safari_review_team workspace linear_delivery requires unavailable provider linear',
     ],
     ...overrides,
   }
@@ -112,15 +112,15 @@ const agents = [
 
 function seedDashboard(initialTeams = [team()]) {
   listWorkspaceTeams.mockResolvedValue(initialTeams)
-  listWorkspaceSetups.mockResolvedValue([
+  listWorkspaces.mockResolvedValue([
     {
-      id: 'linear_delivery_setup',
-      display_name: 'Linear Delivery Setup',
+      id: 'linear_delivery',
+      display_name: 'Linear Delivery',
       providers: ['linear'],
     },
     {
-      id: 'docs_setup',
-      display_name: 'Docs Setup',
+      id: 'docs_workspace',
+      display_name: 'Docs Workspace',
       providers: [],
     },
   ])
@@ -177,7 +177,7 @@ describe('WorkspaceTeamsPanel', () => {
     }))
     updateWorkspaceTeamMetadata.mockResolvedValue(team({
       display_name: 'Safari Review Guild',
-      workspace_setup: 'docs_setup',
+      workspace: 'docs_workspace',
     }))
     const { WorkspaceTeamsPanel } = await import('../components/WorkspaceTeamsPanel')
 
@@ -231,13 +231,13 @@ describe('WorkspaceTeamsPanel', () => {
       target: { value: 'Safari Review Guild' },
     })
     fireEvent.blur(screen.getByLabelText('Team display name'))
-    fireEvent.change(screen.getByLabelText('Workspace setup'), {
-      target: { value: 'docs_setup' },
+    fireEvent.change(screen.getByLabelText('Workspace'), {
+      target: { value: 'docs_workspace' },
     })
 
     await waitFor(() => expect(updateWorkspaceTeamMetadata).toHaveBeenLastCalledWith(
       'safari_review_team',
-      { display_name: 'Safari Review Guild', workspace_setup: 'docs_setup' },
+      { display_name: 'Safari Review Guild', workspace: 'docs_workspace' },
     ))
   })
 

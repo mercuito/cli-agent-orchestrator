@@ -22,7 +22,7 @@ make the normal UI actions first-class:
 
 - `GET /workspace-teams` lists persisted teams.
 - `PUT /workspace-teams/{team_id}` creates or updates a whole team payload.
-- `GET /workspace-setups` lists code-owned workspace setups.
+- `GET /workspaces` lists code-owned workspaces.
 - Team definitions and role policy live in `WorkspaceTeamStore` /
   `workspace-teams.json`.
 - Agent membership lives in agent config at `agent.workspace.team`.
@@ -38,8 +38,9 @@ that coordination.
 ## Non-Goals
 
 - Do not implement the Teams tab redesign in this plan.
-- Do not add workspace setup CRUD or a workspace setup editor. Workspace setups
-  remain code-owned and selectable through the existing setup registry/list API.
+- Do not add workspace CRUD or a workspace editor. Workspaces
+  remain code-owned and selectable through the existing workspace registry/list
+  API.
 - Do not change `ToolService` authority, effective access resolution, MCP
   materialization, provider conversation rules, or cross-team messaging policy.
 - Do not introduce a second team, role, or membership persistence owner.
@@ -68,9 +69,9 @@ PUT    /workspace-teams/{team_id}
 DELETE /workspace-teams/{team_id}
 ```
 
-`POST /workspace-teams` creates a team with a valid workspace setup and the
+`POST /workspace-teams` creates a team with a valid workspace and the
 default `member` role. `PUT /workspace-teams/{team_id}` updates team metadata and
-workspace setup selection without requiring the caller to resubmit unrelated
+workspace selection without requiring the caller to resubmit unrelated
 role policy or role assignments. Deleting a team rejects while any agent is a
 member of that team.
 
@@ -99,14 +100,14 @@ role assignment for the agent.
 
 The member endpoint is the only dashboard-facing operation that changes team
 membership. It must be idempotent and must validate the target team, agent, role,
-and workspace setup before writing.
+and workspace before writing.
 
 ## Response Shape
 
 Team responses must expose enough detail for the future Teams UI to render
 without deriving authority itself:
 
-- team id, display name, and workspace setup id;
+- team id, display name, and workspace id;
 - roles and role configuration;
 - role assignments;
 - member ids;
@@ -121,7 +122,7 @@ detail shape rather than inferring member role state from separate lists.
 
 1. Extend the team store/service owner.
    - Add store delete support.
-   - Add service methods for team create, metadata/setup update, delete,
+   - Add service methods for team create, metadata/workspace update, delete,
      single-role create/update, single-role delete, member assign/move, and
      member removal.
    - Keep validation and normalization inside the service/store owner.
@@ -180,8 +181,8 @@ This is the single authoritative acceptance section for this plan.
 - Role assignments for non-members remain diagnostics-only and never create
   membership.
 - Team deletion rejects while any agent is a member of the team.
-- Team workspace setup updates validate that the setup exists, but this plan
-  does not introduce workspace setup CRUD.
+- Team workspace updates validate that the workspace exists, but this plan
+  does not introduce workspace CRUD.
 - Team responses include member detail with effective/default role information
   sufficient for the future Teams UI.
 - Existing whole-team upsert behavior is either replaced for dashboard usage or
@@ -203,8 +204,8 @@ This is the single authoritative acceptance section for this plan.
 Expected verification commands:
 
 ```bash
-uv run pytest test/workspace_setups/test_workspace_setup_manager.py test/api/test_agent_routes.py -q
-uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_setup_collaboration.py -q
+uv run pytest test/workspaces/test_workspace_manager.py test/api/test_agent_routes.py -q
+uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_collaboration.py -q
 uv run python -m compileall -q src/cli_agent_orchestrator
 uv run python scripts/catalog_criteria.py
 ```
@@ -281,8 +282,8 @@ Implementation verification recorded 2026-05-19.
 - Team deletion rejects while any agent is a member of the team, verified by
   `test_team_service_deletes_empty_team_and_rejects_member_team_deletion` and
   `test_workspace_team_api_rejects_member_role_and_member_team_deletion`.
-- Team workspace setup create/update paths validate setup existence through
-  `WorkspaceSetupRegistry.get`; no workspace setup CRUD was added.
+- Team workspace create/update paths validate workspace existence through
+  `WorkspaceRegistry.get`; no workspace CRUD was added.
 - Team responses now include `member_details` with `agent_id`, `display_name`,
   effective `role_id`, and `role_explicitly_assigned`, verified by
   `test_workspace_team_member_api_moves_agent_and_returns_member_detail`.
@@ -299,7 +300,7 @@ Implementation verification recorded 2026-05-19.
   services.
 - `ToolService` effective access code was not changed. Existing behavior was
   reverified by `uv run pytest test/services/test_tool_service.py
-  test/mcp_server/test_workspace_setup_collaboration.py -q`.
+  test/mcp_server/test_workspace_collaboration.py -q`.
 - Tests verify service/store and HTTP API owner surfaces without mocking target
   behavior. Agent membership tests write real temporary agent config files via
   `write_agent` and inspect them via `load_agent`.
@@ -315,9 +316,9 @@ Implementation verification recorded 2026-05-19.
 
 ### Verification Commands
 
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py test/api/test_agent_routes.py -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py test/api/test_agent_routes.py -q`
   passed: 58 tests.
-- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_setup_collaboration.py -q`
+- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_collaboration.py -q`
   passed: 35 tests.
 - `uv run python -m compileall -q src/cli_agent_orchestrator` passed.
 - `uv run python scripts/catalog_criteria.py` passed and reported the criteria
@@ -341,7 +342,7 @@ before membership-sensitive deletion checks. Regression coverage was added in
 
 Evidence after the fix:
 
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py -q`
   passed.
 
 ### Revision 2: Forbid Agent Route Membership Bypass
@@ -361,9 +362,9 @@ added in `test_update_agent_rejects_direct_workspace_team_mutation` and
 
 Evidence after the fix:
 
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py test/api/test_agent_routes.py -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py test/api/test_agent_routes.py -q`
   passed: 58 tests.
-- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_setup_collaboration.py -q`
+- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_collaboration.py -q`
   passed: 35 tests.
 - `uv run python -m compileall -q src/cli_agent_orchestrator` passed.
 - `uv run python scripts/catalog_criteria.py` passed.
@@ -386,11 +387,11 @@ without an injected root. Regression coverage was added in
 
 Evidence after the fix:
 
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py::test_default_team_service_uses_injected_agents_root_for_member_writes test/workspace_setups/test_workspace_setup_manager.py::test_reused_default_root_team_service_rejects_delete_after_member_assignment -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py::test_default_team_service_uses_injected_agents_root_for_member_writes test/workspaces/test_workspace_manager.py::test_reused_default_root_team_service_rejects_delete_after_member_assignment -q`
   passed: 2 tests.
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py test/api/test_agent_routes.py -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py test/api/test_agent_routes.py -q`
   passed: 58 tests.
-- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_setup_collaboration.py -q`
+- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_collaboration.py -q`
   passed: 35 tests.
 - `uv run python -m compileall -q src/cli_agent_orchestrator` passed.
 - `uv run python scripts/catalog_criteria.py` passed.
@@ -410,9 +411,9 @@ these notes non-blocking for the Definition of Done.
 Reviewer 2 reported zero valid findings. The reviewer independently reran the
 full verification set and `git diff --check` for touched paths:
 
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py test/api/test_agent_routes.py -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py test/api/test_agent_routes.py -q`
   passed: 57 tests.
-- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_setup_collaboration.py -q`
+- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_collaboration.py -q`
   passed: 35 tests.
 - `uv run python -m compileall -q src/cli_agent_orchestrator` passed.
 - `uv run python scripts/catalog_criteria.py` passed.
@@ -425,9 +426,9 @@ superseded by Revision 3 and restarted.
 
 Reviewer 3 reported zero valid findings after Revision 3. The reviewer reran:
 
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py::test_default_team_service_uses_injected_agents_root_for_member_writes test/workspace_setups/test_workspace_setup_manager.py::test_reused_default_root_team_service_rejects_delete_after_member_assignment -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py::test_default_team_service_uses_injected_agents_root_for_member_writes test/workspaces/test_workspace_manager.py::test_reused_default_root_team_service_rejects_delete_after_member_assignment -q`
   passed.
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py test/api/test_agent_routes.py -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py test/api/test_agent_routes.py -q`
   passed: 58 tests.
 - `uv run python scripts/catalog_criteria.py` passed.
 - `git diff --check` for touched paths passed.
@@ -440,11 +441,11 @@ ToolService/collaboration suite or compileall during review.
 
 Reviewer 4 reported zero valid findings after Revision 3. The reviewer reran:
 
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py::test_default_team_service_uses_injected_agents_root_for_member_writes test/workspace_setups/test_workspace_setup_manager.py::test_reused_default_root_team_service_rejects_delete_after_member_assignment -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py::test_default_team_service_uses_injected_agents_root_for_member_writes test/workspaces/test_workspace_manager.py::test_reused_default_root_team_service_rejects_delete_after_member_assignment -q`
   passed.
-- `uv run pytest test/workspace_setups/test_workspace_setup_manager.py test/api/test_agent_routes.py -q`
+- `uv run pytest test/workspaces/test_workspace_manager.py test/api/test_agent_routes.py -q`
   passed: 58 tests.
-- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_setup_collaboration.py -q`
+- `uv run pytest test/services/test_tool_service.py test/mcp_server/test_workspace_collaboration.py -q`
   passed: 35 tests.
 - `uv run python -m compileall -q src/cli_agent_orchestrator` passed.
 - `uv run python scripts/catalog_criteria.py` passed.

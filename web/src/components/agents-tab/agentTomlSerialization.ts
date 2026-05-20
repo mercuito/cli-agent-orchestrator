@@ -199,7 +199,9 @@ export function parseAgentTomlDraft(text: string): AgentWriteRequest {
     const [, key, rawValue] = match
     const value = parseTomlValue(rawValue)
     if (section === 'workspace') {
-      if (key === 'setup') return
+      if (key === 'setup') {
+        throw new Error('[workspace].setup is not supported; use [workspace].team')
+      }
       body.workspace = { ...(body.workspace || {}), [key]: value } as AgentWriteRequest['workspace']
       return
     }

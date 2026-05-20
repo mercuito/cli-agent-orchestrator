@@ -122,13 +122,13 @@ from cli_agent_orchestrator.utils.skills import (
     load_skill_content,
     validate_skill_name,
 )
-from cli_agent_orchestrator.workspace_setups import (
+from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
-    WorkspaceSetupConfigError,
+    WorkspaceConfigError,
     WorkspaceTeam,
     WorkspaceTeamRole,
     default_workspace_collaboration_manager,
-    default_workspace_setup_registry,
+    default_workspace_registry,
     default_workspace_team_service,
 )
 from cli_agent_orchestrator.workspace_tool_providers import (
@@ -181,7 +181,7 @@ def _require_inbox_message_policy(sender_id: str, receiver_id: str) -> None:
     """Enforce team collaboration policy before terminal inbox persistence."""
     try:
         require_terminal_same_team_collaboration(sender_id, receiver_id)
-    except WorkspaceSetupConfigError as exc:
+    except WorkspaceConfigError as exc:
         detail = str(exc)
         status_code = (
             status.HTTP_404_NOT_FOUND
@@ -266,7 +266,7 @@ class AgentRuntimeTerminalResponse(BaseModel):
 
 class AgentWorkspaceResponse(BaseModel):
     team: Optional[str] = None
-    derived_setup: Optional[str] = None
+    derived_workspace: Optional[str] = None
     diagnostics: List[str] = []
 
 
@@ -381,7 +381,7 @@ class AgentConfigResponse(BaseModel):
             codex_config=dict(agent.codex_config),
             workspace=AgentWorkspaceResponse(
                 team=agent.workspace.team,
-                derived_setup=_derived_setup_for_agent(agent),
+                derived_workspace=_derived_workspace_for_agent(agent),
                 diagnostics=list(agent.workspace.diagnostics),
             ),
             linear=linear,
@@ -529,7 +529,7 @@ class AgentStatusResponse(BaseModel):
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
     workspace_team_id: Optional[str] = None
-    derived_workspace_setup_id: Optional[str] = None
+    derived_workspace_id: Optional[str] = None
     workspace_team_diagnostics: List[str] = []
     mcp_tool_surface: AgentMcpToolSurfaceResponse
     effective_tool_access: EffectiveToolAccessResponse
@@ -564,7 +564,7 @@ class AgentStatusResponse(BaseModel):
             active_terminal_id=status.active_terminal_id,
             active_workspace_context_id=status.active_workspace_context_id,
             workspace_team_id=status.workspace_team_id,
-            derived_workspace_setup_id=status.derived_workspace_setup_id,
+            derived_workspace_id=status.derived_workspace_id,
             workspace_team_diagnostics=list(status.workspace_team_diagnostics),
             mcp_tool_surface=mcp_tool_surface,
             effective_tool_access=effective_tool_access,
@@ -572,16 +572,16 @@ class AgentStatusResponse(BaseModel):
         )
 
 
-class WorkspaceSetupDiagnosticResponse(BaseModel):
+class WorkspaceDiagnosticResponse(BaseModel):
     code: str
     message: str
     team_id: Optional[str] = None
-    setup_id: Optional[str] = None
+    workspace_id: Optional[str] = None
     agent_id: Optional[str] = None
     provider_name: Optional[str] = None
 
 
-class WorkspaceSetupResponse(BaseModel):
+class WorkspaceResponse(BaseModel):
     id: str
     display_name: str
     providers: List[str]
@@ -637,7 +637,7 @@ class WorkspaceTeamMemberResponse(BaseModel):
 class WorkspaceTeamResponse(BaseModel):
     id: str
     display_name: str
-    workspace_setup: str
+    workspace: str
     roles: Dict[str, WorkspaceTeamRoleResponse] = Field(default_factory=dict)
     role_assignments: Dict[str, str] = Field(default_factory=dict)
     members: List[str] = Field(default_factory=list)
@@ -670,7 +670,7 @@ class WorkspaceTeamResponse(BaseModel):
         return cls(
             id=team.id,
             display_name=team.display_name,
-            workspace_setup=team.workspace_setup,
+            workspace=team.workspace,
             roles={
                 role_id: WorkspaceTeamRoleResponse.from_role(role_id, role)
                 for role_id, role in sorted(team.roles.items())
@@ -698,7 +698,7 @@ class WorkspaceTeamCreateRequest(BaseModel):
 
     id: str
     display_name: str
-    workspace_setup: str
+    workspace: str
 
 
 class WorkspaceTeamUpdateRequest(BaseModel):
@@ -706,7 +706,7 @@ class WorkspaceTeamUpdateRequest(BaseModel):
 
     id: Optional[str] = None
     display_name: str
-    workspace_setup: str
+    workspace: str
 
 
 class WorkspaceTeamRoleWriteRequest(WorkspaceTeamRoleResponse):
@@ -719,11 +719,11 @@ class WorkspaceTeamMemberAssignRequest(BaseModel):
     role_id: Optional[str] = None
 
 
-def _derived_setup_for_agent(agent: Agent) -> Optional[str]:
+def _derived_workspace_for_agent(agent: Agent) -> Optional[str]:
     if agent.workspace.team is None:
         return None
     try:
-        return default_workspace_team_service().setup_for_team(agent.workspace.team).id
+        return default_workspace_team_service().workspace_for_team(agent.workspace.team).id
     except Exception:
         return None
 
@@ -1400,16 +1400,16 @@ async def get_provider_catalog_endpoint(provider_type: str) -> ProviderCatalogRe
     )
 
 
-@app.get("/workspace-setups/diagnostics", response_model=List[WorkspaceSetupDiagnosticResponse])
-async def list_workspace_setup_diagnostics_endpoint() -> List[WorkspaceSetupDiagnosticResponse]:
-    """Return workspace team/setup validation and pruning diagnostics."""
+@app.get("/workspaces/diagnostics", response_model=List[WorkspaceDiagnosticResponse])
+async def list_workspace_diagnostics_endpoint() -> List[WorkspaceDiagnosticResponse]:
+    """Return workspace team/workspace validation and pruning diagnostics."""
     try:
         return [
-            WorkspaceSetupDiagnosticResponse(
+            WorkspaceDiagnosticResponse(
                 code=diagnostic.code,
                 message=diagnostic.message,
                 team_id=diagnostic.team_id,
-                setup_id=diagnostic.setup_id,
+                workspace_id=diagnostic.workspace_id,
                 agent_id=diagnostic.agent_id,
                 provider_name=diagnostic.provider_name,
             )
@@ -1419,16 +1419,16 @@ async def list_workspace_setup_diagnostics_endpoint() -> List[WorkspaceSetupDiag
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@app.get("/workspace-setups", response_model=List[WorkspaceSetupResponse])
-async def list_workspace_setups_endpoint() -> List[WorkspaceSetupResponse]:
-    """Return code-owned workspace setups available to teams."""
+@app.get("/workspaces", response_model=List[WorkspaceResponse])
+async def list_workspaces_endpoint() -> List[WorkspaceResponse]:
+    """Return code-owned workspaces available to teams."""
     return [
-        WorkspaceSetupResponse(
-            id=setup.id,
-            display_name=setup.display_name,
-            providers=list(setup.providers),
+        WorkspaceResponse(
+            id=workspace.id,
+            display_name=workspace.display_name,
+            providers=list(workspace.providers),
         )
-        for setup in default_workspace_setup_registry().all()
+        for workspace in default_workspace_registry().all()
     ]
 
 
@@ -1524,7 +1524,7 @@ async def create_workspace_team_endpoint(
         team = default_workspace_team_service().create_team(
             team_id=body.id,
             display_name=body.display_name,
-            workspace_setup=body.workspace_setup,
+            workspace=body.workspace,
         )
         return WorkspaceTeamResponse.from_team(team)
     except (AgentConfigError, AgentPathError, ValueError) as e:
@@ -1542,7 +1542,7 @@ async def upsert_workspace_team_endpoint(
         team = default_workspace_team_service().update_team_metadata(
             team_id=team_id,
             display_name=body.display_name,
-            workspace_setup=body.workspace_setup,
+            workspace=body.workspace,
         )
         return WorkspaceTeamResponse.from_team(team)
     except (AgentConfigError, AgentPathError, ValueError) as e:

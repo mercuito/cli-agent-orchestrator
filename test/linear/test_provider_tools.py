@@ -104,7 +104,7 @@ def test_provider_tools_imports_without_workspace_tool_provider_import_order():
 
 def _agents(
     *,
-    workspace_setup: str | None = None,
+    workspace: str | None = None,
     tool_access_by_agent: Mapping[str, tuple[LinearToolAccessConfig, ...]] | None = None,
 ) -> AgentRegistry:
     tool_access_by_agent = tool_access_by_agent or {}
@@ -117,7 +117,7 @@ def _agents(
                 workdir="/repo",
                 session_name="implementation-partner",
                 prompt="# Implementation Partner\n",
-                workspace=AgentWorkspaceConfig(team=workspace_setup),
+                workspace=AgentWorkspaceConfig(team=workspace),
                 linear=LinearConfig(
                     app_key="implementation_partner",
                     access_token="access-token",
@@ -190,11 +190,11 @@ def _provider(
     tmp_path,
     tool_access_body: str,
     *,
-    workspace_setup_enabled: bool = False,
+    workspace_enabled: bool = False,
 ) -> LinearWorkspaceToolProvider:
     provider = LinearWorkspaceToolProvider(
         agent_registry=_agents(
-            workspace_setup="cao_delivery" if workspace_setup_enabled else None,
+            workspace="cao_delivery" if workspace_enabled else None,
             tool_access_by_agent=_tool_access_from_body(tool_access_body),
         ),
         preflight_credentials=False,
@@ -226,11 +226,11 @@ def _mcp_for_provider(
     provider: LinearWorkspaceToolProvider,
     terminal_id: str,
     *,
-    workspace_setup_enabled: bool = False,
+    workspace_enabled: bool = False,
 ):
     policy = provider.provider_tool_access()
-    agents = _agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None)
-    tool_service = _tool_service_for_test(policy, agents) if workspace_setup_enabled else None
+    agents = _agents(workspace="cao_delivery" if workspace_enabled else None)
+    tool_service = _tool_service_for_test(policy, agents) if workspace_enabled else None
     mcp = FastMCP(f"linear-tools-{terminal_id}", mask_error_details=False)
     registered = register_provider_mediated_mcp_tools(
         terminal_id=terminal_id,
@@ -269,7 +269,7 @@ create_parent_issues = ["CAO-28"]
 allow_top_level_create = true
 update_fields = {json.dumps(sorted(UPDATE_ISSUE_FIELDS))}
 """,
-        workspace_setup_enabled=True,
+        workspace_enabled=True,
     )
     policy = provider.provider_tool_access()
 
@@ -690,15 +690,15 @@ def _mutated_project_payload(
 def _service(
     provider: LinearWorkspaceToolProvider,
     *,
-    workspace_setup_enabled: bool = False,
+    workspace_enabled: bool = False,
 ) -> ProviderMediatedToolInvocationService:
     policy = provider.provider_tool_access()
-    agents = _agents(workspace_setup="cao_delivery" if workspace_setup_enabled else None)
+    agents = _agents(workspace="cao_delivery" if workspace_enabled else None)
     return ProviderMediatedToolInvocationService(
         policies={"linear": policy},
         agent_registry=agents,
         terminal_metadata_resolver=_terminal_metadata,
-        tool_service=_tool_service_for_test(policy, agents) if workspace_setup_enabled else None,
+        tool_service=_tool_service_for_test(policy, agents) if workspace_enabled else None,
     )
 
 
@@ -720,16 +720,16 @@ def _tool_service_for_test(
         agent_manager=AgentManager(configured_agents=agents),
         terminal_metadata_resolver=_terminal_metadata,
         provider_policy_loader=lambda _registry: {"linear": team_policy},
-        collaboration_manager_factory=lambda _registry: _WorkspaceSetupManager(team_policy),
+        collaboration_manager_factory=lambda _registry: _WorkspaceManager(team_policy),
     )
 
 
-class _WorkspaceSetupManager:
+class _WorkspaceManager:
     def __init__(self, policy) -> None:
         self._policy = policy
 
-    def setup_for_agent(self, agent):
-        return _WorkspaceSetup()
+    def workspace_for_agent(self, agent):
+        return _Workspace()
 
     def authorized_tool_access_locations(self, provider_name: str):
         if provider_name != "linear":
@@ -737,7 +737,7 @@ class _WorkspaceSetupManager:
         return tuple(access.source_location for access in self._policy.access)
 
 
-class _WorkspaceSetup:
+class _Workspace:
     providers = ("linear",)
 
 

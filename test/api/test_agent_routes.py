@@ -43,10 +43,10 @@ from cli_agent_orchestrator.runtime.events import (
 from cli_agent_orchestrator.services.agent_manager import AgentManager, AgentStatus
 from cli_agent_orchestrator.services.tool_service import ToolService
 from cli_agent_orchestrator.utils.dashboard_links import create_agent_dashboard_token
-from cli_agent_orchestrator.workspace_setups import (
-    WorkspaceSetup,
-    WorkspaceSetupDiagnostic,
-    WorkspaceSetupRegistry,
+from cli_agent_orchestrator.workspaces import (
+    Workspace,
+    WorkspaceDiagnostic,
+    WorkspaceRegistry,
     WorkspaceTeam,
     WorkspaceTeamRole,
     WorkspaceTeamService,
@@ -475,10 +475,10 @@ def test_get_agent_reads_tool_metadata_from_tool_service_owner(client, monkeypat
     assert response.json()["effective_tool_access"]["allowed_tools"] == ["assign"]
 
 
-def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(client, monkeypatch):
+def test_workspace_diagnostics_endpoint_surfaces_manager_diagnostics(client, monkeypatch):
     manager = SimpleNamespace(
         diagnostics=lambda: (
-            WorkspaceSetupDiagnostic(
+            WorkspaceDiagnostic(
                 code="unknown_team",
                 message="Unknown workspace team: future",
                 team_id="future",
@@ -491,7 +491,7 @@ def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(clien
         lambda: manager,
     )
 
-    response = client.get("/workspace-setups/diagnostics")
+    response = client.get("/workspaces/diagnostics")
 
     assert response.status_code == 200
     assert response.json() == [
@@ -499,7 +499,7 @@ def test_workspace_setup_diagnostics_endpoint_surfaces_manager_diagnostics(clien
             "code": "unknown_team",
             "message": "Unknown workspace team: future",
             "team_id": "future",
-            "setup_id": None,
+            "workspace_id": None,
             "agent_id": "implementation_partner",
             "provider_name": None,
         }
@@ -511,7 +511,7 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
     team = WorkspaceTeam(
         id="cao_delivery",
         display_name="CAO Delivery",
-        workspace_setup="linear_delivery_setup",
+        workspace="linear_delivery",
     )
 
     class _TeamService:
@@ -523,13 +523,13 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
             *,
             team_id: str,
             display_name: str,
-            workspace_setup: str,
+            workspace: str,
         ):
-            saved.append((team_id, display_name, workspace_setup))
+            saved.append((team_id, display_name, workspace))
             return WorkspaceTeam(
                 id=team_id,
                 display_name=display_name,
-                workspace_setup=workspace_setup,
+                workspace=workspace,
             )
 
     monkeypatch.setattr(
@@ -552,12 +552,12 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
         lambda: SimpleNamespace(diagnostics=lambda: ()),
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.api.main.default_workspace_setup_registry",
+        "cli_agent_orchestrator.api.main.default_workspace_registry",
         lambda: SimpleNamespace(
             all=lambda: (
-                WorkspaceSetup(
-                    id="linear_delivery_setup",
-                    display_name="Linear Delivery Setup",
+                Workspace(
+                    id="linear_delivery",
+                    display_name="Linear Delivery",
                     providers=("linear",),
                     resolver=lambda event: None,
                 ),
@@ -566,32 +566,59 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
     )
 
     list_response = client.get("/workspace-teams")
-    setups_response = client.get("/workspace-setups")
+    workspaces_response = client.get("/workspaces")
     save_response = client.put(
         "/workspace-teams/research",
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace_setup": "linear_delivery_setup",
+            "workspace": "linear_delivery",
         },
     )
 
     assert list_response.status_code == 200
     assert list_response.json()[0]["members"] == ["implementation_partner"]
-    assert setups_response.status_code == 200
-    assert setups_response.json()[0]["id"] == "linear_delivery_setup"
+    assert workspaces_response.status_code == 200
+    assert workspaces_response.json()[0]["id"] == "linear_delivery"
     assert save_response.status_code == 200
-    assert saved == [("research", "Research", "linear_delivery_setup")]
+    assert saved == [("research", "Research", "linear_delivery")]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ("/workspace-setups", "/workspace-setups/diagnostics"),
+)
+def test_legacy_workspace_setup_routes_are_not_registered(client, path):
+    response = client.get(path)
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    (("post", "/workspace-teams"), ("put", "/workspace-teams/research")),
+)
+def test_workspace_team_write_rejects_legacy_workspace_setup_field(client, method, path):
+    response = getattr(client, method)(
+        path,
+        json={
+            "id": "research",
+            "display_name": "Research",
+            "workspace_setup": "linear_delivery",
+        },
+    )
+
+    assert response.status_code == 400
 
 
 def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
     client, monkeypatch, tmp_path
 ):
-    setup_registry = WorkspaceSetupRegistry(
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id="linear_delivery_setup",
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id="linear_delivery",
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=lambda event: None,
             ),
@@ -599,7 +626,7 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
     )
     team_store = WorkspaceTeamStore(tmp_path / "workspace-teams.json", bootstrap_teams=())
     service = WorkspaceTeamService(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_store=team_store,
         agent_registry=AgentRegistry({}),
         available_providers=("linear",),
@@ -622,7 +649,7 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace_setup": "linear_delivery_setup",
+            "workspace": "linear_delivery",
         },
     )
     role_response = client.put(
@@ -667,18 +694,18 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
 
 
 def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch, tmp_path):
-    setup_registry = WorkspaceSetupRegistry(
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id="linear_delivery_setup",
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id="linear_delivery",
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=lambda event: None,
             ),
         )
     )
     service = WorkspaceTeamService(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_store=WorkspaceTeamStore(tmp_path / "workspace-teams.json", bootstrap_teams=()),
         agent_registry=AgentRegistry({}),
         available_providers=("linear",),
@@ -701,7 +728,7 @@ def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace_setup": "linear_delivery_setup",
+            "workspace": "linear_delivery",
         },
     )
     fetched = client.get("/workspace-teams/research")
@@ -710,7 +737,7 @@ def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch
         json={
             "id": "research",
             "display_name": "Research Renamed",
-            "workspace_setup": "linear_delivery_setup",
+            "workspace": "linear_delivery",
         },
     )
     deleted = client.delete("/workspace-teams/research")
@@ -729,25 +756,25 @@ def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch
 def test_workspace_team_role_delete_api_falls_assignments_back_to_member(
     client, monkeypatch, tmp_path
 ):
-    setup_registry = WorkspaceSetupRegistry(
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id="linear_delivery_setup",
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id="linear_delivery",
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=lambda event: None,
             ),
         )
     )
     service = WorkspaceTeamService(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_store=WorkspaceTeamStore(
             tmp_path / "workspace-teams.json",
             bootstrap_teams=(
                 WorkspaceTeam(
                     id="research",
                     display_name="Research",
-                    workspace_setup="linear_delivery_setup",
+                    workspace="linear_delivery",
                     roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                     role_assignments={"aria": "reviewer"},
                 ),
@@ -784,25 +811,25 @@ def test_workspace_team_api_rejects_member_role_and_member_team_deletion(
         replace(_agent("aria"), workspace=AgentWorkspaceConfig(team="research")),
         agents_root=agents_root,
     )
-    setup_registry = WorkspaceSetupRegistry(
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id="linear_delivery_setup",
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id="linear_delivery",
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=lambda event: None,
             ),
         )
     )
     service = WorkspaceTeamService(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_store=WorkspaceTeamStore(
             tmp_path / "workspace-teams.json",
             bootstrap_teams=(
                 WorkspaceTeam(
                     id="research",
                     display_name="Research",
-                    workspace_setup="linear_delivery_setup",
+                    workspace="linear_delivery",
                 ),
             ),
         ),
@@ -838,7 +865,7 @@ def test_workspace_team_metadata_put_rejects_legacy_role_policy_payload(client, 
     team = WorkspaceTeam(
         id="research",
         display_name="Research",
-        workspace_setup="linear_delivery_setup",
+        workspace="linear_delivery",
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_workspace_team_service",
@@ -850,7 +877,7 @@ def test_workspace_team_metadata_put_rejects_legacy_role_policy_payload(client, 
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace_setup": "linear_delivery_setup",
+            "workspace": "linear_delivery",
             "roles": {"reviewer": {"display_name": "Reviewer"}},
         },
     )
@@ -867,11 +894,11 @@ def test_workspace_team_member_api_moves_agent_and_returns_member_detail(
         replace(_agent("aria"), workspace=AgentWorkspaceConfig(team="delivery")),
         agents_root=agents_root,
     )
-    setup_registry = WorkspaceSetupRegistry(
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id="linear_delivery_setup",
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id="linear_delivery",
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=lambda event: None,
             ),
@@ -883,19 +910,19 @@ def test_workspace_team_member_api_moves_agent_and_returns_member_detail(
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup="linear_delivery_setup",
+                workspace="linear_delivery",
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                 role_assignments={"aria": "reviewer"},
             ),
             WorkspaceTeam(
                 id="research",
                 display_name="Research",
-                workspace_setup="linear_delivery_setup",
+                workspace="linear_delivery",
             ),
         ),
     )
     service = WorkspaceTeamService(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_store=team_store,
         agent_registry=load_agent_registry(agents_root=agents_root),
         available_providers=("linear",),
@@ -945,11 +972,11 @@ def test_workspace_team_member_remove_api_clears_membership_and_assignment(
         replace(_agent("aria"), workspace=AgentWorkspaceConfig(team="delivery")),
         agents_root=agents_root,
     )
-    setup_registry = WorkspaceSetupRegistry(
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id="linear_delivery_setup",
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id="linear_delivery",
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=lambda event: None,
             ),
@@ -961,14 +988,14 @@ def test_workspace_team_member_remove_api_clears_membership_and_assignment(
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup="linear_delivery_setup",
+                workspace="linear_delivery",
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                 role_assignments={"aria": "reviewer"},
             ),
         ),
     )
     service = WorkspaceTeamService(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_store=team_store,
         agent_registry=load_agent_registry(agents_root=agents_root),
         available_providers=("linear",),
@@ -1003,7 +1030,7 @@ def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monk
     team = WorkspaceTeam(
         id="cao_delivery",
         display_name="CAO Delivery",
-        workspace_setup="linear_delivery_setup",
+        workspace="linear_delivery",
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_workspace_team_service",
@@ -1017,22 +1044,22 @@ def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monk
         "cli_agent_orchestrator.api.main.default_workspace_collaboration_manager",
         lambda: SimpleNamespace(
             diagnostics=lambda: (
-                WorkspaceSetupDiagnostic(
+                WorkspaceDiagnostic(
                     code="pruned_provider_identity",
                     message="Workspace team cao_delivery pruned linear tool access for discovery",
                     team_id="cao_delivery",
-                    setup_id="linear_delivery_setup",
+                    workspace_id="linear_delivery",
                     agent_id="discovery",
                     provider_name="linear",
                 ),
-                WorkspaceSetupDiagnostic(
+                WorkspaceDiagnostic(
                     code="unavailable_provider",
                     message=(
-                        "Workspace team cao_delivery setup linear_delivery_setup "
+                        "Workspace team cao_delivery workspace linear_delivery "
                         "requires unavailable provider linear"
                     ),
                     team_id="cao_delivery",
-                    setup_id="linear_delivery_setup",
+                    workspace_id="linear_delivery",
                     provider_name="linear",
                 ),
             )
@@ -1043,7 +1070,7 @@ def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monk
 
     assert response.status_code == 200
     assert response.json()[0]["diagnostics"] == [
-        "Workspace team cao_delivery setup linear_delivery_setup requires unavailable provider linear"
+        "Workspace team cao_delivery workspace linear_delivery requires unavailable provider linear"
     ]
 
 
@@ -1527,7 +1554,7 @@ def test_create_agent_rejects_direct_workspace_team_membership(client, monkeypat
     assert "/workspace-teams/{team_id}/members/{agent_id}" in response.json()["detail"]
 
 
-def test_update_agent_rejects_legacy_workspace_setup(client, monkeypatch):
+def test_update_agent_rejects_legacy_workspace(client, monkeypatch):
     existing_agent = replace(_agent(), workspace=AgentWorkspaceConfig(team="cao_delivery"))
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.load_agent",
@@ -1536,7 +1563,7 @@ def test_update_agent_rejects_legacy_workspace_setup(client, monkeypatch):
 
     response = client.put(
         "/agents/implementation_partner",
-        json={"workspace": {"setup": "linear_delivery_setup"}},
+        json={"workspace": {"setup": "linear_delivery"}},
     )
 
     assert response.status_code == 400

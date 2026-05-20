@@ -54,8 +54,8 @@ from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
 from cli_agent_orchestrator.services.tool_service import ToolService, default_tool_service
 from cli_agent_orchestrator.utils.terminal import wait_until_terminal_status
-from cli_agent_orchestrator.workspace_setups import (
-    WorkspaceSetupConfigError,
+from cli_agent_orchestrator.workspaces import (
+    WorkspaceConfigError,
     default_workspace_collaboration_manager,
 )
 from cli_agent_orchestrator.workspace_tool_providers.registry import (
@@ -430,18 +430,18 @@ def _require_workspace_team_collaboration(receiver_agent_id: str) -> None:
 def _sender_agent_id_for_workspace_team_guard() -> str:
     sender_terminal_id = os.getenv("CAO_TERMINAL_ID")
     if not sender_terminal_id:
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             "Workspace team collaboration rejected: sender terminal is unknown"
         )
     sender_metadata = db_module.get_terminal_metadata(sender_terminal_id)
     if sender_metadata is None:
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Workspace team collaboration rejected: sender terminal {sender_terminal_id} "
             "is unknown"
         )
     sender_agent_id = sender_metadata.get("agent_id")
     if not isinstance(sender_agent_id, str) or not sender_agent_id.strip():
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Workspace team collaboration rejected: sender terminal {sender_terminal_id} "
             "has no CAO agent"
         )
@@ -452,13 +452,13 @@ def _require_workspace_team_terminal_collaboration(receiver_terminal_id: str) ->
     sender_agent_id = _sender_agent_id_for_workspace_team_guard()
     receiver_metadata = db_module.get_terminal_metadata(receiver_terminal_id)
     if receiver_metadata is None:
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Workspace team collaboration rejected: receiver terminal {receiver_terminal_id} "
             "is unknown"
         )
     receiver_agent_id = receiver_metadata.get("agent_id")
     if not isinstance(receiver_agent_id, str) or not receiver_agent_id.strip():
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Workspace team collaboration rejected: receiver terminal {receiver_terminal_id} "
             "has no CAO agent"
         )

@@ -98,7 +98,7 @@ the affected service result to recompute:
   runtime capabilities;
 - team membership and selected role for the agent;
 - team role grants, including CAO tools, MCP servers, and provider grants;
-- workspace setup/provider configuration;
+- workspace/provider configuration;
 - enabled/available provider set;
 - built-in CAO tool registry changes;
 - provider tool registry/source changes;
@@ -173,9 +173,9 @@ Use tests at the owner boundary first:
   report. It does not need to be a brittle timing assertion in CI, but the
   evidence must be reproducible.
 
-Tests must use owner surfaces for setup wherever practical. Do not seed private
-provider/tool internals unless there is no public owner surface; any exception
-must be documented in the test.
+Tests must use owner surfaces for workspace and provider state wherever
+practical. Do not seed private provider/tool internals unless there is no
+public owner surface; any exception must be documented in the test.
 
 ## Criteria Catalog
 
@@ -228,7 +228,7 @@ catalog. No criteria applicable to the completed diff may be violated.
 - The implementation documents, in code or completion report, exactly what is
   reused and which inputs invalidate it.
 - Live authority data is not cached blindly: agent config, team membership,
-  role grants, workspace setup/provider state, provider availability, and
+  role grants, workspace/provider state, provider availability, and
   runtime/source freshness changes recompute affected answers.
 - Existing `/agents` and `/agents/{agent_id}` response behavior is preserved or
   any deliberate response-shape change is explicitly documented and tested.
@@ -248,4 +248,3 @@ catalog. No criteria applicable to the completed diff may be violated.
   documented in the completion report, and the review loop restarts.
 - Completion requires two successive fresh-context reviews with zero valid
   findings.
-

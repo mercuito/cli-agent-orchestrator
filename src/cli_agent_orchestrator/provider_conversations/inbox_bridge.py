@@ -20,7 +20,7 @@ from cli_agent_orchestrator.provider_conversations.inbox_read_presentation impor
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
-from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
+from cli_agent_orchestrator.workspaces import WorkspaceConfigError
 
 PROVIDER_CONVERSATION_INBOX_SOURCE_KIND = "provider_conversation_thread"
 PROVIDER_CONVERSATION_INBOX_ROUTE_KIND = "provider_conversation_thread"
@@ -228,7 +228,7 @@ def _require_provider_preview_authorized(
         provider_identity=provider_identity,
     )
     if not decision.allowed:
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             "Provider conversation preview is not authorized by ToolService: "
             f"{decision.reason}"
         )
@@ -272,25 +272,25 @@ def _require_receiver_authorized_for_agent(
 ) -> None:
     agent_id = authorized_agent_id.strip()
     if not agent_id:
-        raise WorkspaceSetupConfigError("authorized_agent_id is required")
+        raise WorkspaceConfigError("authorized_agent_id is required")
 
     agent_receiver_prefix = f"agent:{agent_id}"
     if receiver_id == agent_receiver_prefix or receiver_id.startswith(f"{agent_receiver_prefix}:"):
         return
 
     if receiver_id.startswith("agent:"):
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Provider conversation receiver {receiver_id!r} is not owned by "
             f"team-authorized agent {agent_id!r}"
         )
 
     terminal = session.get(db_module.TerminalModel, receiver_id)
     if terminal is None:
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Provider conversation receiver terminal {receiver_id!r} was not found"
         )
     if terminal.agent_id != agent_id:
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Provider conversation receiver terminal {receiver_id!r} is owned by "
             f"agent {terminal.agent_id!r}, not team-authorized agent {agent_id!r}"
         )

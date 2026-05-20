@@ -21,7 +21,7 @@ from cli_agent_orchestrator.services.collaboration_policy import (
     require_terminal_workspace_team,
 )
 from cli_agent_orchestrator.services.tool_service import default_tool_service
-from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
+from cli_agent_orchestrator.workspaces import WorkspaceConfigError
 
 
 class BatonError(Exception):
@@ -79,7 +79,7 @@ def _require_operator_reassign_receiver(db: Session, row: BatonModel, receiver_i
         return
     try:
         require_terminal_workspace_team(row.current_holder_id, db=db, role="Current baton holder")
-    except WorkspaceSetupConfigError:
+    except WorkspaceConfigError:
         return
     require_terminal_same_team_collaboration(row.current_holder_id, receiver_id, db=db)
 

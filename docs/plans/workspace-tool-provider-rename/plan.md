@@ -4,7 +4,7 @@ Status: Draft
 
 ## Goal
 
-Rename the active “workspace provider” concept to “workspace tool provider” so the code matches the current model: these integrations do not provide a workspace; they provide tools, identity/addressability metadata, and provider-backed behavior for a workspace setup/team.
+Rename the active “workspace provider” concept to “workspace tool provider” so the code matches the current model: these integrations do not provide a workspace; they provide tools, identity/addressability metadata, and provider-backed behavior for a workspace/team.
 
 This is a semantic cleanup with API/config consequences. The old runtime concept should not remain as a parallel compatibility layer.
 
@@ -34,7 +34,7 @@ Production code currently uses the old name in these active areas:
 - Linear global accessors:
   - `get_linear_workspace_provider`
   - `set_default_linear_workspace_provider`
-- Workspace setup manager names:
+- Workspace manager names:
   - `WorkspaceProviderCandidateMapping`
   - `WorkspaceProviderView`
   - `WorkspaceProviderEventResolution`
@@ -51,7 +51,7 @@ Database inventory did not find any `workspace_provider_*` SQLite table or colum
 
 ## Non-Goals
 
-- Do not change the team/workspace setup model.
+- Do not change the team/workspace model.
 - Do not change ToolService authority or tool access behavior.
 - Do not add provider-specific UI features.
 - Do not preserve old Python import paths, aliases, or old API routes as normal runtime compatibility.
@@ -82,7 +82,7 @@ Expected changes include:
 - `test/workspace_providers/` -> `test/workspace_tool_providers/`
 - `test/linear/test_workspace_provider.py` -> `test/linear/test_workspace_tool_provider.py`
 - Rename `WorkspaceProvider*` and `LinearWorkspaceProvider*` active code symbols to `WorkspaceToolProvider*` and `LinearWorkspaceToolProvider*`.
-- Rename workspace setup manager view/mapping/event-resolution types that describe provider-supplied tool/addressability information.
+- Rename workspace manager view/mapping/event-resolution types that describe provider-supplied tool/addressability information.
 
 Do not add import shims for the old module names.
 
@@ -152,7 +152,7 @@ Required backend checks:
 - Run the renamed workspace tool provider tests.
 - Run Linear provider tests.
 - Run API route tests covering the renamed route and absence of the old route.
-- Run workspace setup manager tests.
+- Run workspace manager tests.
 - Run ToolService/provider-mediated registration and invocation tests touched by the rename.
 
 Required frontend checks:

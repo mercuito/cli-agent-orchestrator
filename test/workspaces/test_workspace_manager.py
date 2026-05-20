@@ -14,13 +14,13 @@ from cli_agent_orchestrator.agent import (
     write_agent,
 )
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     DEFAULT_WORKSPACE_TEAM_ID,
     WorkspaceCollaborationManager,
-    WorkspaceSetup,
-    WorkspaceSetupConfigError,
-    WorkspaceSetupRegistry,
+    Workspace,
+    WorkspaceConfigError,
+    WorkspaceRegistry,
     WorkspaceTeam,
     WorkspaceTeamAuthorizedMapping,
     WorkspaceTeamRegistry,
@@ -79,13 +79,13 @@ class RecordingProviderAdapter:
         self,
         *,
         team: WorkspaceTeam,
-        setup: WorkspaceSetup,
+        workspace: Workspace,
         authorized_mappings: tuple[WorkspaceTeamAuthorizedMapping, ...],
         agent_registry: AgentRegistry,
     ) -> WorkspaceToolProviderView:
         return WorkspaceToolProviderView(
             team_id=team.id,
-            setup_id=setup.id,
+            workspace_id=workspace.id,
             provider_name="test",
             value={mapping.provider_value: mapping.agent_id for mapping in authorized_mappings},
         )
@@ -96,7 +96,7 @@ class RecordingProviderAdapter:
         try:
             return provider_view.value[event.agent_key], event.agent_key
         except KeyError as exc:
-            raise WorkspaceSetupConfigError("provider identity is not team-authorized") from exc
+            raise WorkspaceConfigError("provider identity is not team-authorized") from exc
 
     def candidate_mappings_for_event(
         self,
@@ -149,12 +149,12 @@ def _resolver(_event):
     )
 
 
-def _setup_registry() -> WorkspaceSetupRegistry:
-    return WorkspaceSetupRegistry(
+def _workspace_registry() -> WorkspaceRegistry:
+    return WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id=DEFAULT_WORKSPACE_SETUP_ID,
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id=DEFAULT_WORKSPACE_ID,
+                display_name="Linear Delivery",
                 providers=("test",),
                 resolver=_resolver,
             ),
@@ -170,7 +170,7 @@ def _team_store(tmp_path, *teams: WorkspaceTeam) -> WorkspaceTeamStore:
             WorkspaceTeam(
                 id=DEFAULT_WORKSPACE_TEAM_ID,
                 display_name="CAO Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
         ),
     )
@@ -179,7 +179,7 @@ def _team_store(tmp_path, *teams: WorkspaceTeam) -> WorkspaceTeamStore:
 def _manager(tmp_path, registry: AgentRegistry, *teams: WorkspaceTeam):
     store = _team_store(tmp_path, *teams)
     return WorkspaceCollaborationManager(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_registry=WorkspaceTeamRegistry(store),
         agent_registry=registry,
         provider_adapters={"test": RecordingProviderAdapter()},
@@ -195,7 +195,7 @@ def _write_agents(tmp_path, *agents: Agent):
 
 def test_team_store_seeds_bootstrap_and_persists_dashboard_edits(tmp_path):
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(tmp_path),
         agent_registry=AgentRegistry({}),
         available_providers=("test",),
@@ -204,12 +204,109 @@ def test_team_store_seeds_bootstrap_and_persists_dashboard_edits(tmp_path):
     service.create_or_update_team(
         team_id="research",
         display_name="Research",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
     )
     reloaded = WorkspaceTeamRegistry(_team_store(tmp_path))
 
     assert [team.id for team in reloaded.all()] == ["cao_delivery", "research"]
-    assert reloaded.get("research").workspace_setup == DEFAULT_WORKSPACE_SETUP_ID
+    assert reloaded.get("research").workspace == DEFAULT_WORKSPACE_ID
+
+
+def test_team_store_canonical_workspace_round_trips_without_legacy_key(tmp_path):
+    # Given
+    store = WorkspaceTeamStore(tmp_path / "workspace-teams.json")
+    team = WorkspaceTeam(
+        id="delivery",
+        display_name="Delivery",
+        workspace=DEFAULT_WORKSPACE_ID,
+    )
+
+    # When
+    store.upsert(team)
+    reloaded = WorkspaceTeamStore(store.path).get("delivery")
+    payload = json.loads(store.path.read_text())
+
+    # Then
+    assert reloaded.workspace == DEFAULT_WORKSPACE_ID
+    assert payload["teams"][0]["workspace"] == DEFAULT_WORKSPACE_ID
+    assert "workspace_setup" not in payload["teams"][0]
+
+
+def test_team_store_migrates_legacy_workspace_setup_key(tmp_path):
+    # Given
+    store_path = tmp_path / "workspace-teams.json"
+    store_path.write_text(
+        json.dumps(
+            {
+                "teams": [
+                    {
+                        "id": "delivery",
+                        "display_name": "Delivery",
+                        "workspace_setup": DEFAULT_WORKSPACE_ID,
+                    }
+                ]
+            }
+        )
+    )
+
+    # When
+    team = WorkspaceTeamStore(store_path).get("delivery")
+    payload = json.loads(store_path.read_text())
+
+    # Then
+    assert team.workspace == DEFAULT_WORKSPACE_ID
+    assert payload["teams"][0]["workspace"] == DEFAULT_WORKSPACE_ID
+    assert "workspace_setup" not in payload["teams"][0]
+
+
+def test_team_store_migrates_legacy_default_workspace_id(tmp_path):
+    # Given
+    store_path = tmp_path / "workspace-teams.json"
+    store_path.write_text(
+        json.dumps(
+            {
+                "teams": [
+                    {
+                        "id": "delivery",
+                        "display_name": "Delivery",
+                        "workspace_setup": "linear_delivery_setup",
+                    }
+                ]
+            }
+        )
+    )
+
+    # When
+    team = WorkspaceTeamStore(store_path).get("delivery")
+    payload = json.loads(store_path.read_text())
+
+    # Then
+    assert team.workspace == DEFAULT_WORKSPACE_ID
+    assert payload["teams"][0]["workspace"] == DEFAULT_WORKSPACE_ID
+    assert "workspace_setup" not in payload["teams"][0]
+
+
+def test_team_store_rejects_conflicting_workspace_fields(tmp_path):
+    # Given
+    store_path = tmp_path / "workspace-teams.json"
+    store_path.write_text(
+        json.dumps(
+            {
+                "teams": [
+                    {
+                        "id": "delivery",
+                        "display_name": "Delivery",
+                        "workspace": DEFAULT_WORKSPACE_ID,
+                        "workspace_setup": "future_workspace",
+                    }
+                ]
+            }
+        )
+    )
+
+    # When / Then
+    with pytest.raises(WorkspaceConfigError, match="conflicting workspace and workspace_setup"):
+        WorkspaceTeamStore(store_path).list()
 
 
 def test_team_store_deletes_persisted_team(tmp_path):
@@ -219,7 +316,7 @@ def test_team_store_deletes_persisted_team(tmp_path):
         WorkspaceTeam(
             id="delivery",
             display_name="Delivery",
-            workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+            workspace=DEFAULT_WORKSPACE_ID,
         ),
     )
 
@@ -233,7 +330,7 @@ def test_team_store_deletes_persisted_team(tmp_path):
 def test_team_service_creates_team_with_default_member_role(tmp_path):
     # Given
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=WorkspaceTeamStore(tmp_path / "workspace-teams.json", bootstrap_teams=()),
         agent_registry=AgentRegistry({}),
         available_providers=("test",),
@@ -243,7 +340,7 @@ def test_team_service_creates_team_with_default_member_role(tmp_path):
     team = service.create_team(
         team_id="research",
         display_name="Research",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
     )
 
     # Then
@@ -254,13 +351,13 @@ def test_team_service_creates_team_with_default_member_role(tmp_path):
 def test_team_service_updates_metadata_without_erasing_roles_or_assignments(tmp_path):
     # Given
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                 role_assignments={"agent_a": "reviewer"},
             ),
@@ -273,7 +370,7 @@ def test_team_service_updates_metadata_without_erasing_roles_or_assignments(tmp_
     team = service.update_team_metadata(
         team_id="delivery",
         display_name="Delivery Renamed",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
     )
 
     # Then
@@ -286,18 +383,18 @@ def test_team_service_deletes_empty_team_and_rejects_member_team_deletion(tmp_pa
     # Given
     agents_root = _write_agents(tmp_path, _agent("agent_a", "delivery"))
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
             WorkspaceTeam(
                 id="research",
                 display_name="Research",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
         ),
         agent_registry=load_agent_registry(agents_root=agents_root),
@@ -311,7 +408,7 @@ def test_team_service_deletes_empty_team_and_rejects_member_team_deletion(tmp_pa
     # Then
     assert deleted.id == "research"
     assert [team.id for team in service.list_teams()] == ["delivery"]
-    with pytest.raises(WorkspaceSetupConfigError, match="members exist"):
+    with pytest.raises(WorkspaceConfigError, match="members exist"):
         service.delete_team("delivery")
 
 
@@ -322,13 +419,13 @@ def test_reused_default_root_team_service_rejects_delete_after_member_assignment
     agents_root = _write_agents(tmp_path, _agent("agent_a"))
     monkeypatch.setattr("cli_agent_orchestrator.agent.AGENTS_ROOT", agents_root)
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
         ),
         agent_registry=load_agent_registry(),
@@ -338,7 +435,7 @@ def test_reused_default_root_team_service_rejects_delete_after_member_assignment
     service.assign_member(team_id="delivery", agent_id="agent_a")
 
     # When / Then
-    with pytest.raises(WorkspaceSetupConfigError, match="members exist"):
+    with pytest.raises(WorkspaceConfigError, match="members exist"):
         service.delete_team("delivery")
 
 
@@ -366,13 +463,13 @@ def test_default_team_service_uses_injected_agents_root_for_member_writes(tmp_pa
 def test_team_service_put_role_mutates_one_role_without_resubmitting_policy(tmp_path):
     # Given
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
                 roles={
                     "reviewer": WorkspaceTeamRole(
                         display_name="Reviewer",
@@ -402,13 +499,13 @@ def test_team_service_assigns_member_through_agent_config_and_role_assignment(tm
     # Given
     agents_root = _write_agents(tmp_path, _agent("agent_a"))
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
             ),
         ),
@@ -429,20 +526,20 @@ def test_team_service_moves_member_and_clears_old_role_assignment(tmp_path):
     # Given
     agents_root = _write_agents(tmp_path, _agent("agent_a", "delivery"))
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                 role_assignments={"agent_a": "reviewer"},
             ),
             WorkspaceTeam(
                 id="research",
                 display_name="Research",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
         ),
         agent_registry=load_agent_registry(agents_root=agents_root),
@@ -463,13 +560,13 @@ def test_team_service_removes_member_and_clears_team_role_assignment(tmp_path):
     # Given
     agents_root = _write_agents(tmp_path, _agent("agent_a", "delivery"))
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                 role_assignments={"agent_a": "reviewer"},
             ),
@@ -491,13 +588,13 @@ def test_role_assignment_alone_does_not_create_team_membership(tmp_path):
     # Given
     agents_root = _write_agents(tmp_path, _agent("agent_a"))
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(
             tmp_path,
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
             ),
         ),
@@ -516,7 +613,7 @@ def test_role_assignment_alone_does_not_create_team_membership(tmp_path):
 
 def test_team_store_persists_roles_and_role_assignments(tmp_path):
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(tmp_path),
         agent_registry=AgentRegistry({}),
         available_providers=("test",),
@@ -525,7 +622,7 @@ def test_team_store_persists_roles_and_role_assignments(tmp_path):
     service.create_or_update_team(
         team_id="delivery",
         display_name="Delivery",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
         roles={
             "reviewer": WorkspaceTeamRole(
                 display_name="Reviewer",
@@ -548,7 +645,7 @@ def test_team_role_assignment_and_deletion_semantics(tmp_path):
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
         roles={
             "reviewer": WorkspaceTeamRole(
                 display_name="Reviewer",
@@ -559,7 +656,7 @@ def test_team_role_assignment_and_deletion_semantics(tmp_path):
     )
     registry = AgentRegistry({"agent_a": _agent("agent_a", "delivery")})
     service = WorkspaceTeamService(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_store=_team_store(tmp_path, team),
         agent_registry=registry,
         available_providers=("test",),
@@ -578,7 +675,7 @@ def test_team_role_assignment_and_deletion_semantics(tmp_path):
     assert without_role.role_assignments == {"agent_a": "member"}
     assert "reviewer" not in without_role.roles
 
-    with pytest.raises(WorkspaceSetupConfigError, match="member role cannot be deleted"):
+    with pytest.raises(WorkspaceConfigError, match="member role cannot be deleted"):
         service.delete_role(team_id="delivery", role_id="member")
 
 
@@ -591,7 +688,7 @@ def test_team_store_rejects_non_string_persisted_team_fields(tmp_path):
                     {
                         "id": None,
                         "display_name": "Broken",
-                        "workspace_setup": DEFAULT_WORKSPACE_SETUP_ID,
+                        "workspace": DEFAULT_WORKSPACE_ID,
                     }
                 ]
             }
@@ -599,7 +696,7 @@ def test_team_store_rejects_non_string_persisted_team_fields(tmp_path):
     )
     store = WorkspaceTeamStore(store_path)
 
-    with pytest.raises(WorkspaceSetupConfigError, match="workspace team id"):
+    with pytest.raises(WorkspaceConfigError, match="workspace team id"):
         store.list()
 
 
@@ -625,12 +722,12 @@ def test_team_authorizes_only_provider_candidates_for_team_members(tmp_path):
     ]
 
 
-def test_manager_reports_unknown_team_setup_and_unavailable_provider(tmp_path):
-    setup_registry = WorkspaceSetupRegistry(
+def test_manager_reports_unknown_team_workspace_and_unavailable_provider(tmp_path):
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id=DEFAULT_WORKSPACE_SETUP_ID,
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id=DEFAULT_WORKSPACE_ID,
+                display_name="Linear Delivery",
                 providers=("missing",),
                 resolver=_resolver,
             ),
@@ -642,17 +739,17 @@ def test_manager_reports_unknown_team_setup_and_unavailable_provider(tmp_path):
             WorkspaceTeam(
                 id=DEFAULT_WORKSPACE_TEAM_ID,
                 display_name="CAO Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
             WorkspaceTeam(
                 id="broken",
                 display_name="Broken",
-                workspace_setup="future_setup",
+                workspace="future_workspace",
             ),
         ),
     )
     manager = WorkspaceCollaborationManager(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_registry=WorkspaceTeamRegistry(store),
         agent_registry=AgentRegistry({"agent_a": _agent("agent_a", "unknown_team")}),
         provider_adapters={},
@@ -663,16 +760,16 @@ def test_manager_reports_unknown_team_setup_and_unavailable_provider(tmp_path):
 
     assert sorted(diagnostic.code for diagnostic in diagnostics) == [
         "unavailable_provider",
-        "unknown_setup",
         "unknown_team",
+        "unknown_workspace",
     ]
 
 
-def test_setup_rejects_multiple_resolvers():
-    with pytest.raises(WorkspaceSetupConfigError, match="exactly one resolver"):
-        WorkspaceSetup(
-            id=DEFAULT_WORKSPACE_SETUP_ID,
-            display_name="Linear Delivery Setup",
+def test_workspace_rejects_multiple_resolvers():
+    with pytest.raises(WorkspaceConfigError, match="exactly one resolver"):
+        Workspace(
+            id=DEFAULT_WORKSPACE_ID,
+            display_name="Linear Delivery",
             providers=("test",),
             resolver=(_resolver, _resolver),  # type: ignore[arg-type]
         )
@@ -684,28 +781,28 @@ def test_agents_without_team_do_not_resolve_provider_events(tmp_path):
     assert manager.resolve_event_context(_agent("agent_a"), Event("provider-a")) is None
 
 
-def test_collaboration_requires_same_non_empty_team_even_when_setup_is_shared(tmp_path):
+def test_collaboration_requires_same_non_empty_team_even_when_workspace_is_shared(tmp_path):
     delivery = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
     )
     research = WorkspaceTeam(
         id="research",
         display_name="Research",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
     )
     manager = _manager(tmp_path, AgentRegistry({}), delivery, research)
     sender = _agent("agent_a", "delivery")
 
     manager.require_same_team_collaboration(sender=sender, receiver=_agent("agent_b", "delivery"))
 
-    with pytest.raises(WorkspaceSetupConfigError, match="sender agent_a team delivery"):
+    with pytest.raises(WorkspaceConfigError, match="sender agent_a team delivery"):
         manager.require_same_team_collaboration(
             sender=sender,
             receiver=_agent("agent_b", "research"),
         )
-    with pytest.raises(WorkspaceSetupConfigError, match="receiver agent_b team none"):
+    with pytest.raises(WorkspaceConfigError, match="receiver agent_b team none"):
         manager.require_same_team_collaboration(sender=sender, receiver=_agent("agent_b"))
 
 
@@ -713,12 +810,12 @@ def test_ambiguous_provider_events_fail_closed_across_teams(tmp_path):
     delivery = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
     )
     research = WorkspaceTeam(
         id="research",
         display_name="Research",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
     )
     registry = AgentRegistry(
         {
@@ -728,11 +825,11 @@ def test_ambiguous_provider_events_fail_closed_across_teams(tmp_path):
     )
     store = _team_store(tmp_path, delivery, research)
     manager = WorkspaceCollaborationManager(
-        setup_registry=_setup_registry(),
+        workspace_registry=_workspace_registry(),
         team_registry=WorkspaceTeamRegistry(store),
         agent_registry=registry,
         provider_adapters={"test": DuplicateIdentityProviderAdapter()},
     )
 
-    with pytest.raises(WorkspaceSetupConfigError, match="multiple workspace teams"):
+    with pytest.raises(WorkspaceConfigError, match="multiple workspace teams"):
         manager.resolve_provider_event("test", Event("shared-provider-user"))

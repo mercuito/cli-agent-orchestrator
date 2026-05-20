@@ -18,13 +18,13 @@ from cli_agent_orchestrator.services.collaboration_policy import (
     require_terminal_workspace_team,
 )
 from cli_agent_orchestrator.services import baton_service, inbox_service
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
-    WorkspaceSetupConfigError,
+    WorkspaceConfigError,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
-    default_workspace_setup_registry,
+    default_workspace_registry,
 )
 
 _REAL_AVAILABLE_BATON_HOLDER_TOOLS = baton_service.available_baton_holder_tools
@@ -118,19 +118,19 @@ class _ToolService:
 
 def _collaboration_manager() -> WorkspaceCollaborationManager:
     return WorkspaceCollaborationManager(
-        setup_registry=default_workspace_setup_registry(),
+        workspace_registry=default_workspace_registry(),
         team_registry=WorkspaceTeamRegistry(
             _TeamStore(
                 (
                     WorkspaceTeam(
                         id="delivery",
                         display_name="Delivery",
-                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        workspace=DEFAULT_WORKSPACE_ID,
                     ),
                     WorkspaceTeam(
                         id="research",
                         display_name="Research",
-                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        workspace=DEFAULT_WORKSPACE_ID,
                     ),
                 )
             )
@@ -178,7 +178,7 @@ def test_baton_inbox_delivery_requires_same_workspace_team_before_queue(
         holder_id="impl",
     )
 
-    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+    with pytest.raises(WorkspaceConfigError, match="cannot collaborate"):
         baton_service.pass_baton(
             baton_id="baton-1",
             actor_id="impl",
@@ -221,7 +221,7 @@ def test_baton_reassign_requires_same_workspace_team_before_state_change(
         holder_id="impl",
     )
 
-    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+    with pytest.raises(WorkspaceConfigError, match="cannot collaborate"):
         baton_service.reassign_baton(
             baton_id="baton-1",
             actor_id="impl",
@@ -264,7 +264,7 @@ def test_operator_reassign_rejects_out_of_team_durable_holder(
         holder_id="impl",
     )
 
-    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+    with pytest.raises(WorkspaceConfigError, match="cannot collaborate"):
         baton_service.reassign_baton(
             baton_id="baton-1",
             actor_id="originator",
@@ -310,7 +310,7 @@ def test_operator_reassign_rejects_out_of_team_return_stack_participant(
         row.return_stack_json = '["outsider"]'
         session.commit()
 
-    with pytest.raises(WorkspaceSetupConfigError, match="cannot collaborate"):
+    with pytest.raises(WorkspaceConfigError, match="cannot collaborate"):
         baton_service.reassign_baton(
             baton_id="baton-1",
             actor_id="originator",

@@ -26,7 +26,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueDelegatedToAgentEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.workspace_setups import default_workspace_collaboration_manager
+from cli_agent_orchestrator.workspaces import default_workspace_collaboration_manager
 
 
 def _agent_session_payload(issue: dict | None, *, session_id: str = "session-1") -> dict:

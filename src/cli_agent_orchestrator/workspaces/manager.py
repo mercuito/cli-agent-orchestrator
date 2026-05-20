@@ -1,4 +1,4 @@
-"""Workspace setup definitions, team ownership, diagnostics, and routing."""
+"""Workspace definitions, team ownership, diagnostics, and routing."""
 
 from __future__ import annotations
 
@@ -22,18 +22,19 @@ from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
 
-DEFAULT_WORKSPACE_SETUP_ID = "linear_delivery_setup"
+DEFAULT_WORKSPACE_ID = "linear_delivery"
+LEGACY_WORKSPACE_IDS = {"linear_delivery_setup": DEFAULT_WORKSPACE_ID}
 DEFAULT_WORKSPACE_TEAM_ID = "cao_delivery"
 WORKSPACE_TEAMS_FILENAME = "workspace-teams.json"
 DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE = "member"
 DEFAULT_WORKSPACE_TEAM_MEMBER_TOOLS = ("send_message", "handoff")
 
 
-class WorkspaceSetupConfigError(ValueError):
-    """Raised when workspace setup/team membership or routing fails closed."""
+class WorkspaceConfigError(ValueError):
+    """Raised when workspace/team membership or routing fails closed."""
 
 
-class WorkspaceSetupResolver(Protocol):
+class WorkspaceContextResolver(Protocol):
     """Resolve one provider/runtime event into one authoritative workspace context."""
 
     def __call__(self, event: CaoEvent) -> WorkspaceContextResolution | None:
@@ -41,30 +42,30 @@ class WorkspaceSetupResolver(Protocol):
 
 
 @dataclass(frozen=True)
-class WorkspaceSetup:
-    """Code-owned definition of one CAO workspace setup."""
+class Workspace:
+    """Code-owned definition of one CAO workspace."""
 
     id: str
     display_name: str
     providers: tuple[str, ...]
-    resolver: WorkspaceSetupResolver
+    resolver: WorkspaceContextResolver
 
     def __post_init__(self) -> None:
-        _required_token(self.id, "workspace setup id")
-        _required_token(self.display_name, "workspace setup display name")
+        _required_token(self.id, "workspace id")
+        _required_token(self.display_name, "workspace display name")
         if not self.providers:
-            raise WorkspaceSetupConfigError(f"Workspace setup {self.id} must declare providers")
+            raise WorkspaceConfigError(f"Workspace {self.id} must declare providers")
         normalized = tuple(_normalize_provider(provider) for provider in self.providers)
         if len(set(normalized)) != len(normalized):
-            raise WorkspaceSetupConfigError(
-                f"Workspace setup {self.id} declares duplicate providers"
+            raise WorkspaceConfigError(
+                f"Workspace {self.id} declares duplicate providers"
             )
         if isinstance(self.resolver, (tuple, list)):
-            raise WorkspaceSetupConfigError(
-                f"Workspace setup {self.id} must own exactly one resolver"
+            raise WorkspaceConfigError(
+                f"Workspace {self.id} must own exactly one resolver"
             )
         if not callable(self.resolver):
-            raise WorkspaceSetupConfigError(f"Workspace setup {self.id} resolver must be callable")
+            raise WorkspaceConfigError(f"Workspace {self.id} resolver must be callable")
         object.__setattr__(self, "providers", normalized)
 
 
@@ -93,7 +94,7 @@ class WorkspaceTeamRole:
         for provider_name, grants in self.providers.items():
             normalized_provider = _normalize_provider(provider_name)
             if not isinstance(grants, Mapping):
-                raise WorkspaceSetupConfigError(
+                raise WorkspaceConfigError(
                     f"workspace team role provider {normalized_provider} grants must be an object"
                 )
             normalized_providers[normalized_provider] = {
@@ -110,14 +111,14 @@ class WorkspaceTeam:
 
     id: str
     display_name: str
-    workspace_setup: str
+    workspace: str
     roles: Mapping[str, WorkspaceTeamRole] = field(default_factory=dict)
     role_assignments: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _required_token(self.id, "workspace team id")
         _required_token(self.display_name, "workspace team display name")
-        _required_token(self.workspace_setup, "workspace team setup id")
+        _required_token(self.workspace, "workspace team workspace id")
         roles = {
             _required_token(role_id, "workspace team role id"): role
             for role_id, role in self.roles.items()
@@ -150,7 +151,7 @@ class WorkspaceTeam:
         """Return this team after deleting one role and moving assignments to member."""
         normalized = _required_token(role_id, "workspace team role id")
         if normalized == DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE:
-            raise WorkspaceSetupConfigError("Workspace team member role cannot be deleted")
+            raise WorkspaceConfigError("Workspace team member role cannot be deleted")
         roles = dict(self.roles)
         roles.pop(normalized, None)
         assignments = {
@@ -160,7 +161,7 @@ class WorkspaceTeam:
         return WorkspaceTeam(
             id=self.id,
             display_name=self.display_name,
-            workspace_setup=self.workspace_setup,
+            workspace=self.workspace,
             roles=roles,
             role_assignments=assignments,
         )
@@ -183,7 +184,7 @@ class WorkspaceTeamAuthorizedMapping:
     """Team-owned authorization decision for one provider candidate."""
 
     team_id: str
-    setup_id: str
+    workspace_id: str
     provider_name: str
     agent_id: str
     mapping_kind: str
@@ -197,7 +198,7 @@ class WorkspaceToolProviderView:
     """Team-filtered projection built by a provider adapter."""
 
     team_id: str
-    setup_id: str
+    workspace_id: str
     provider_name: str
     value: Any
 
@@ -207,7 +208,7 @@ class WorkspaceToolProviderEventResolution:
     """Resolved team-bound provider event identity."""
 
     team: WorkspaceTeam
-    setup: WorkspaceSetup
+    workspace: Workspace
     agent: Agent
     provider_name: str
     provider_view: WorkspaceToolProviderView
@@ -215,18 +216,18 @@ class WorkspaceToolProviderEventResolution:
 
 
 @dataclass(frozen=True)
-class WorkspaceSetupDiagnostic:
-    """User-visible workspace setup/team diagnostic."""
+class WorkspaceDiagnostic:
+    """User-visible workspace/team diagnostic."""
 
     code: str
     message: str
     team_id: str | None = None
-    setup_id: str | None = None
+    workspace_id: str | None = None
     agent_id: str | None = None
     provider_name: str | None = None
 
 
-class WorkspaceSetupProviderAdapter(Protocol):
+class WorkspaceToolProviderAdapter(Protocol):
     """Provider-owned adapter for candidate mappings and team-bound views."""
 
     provider_name: str
@@ -240,7 +241,7 @@ class WorkspaceSetupProviderAdapter(Protocol):
         self,
         *,
         team: WorkspaceTeam,
-        setup: WorkspaceSetup,
+        workspace: Workspace,
         authorized_mappings: tuple[WorkspaceTeamAuthorizedMapping, ...],
         agent_registry: AgentRegistry,
     ) -> WorkspaceToolProviderView:
@@ -266,28 +267,28 @@ class WorkspaceSetupProviderAdapter(Protocol):
         """Return candidate mappings that match the provider-native event identity."""
 
 
-class WorkspaceSetupRegistry:
-    """Code-owned lookup of workspace setup definitions."""
+class WorkspaceRegistry:
+    """Code-owned lookup of workspace definitions."""
 
-    def __init__(self, setups: tuple[WorkspaceSetup, ...] = ()) -> None:
-        self._setups: dict[str, WorkspaceSetup] = {}
-        for setup in setups:
-            self.register(setup)
+    def __init__(self, workspaces: tuple[Workspace, ...] = ()) -> None:
+        self._workspaces: dict[str, Workspace] = {}
+        for workspace in workspaces:
+            self.register(workspace)
 
-    def register(self, setup: WorkspaceSetup) -> None:
-        if setup.id in self._setups:
-            raise WorkspaceSetupConfigError(f"Duplicate workspace setup: {setup.id}")
-        self._setups[setup.id] = setup
+    def register(self, workspace: Workspace) -> None:
+        if workspace.id in self._workspaces:
+            raise WorkspaceConfigError(f"Duplicate workspace: {workspace.id}")
+        self._workspaces[workspace.id] = workspace
 
-    def get(self, setup_id: str) -> WorkspaceSetup:
-        normalized = _required_token(setup_id, "workspace setup id")
+    def get(self, workspace_id: str) -> Workspace:
+        normalized = _required_token(workspace_id, "workspace id")
         try:
-            return self._setups[normalized]
+            return self._workspaces[normalized]
         except KeyError as exc:
-            raise WorkspaceSetupConfigError(f"Unknown workspace setup: {normalized}") from exc
+            raise WorkspaceConfigError(f"Unknown workspace: {normalized}") from exc
 
-    def all(self) -> tuple[WorkspaceSetup, ...]:
-        return tuple(self._setups[key] for key in sorted(self._setups))
+    def all(self) -> tuple[Workspace, ...]:
+        return tuple(self._workspaces[key] for key in sorted(self._workspaces))
 
 
 class WorkspaceTeamStore:
@@ -316,7 +317,7 @@ class WorkspaceTeamStore:
         try:
             return teams[normalized]
         except KeyError as exc:
-            raise WorkspaceSetupConfigError(f"Unknown workspace team: {normalized}") from exc
+            raise WorkspaceConfigError(f"Unknown workspace team: {normalized}") from exc
 
     def upsert(self, team: WorkspaceTeam) -> WorkspaceTeam:
         teams = self._read_after_seed()
@@ -335,13 +336,13 @@ class WorkspaceTeamStore:
         for team_id in delete_team_ids:
             normalized = _required_token(team_id, "workspace team id")
             if normalized not in teams:
-                raise WorkspaceSetupConfigError(f"Unknown workspace team: {normalized}")
+                raise WorkspaceConfigError(f"Unknown workspace team: {normalized}")
             teams.pop(normalized)
             deleted.add(normalized)
         changed: dict[str, WorkspaceTeam] = {}
         for team in upsert_teams:
             if team.id in deleted:
-                raise WorkspaceSetupConfigError(
+                raise WorkspaceConfigError(
                     f"Workspace team {team.id} cannot be upserted and deleted together"
                 )
             teams[team.id] = team
@@ -376,20 +377,23 @@ class WorkspaceTeamStore:
         try:
             raw = json.loads(self._path.read_text())
         except json.JSONDecodeError as exc:
-            raise WorkspaceSetupConfigError(
+            raise WorkspaceConfigError(
                 f"Invalid workspace team store {self._path}: {exc}"
             ) from exc
         if not isinstance(raw, Mapping):
-            raise WorkspaceSetupConfigError(f"Workspace team store {self._path} must be an object")
+            raise WorkspaceConfigError(f"Workspace team store {self._path} must be an object")
         raw_teams = raw.get("teams", [])
         if not isinstance(raw_teams, list):
-            raise WorkspaceSetupConfigError(
+            raise WorkspaceConfigError(
                 f"Workspace team store {self._path} field teams must be a list"
             )
         teams: dict[str, WorkspaceTeam] = {}
+        needs_migration = False
         for raw_team in raw_teams:
             if not isinstance(raw_team, Mapping):
-                raise WorkspaceSetupConfigError("Workspace team entries must be objects")
+                raise WorkspaceConfigError("Workspace team entries must be objects")
+            workspace_id, migrated = _workspace_from_json(raw_team)
+            needs_migration = needs_migration or migrated
             team = WorkspaceTeam(
                 id=_required_json_token(raw_team, "id", "workspace team id"),
                 display_name=_required_json_token(
@@ -397,11 +401,7 @@ class WorkspaceTeamStore:
                     "display_name",
                     "workspace team display name",
                 ),
-                workspace_setup=_required_json_token(
-                    raw_team,
-                    "workspace_setup",
-                    "workspace team setup id",
-                ),
+                workspace=workspace_id,
                 roles=_roles_from_json(raw_team.get("roles", {})),
                 role_assignments=_str_mapping(
                     raw_team.get("role_assignments", {}),
@@ -409,8 +409,10 @@ class WorkspaceTeamStore:
                 ),
             )
             if team.id in teams:
-                raise WorkspaceSetupConfigError(f"Duplicate workspace team: {team.id}")
+                raise WorkspaceConfigError(f"Duplicate workspace team: {team.id}")
             teams[team.id] = team
+        if needs_migration:
+            self._write(teams)
         return teams
 
     def _write(self, teams: Mapping[str, WorkspaceTeam]) -> None:
@@ -420,7 +422,7 @@ class WorkspaceTeamStore:
                 {
                     "id": team.id,
                     "display_name": team.display_name,
-                    "workspace_setup": team.workspace_setup,
+                    "workspace": team.workspace,
                     "roles": {
                         role_id: _role_to_json(role) for role_id, role in sorted(team.roles.items())
                     },
@@ -461,13 +463,13 @@ class WorkspaceTeamService:
     def __init__(
         self,
         *,
-        setup_registry: WorkspaceSetupRegistry,
+        workspace_registry: WorkspaceRegistry,
         team_store: WorkspaceTeamStore,
         agent_registry: AgentRegistry,
         available_providers: tuple[str, ...],
         agents_root: str | Path | None = None,
     ) -> None:
-        self._setup_registry = setup_registry
+        self._workspace_registry = workspace_registry
         self._team_store = team_store
         self._team_registry = WorkspaceTeamRegistry(team_store)
         self._agent_registry = agent_registry
@@ -492,21 +494,21 @@ class WorkspaceTeamService:
         *,
         team_id: str,
         display_name: str,
-        workspace_setup: str,
+        workspace: str,
     ) -> WorkspaceTeam:
         normalized = _required_token(team_id, "workspace team id")
         try:
             self._team_registry.get(normalized)
-        except WorkspaceSetupConfigError:
+        except WorkspaceConfigError:
             pass
         else:
-            raise WorkspaceSetupConfigError(f"Workspace team already exists: {normalized}")
+            raise WorkspaceConfigError(f"Workspace team already exists: {normalized}")
         team = WorkspaceTeam(
             id=normalized,
             display_name=display_name,
-            workspace_setup=workspace_setup,
+            workspace=workspace,
         )
-        self._setup_registry.get(team.workspace_setup)
+        self._workspace_registry.get(team.workspace)
         return self._team_store.upsert(team)
 
     def update_team_metadata(
@@ -514,24 +516,24 @@ class WorkspaceTeamService:
         *,
         team_id: str,
         display_name: str,
-        workspace_setup: str,
+        workspace: str,
     ) -> WorkspaceTeam:
         existing = self._team_registry.get(team_id)
         team = WorkspaceTeam(
             id=existing.id,
             display_name=display_name,
-            workspace_setup=workspace_setup,
+            workspace=workspace,
             roles=existing.roles,
             role_assignments=existing.role_assignments,
         )
-        self._setup_registry.get(team.workspace_setup)
+        self._workspace_registry.get(team.workspace)
         return self._team_store.upsert(team)
 
     def delete_team(self, team_id: str) -> WorkspaceTeam:
         team = self._team_registry.get(team_id)
         members = self._member_ids_for_team(team.id)
         if members:
-            raise WorkspaceSetupConfigError(
+            raise WorkspaceConfigError(
                 f"Workspace team {team.id} cannot be deleted while members exist: "
                 f"{', '.join(sorted(members))}"
             )
@@ -542,18 +544,18 @@ class WorkspaceTeamService:
         *,
         team_id: str,
         display_name: str,
-        workspace_setup: str,
+        workspace: str,
         roles: Mapping[str, WorkspaceTeamRole] | None = None,
         role_assignments: Mapping[str, str] | None = None,
     ) -> WorkspaceTeam:
         try:
             existing = self._team_registry.get(team_id)
-        except WorkspaceSetupConfigError:
+        except WorkspaceConfigError:
             existing = None
         team = WorkspaceTeam(
             id=team_id,
             display_name=display_name,
-            workspace_setup=workspace_setup,
+            workspace=workspace,
             roles=roles if roles is not None else (existing.roles if existing else {}),
             role_assignments=(
                 role_assignments
@@ -561,7 +563,7 @@ class WorkspaceTeamService:
                 else (existing.role_assignments if existing else {})
             ),
         )
-        self._setup_registry.get(team.workspace_setup)
+        self._workspace_registry.get(team.workspace)
         self._validate_role_assignments(team)
         return self._team_store.upsert(team)
 
@@ -579,7 +581,7 @@ class WorkspaceTeamService:
         updated = WorkspaceTeam(
             id=team.id,
             display_name=team.display_name,
-            workspace_setup=team.workspace_setup,
+            workspace=team.workspace,
             roles=roles,
             role_assignments=team.role_assignments,
         )
@@ -590,7 +592,7 @@ class WorkspaceTeamService:
         team = self._team_registry.get(team_id)
         normalized_role = _required_token(role_id, "workspace team role id")
         if normalized_role not in team.roles:
-            raise WorkspaceSetupConfigError(
+            raise WorkspaceConfigError(
                 f"Unknown workspace team role {normalized_role} for team {team.id}"
             )
         assignments = dict(team.role_assignments)
@@ -599,7 +601,7 @@ class WorkspaceTeamService:
             WorkspaceTeam(
                 id=team.id,
                 display_name=team.display_name,
-                workspace_setup=team.workspace_setup,
+                workspace=team.workspace,
                 roles=team.roles,
                 role_assignments=assignments,
             )
@@ -613,7 +615,7 @@ class WorkspaceTeamService:
             WorkspaceTeam(
                 id=team.id,
                 display_name=team.display_name,
-                workspace_setup=team.workspace_setup,
+                workspace=team.workspace,
                 roles=team.roles,
                 role_assignments=assignments,
             )
@@ -631,7 +633,7 @@ class WorkspaceTeamService:
         role_id: str | None = None,
     ) -> WorkspaceTeam:
         team = self._team_registry.get(team_id)
-        self._setup_registry.get(team.workspace_setup)
+        self._workspace_registry.get(team.workspace)
         agent = self._load_agent_for_update(agent_id)
         normalized_role = (
             DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE
@@ -639,7 +641,7 @@ class WorkspaceTeamService:
             else _required_token(role_id, "workspace team role id")
         )
         if normalized_role not in team.roles:
-            raise WorkspaceSetupConfigError(
+            raise WorkspaceConfigError(
                 f"Unknown workspace team role {normalized_role} for team {team.id}"
             )
 
@@ -674,43 +676,43 @@ class WorkspaceTeamService:
         )
         return self._team_registry.get(team.id)
 
-    def setup_for_team(self, team_id: str) -> WorkspaceSetup:
+    def workspace_for_team(self, team_id: str) -> Workspace:
         team = self._team_registry.get(team_id)
-        return self._setup_registry.get(team.workspace_setup)
+        return self._workspace_registry.get(team.workspace)
 
-    def diagnostics(self) -> tuple[WorkspaceSetupDiagnostic, ...]:
-        diagnostics: list[WorkspaceSetupDiagnostic] = []
+    def diagnostics(self) -> tuple[WorkspaceDiagnostic, ...]:
+        diagnostics: list[WorkspaceDiagnostic] = []
         for team in self._team_registry.all():
             try:
-                setup = self._setup_registry.get(team.workspace_setup)
-            except WorkspaceSetupConfigError as exc:
+                workspace = self._workspace_registry.get(team.workspace)
+            except WorkspaceConfigError as exc:
                 diagnostics.append(
-                    WorkspaceSetupDiagnostic(
-                        code="unknown_setup",
+                    WorkspaceDiagnostic(
+                        code="unknown_workspace",
                         message=str(exc),
                         team_id=team.id,
-                        setup_id=team.workspace_setup,
+                        workspace_id=team.workspace,
                     )
                 )
                 continue
-            for provider_name in setup.providers:
+            for provider_name in workspace.providers:
                 if provider_name not in self._available_providers:
                     diagnostics.append(
-                        WorkspaceSetupDiagnostic(
+                        WorkspaceDiagnostic(
                             code="unavailable_provider",
                             message=(
-                                f"Workspace team {team.id} setup {setup.id} requires "
+                                f"Workspace team {team.id} workspace {workspace.id} requires "
                                 f"unavailable provider {provider_name}"
                             ),
                             team_id=team.id,
-                            setup_id=setup.id,
+                            workspace_id=workspace.id,
                             provider_name=provider_name,
                         )
                     )
         for agent in self._agent_registry.all().values():
             for message in agent.workspace.diagnostics:
                 diagnostics.append(
-                    WorkspaceSetupDiagnostic(
+                    WorkspaceDiagnostic(
                         code="legacy_workspace_config",
                         message=message,
                         team_id=agent.workspace.team,
@@ -722,10 +724,10 @@ class WorkspaceTeamService:
                 continue
             try:
                 team = self._team_registry.get(team_id)
-                self._setup_registry.get(team.workspace_setup)
-            except WorkspaceSetupConfigError as exc:
+                self._workspace_registry.get(team.workspace)
+            except WorkspaceConfigError as exc:
                 diagnostics.append(
-                    WorkspaceSetupDiagnostic(
+                    WorkspaceDiagnostic(
                         code="unknown_team",
                         message=str(exc),
                         team_id=team_id,
@@ -737,7 +739,7 @@ class WorkspaceTeamService:
     def _validate_role_assignments(self, team: WorkspaceTeam) -> None:
         for agent_id, role_id in team.role_assignments.items():
             if role_id not in team.roles:
-                raise WorkspaceSetupConfigError(
+                raise WorkspaceConfigError(
                     f"Unknown workspace team role {role_id} for team {team.id} "
                     f"assignment {agent_id}"
                 )
@@ -753,7 +755,7 @@ class WorkspaceTeamService:
     def _load_agent_for_update(self, agent_id: str) -> Agent:
         normalized = _required_token(agent_id, "agent id")
         if self._agents_root is None:
-            raise WorkspaceSetupConfigError("WorkspaceTeamService requires agents_root")
+            raise WorkspaceConfigError("WorkspaceTeamService requires agents_root")
         agent = load_agent(normalized, agents_root=self._agents_root)
         self._agent_registry_file_backed = True
         return agent
@@ -763,7 +765,7 @@ class WorkspaceTeamService:
             return None
         try:
             return self._team_registry.get(team_id)
-        except WorkspaceSetupConfigError:
+        except WorkspaceConfigError:
             return None
 
     def _upsert_teams_then_patch_agent(
@@ -801,13 +803,13 @@ class WorkspaceCollaborationManager:
     def __init__(
         self,
         *,
-        setup_registry: WorkspaceSetupRegistry,
+        workspace_registry: WorkspaceRegistry,
         team_registry: WorkspaceTeamRegistry,
         agent_registry: AgentRegistry,
-        provider_adapters: Mapping[str, WorkspaceSetupProviderAdapter],
+        provider_adapters: Mapping[str, WorkspaceToolProviderAdapter],
         available_providers: tuple[str, ...] | None = None,
     ) -> None:
-        self._setup_registry = setup_registry
+        self._workspace_registry = workspace_registry
         self._team_registry = team_registry
         self._agent_registry = agent_registry
         self._provider_adapters = {
@@ -832,15 +834,15 @@ class WorkspaceCollaborationManager:
             return None
         return self._team_registry.get(agent.workspace.team)
 
-    def setup_for_agent(self, agent: Agent) -> WorkspaceSetup | None:
+    def workspace_for_agent(self, agent: Agent) -> Workspace | None:
         team = self.team_for_agent(agent)
         if team is None:
             return None
-        return self._setup_registry.get(team.workspace_setup)
+        return self._workspace_registry.get(team.workspace)
 
-    def diagnostics(self) -> tuple[WorkspaceSetupDiagnostic, ...]:
+    def diagnostics(self) -> tuple[WorkspaceDiagnostic, ...]:
         service = WorkspaceTeamService(
-            setup_registry=self._setup_registry,
+            workspace_registry=self._workspace_registry,
             team_store=_ReadOnlyTeamStore(self._team_registry.all()),
             agent_registry=self._agent_registry,
             available_providers=tuple(self._available_providers),
@@ -848,30 +850,30 @@ class WorkspaceCollaborationManager:
         diagnostics = list(service.diagnostics())
         for team in self._team_registry.all():
             try:
-                setup = self._setup_registry.get(team.workspace_setup)
-            except WorkspaceSetupConfigError:
+                workspace = self._workspace_registry.get(team.workspace)
+            except WorkspaceConfigError:
                 continue
-            diagnostics.extend(self._pruned_mapping_diagnostics(team, setup))
+            diagnostics.extend(self._pruned_mapping_diagnostics(team, workspace))
         return tuple(diagnostics)
 
     def provider_view(self, team_id: str, provider_name: str) -> WorkspaceToolProviderView:
         team = self._team_registry.get(team_id)
-        setup = self._setup_registry.get(team.workspace_setup)
+        workspace = self._workspace_registry.get(team.workspace)
         normalized_provider = _normalize_provider(provider_name)
-        if normalized_provider not in setup.providers:
-            raise WorkspaceSetupConfigError(
-                f"Workspace team {team.id} setup {setup.id} does not include provider "
+        if normalized_provider not in workspace.providers:
+            raise WorkspaceConfigError(
+                f"Workspace team {team.id} workspace {workspace.id} does not include provider "
                 f"{normalized_provider}"
             )
         if normalized_provider not in self._available_providers:
-            raise WorkspaceSetupConfigError(
-                f"Workspace team {team.id} setup {setup.id} requires unavailable provider "
+            raise WorkspaceConfigError(
+                f"Workspace team {team.id} workspace {workspace.id} requires unavailable provider "
                 f"{normalized_provider}"
             )
         adapter = self._adapter(normalized_provider)
         return adapter.build_provider_view(
             team=team,
-            setup=setup,
+            workspace=workspace,
             authorized_mappings=self.authorized_mappings(team.id, normalized_provider),
             agent_registry=self._agent_registry,
         )
@@ -880,11 +882,11 @@ class WorkspaceCollaborationManager:
         self, team_id: str, provider_name: str
     ) -> tuple[WorkspaceTeamAuthorizedMapping, ...]:
         team = self._team_registry.get(team_id)
-        setup = self._setup_registry.get(team.workspace_setup)
+        workspace = self._workspace_registry.get(team.workspace)
         normalized_provider = _normalize_provider(provider_name)
-        if normalized_provider not in setup.providers:
-            raise WorkspaceSetupConfigError(
-                f"Workspace team {team.id} setup {setup.id} does not include provider "
+        if normalized_provider not in workspace.providers:
+            raise WorkspaceConfigError(
+                f"Workspace team {team.id} workspace {workspace.id} does not include provider "
                 f"{normalized_provider}"
             )
         members = self._team_member_ids(team.id)
@@ -896,7 +898,7 @@ class WorkspaceCollaborationManager:
             authorized.append(
                 WorkspaceTeamAuthorizedMapping(
                     team_id=team.id,
-                    setup_id=setup.id,
+                    workspace_id=workspace.id,
                     provider_name=normalized_provider,
                     agent_id=candidate.agent_id,
                     mapping_kind=candidate.mapping_kind,
@@ -914,10 +916,10 @@ class WorkspaceCollaborationManager:
     def resolve_event_context(
         self, agent: Agent, event: CaoEvent
     ) -> WorkspaceContextResolution | None:
-        setup = self.setup_for_agent(agent)
-        if setup is None:
+        workspace = self.workspace_for_agent(agent)
+        if workspace is None:
             return None
-        return setup.resolver(event)
+        return workspace.resolver(event)
 
     def resolve_provider_event(
         self, provider_name: str, event: CaoEvent
@@ -928,11 +930,11 @@ class WorkspaceCollaborationManager:
         errors: list[str] = []
         for team in self._team_registry.all():
             try:
-                setup = self._setup_registry.get(team.workspace_setup)
-            except WorkspaceSetupConfigError as exc:
+                workspace = self._workspace_registry.get(team.workspace)
+            except WorkspaceConfigError as exc:
                 errors.append(str(exc))
                 continue
-            if normalized_provider not in setup.providers:
+            if normalized_provider not in workspace.providers:
                 continue
             try:
                 view = self.provider_view(team.id, normalized_provider)
@@ -943,20 +945,20 @@ class WorkspaceCollaborationManager:
                 matches.append(
                     WorkspaceToolProviderEventResolution(
                         team=team,
-                        setup=setup,
+                        workspace=workspace,
                         agent=self._agent_registry.get(agent_id),
                         provider_name=normalized_provider,
                         provider_view=view,
                         provider_payload=payload,
                     )
                 )
-            except WorkspaceSetupConfigError as exc:
+            except WorkspaceConfigError as exc:
                 errors.append(str(exc))
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
             teams = ", ".join(match.team.id for match in matches)
-            raise WorkspaceSetupConfigError(
+            raise WorkspaceConfigError(
                 f"Provider event resolved in multiple workspace teams for "
                 f"{normalized_provider}: {teams}"
             )
@@ -969,7 +971,7 @@ class WorkspaceCollaborationManager:
         )
         if candidate_detail:
             detail = f"{detail}; {candidate_detail}"
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"{normalized_provider} provider identity {identity} is authenticated but not "
             f"CAO-addressable in any workspace team: {detail}"
         )
@@ -984,9 +986,9 @@ class WorkspaceCollaborationManager:
         receiver_team = receiver.workspace.team
         if sender_team and receiver_team and sender_team == receiver_team:
             team = self._team_registry.get(sender_team)
-            self._setup_registry.get(team.workspace_setup)
+            self._workspace_registry.get(team.workspace)
             return
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"Workspace team collaboration rejected: sender {sender.id} team "
             f"{sender_team or 'none'} cannot collaborate with receiver {receiver.id} team "
             f"{receiver_team or 'none'}"
@@ -999,20 +1001,20 @@ class WorkspaceCollaborationManager:
             if agent.workspace.team == team_id
         }
 
-    def _adapter(self, provider_name: str) -> WorkspaceSetupProviderAdapter:
+    def _adapter(self, provider_name: str) -> WorkspaceToolProviderAdapter:
         try:
             return self._provider_adapters[provider_name]
         except KeyError as exc:
-            raise WorkspaceSetupConfigError(
+            raise WorkspaceConfigError(
                 f"Unavailable workspace tool provider: {provider_name}"
             ) from exc
 
     def _pruned_mapping_diagnostics(
-        self, team: WorkspaceTeam, setup: WorkspaceSetup
-    ) -> tuple[WorkspaceSetupDiagnostic, ...]:
-        diagnostics: list[WorkspaceSetupDiagnostic] = []
+        self, team: WorkspaceTeam, workspace: Workspace
+    ) -> tuple[WorkspaceDiagnostic, ...]:
+        diagnostics: list[WorkspaceDiagnostic] = []
         member_ids = self._team_member_ids(team.id)
-        for provider_name in setup.providers:
+        for provider_name in workspace.providers:
             if provider_name not in self._provider_adapters:
                 continue
             for candidate in self._provider_adapters[provider_name].build_candidate_mappings(
@@ -1021,7 +1023,7 @@ class WorkspaceCollaborationManager:
                 if candidate.agent_id in member_ids:
                     continue
                 diagnostics.append(
-                    WorkspaceSetupDiagnostic(
+                    WorkspaceDiagnostic(
                         code="pruned_provider_identity",
                         message=(
                             f"Workspace team {team.id} pruned {provider_name} "
@@ -1029,7 +1031,7 @@ class WorkspaceCollaborationManager:
                             f"out-of-team agent {candidate.agent_id}"
                         ),
                         team_id=team.id,
-                        setup_id=setup.id,
+                        workspace_id=workspace.id,
                         agent_id=candidate.agent_id,
                         provider_name=provider_name,
                     )
@@ -1039,7 +1041,7 @@ class WorkspaceCollaborationManager:
     def _provider_event_candidate_detail(
         self,
         *,
-        adapter: WorkspaceSetupProviderAdapter,
+        adapter: WorkspaceToolProviderAdapter,
         provider_name: str,
         event: CaoEvent,
     ) -> str | None:
@@ -1084,16 +1086,16 @@ class WorkspaceCollaborationManager:
             )
         try:
             team = self._team_registry.get(team_id)
-            setup = self._setup_registry.get(team.workspace_setup)
-        except WorkspaceSetupConfigError as exc:
+            workspace = self._workspace_registry.get(team.workspace)
+        except WorkspaceConfigError as exc:
             return (
                 f"{provider_name} {candidate.provider_identity} {candidate.provider_value} "
                 f"maps to agent {agent.id} in workspace team {team_id}, but {exc}"
             )
-        if provider_name not in setup.providers:
+        if provider_name not in workspace.providers:
             return (
                 f"{provider_name} {candidate.provider_identity} {candidate.provider_value} "
-                f"maps to agent {agent.id} in workspace team {team.id}, but setup {setup.id} "
+                f"maps to agent {agent.id} in workspace team {team.id}, but workspace {workspace.id} "
                 f"does not include provider {provider_name}"
             )
         return (
@@ -1115,22 +1117,22 @@ class _ReadOnlyTeamStore(WorkspaceTeamStore):
         try:
             return self._teams[normalized]
         except KeyError as exc:
-            raise WorkspaceSetupConfigError(f"Unknown workspace team: {normalized}") from exc
+            raise WorkspaceConfigError(f"Unknown workspace team: {normalized}") from exc
 
     def upsert(self, team: WorkspaceTeam) -> WorkspaceTeam:
-        raise WorkspaceSetupConfigError("read-only workspace team store")
+        raise WorkspaceConfigError("read-only workspace team store")
 
 
-def default_workspace_setup_registry() -> WorkspaceSetupRegistry:
+def default_workspace_registry() -> WorkspaceRegistry:
     from cli_agent_orchestrator.linear.workspace_context_resolver import (
         resolve_linear_workspace_event,
     )
 
-    return WorkspaceSetupRegistry(
+    return WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id=DEFAULT_WORKSPACE_SETUP_ID,
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id=DEFAULT_WORKSPACE_ID,
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=resolve_linear_workspace_event,
             ),
@@ -1148,7 +1150,7 @@ def default_workspace_team_store(
             WorkspaceTeam(
                 id=DEFAULT_WORKSPACE_TEAM_ID,
                 display_name="CAO Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
         ),
     )
@@ -1160,16 +1162,16 @@ def default_workspace_team_service(
     agents_root: str | Path | None = None,
     team_store_path: str | Path | None = None,
 ) -> WorkspaceTeamService:
-    from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+    from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 
     resolved_agents_root = (
         Path(agents_root) if agents_root is not None else agent_config.AGENTS_ROOT
     )
     registry = agent_registry or load_agent_registry(agents_root=resolved_agents_root)
-    setup_registry = default_workspace_setup_registry()
-    adapters = {"linear": LinearWorkspaceSetupAdapter()}
+    workspace_registry = default_workspace_registry()
+    adapters = {"linear": LinearWorkspaceAdapter()}
     return WorkspaceTeamService(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_store=default_workspace_team_store(path=team_store_path),
         agent_registry=registry,
         available_providers=tuple(adapters),
@@ -1182,30 +1184,63 @@ def default_workspace_collaboration_manager(
     agent_registry: AgentRegistry | None = None,
     team_store_path: str | Path | None = None,
 ) -> WorkspaceCollaborationManager:
-    from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+    from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 
     registry = agent_registry or load_agent_registry()
-    setup_registry = default_workspace_setup_registry()
+    workspace_registry = default_workspace_registry()
     team_store = default_workspace_team_store(path=team_store_path)
     return WorkspaceCollaborationManager(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_registry=WorkspaceTeamRegistry(team_store),
         agent_registry=registry,
-        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        provider_adapters={"linear": LinearWorkspaceAdapter()},
     )
 
 
 def _required_token(value: str, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise WorkspaceSetupConfigError(f"{label} must be a non-empty string")
+        raise WorkspaceConfigError(f"{label} must be a non-empty string")
     return value.strip()
 
 
 def _required_json_token(raw: Mapping[str, Any], key: str, label: str) -> str:
     value = raw.get(key)
     if not isinstance(value, str):
-        raise WorkspaceSetupConfigError(f"{label} must be a non-empty string")
+        raise WorkspaceConfigError(f"{label} must be a non-empty string")
     return _required_token(value, label)
+
+
+def _workspace_from_json(raw_team: Mapping[str, Any]) -> tuple[str, bool]:
+    has_workspace = "workspace" in raw_team
+    has_legacy_workspace = "workspace_setup" in raw_team
+    if not has_workspace and not has_legacy_workspace:
+        raise WorkspaceConfigError("workspace team workspace id must be a non-empty string")
+    if has_workspace and has_legacy_workspace:
+        workspace = _required_json_token(raw_team, "workspace", "workspace team workspace id")
+        legacy_workspace = _required_json_token(
+            raw_team,
+            "workspace_setup",
+            "legacy workspace team workspace id",
+        )
+        if workspace != legacy_workspace:
+            raise WorkspaceConfigError(
+                "Workspace team entry has conflicting workspace and workspace_setup values"
+            )
+        return _canonical_workspace_id(workspace), True
+    if has_legacy_workspace:
+        legacy_workspace = _required_json_token(
+            raw_team,
+            "workspace_setup",
+            "legacy workspace team workspace id",
+        )
+        return _canonical_workspace_id(legacy_workspace), True
+    workspace = _required_json_token(raw_team, "workspace", "workspace team workspace id")
+    canonical = _canonical_workspace_id(workspace)
+    return canonical, canonical != workspace
+
+
+def _canonical_workspace_id(workspace_id: str) -> str:
+    return LEGACY_WORKSPACE_IDS.get(_required_token(workspace_id, "workspace id"), workspace_id)
 
 
 def _normalize_provider(value: str) -> str:
@@ -1214,11 +1249,11 @@ def _normalize_provider(value: str) -> str:
 
 def _str_tuple(value: Any, label: str) -> tuple[str, ...]:
     if not isinstance(value, (tuple, list)):
-        raise WorkspaceSetupConfigError(f"{label} must be a string list")
+        raise WorkspaceConfigError(f"{label} must be a string list")
     result: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            raise WorkspaceSetupConfigError(f"{label} must contain only non-empty strings")
+            raise WorkspaceConfigError(f"{label} must contain only non-empty strings")
         result.append(item.strip())
     return tuple(dict.fromkeys(result))
 
@@ -1227,7 +1262,7 @@ def _str_mapping(value: Any, label: str) -> Mapping[str, str]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
-        raise WorkspaceSetupConfigError(f"{label} must be an object")
+        raise WorkspaceConfigError(f"{label} must be an object")
     return {
         _required_token(str(key), f"{label} key"): _required_token(str(item), f"{label} value")
         for key, item in value.items()
@@ -1238,11 +1273,11 @@ def _roles_from_json(value: Any) -> Mapping[str, WorkspaceTeamRole]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
-        raise WorkspaceSetupConfigError("workspace team roles must be an object")
+        raise WorkspaceConfigError("workspace team roles must be an object")
     roles: dict[str, WorkspaceTeamRole] = {}
     for role_id, role_value in value.items():
         if not isinstance(role_value, Mapping):
-            raise WorkspaceSetupConfigError("workspace team role entries must be objects")
+            raise WorkspaceConfigError("workspace team role entries must be objects")
         roles[_required_token(str(role_id), "workspace team role id")] = WorkspaceTeamRole(
             display_name=_required_json_token(
                 role_value,
@@ -1285,7 +1320,7 @@ def _team_with_role_assignment(
     return WorkspaceTeam(
         id=team.id,
         display_name=team.display_name,
-        workspace_setup=team.workspace_setup,
+        workspace=team.workspace,
         roles=team.roles,
         role_assignments=assignments,
     )
@@ -1297,7 +1332,7 @@ def _team_without_role_assignment(team: WorkspaceTeam, agent_id: str) -> Workspa
     return WorkspaceTeam(
         id=team.id,
         display_name=team.display_name,
-        workspace_setup=team.workspace_setup,
+        workspace=team.workspace,
         roles=team.roles,
         role_assignments=assignments,
     )

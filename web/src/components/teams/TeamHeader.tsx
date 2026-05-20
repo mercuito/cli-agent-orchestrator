@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
-import type { WorkspaceSetup, WorkspaceTeam } from '../../api'
+import type { Workspace, WorkspaceTeam } from '../../api'
 
 interface TeamHeaderProps {
   team: WorkspaceTeam
-  setups: WorkspaceSetup[]
-  onMetadataChange: (metadata: { display_name: string; workspace_setup: string }) => void
+  workspaces: Workspace[]
+  onMetadataChange: (metadata: { display_name: string; workspace: string }) => void
 }
 
-export function TeamHeader({ team, setups, onMetadataChange }: TeamHeaderProps) {
+export function TeamHeader({ team, workspaces, onMetadataChange }: TeamHeaderProps) {
   const [displayName, setDisplayName] = useState(team.display_name)
 
   useEffect(() => {
@@ -17,7 +17,7 @@ export function TeamHeader({ team, setups, onMetadataChange }: TeamHeaderProps) 
   const commitDisplayName = () => {
     const nextDisplayName = displayName.trim() || team.id
     if (nextDisplayName !== team.display_name) {
-      onMetadataChange({ display_name: nextDisplayName, workspace_setup: team.workspace_setup })
+      onMetadataChange({ display_name: nextDisplayName, workspace: team.workspace })
     }
   }
 
@@ -42,19 +42,19 @@ export function TeamHeader({ team, setups, onMetadataChange }: TeamHeaderProps) 
         </div>
 
         <label className="grid min-w-[260px] gap-1.5 text-xs text-gray-400">
-          Workspace setup
+          Workspace
           <select
-            aria-label="Workspace setup"
-            value={team.workspace_setup}
+            aria-label="Workspace"
+            value={team.workspace}
             onChange={event => onMetadataChange({
               display_name: (displayName.trim() || team.id),
-              workspace_setup: event.target.value,
+              workspace: event.target.value,
             })}
             className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-100 focus:border-emerald-500 focus:outline-none"
           >
-            {setups.map(setup => (
-              <option key={setup.id} value={setup.id}>
-                {setup.display_name} ({setup.id})
+            {workspaces.map(workspace => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.display_name} ({workspace.id})
               </option>
             ))}
           </select>

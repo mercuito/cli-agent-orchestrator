@@ -94,7 +94,7 @@ function ariaStatus(overrides: Partial<AgentStatus['config']> = {}): AgentStatus
       use_legacy_mcp_json: null,
       runtime_capabilities: null,
       codex_config: {},
-      workspace: { team: null, derived_setup: null, diagnostics: [] },
+      workspace: { team: null, derived_workspace: null, diagnostics: [] },
       linear: {
         app_key: 'aria',
         client_id: 'linear-client',
@@ -152,14 +152,14 @@ beforeEach(() => {
     {
       id: 'cao_delivery',
       display_name: 'CAO Delivery',
-      workspace_setup: 'linear_delivery_setup',
+      workspace: 'linear_delivery',
       members: ['aria'],
       diagnostics: [],
     },
     {
       id: 'research',
       display_name: 'Research',
-      workspace_setup: 'research_setup',
+      workspace: 'research_workspace',
       members: [],
       diagnostics: [],
     },
@@ -218,28 +218,28 @@ describe('AgentConfigTab', () => {
     expect(screen.getByText(/Access token: Managed by OAuth callback/)).toBeInTheDocument()
   })
 
-  it('updates the read-only derived setup field from the selected team while editing', async () => {
+  it('updates the read-only derived workspace field from the selected team while editing', async () => {
     const { AgentConfigTab } = await loadConfigTab()
 
     render(
       <AgentConfigTab
-        agent={ariaStatus({ workspace: { team: 'cao_delivery', derived_setup: 'linear_delivery_setup', diagnostics: [] } })}
+        agent={ariaStatus({ workspace: { team: 'cao_delivery', derived_workspace: 'linear_delivery', diagnostics: [] } })}
         onAgentUpdated={vi.fn()}
       />,
     )
 
     fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
-    const setupInput = screen.getByLabelText('aria derived workspace setup') as HTMLInputElement
+    const workspaceInput = screen.getByLabelText('aria derived workspace') as HTMLInputElement
 
-    expect(setupInput.value).toBe('linear_delivery_setup')
-    expect(setupInput.disabled).toBe(true)
+    expect(workspaceInput.value).toBe('linear_delivery')
+    expect(workspaceInput.disabled).toBe(true)
 
     fireEvent.change(screen.getByLabelText('aria workspace team'), {
       target: { value: 'research' },
     })
 
-    expect(setupInput.value).toBe('research_setup')
-    expect(setupInput.disabled).toBe(true)
+    expect(workspaceInput.value).toBe('research_workspace')
+    expect(workspaceInput.disabled).toBe(true)
   })
 
   it('flips structured fields into inputs and dropdowns in edit mode', async () => {
@@ -608,10 +608,36 @@ describe('AgentConfigTab raw TOML disclosure', () => {
     expect('id' in body).toBe(false)
   })
 
+  it('rejects legacy [workspace].setup in raw TOML instead of silently dropping it', async () => {
+    const onSaveError = vi.fn()
+    const { AgentConfigTab } = await loadConfigTab()
+    render(
+      <AgentConfigTab
+        agent={ariaStatus()}
+        onAgentUpdated={vi.fn()}
+        onSaveError={onSaveError}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
+
+    const textarea = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
+    fireEvent.change(textarea, {
+      target: { value: `${textarea.value}\n[workspace]\nsetup = "linear_delivery"\n` },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
+
+    expect(await screen.findByText(/\[workspace\]\.setup is not supported/i)).toBeInTheDocument()
+    expect(onSaveError).toHaveBeenCalledWith(
+      '[workspace].setup is not supported; use [workspace].team',
+    )
+    expect(updateAgent).not.toHaveBeenCalled()
+  })
+
   it('labels raw local access edits as standalone fallback for teamed agents without existing local grants', async () => {
     const { AgentConfigTab } = await loadConfigTab()
     const teamedAgent = ariaStatus({
-      workspace: { team: 'cao_delivery', derived_setup: 'linear_delivery_setup', diagnostics: [] },
+      workspace: { team: 'cao_delivery', derived_workspace: 'linear_delivery', diagnostics: [] },
       cao_tools: null,
       mcp_servers: {},
       codex_config: {},

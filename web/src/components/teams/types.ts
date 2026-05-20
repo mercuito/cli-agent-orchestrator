@@ -2,7 +2,7 @@ import type {
   AgentStatus,
   ProviderRoleAccessSchema,
   ToolDescriptor,
-  WorkspaceSetup,
+  Workspace,
   WorkspaceTeam,
   WorkspaceTeamRole,
 } from '../../api'
@@ -20,7 +20,7 @@ export interface ToolOption {
 export interface TeamsDataProps {
   teams: WorkspaceTeam[]
   selectedTeam: WorkspaceTeam | null
-  setups: WorkspaceSetup[]
+  workspaces: Workspace[]
   agents: AgentStatus[]
   caoTools: ToolDescriptor[]
   providerSchemas: Record<string, ProviderRoleAccessSchema>

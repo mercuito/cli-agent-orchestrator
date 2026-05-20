@@ -9,7 +9,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
 )
-from cli_agent_orchestrator.workspace_setups import default_workspace_collaboration_manager
+from cli_agent_orchestrator.workspaces import default_workspace_collaboration_manager
 from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderToolInvocationContext,
 )

@@ -16,12 +16,12 @@ from cli_agent_orchestrator.clients.database import Base, BatonEventModel, Baton
 from cli_agent_orchestrator.models.baton import BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services import baton_service, baton_watchdog_service, inbox_service
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
-    default_workspace_setup_registry,
+    default_workspace_registry,
 )
 
 _REAL_AVAILABLE_BATON_HOLDER_TOOLS = baton_service.available_baton_holder_tools
@@ -91,14 +91,14 @@ def _agent(agent_id: str, team: str | None = "delivery") -> Agent:
 
 def _collaboration_manager() -> WorkspaceCollaborationManager:
     return WorkspaceCollaborationManager(
-        setup_registry=default_workspace_setup_registry(),
+        workspace_registry=default_workspace_registry(),
         team_registry=WorkspaceTeamRegistry(
             _TeamStore(
                 (
                     WorkspaceTeam(
                         id="delivery",
                         display_name="Delivery",
-                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        workspace=DEFAULT_WORKSPACE_ID,
                     ),
                 )
             )

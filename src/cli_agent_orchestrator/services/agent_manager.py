@@ -34,7 +34,7 @@ class AgentStatus:
     active_terminal_id: Optional[str] = None
     active_workspace_context_id: Optional[str] = None
     workspace_team_id: Optional[str] = None
-    derived_workspace_setup_id: Optional[str] = None
+    derived_workspace_id: Optional[str] = None
     workspace_team_diagnostics: tuple[str, ...] = ()
     last_active_at: Optional[datetime] = None
 
@@ -49,7 +49,7 @@ class AgentStatus:
             agent=agent,
             active=False,
             workspace_team_id=agent.workspace.team,
-            derived_workspace_setup_id=_derived_workspace_setup_id(agent),
+            derived_workspace_id=_derived_workspace_id(agent),
             workspace_team_diagnostics=agent.workspace.diagnostics,
         )
 
@@ -176,7 +176,7 @@ class AgentManager:
             active_terminal_id=_optional_str(terminal.get("id")),
             active_workspace_context_id=_optional_str(terminal.get("workspace_context_id")),
             workspace_team_id=agent.workspace.team,
-            derived_workspace_setup_id=_derived_workspace_setup_id(agent),
+            derived_workspace_id=_derived_workspace_id(agent),
             workspace_team_diagnostics=agent.workspace.diagnostics,
             last_active_at=_optional_datetime(terminal.get("last_active")),
         )
@@ -204,13 +204,13 @@ def default_agent_manager() -> AgentManager:
     return create_default_agent_manager()
 
 
-def _derived_workspace_setup_id(agent: Agent) -> Optional[str]:
+def _derived_workspace_id(agent: Agent) -> Optional[str]:
     if agent.workspace.team is None:
         return None
     try:
-        from cli_agent_orchestrator.workspace_setups import default_workspace_team_service
+        from cli_agent_orchestrator.workspaces import default_workspace_team_service
 
-        return default_workspace_team_service().setup_for_team(agent.workspace.team).id
+        return default_workspace_team_service().workspace_for_team(agent.workspace.team).id
     except Exception:
         return None
 

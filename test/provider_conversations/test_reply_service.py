@@ -29,13 +29,13 @@ from cli_agent_orchestrator.provider_conversations.reply_service import (
     reply_to_inbox_message,
 )
 from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
-from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
-    default_workspace_setup_registry,
+    default_workspace_registry,
 )
 
 
@@ -98,16 +98,16 @@ def _provider_inbox_collaboration_manager() -> WorkspaceCollaborationManager:
         linear=LinearConfig(app_key="implementation_partner", access_token="token"),
     )
     return WorkspaceCollaborationManager(
-        setup_registry=default_workspace_setup_registry(),
+        workspace_registry=default_workspace_registry(),
         agent_registry=AgentRegistry({agent.id: agent}),
-        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        provider_adapters={"linear": LinearWorkspaceAdapter()},
         team_registry=WorkspaceTeamRegistry(
             _TeamStore(
                 (
                     WorkspaceTeam(
                         id="cao_delivery",
                         display_name="CAO Delivery",
-                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        workspace=DEFAULT_WORKSPACE_ID,
                     ),
                 )
             )

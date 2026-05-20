@@ -39,7 +39,7 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     use_legacy_mcp_json: null,
     runtime_capabilities: null,
     codex_config: {},
-    workspace: { team: null, derived_setup: null, diagnostics: [] },
+    workspace: { team: null, derived_workspace: null, diagnostics: [] },
     linear: {
       app_key: agentId,
       client_id: 'linear-client',
@@ -199,12 +199,12 @@ vi.mock('../api', () => ({
       }),
     ),
     listAgents,
-    listWorkspaceSetupDiagnostics: vi.fn(() => Promise.resolve([])),
+    listWorkspaceDiagnostics: vi.fn(() => Promise.resolve([])),
     listWorkspaceTeams: vi.fn(() => Promise.resolve([
       {
         id: 'cao_delivery',
         display_name: 'CAO Delivery',
-        workspace_setup: 'linear_delivery_setup',
+        workspace: 'linear_delivery',
         members: ['aria'],
         diagnostics: [],
       },

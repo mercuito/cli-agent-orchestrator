@@ -93,7 +93,7 @@ def test_agents_root_honors_cao_agents_dir_env_at_import(tmp_path):
     assert result.stdout.strip() == str(agents_root)
 
 
-def test_agent_model_rejects_invalid_workspace_setup():
+def test_agent_model_rejects_invalid_workspace():
     with pytest.raises(AgentConfigError, match="workspace.team"):
         _agent(workspace=AgentWorkspaceConfig(team=""))
 
@@ -165,7 +165,7 @@ def test_write_then_load_agent_round_trips_and_sets_permissions(tmp_path):
     )
 
 
-def test_agent_workspace_setup_round_trips_without_legacy_block(tmp_path):
+def test_agent_workspace_round_trips_without_legacy_block(tmp_path):
     given_agent = _agent(workspace=AgentWorkspaceConfig(team="cao_delivery"))
 
     write_agent(given_agent, agents_root=tmp_path)
@@ -178,7 +178,7 @@ def test_agent_workspace_setup_round_trips_without_legacy_block(tmp_path):
     assert "workspace_context" not in config_text
 
 
-def test_agent_without_workspace_setup_round_trips(tmp_path):
+def test_agent_without_workspace_round_trips(tmp_path):
     given_agent = _agent(workspace=AgentWorkspaceConfig())
 
     write_agent(given_agent, agents_root=tmp_path)
@@ -297,7 +297,7 @@ resolver_id = "linear_planning"
     assert "[workspace] team" in message
 
 
-def test_workspace_setup_wins_over_legacy_workspace_context(tmp_path):
+def test_workspace_wins_over_legacy_workspace_context(tmp_path):
     agent_dir = tmp_path / "implementation_partner"
     agent_dir.mkdir()
     (agent_dir / "agent.toml").write_text("""

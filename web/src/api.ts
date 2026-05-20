@@ -81,7 +81,7 @@ export interface AgentConfig {
   use_legacy_mcp_json: boolean | null
   runtime_capabilities: string[] | null
   codex_config: Record<string, unknown>
-  workspace: { team: string | null; derived_setup: string | null; diagnostics: string[] }
+  workspace: { team: string | null; derived_workspace: string | null; diagnostics: string[] }
   linear: {
     app_key: string | null
     client_id: string | null
@@ -150,23 +150,23 @@ export interface AgentStatus {
   active_terminal_id: string | null
   active_workspace_context_id: string | null
   workspace_team_id?: string | null
-  derived_workspace_setup_id?: string | null
+  derived_workspace_id?: string | null
   workspace_team_diagnostics?: string[]
   mcp_tool_surface?: McpToolSurface
   effective_tool_access?: EffectiveToolAccess
   last_active_at: string | null
 }
 
-export interface WorkspaceSetupDiagnostic {
+export interface WorkspaceDiagnostic {
   code: string
   message: string
   team_id: string | null
-  setup_id: string | null
+  workspace_id: string | null
   agent_id: string | null
   provider_name: string | null
 }
 
-export interface WorkspaceSetup {
+export interface Workspace {
   id: string
   display_name: string
   providers: string[]
@@ -175,7 +175,7 @@ export interface WorkspaceSetup {
 export interface WorkspaceTeam {
   id: string
   display_name: string
-  workspace_setup: string
+  workspace: string
   roles: Record<string, WorkspaceTeamRole>
   role_assignments: Record<string, string>
   members: string[]
@@ -401,21 +401,21 @@ export const api = {
     )
   },
   listAgents: () => fetchJSON<AgentStatus[]>('/agents', { timeoutMs: 30000 }),
-  listWorkspaceSetupDiagnostics: () => fetchJSON<WorkspaceSetupDiagnostic[]>('/workspace-setups/diagnostics'),
-  listWorkspaceSetups: () => fetchJSON<WorkspaceSetup[]>('/workspace-setups'),
+  listWorkspaceDiagnostics: () => fetchJSON<WorkspaceDiagnostic[]>('/workspaces/diagnostics'),
+  listWorkspaces: () => fetchJSON<Workspace[]>('/workspaces'),
   listWorkspaceTeams: () => fetchJSON<WorkspaceTeam[]>('/workspace-teams'),
   listCaoToolDescriptors: () => fetchJSON<ToolDescriptor[]>('/cao-tools/descriptors'),
   getWorkspaceToolProviderRoleAccessSchema: (provider: string) =>
     fetchJSON<ProviderRoleAccessSchema>(
       `/workspace-tool-providers/${encodeURIComponent(provider)}/role-access-schema`,
     ),
-  createWorkspaceTeam: (team: { id: string; display_name: string; workspace_setup: string }) =>
+  createWorkspaceTeam: (team: { id: string; display_name: string; workspace: string }) =>
     fetchJSON<WorkspaceTeam>('/workspace-teams', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(team),
     }),
-  updateWorkspaceTeamMetadata: (teamId: string, metadata: { display_name: string; workspace_setup: string }) =>
+  updateWorkspaceTeamMetadata: (teamId: string, metadata: { display_name: string; workspace: string }) =>
     fetchJSON<WorkspaceTeam>(`/workspace-teams/${encodeURIComponent(teamId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

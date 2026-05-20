@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Monitor, Play, Square, Wrench } from 'lucide-react'
-import { AgentStatus, WorkspaceSetupDiagnostic } from '../../api'
+import { AgentStatus, WorkspaceDiagnostic } from '../../api'
 
 export type AgentDetailTab = 'config' | 'timeline'
 
@@ -11,7 +11,7 @@ interface AgentDetailPanelProps {
   onStopAgent: (agentId: string) => void | Promise<void>
   startingAgentId?: string | null
   stoppingAgentId?: string | null
-  workspaceSetupDiagnostics?: WorkspaceSetupDiagnostic[]
+  workspaceDiagnostics?: WorkspaceDiagnostic[]
   renderConfigTab: (agent: AgentStatus) => JSX.Element
   renderTimelineTab: (agent: AgentStatus) => JSX.Element
 }
@@ -44,7 +44,7 @@ export function AgentDetailPanel({
   onStopAgent,
   startingAgentId = null,
   stoppingAgentId = null,
-  workspaceSetupDiagnostics = [],
+  workspaceDiagnostics = [],
   renderConfigTab,
   renderTimelineTab,
 }: AgentDetailPanelProps) {
@@ -64,7 +64,7 @@ export function AgentDetailPanel({
   const isStopping = stoppingAgentId === agent.agent_id
   const diagnostics = [
     ...(agent.workspace_team_diagnostics ?? []),
-    ...workspaceSetupDiagnostics
+    ...workspaceDiagnostics
       .filter(diagnostic => diagnostic.code !== PRUNED_PROVIDER_IDENTITY_DIAGNOSTIC_CODE)
       .filter(diagnostic => !diagnostic.agent_id || diagnostic.agent_id === agent.agent_id)
       .map(diagnostic => diagnostic.message),
@@ -109,8 +109,8 @@ export function AgentDetailPanel({
             <dd className="truncate text-gray-400">{agent.workdir}</dd>
             <dt className="text-gray-600">team</dt>
             <dd className="truncate text-emerald-300">{agent.workspace_team_id ?? 'none'}</dd>
-            <dt className="text-gray-600">setup</dt>
-            <dd className="truncate text-violet-300">{agent.derived_workspace_setup_id ?? 'default'}</dd>
+            <dt className="text-gray-600">workspace</dt>
+            <dd className="truncate text-violet-300">{agent.derived_workspace_id ?? 'default'}</dd>
             {agent.active && agent.active_terminal_id && (
               <>
                 <dt className="text-gray-600">terminal</dt>

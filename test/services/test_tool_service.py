@@ -14,7 +14,7 @@ from cli_agent_orchestrator.agent import (
 from cli_agent_orchestrator.constants import DEFAULT_RUNTIME_CAPABILITIES
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.tool_service import ToolService, tool_service_for_loaded_agent
-from cli_agent_orchestrator.workspace_setups import WorkspaceTeam, WorkspaceTeamRole
+from cli_agent_orchestrator.workspaces import WorkspaceTeam, WorkspaceTeamRole
 from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderConversationAccessRequirement,
     ProviderMediatedToolDefinition,
@@ -91,7 +91,7 @@ def test_teamed_local_access_is_inactive_and_not_materialized():
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(agents=(agent,)),
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(agents=(agent,)),
     )
 
     access = service.tools_for_agent(agent.id, built_in_tool_names=("send_message", "assign"))
@@ -126,7 +126,7 @@ def test_teamed_omitted_runtime_capabilities_preserve_agent_owned_defaults():
     agent = _agent(team="delivery", mcp_servers={"custom": {"command": "custom-mcp"}})
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(agents=(agent,)),
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(agents=(agent,)),
     )
 
     access = service.tools_for_agent(agent.id)
@@ -154,7 +154,7 @@ def test_switching_agent_into_team_changes_active_source_to_team_role():
     standalone_service = ToolService(agent_manager=_manager(standalone))
     teamed_service = ToolService(
         agent_manager=_manager(teamed),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(agents=(teamed,)),
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(agents=(teamed,)),
     )
 
     before = standalone_service.tools_for_agent(
@@ -191,7 +191,7 @@ def test_removing_agent_from_team_restores_standalone_local_source():
     )
     teamed_service = ToolService(
         agent_manager=_manager(teamed),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(agents=(teamed,)),
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(agents=(teamed,)),
     )
     standalone_service = ToolService(agent_manager=_manager(standalone))
 
@@ -459,7 +459,7 @@ def test_agent_tool_view_recomputes_when_team_role_grants_change():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -469,7 +469,7 @@ def test_agent_tool_view_recomputes_when_team_role_grants_change():
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -501,7 +501,7 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -570,7 +570,7 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
                 ),
             )
         },
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -755,18 +755,18 @@ def test_teamed_missing_team_diagnostic_is_actionable():
     assert access.diagnostics[0].source == "workspace_team"
 
 
-def test_teamed_missing_setup_diagnostic_is_actionable():
+def test_teamed_missing_workspace_diagnostic_is_actionable():
     agent = _agent(agent_id="agent", team="delivery")
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _MissingSetupManager(agent),
+        collaboration_manager_factory=lambda _registry: _MissingWorkspaceManager(agent),
     )
 
     access = service.tools_for_agent(agent.id)
 
     assert access.built_in_cao_tools == ()
     assert [diagnostic.code for diagnostic in access.diagnostics] == ["invalid_workspace_team"]
-    assert "workspace team delivery has no setup" in access.diagnostics[0].message
+    assert "workspace team delivery has no workspace" in access.diagnostics[0].message
 
 
 def test_teamed_missing_role_and_non_member_assignment_diagnostics_are_actionable():
@@ -775,7 +775,7 @@ def test_teamed_missing_role_and_non_member_assignment_diagnostics_are_actionabl
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         role_assignments={
             "agent": "missing_role",
             "outsider": "missing_role",
@@ -783,7 +783,7 @@ def test_teamed_missing_role_and_non_member_assignment_diagnostics_are_actionabl
     )
     service = ToolService(
         agent_manager=_manager(agent, outsider),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent, outsider),
         ),
@@ -838,7 +838,7 @@ def test_teamed_provider_local_access_is_inactive_not_effective():
     assert decision.reason == "provider_tool_denied"
 
 
-def test_teamed_provider_access_requires_workspace_setup_authorized_location():
+def test_teamed_provider_access_requires_workspace_authorized_location():
     agent = _agent(
         agent_id="agent",
         team="delivery",
@@ -847,7 +847,7 @@ def test_teamed_provider_access_requires_workspace_setup_authorized_location():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -859,7 +859,7 @@ def test_teamed_provider_access_requires_workspace_setup_authorized_location():
                         },
                     },
                     "github": {
-                        "outside_setup": {
+                        "outside_workspace": {
                             "tools": ["ignored"],
                         },
                     },
@@ -869,7 +869,7 @@ def test_teamed_provider_access_requires_workspace_setup_authorized_location():
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -883,7 +883,7 @@ def test_teamed_provider_access_requires_workspace_setup_authorized_location():
         service.can_invoke(agent.id, "cao_linear.create_issue", provider_name="linear").allowed
         is False
     )
-    assert "role_provider_not_in_workspace_setup" in {
+    assert "role_provider_not_in_workspace" in {
         diagnostic.code for diagnostic in access.diagnostics
     }
 
@@ -906,7 +906,7 @@ def test_teamed_role_provider_access_ignores_invalid_agent_local_linear_grants()
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -922,7 +922,7 @@ def test_teamed_role_provider_access_ignores_invalid_agent_local_linear_grants()
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -943,7 +943,7 @@ def test_loaded_agent_tool_service_keeps_full_registry_for_team_diagnostics(monk
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         role_assignments={"peer": "member"},
     )
     monkeypatch.setattr(
@@ -952,7 +952,7 @@ def test_loaded_agent_tool_service_keeps_full_registry_for_team_diagnostics(monk
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.tool_service.default_workspace_collaboration_manager",
-        lambda *, agent_registry: _ProviderSetupManager(
+        lambda *, agent_registry: _ProviderWorkspaceManager(
             team=team,
             agents=tuple(agent_registry.all().values()),
         ),
@@ -983,7 +983,7 @@ def test_default_member_role_does_not_grant_provider_conversation_requirements()
                 ),
             )
         },
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(agents=(agent,)),
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(agents=(agent,)),
     )
 
     access = service.tools_for_agent(agent.id, built_in_tool_names=("read_inbox_message",))
@@ -1008,7 +1008,7 @@ def test_terminate_target_must_be_in_same_workspace_team():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1031,7 +1031,7 @@ def test_terminate_target_must_be_in_same_workspace_team():
         terminal_metadata_resolver=lambda terminal_id: {
             str(terminal["id"]): terminal for terminal in terminals
         }.get(terminal_id),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(caller, teammate, outsider),
         ),
@@ -1061,7 +1061,7 @@ def test_role_inbox_grant_enables_provider_conversation_requirement():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1080,7 +1080,7 @@ def test_role_inbox_grant_enables_provider_conversation_requirement():
                 ),
             )
         },
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -1103,7 +1103,7 @@ def test_role_read_inbox_grant_does_not_authorize_provider_activity():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1127,7 +1127,7 @@ def test_role_read_inbox_grant_does_not_authorize_provider_activity():
                 ),
             )
         },
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -1158,7 +1158,7 @@ def test_role_provider_activity_permission_registers_provider_activity():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1177,7 +1177,7 @@ def test_role_provider_activity_permission_registers_provider_activity():
                 ),
             )
         },
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -1210,7 +1210,7 @@ def test_role_provider_access_expands_for_each_member_on_role():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1227,7 +1227,7 @@ def test_role_provider_access_expands_for_each_member_on_role():
     )
     service = ToolService(
         agent_manager=_manager(first, second),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(first, second),
         ),
@@ -1247,7 +1247,7 @@ def test_role_provider_access_missing_presence_emits_diagnostic_and_no_tool():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1263,7 +1263,7 @@ def test_role_provider_access_missing_presence_emits_diagnostic_and_no_tool():
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -1280,7 +1280,7 @@ def test_role_provider_access_rejects_non_boolean_provider_fields():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1298,7 +1298,7 @@ def test_role_provider_access_rejects_non_boolean_provider_fields():
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -1318,7 +1318,7 @@ def test_provider_conversation_missing_identity_denies_through_tool_service():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1337,7 +1337,7 @@ def test_provider_conversation_missing_identity_denies_through_tool_service():
                 ),
             )
         },
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -1360,7 +1360,7 @@ def test_provider_conversation_denies_operations_missing_provider_descriptor():
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
-        workspace_setup="setup",
+        workspace="workspace",
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -1379,7 +1379,7 @@ def test_provider_conversation_denies_operations_missing_provider_descriptor():
                 ),
             )
         },
-        collaboration_manager_factory=lambda _registry: _ProviderSetupManager(
+        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -1405,17 +1405,17 @@ class _InvalidTeamManager:
     def team_for_agent(self, agent):
         raise RuntimeError("invalid team")
 
-    def setup_for_agent(self, agent):
+    def workspace_for_agent(self, agent):
         raise RuntimeError("invalid team")
 
 
-class _MissingSetupManager:
+class _MissingWorkspaceManager:
     def __init__(self, agent: Agent) -> None:
         self._agent_registry = AgentRegistry({agent.id: agent})
         self._team = WorkspaceTeam(
             id="delivery",
             display_name="Delivery",
-            workspace_setup="setup",
+            workspace="workspace",
         )
 
     @property
@@ -1425,11 +1425,11 @@ class _MissingSetupManager:
     def team_for_agent(self, agent):
         return self._team
 
-    def setup_for_agent(self, agent):
+    def workspace_for_agent(self, agent):
         return None
 
 
-class _ProviderSetupManager:
+class _ProviderWorkspaceManager:
     def __init__(
         self,
         *,
@@ -1439,7 +1439,7 @@ class _ProviderSetupManager:
         self._team = team or WorkspaceTeam(
             id="delivery",
             display_name="Delivery",
-            workspace_setup="setup",
+            workspace="workspace",
         )
         self._agent_registry = AgentRegistry({agent.id: agent for agent in agents})
 
@@ -1452,10 +1452,10 @@ class _ProviderSetupManager:
             raise RuntimeError("invalid team")
         return self._team
 
-    def setup_for_agent(self, agent):
-        return _ProviderSetup()
+    def workspace_for_agent(self, agent):
+        return _ProviderWorkspace()
 
 
-class _ProviderSetup:
-    id = "setup"
+class _ProviderWorkspace:
+    id = "workspace"
     providers = ("linear",)

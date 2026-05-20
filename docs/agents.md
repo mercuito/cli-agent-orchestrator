@@ -59,8 +59,8 @@ The old profile prompt fields are flattened into the two-file agent shape:
 Agents without a workspace team are still valid and start in their default
 runtime workspace context. Provider event routing and team-aware collaboration
 only apply to agents that share the same non-empty team. The team's selected
-workspace setup is derived from the persisted team definition, not from the
-agent config.
+workspace is derived from the persisted team definition, not from the agent
+config.
 
 ## Linear
 

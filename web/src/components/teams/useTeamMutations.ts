@@ -55,7 +55,7 @@ export function useTeamMutations({ teams, setTeams, selectedTeamId, setSelectedT
         const created = await api.createWorkspaceTeam({
           id: team.id,
           display_name: team.display_name,
-          workspace_setup: team.workspace_setup,
+          workspace: team.workspace,
         })
         setTeams(current => current.map(currentTeam => currentTeam.id === team.id ? created : currentTeam))
         setSelectedTeamId(created.id)
@@ -70,7 +70,7 @@ export function useTeamMutations({ teams, setTeams, selectedTeamId, setSelectedT
       }
     },
 
-    async updateMetadata(team: WorkspaceTeam, metadata: { display_name: string; workspace_setup: string }) {
+    async updateMetadata(team: WorkspaceTeam, metadata: { display_name: string; workspace: string }) {
       await runOptimisticTeamUpdate(
         team,
         { ...team, ...metadata },
@@ -180,11 +180,11 @@ export function useTeamMutations({ teams, setTeams, selectedTeamId, setSelectedT
       ).catch(() => {})
     },
 
-    emptyTeam(id: string, displayName: string, workspaceSetup: string): WorkspaceTeam {
+    emptyTeam(id: string, displayName: string, workspace: string): WorkspaceTeam {
       return {
         id,
         display_name: displayName,
-        workspace_setup: workspaceSetup,
+        workspace,
         roles: { [fallbackRoleId]: defaultMemberRole() },
         role_assignments: {},
         members: [],

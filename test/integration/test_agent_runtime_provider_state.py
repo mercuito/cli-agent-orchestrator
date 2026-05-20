@@ -37,7 +37,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 from cli_agent_orchestrator.linear.workspace_tool_provider import LinearWorkspaceToolProvider
 from cli_agent_orchestrator.mcp_server.provider_tools import register_provider_mediated_mcp_tools
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -51,13 +51,13 @@ from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeFreshnessAction, AgentRuntimeHandle
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.tool_service import ToolAccessDecision, ToolService
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
     WorkspaceTeamRole,
-    default_workspace_setup_registry,
+    default_workspace_registry,
 )
 
 pytestmark = pytest.mark.integration
@@ -231,7 +231,7 @@ def _linear_role_collaboration_manager(
     team = WorkspaceTeam(
         id="cao_delivery",
         display_name="CAO Delivery",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -257,10 +257,10 @@ def _linear_role_collaboration_manager(
         },
     )
     return WorkspaceCollaborationManager(
-        setup_registry=default_workspace_setup_registry(),
+        workspace_registry=default_workspace_registry(),
         team_registry=WorkspaceTeamRegistry(_TeamStore((team,))),
         agent_registry=agent_registry,
-        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        provider_adapters={"linear": LinearWorkspaceAdapter()},
     )
 
 

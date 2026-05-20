@@ -10,14 +10,14 @@ from cli_agent_orchestrator.agent import (
     LinearToolAccessConfig,
 )
 from cli_agent_orchestrator.linear.workspace_events import LinearIssueContextEvent
-from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
-    WorkspaceSetup,
-    WorkspaceSetupConfigError,
-    WorkspaceSetupRegistry,
+    Workspace,
+    WorkspaceConfigError,
+    WorkspaceRegistry,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
     WorkspaceTeamStore,
@@ -81,16 +81,16 @@ def _manager(tmp_path) -> WorkspaceCollaborationManager:
             WorkspaceTeam(
                 id="cao_delivery",
                 display_name="CAO Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
         ),
     )
     return WorkspaceCollaborationManager(
-        setup_registry=WorkspaceSetupRegistry(
+        workspace_registry=WorkspaceRegistry(
             (
-                WorkspaceSetup(
-                    id=DEFAULT_WORKSPACE_SETUP_ID,
-                    display_name="Linear Delivery Setup",
+                Workspace(
+                    id=DEFAULT_WORKSPACE_ID,
+                    display_name="Linear Delivery",
                     providers=("linear",),
                     resolver=_resolver,
                 ),
@@ -98,7 +98,7 @@ def _manager(tmp_path) -> WorkspaceCollaborationManager:
         ),
         team_registry=WorkspaceTeamRegistry(store),
         agent_registry=registry,
-        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        provider_adapters={"linear": LinearWorkspaceAdapter()},
     )
 
 
@@ -139,7 +139,7 @@ def test_linear_provider_view_prunes_out_of_team_presence_and_does_not_authorize
 def test_linear_event_for_out_of_team_identity_is_not_cao_addressable(tmp_path):
     manager = _manager(tmp_path)
 
-    with pytest.raises(WorkspaceSetupConfigError) as exc_info:
+    with pytest.raises(WorkspaceConfigError) as exc_info:
         manager.resolve_provider_event(
             "linear",
             _event(
@@ -161,7 +161,7 @@ def test_linear_event_for_out_of_team_identity_is_not_cao_addressable(tmp_path):
 def test_linear_event_for_out_of_team_alias_identity_explains_rejection(tmp_path):
     manager = _manager(tmp_path)
 
-    with pytest.raises(WorkspaceSetupConfigError) as exc_info:
+    with pytest.raises(WorkspaceConfigError) as exc_info:
         manager.resolve_provider_event(
             "linear",
             _event(

@@ -34,7 +34,7 @@ The approved mockup establishes this target:
   app.
 - Left rail shows team cards with display name, agent count, role count, and a
   `+ New team` action.
-- Main area shows selected team identity, read-only Team ID, workspace setup
+- Main area shows selected team identity, read-only Team ID, workspace
   select, available agents, members, and a roles strip.
 - Available agents are added with explicit row actions, not drag-and-drop.
 - Members have inline role dropdowns and remove actions.
@@ -52,7 +52,7 @@ The approved mockup establishes this target:
 - `web/src/components/WorkspaceTeamsPanel.tsx` renders the current Teams tab as
   a read-only list plus a single-form editor. Role assignments are edited as raw
   JSON and membership is not directly manageable.
-- The component already loads teams, workspace setups, CAO tool descriptors, and
+- The component already loads teams, workspaces, CAO tool descriptors, and
   workspace tool provider role access schemas.
 - The frontend must use the granular team CRUD endpoints added by the backend
   plans instead of the old whole-team upsert flow.
@@ -95,7 +95,7 @@ that composes these pieces:
 
 - `TeamRail` — renders team cards, selection, and `+ New team`.
 - `TeamHeader` — renders selected team name, read-only Team ID, and workspace
-  setup select.
+  select.
 - `AvailableAgentsPanel` — renders searchable agents not currently in the
   selected team. Each row has an explicit add action.
 - `MembersPanel` — renders searchable team members. Each row has an inline role
@@ -110,9 +110,9 @@ that composes these pieces:
 
 Add typed wrappers for the granular backend endpoints:
 
-- `createWorkspaceTeam({ id, display_name, workspace_setup })`
+- `createWorkspaceTeam({ id, display_name, workspace })`
   -> `POST /workspace-teams`
-- `updateWorkspaceTeamMetadata(team_id, { display_name, workspace_setup })`
+- `updateWorkspaceTeamMetadata(team_id, { display_name, workspace })`
   -> `PUT /workspace-teams/{team_id}`
 - `deleteWorkspaceTeam(team_id)` -> `DELETE /workspace-teams/{team_id}`
 - `putWorkspaceTeamRole(team_id, role_id, role)`
@@ -145,7 +145,7 @@ edits that feel patch-like in the UI must be implemented by merging the changed
 field into the current frontend object and then sending the complete backend
 `PUT` payload:
 
-- team metadata `PUT` requires both `display_name` and `workspace_setup`;
+- team metadata `PUT` requires both `display_name` and `workspace`;
 - role `PUT` requires the complete role object, including display name, CAO
   tools, MCP server grants, and provider grants;
 - member add/change is granular already and uses the member endpoint.
@@ -162,9 +162,9 @@ role state from `role_assignments`.
 2. **Scaffold the new component structure.** Create the components listed in
    Component Shape and wire them through `WorkspaceTeamsPanel.tsx`.
 
-3. **Replace the data shell.** Load teams, agents, setups, CAO tool descriptors,
-   and provider tool schemas. Hold one selected team id and one source-of-truth
-   team list.
+3. **Replace the data shell.** Load teams, agents, workspaces, CAO tool
+   descriptors, and provider tool schemas. Hold one selected team id and one
+   source-of-truth team list.
 
 4. **Implement mutations.** Centralize optimistic updates and rollback in
    `useTeamMutations`. UI-level field edits are local patches, but API writes
@@ -216,8 +216,8 @@ This is the single authoritative acceptance section for this plan.
 - Removing a member uses
   `DELETE /workspace-teams/{team_id}/members/{agent_id}` and updates
   optimistically with rollback on failure.
-- Workspace setup and team display-name changes use the metadata endpoint with
-  both `display_name` and `workspace_setup` in the request body, matching the
+- Workspace and team display-name changes use the metadata endpoint with
+  both `display_name` and `workspace` in the request body, matching the
   current backend contract.
 - Role cards show member counts derived from `member_details`.
 - Clicking a role card opens the drawer for that role.
@@ -286,7 +286,7 @@ dashboard, not mocked components and not `mockup.html`.
 4. Change one member's role through the inline dropdown and confirm the visible
    role assignment changes.
 5. Remove one member and confirm the member list and counts update.
-6. Change the team display name and workspace setup, refresh the page, and
+6. Change the team display name and workspace, refresh the page, and
    confirm the saved values persist.
 7. Create a role and confirm the role drawer opens for it.
 8. Search/filter the tool list by name and confirm unrelated tools are hidden
@@ -318,7 +318,7 @@ The table must include at least these rows:
 - Team rail selection.
 - `+ New team`.
 - Team display-name edit.
-- Workspace setup select.
+- Workspace select.
 - Available-agent search.
 - Available-agent `Add` action.
 - Members search.

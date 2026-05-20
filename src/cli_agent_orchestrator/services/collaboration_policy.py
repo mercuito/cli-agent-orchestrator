@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import TerminalModel
-from cli_agent_orchestrator.workspace_setups import (
-    WorkspaceSetupConfigError,
+from cli_agent_orchestrator.workspaces import (
+    WorkspaceConfigError,
     default_workspace_collaboration_manager,
 )
 
@@ -24,10 +24,10 @@ def require_terminal_same_team_collaboration(
 
     sender_metadata = _terminal_metadata(sender_id, db=db)
     if sender_metadata is None:
-        raise WorkspaceSetupConfigError(f"Sender terminal not found: {sender_id}")
+        raise WorkspaceConfigError(f"Sender terminal not found: {sender_id}")
     receiver_metadata = _terminal_metadata(receiver_id, db=db)
     if receiver_metadata is None:
-        raise WorkspaceSetupConfigError(f"Receiver terminal not found: {receiver_id}")
+        raise WorkspaceConfigError(f"Receiver terminal not found: {receiver_id}")
     sender_agent_id = _metadata_agent_id(sender_metadata, terminal_id=sender_id, role="Sender")
     receiver_agent_id = _metadata_agent_id(
         receiver_metadata,
@@ -51,15 +51,15 @@ def require_terminal_workspace_team(
 
     metadata = _terminal_metadata(terminal_id, db=db)
     if metadata is None:
-        raise WorkspaceSetupConfigError(f"{role} terminal not found: {terminal_id}")
+        raise WorkspaceConfigError(f"{role} terminal not found: {terminal_id}")
     agent_id = _metadata_agent_id(metadata, terminal_id=terminal_id, role=role)
     manager = default_workspace_collaboration_manager()
     agent = manager.agent_registry.get(agent_id)
     if manager.team_for_agent(agent) is None:
-        raise WorkspaceSetupConfigError(
+        raise WorkspaceConfigError(
             f"{role} terminal {terminal_id} agent {agent.id} has no workspace team"
         )
-    manager.setup_for_agent(agent)
+    manager.workspace_for_agent(agent)
 
 
 def _terminal_metadata(
@@ -78,5 +78,5 @@ def _terminal_metadata(
 def _metadata_agent_id(metadata: Mapping[str, object], *, terminal_id: str, role: str) -> str:
     agent_id = metadata.get("agent_id")
     if not isinstance(agent_id, str) or not agent_id.strip():
-        raise WorkspaceSetupConfigError(f"{role} terminal {terminal_id} has no CAO agent")
+        raise WorkspaceConfigError(f"{role} terminal {terminal_id} has no CAO agent")
     return agent_id.strip()

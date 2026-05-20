@@ -25,9 +25,9 @@ planning/work context.
 The desired model is higher level:
 
 - an agent belongs to one named workspace team,
-- a team points at one workspace setup,
-- a setup defines the workspace tool providers and resolver available to that team,
-- a setup owns exactly one resolver,
+- a team points at one workspace,
+- a workspace defines the workspace tool providers and resolver available to that team,
+- a workspace owns exactly one resolver,
 - the resolver may consult multiple providers, but it is the only authority for
   deriving workspace context IDs,
 - agents in the same team can naturally collaborate,
@@ -55,7 +55,7 @@ parts into a team membership model.
 
 ## Locked Vocabulary
 
-Use **workspace setup** for provider/resolver/context machinery.
+Use **workspace** for provider/resolver/context machinery.
 
 Use **workspace team** for the logical group of agents that can collaborate
 naturally. This is the collaboration boundary.
@@ -75,7 +75,7 @@ CAO-managed team, not membership in the provider's own workspace.
   workspace context, and be inspected, but it cannot use team-aware agent
   collaboration.
 - Agent-to-agent messaging requires both agents to be on the same team.
-- A team has one workspace setup, which supplies the provider address book,
+- A team has one workspace, which supplies the provider address book,
   resolver, and workspace context model for that team's collaboration.
 - Cross-team messaging is blocked in v1. If needed later, it should be added as
   an explicit bridge, front desk, gateway, or delegation policy.
@@ -89,9 +89,9 @@ Each agent references at most one workspace team:
 team = "cao_delivery"
 ```
 
-The team definition points at one setup. Agent configs do not directly select a
-setup for collaboration. That keeps collaboration policy from collapsing into a
-raw setup-name equality check.
+The team definition points at one workspace. Agent configs do not directly select a
+workspace for collaboration. That keeps collaboration policy from collapsing into a
+raw workspace-name equality check.
 
 No team means the agent has no workspace team membership. In that state:
 
@@ -100,7 +100,7 @@ No team means the agent has no workspace team membership. In that state:
 - runtime terminals still get a default workspace context, preserving the
   existing terminal invariant.
 
-Workspace setup definitions are code-owned in v1. A setup is still the
+Workspace definitions are code-owned in v1. A workspace is still the
 provider/resolver contract, so keeping it in code prevents users from creating
 invalid provider/resolver combinations before the model is proven.
 
@@ -114,9 +114,9 @@ file-based team management.
 Example v1 definitions:
 
 ```python
-WorkspaceSetup(
-    id="linear_delivery_setup",
-    display_name="Linear Delivery Setup",
+Workspace(
+    id="linear_delivery",
+    display_name="Linear Delivery",
     providers=("linear", "github"),
     resolver=LinearPlanningWorkspaceResolver(...),
 )
@@ -124,36 +124,36 @@ WorkspaceSetup(
 WorkspaceTeam(
     id="cao_delivery",
     display_name="CAO Delivery",
-    workspace_setup="linear_delivery_setup",
+    workspace="linear_delivery",
 )
 ```
 
-Use `cao_delivery` as the first team id. Use `linear_delivery_setup` as the
-first setup id. Keeping these ids distinct prevents the code from accidentally
-treating team identity and setup identity as interchangeable.
+Use `cao_delivery` as the first team id. Use `linear_delivery` as the
+first workspace id. Keeping these ids distinct prevents the code from accidentally
+treating team identity and workspace identity as interchangeable.
 
-The setup has one resolver. That resolver can ask Linear, GitHub, or future
+The workspace has one resolver. That resolver can ask Linear, GitHub, or future
 providers for data, but it must return one authoritative
 `WorkspaceContextResolution`.
 
-Two teams may point at the same setup, but they remain separate collaboration
-domains unless a future plan introduces an explicit bridge. Same setup does not
+Two teams may point at the same workspace, but they remain separate collaboration
+domains unless a future plan introduces an explicit bridge. Same workspace does not
 mean same team.
 
-Workspace context identity is setup/resolver scoped, not team scoped. If two
-teams share the same setup and resolve the same provider object, they may use
+Workspace context identity is workspace/resolver scoped, not team scoped. If two
+teams share the same workspace and resolve the same provider object, they may use
 the same workspace context id while message policy still prevents cross-team
-collaboration. If two different setups or resolver namespaces resolve the same
+collaboration. If two different workspaces or resolver namespaces resolve the same
 provider object, they must not silently collide into one context.
 
 ## Team Boundary
 
-Workspace setup and workspace team are intentionally separate:
+Workspace and workspace team are intentionally separate:
 
-- a setup answers "how do we resolve workspace context and provider views?";
+- a workspace answers "how do we resolve workspace context and provider views?";
 - a team answers "which agents are allowed to collaborate naturally?";
-- provider addressability is materialized for a team using that team's setup;
-- collaboration checks compare team membership, not setup ids.
+- provider addressability is materialized for a team using that team's workspace;
+- collaboration checks compare team membership, not workspace ids.
 
 This prevents a subtle class of bugs where two unrelated teams happen to use
 the same provider/resolver machinery and accidentally become mutually
@@ -163,13 +163,13 @@ addressable.
 
 A workspace team shares one workflow model, not one identical permission set.
 
-The team's workspace setup defines the workflow concepts available to the team:
+The team's workspace defines the workflow concepts available to the team:
 which providers exist, which resolver determines context, and which provider
 address books can participate in collaboration. Every agent on the team operates
 inside that same workflow model.
 
 Provider permissions remain agent-specific. Team membership does not grant
-provider power by itself. An agent can belong to a team whose setup includes
+provider power by itself. An agent can belong to a team whose workspace includes
 Linear and GitHub while only having Linear read access, GitHub read access,
 Linear write access, or no provider tool access at all.
 
@@ -198,14 +198,14 @@ For v1, CAO-managed agent collaboration is same-team only:
 - agents on the same team may message, hand off to, delegate to, or otherwise
   address each other through CAO collaboration surfaces;
 - agents on different teams may not collaborate through those surfaces, even
-  when both teams use the same workspace setup;
+  when both teams use the same workspace;
 - agents without a team may still have terminals and default runtime context,
   but they are outside team-aware collaboration;
 - lower-level terminal diagnostics can remain available through terminal-owned
   surfaces, but they must not silently become agent collaboration.
 
 This deliberately trades broader cross-team communication for a stronger
-invariant: every normal collaboration path has one team, one derived setup, and
+invariant: every normal collaboration path has one team, one derived workspace, and
 one resolver-backed context model. If cross-team communication becomes a product
 requirement later, it should be introduced as an explicit bridge or gateway
 policy rather than by weakening same-team enforcement.
@@ -234,10 +234,10 @@ The boundary should be:
 
 In other words, Linear can remain a provider adapter, but the `cao_delivery`
 team authorizes the Linear address book that CAO uses for that team. The team
-uses its configured workspace setup to know which providers and resolver apply.
+uses its configured workspace to know which providers and resolver apply.
 
 External providers can still know about a presence that CAO should not use. For
-example, a Linear app user may exist for Agent B because OAuth/setup happened at
+example, a Linear app user may exist for Agent B because OAuth/workspace happened at
 some point. If Agent A belongs to team `cao_delivery` and Agent B does not,
 then a Linear mention, delegation, teammate lookup, or app-user ping inside
 `cao_delivery` must not resolve Agent B as a CAO-managed recipient.
@@ -249,7 +249,7 @@ The natural prevention point is provider config materialization:
   CAO-addressable.
 - Include only authorized provider presences and provider tool access for agents
   that belong to that team.
-- Keep provider-native extraction functions available so the setup can ask the
+- Keep provider-native extraction functions available so the workspace can ask the
   provider for candidates without duplicating Linear/GitHub parsing details.
 - Let external provider identities remain untouched.
 - Do not expose a CAO recipient mapping for out-of-team agents.
@@ -283,7 +283,7 @@ address book.
 For v1:
 
 - if a provider event resolves to exactly one team-authorized agent, use that
-  agent's team and that team's setup for runtime context resolution;
+  agent's team and that team's workspace for runtime context resolution;
 - if a provider event resolves to no team-authorized agent, reject it as not
   CAO-addressable;
 - if a provider event resolves to multiple team-authorized agents across
@@ -308,20 +308,20 @@ before creating inbox notifications.
 
 ## Proposed Architecture
 
-Create a localized workspace setup/team subsystem, likely under:
+Create a localized workspace/team subsystem, likely under:
 
 ```text
-src/cli_agent_orchestrator/workspace_setups/
+src/cli_agent_orchestrator/workspaces/
 ```
 
 The subsystem owns these public concepts:
 
-- `WorkspaceSetup`: immutable definition of a named setup.
-- `WorkspaceSetupResolver`: protocol for resolving provider/runtime events into
+- `Workspace`: immutable definition of a named workspace.
+- `WorkspaceResolver`: protocol for resolving provider/runtime events into
   a `WorkspaceContextResolution`.
-- `WorkspaceSetupRegistry`: code-owned registration and lookup of known setup
+- `WorkspaceRegistry`: code-owned registration and lookup of known workspace
   definitions.
-- `WorkspaceTeam`: immutable definition of a named team and its selected setup.
+- `WorkspaceTeam`: immutable definition of a named team and its selected workspace.
 - `WorkspaceTeamStore`: the persisted owner for dashboard-managed team
   definitions.
 - `WorkspaceTeamRegistry`: read-through lookup over persisted teams plus
@@ -331,7 +331,7 @@ The subsystem owns these public concepts:
   instead of mutating registries directly.
 - `WorkspaceTeamMembership`: the parsed agent team reference.
 - `WorkspaceCollaborationManager`: the runtime service that validates team
-  membership, resolves events through the team's setup, and enforces
+  membership, resolves events through the team's workspace, and enforces
   collaboration boundaries.
 - `WorkspaceTeamProviderView`: a team-filtered projection of provider
   presences, provider tool access, and provider-native address mappings.
@@ -348,7 +348,7 @@ The subsystem owns these public concepts:
   mapping is addressable inside one team.
 
 Consumers should use this package's public API. They should not reach directly
-into registry internals or provider-specific resolver modules except from setup
+into registry internals or provider-specific resolver modules except from workspace
 definition code.
 
 ## Manager Responsibilities
@@ -360,28 +360,28 @@ decisions:
 1. Validate an agent's configured team name when agents are loaded or used.
 2. Report unknown team names as diagnostics instead of silently disabling
    context.
-3. Resolve the team to its setup.
-4. Report teams that reference unknown setup names as diagnostics.
-5. Validate that the setup's providers are available when the team is used.
+3. Resolve the team to its workspace.
+4. Report teams that reference unknown workspace names as diagnostics.
+5. Validate that the workspace's providers are available when the team is used.
 6. Request candidate provider mappings from provider adapters.
 7. Authorize or prune those mappings against team membership.
 8. Build team-filtered provider views so out-of-team agents are not
    addressable through provider-native identities.
 9. Preserve agent-specific provider permissions when building provider views;
    team membership must not grant provider tool access by itself.
-10. Resolve provider/runtime events by delegating to the team's setup resolver.
+10. Resolve provider/runtime events by delegating to the team's workspace resolver.
 11. Return no resolution for agents without a team.
 12. Bind resolved workspace context IDs into `AgentRuntimeHandle` creation.
 13. Decide whether two agents can collaborate naturally:
    - same non-empty team: allowed,
-   - different team: rejected even when both teams use the same setup,
+   - different team: rejected even when both teams use the same workspace,
    - one or both without a team: rejected for team-aware collaboration.
 14. Keep the collaboration decision on an explicit message-policy path so
    provider context resolution does not accidentally become the messaging
    authorization model.
 15. Produce user-visible rejection messages that name the sender, receiver, and
    team mismatch.
-16. Ensure workspace context identity is scoped by setup/resolver namespace so
+16. Ensure workspace context identity is scoped by workspace/resolver namespace so
    different resolver models do not silently share one provider-object context.
 
 The manager should not replace the lower-level workspace context store. It sits
@@ -426,19 +426,19 @@ resolver-id-to-team behavior.
 
 ## Implementation Phases
 
-### Phase 1 - Define the Setup/Team Subsystem
+### Phase 1 - Define the Workspace/Team Subsystem
 
-- Add the `workspace_setups` package with public types and manager API.
-- Register the first setup that models the current Linear planning behavior.
-- Add a persisted team-definition owner surface under the setup/team subsystem,
+- Add the `workspaces` package with public types and manager API.
+- Register the first workspace that models the current Linear planning behavior.
+- Add a persisted team-definition owner surface under the workspace/team subsystem,
   including store/config format, service API, validation, diagnostics, and
   isolated test-owned storage.
-- Seed the first team that uses the Linear setup through the team owner
+- Seed the first team that uses the Linear workspace through the team owner
   surface. Bootstrap seeds may be code-owned, but runtime team definitions are
   read from the localized persisted store.
 - Keep runtime behavior unchanged while unit tests prove lookup, validation,
-  team lookup, setup lookup, and one-resolver-per-setup invariants.
-- Add diagnostics for unknown team names, unknown setup names, and unavailable
+  team lookup, workspace lookup, and one-resolver-per-workspace invariants.
+- Add diagnostics for unknown team names, unknown workspace names, and unavailable
   providers.
 - Add the provider candidate mapping and team authorization contracts, even if
   Linear is the only provider implementation at first.
@@ -450,40 +450,40 @@ resolver-id-to-team behavior.
   diagnostic/error; do not translate it into team membership.
 - Update config serialization so newly written agent files use `[workspace]`.
 - Update API responses and dashboard config views to show the team name, derived
-  setup name, and workspace context state clearly.
+  workspace name, and workspace context state clearly.
 
 ### Phase 3 - Route Resolution Through the Manager
 
 - Replace direct calls to `resolve_workspace_context_for_agent` in provider
   runtimes with manager calls.
-- Move Linear planning resolution behind a workspace setup resolver adapter.
+- Move Linear planning resolution behind a workspace resolver adapter.
 - Build Linear presence resolution from team-authorized candidate mappings, not
   the global set of agents with Linear config.
 - Treat a Linear app user/app key that belongs to an out-of-team agent as not
   CAO-addressable in the current team.
 - Preserve default runtime context behavior for agents without team
   membership.
-- Add integration coverage that a Linear event resolves through the team/setup
+- Add integration coverage that a Linear event resolves through the team/workspace
   and starts or addresses the agent in the resolved context.
 
 ### Phase 4 - Enforce Collaboration Boundaries
 
 - Identify agent-to-agent messaging entry points, including MCP/server surfaces.
 - Add a team-aware guard before sending workspace-dependent messages.
-- Treat the guard as message policy, not just workspace setup compatibility.
+- Treat the guard as message policy, not just workspace compatibility.
 - Allow same-team collaboration.
 - Reject cross-team collaboration with a clear message.
 - Reject collaboration across different teams even if both teams share the same
-  setup.
+  workspace.
 - Reject team-aware collaboration when either agent has no team.
 - Keep purely terminal-addressed diagnostic operations separate if they are not
   semantically agent collaboration.
 
 ### Phase 5 - Diagnostics and UI
 
-- Surface team/setup validation problems in API responses and the dashboard.
-- Show the selected agent's team, derived setup, and workspace context metadata.
-- Keep terminals visible only in agent context, but include enough team/setup/context
+- Surface team/workspace validation problems in API responses and the dashboard.
+- Show the selected agent's team, derived workspace, and workspace context metadata.
+- Keep terminals visible only in agent context, but include enough team/workspace/context
   information to explain why collaboration or provider event routing worked.
 - If UI changes are made, verify in a real browser against the backend-served
   bundle, including any remote/Tailscale route used during review.
@@ -496,12 +496,12 @@ resolver-id-to-team behavior.
 - Delete old tests, fixtures, examples, and docs that encode the legacy
   `[workspace_context]` model except for explicit historical migration notes.
 - Update docs/examples so "workspace team" is the documented agent membership
-  path and "workspace setup" is documented only as team-owned context machinery.
+  path and "workspace" is documented only as team-owned context machinery.
 
 ## Task Breakdown
 
 Use these tasks as the implementation checklist. Each task should leave the
-codebase closer to the team model without preserving setup-as-membership as a
+codebase closer to the team model without preserving workspace-as-membership as a
 parallel behavior path.
 
 ### Task 1 - Agent Config Becomes Team Membership
@@ -517,59 +517,59 @@ Owned areas:
 
 Required changes:
 
-- Replace agent membership field `workspace.setup` with `workspace.team`.
+- Replace agent membership field `workspace.workspace` with `workspace.team`.
 - Parse and write `[workspace] team = "cao_delivery"`.
 - Update `cao agent create/show/list/edit/start` surfaces. `create` must either
   support explicit `--team` or intentionally create standalone no-team agents
   with documented behavior.
 - Treat legacy `[workspace_context]` as unsupported current configuration:
-  detect it for diagnostics/errors only, and never map it to a team id, setup
+  detect it for diagnostics/errors only, and never map it to a team id, workspace
   id, resolver, recipient, or runtime context.
-- Ensure newly serialized configs do not emit `[workspace] setup`.
+- Ensure newly serialized configs do not emit `[workspace] workspace`.
 
 ### Task 2 - Add Team Registry And Team-Aware Manager
 
 Owned areas:
 
-- `src/cli_agent_orchestrator/workspace_setups/`
-- persisted team-definition storage under the setup/team subsystem or a
+- `src/cli_agent_orchestrator/workspaces/`
+- persisted team-definition storage under the workspace/team subsystem or a
   localized client owned by that subsystem.
-- `test/workspace_setups/`
+- `test/workspaces/`
 
 Required changes:
 
 - Add `WorkspaceTeam`, `WorkspaceTeamStore`, `WorkspaceTeamRegistry`,
   `WorkspaceTeamService`, and team diagnostics.
-- Keep `WorkspaceSetup` as provider/resolver machinery.
-- Add manager APIs for `agent -> team -> setup`.
-- Register `linear_delivery_setup` as the first code-owned setup.
+- Keep `Workspace` as provider/resolver machinery.
+- Add manager APIs for `agent -> team -> workspace`.
+- Register `linear_delivery` as the first code-owned workspace.
 - Seed `cao_delivery` as the first bootstrap team through the same team owner
   surface used by dashboard/API management.
 - Define team create, update, list, validation, diagnostics, and persistence in
-  the setup/team subsystem. Dashboard-managed teams must not be represented by
+  the workspace/team subsystem. Dashboard-managed teams must not be represented by
   process-global mutable registries or ad hoc API-local state.
 - Tests must use isolated test-owned team storage and must not share mutable
   team registry state across test cases or concurrent runs.
-- Fail closed for unknown teams and for teams that reference unknown setups.
+- Fail closed for unknown teams and for teams that reference unknown workspaces.
 
 ### Task 3 - Move Provider Addressability To Team Authorization
 
 Owned areas:
 
-- `src/cli_agent_orchestrator/workspace_setups/`
-- `src/cli_agent_orchestrator/linear/workspace_setup_adapter.py`
+- `src/cli_agent_orchestrator/workspaces/`
+- `src/cli_agent_orchestrator/linear/workspace_adapter.py`
 - `src/cli_agent_orchestrator/workspace_tool_providers/registry.py`
 - `src/cli_agent_orchestrator/workspace_tool_providers/events.py`
 - `src/cli_agent_orchestrator/mcp_server/freshness.py`
 - `src/cli_agent_orchestrator/mcp_server/provider_tools.py`
 - `src/cli_agent_orchestrator/services/terminal_service.py`
-- provider and setup tests under `test/linear/`, `test/workspace_setups/`, and
+- provider and workspace tests under `test/linear/`, `test/workspaces/`, and
   `test/workspace_tool_providers/`.
 
 Required changes:
 
-- Replace setup-authorized mappings with team-authorized mappings.
-- Build team-bound provider views using the team's setup.
+- Replace workspace-authorized mappings with team-authorized mappings.
+- Build team-bound provider views using the team's workspace.
 - Preserve provider-owned candidate extraction and provider-native domain logic.
 - Preserve agent-specific provider tool permissions; team membership must not
   expand tool access.
@@ -597,7 +597,7 @@ Owned areas:
 - `src/cli_agent_orchestrator/linear/inbox_bridge.py`
 - `src/cli_agent_orchestrator/provider_conversations/inbox_bridge.py`
 - `src/cli_agent_orchestrator/provider_conversations/reply_service.py`
-- manager/provider event tests under `test/linear/` and `test/workspace_setups/`.
+- manager/provider event tests under `test/linear/` and `test/workspaces/`.
   Include provider-conversation tests under `test/provider_conversations/` and
   Linear app route tests. Include Linear app service tests and Linear monitor
   tests.
@@ -605,13 +605,13 @@ Owned areas:
 Required changes:
 
 - Resolve inbound provider events through team-authorized provider views.
-- If exactly one team-authorized agent matches, use that agent's team and setup.
+- If exactly one team-authorized agent matches, use that agent's team and workspace.
 - If no team-authorized agent matches, reject before runtime handle creation.
 - If multiple teams match, reject as ambiguous before runtime handle creation.
 - Make provider-originated rejection diagnostics visible through the owning
   provider/runtime surface. Rejections should explain that the provider event
   was authenticated but not CAO-addressable in the resolved team context, and
-  should include enough provider identity and team/setup context for an operator
+  should include enough provider identity and team/workspace context for an operator
   to understand why no agent response occurred.
 - Retire, constrain, or reroute explicit provider-conversation receiver paths so
   provider-originated notifications cannot bypass team-authorized event
@@ -624,10 +624,10 @@ Required changes:
   views.
 - Do not advance monitor watermarks for no-team, out-of-team, or ambiguous
   identities that were not safely processed.
-- Remove runtime checks that use `agent.workspace.setup` as the membership
+- Remove runtime checks that use `agent.workspace.workspace` as the membership
   signal.
 
-### Task 4A - Scope Workspace Context Identity By Setup/Resolver
+### Task 4A - Scope Workspace Context Identity By Workspace/Resolver
 
 Owned areas:
 
@@ -638,11 +638,11 @@ Owned areas:
 
 Required changes:
 
-- Make setup/resolver namespace part of workspace context identity or enforce an
-  equivalent conflict check that prevents different setups/resolvers from
+- Make workspace/resolver namespace part of workspace context identity or enforce an
+  equivalent conflict check that prevents different workspaces/resolvers from
   silently sharing one provider-object context.
 - Preserve the default agent context behavior for no-team runtime work.
-- Allow two teams sharing the same setup to resolve the same provider object to
+- Allow two teams sharing the same workspace to resolve the same provider object to
   the same workspace context id; collaboration remains blocked by team policy.
 - Add migration/backfill coverage for existing workspace contexts.
 
@@ -689,7 +689,7 @@ Owned areas:
 
 Required changes:
 
-- Replace same-setup collaboration guards with same-team message policy.
+- Replace same-workspace collaboration guards with same-team message policy.
 - Apply the policy to direct `send_message`, handoff, assign/delegation, baton
   collaboration paths, and provider-originated teammate lookup.
 - Apply the policy before `create_inbox_delivery` at the inbox message owner
@@ -699,11 +699,11 @@ Required changes:
   id possession and stored provider metadata such as Linear `app_key` must not
   bypass current authorization.
 - Allow same non-empty team.
-- Reject missing-team, different-team, and different-teams-sharing-one-setup
+- Reject missing-team, different-team, and different-teams-sharing-one-workspace
   cases with clear user-visible text.
 - Keep operator/admin terminal control separate from agent collaboration.
 
-### Task 6 - Rename API/UI From Membership Setup To Team
+### Task 6 - Rename API/UI From Membership Workspace To Team
 
 Owned areas:
 
@@ -723,30 +723,30 @@ Owned areas:
 Required changes:
 
 - Expose team id as the agent membership field.
-- Expose derived setup id as metadata, not membership.
+- Expose derived workspace id as metadata, not membership.
 - Add a first-class dashboard Teams tab for viewing, creating, and managing
-  workspace teams. The tab should show each team, its selected workspace setup,
-  setup diagnostics, and current member agents so operators can understand who
+  workspace teams. The tab should show each team, its selected workspace,
+  workspace diagnostics, and current member agents so operators can understand who
   can collaborate with whom.
-- Make the Teams tab the dashboard owner for changing a team's workspace setup.
-  An agent that belongs to a team inherits its setup from that team.
+- Make the Teams tab the dashboard owner for changing a team's workspace.
+  An agent that belongs to a team inherits its workspace from that team.
 - Route Teams tab create/update/list actions through the localized
   `WorkspaceTeamService` owner surface and persisted team store. The UI and API
-  must not mutate setup/team registries directly or keep team definitions only
+  must not mutate workspace/team registries directly or keep team definitions only
   in frontend state.
 - In the agent configuration UI, allow changing the agent's team membership but
-  render the workspace setup as derived read-only metadata whenever the agent is
-  in a team. The setup control must be disabled or replaced with read-only
-  text, with copy that makes clear the setup is owned by the selected team.
-- Do not allow the dashboard to persist an agent-level workspace setup override
-  for a teamed agent. No-team agents may show default/no setup context, but
+  render the workspace as derived read-only metadata whenever the agent is
+  in a team. The workspace control must be disabled or replaced with read-only
+  text, with copy that makes clear the workspace is owned by the selected team.
+- Do not allow the dashboard to persist an agent-level workspace override
+  for a teamed agent. No-team agents may show default/no workspace context, but
   they must not imply independent team workflow membership.
 - Update CLI list/show/create/start output and tests to reflect team membership,
-  derived setup metadata, and team/setup diagnostics where relevant.
-- Rename diagnostics and UI labels where "setup" currently means membership.
-- Continue showing derived setup/workspace context metadata so operators can
+  derived workspace metadata, and team/workspace diagnostics where relevant.
+- Rename diagnostics and UI labels that still present workspace as direct agent membership.
+- Continue showing derived workspace and workspace context metadata so operators can
   understand routing.
-- Add team id and derived setup id to relevant runtime/provider event payloads,
+- Add team id and derived workspace id to relevant runtime/provider event payloads,
   or explicitly document why a payload remains context-only.
 - Update generated web types and timeline views/tests for events that explain
   routing, collaboration, or provider event selection.
@@ -839,7 +839,7 @@ Required changes:
 Owned areas:
 
 - old `[workspace_context]` parser/migration code
-- docs/examples/tests that still present setup membership or legacy context as
+- docs/examples/tests that still present workspace membership or legacy context as
   valid configuration.
 
 Required changes:
@@ -850,12 +850,12 @@ Required changes:
 - Retain, at most, unsupported-legacy detection that emits an actionable
   diagnostic/error and cannot authorize runtime behavior.
 - Replace legacy compatibility tests with tests proving legacy config is
-  rejected or diagnosed and cannot select a team, setup, resolver, recipient, or
+  rejected or diagnosed and cannot select a team, workspace, resolver, recipient, or
   runtime context.
 - Ensure examples and docs present `[workspace] team` as the only current
   membership path.
 - Static search must not find production behavior that treats
-  `[workspace_context]` or `[workspace] setup` as current configuration.
+  `[workspace_context]` or `[workspace] workspace` as current configuration.
 
 ## Test Plan
 
@@ -872,10 +872,10 @@ Required coverage:
     does not map through any resolver-to-team compatibility table,
   - both shapes present keeps `[workspace] team` as the only usable membership
     field and still emits a legacy-config diagnostic.
-- Setup/team registry and manager:
+- Workspace/team registry and manager:
   - unknown team is rejected or surfaced as a diagnostic,
-  - unknown setup is rejected or surfaced as a diagnostic,
-  - a team that references an unknown setup is rejected or surfaced as a
+  - unknown workspace is rejected or surfaced as a diagnostic,
+  - a team that references an unknown workspace is rejected or surfaced as a
     diagnostic,
   - dashboard-created or edited teams persist through the localized team owner
     surface and are visible after service/browser reload,
@@ -884,14 +884,14 @@ Required coverage:
   - tests use isolated team storage and do not rely on process-global mutable
     registries,
   - unavailable provider is detected,
-  - setup definitions cannot have multiple resolvers,
+  - workspace definitions cannot have multiple resolvers,
   - agents without a team do not run provider event resolution.
 - Workspace context identity:
-  - setup/resolver namespace participates in context identity or conflict
+  - workspace/resolver namespace participates in context identity or conflict
     detection,
-  - two teams sharing one setup can resolve the same provider object to one
+  - two teams sharing one workspace can resolve the same provider object to one
     context,
-  - two different setups/resolver namespaces cannot silently collide on the same
+  - two different workspaces/resolver namespaces cannot silently collide on the same
     provider object,
   - default no-team runtime contexts remain agent-scoped.
 - Provider addressability:
@@ -945,8 +945,8 @@ Required coverage:
     `return_stack` do not silently authorize stale cross-team collaboration.
 - Collaboration:
   - same team can collaborate,
-  - different teams with different setups are rejected with a clear message,
-  - different teams with the same setup are still rejected with a clear message,
+  - different teams with different workspaces are rejected with a clear message,
+  - different teams with the same workspace are still rejected with a clear message,
   - missing team is rejected for team-aware collaboration,
   - direct messaging, handoff, delegation, and provider-originated teammate
     lookup all use the same message-policy owner surface,
@@ -956,12 +956,12 @@ Required coverage:
   - direct diagnostic terminal access remains possible only through its existing
     owner surface.
 - Dashboard/API, if touched:
-  - a Teams tab can create/manage teams, choose team setup, and show members,
-  - team name, derived setup name, and active workspace context render for
+  - a Teams tab can create/manage teams, choose team workspace, and show members,
+  - team name, derived workspace name, and active workspace context render for
     selected agents,
   - agent configuration shows team membership as editable while team-derived
-    workspace setup is read-only/disabled for teamed agents,
-  - saving agent configuration cannot persist an agent-level setup override for
+    workspace is read-only/disabled for teamed agents,
+  - saving agent configuration cannot persist an agent-level workspace override for
     a teamed agent,
   - timeline or runtime events that explain routing/collaboration include team
     context where relevant,
@@ -973,18 +973,18 @@ Required coverage:
 
 Implementation is not complete until each acceptance claim has observable
 evidence. Do not rely on illustrative providers that do not exist in production
-unless the test is explicitly exercising the provider-agnostic team/setup
+unless the test is explicitly exercising the provider-agnostic team/workspace
 contract.
 
 | Claim | Required evidence |
 | --- | --- |
 | Agent config supports one team | Parse/write tests load real temporary agent directories with `[workspace] team`, no team, legacy `[workspace_context]`, and both shapes present. Legacy `[workspace_context]` must be rejected or diagnosed as unsupported and must not produce team membership. |
-| CLI agent management reflects team membership | CLI tests cover create/show/list/edit/start behavior for team membership, derived setup metadata, diagnostics, and intentionally standalone no-team creation where applicable. |
-| Team/setup definitions are localized | Code review verifies setup/team public types, registries, manager, and provider-view contracts live under the setup subsystem; consumers import the public surface. |
+| CLI agent management reflects team membership | CLI tests cover create/show/list/edit/start behavior for team membership, derived workspace metadata, diagnostics, and intentionally standalone no-team creation where applicable. |
+| Team/workspace definitions are localized | Code review verifies workspace/team public types, registries, manager, and provider-view contracts live under the workspace subsystem; consumers import the public surface. |
 | Dashboard-managed teams have one owner | Service/API/component tests prove team create/update/list/validation flows use the localized `WorkspaceTeamService` and persisted team store, bootstrap teams seed through the same owner surface, reloads preserve team definitions, and tests use isolated team storage rather than process-global mutable registries. |
 | Team owns final addressability | Manager tests use a real in-process test provider adapter that returns candidate mappings for Agent A and Agent B, then verify only team-member candidates become authorized. The manager itself must not be mocked. |
 | Team workflow does not grant provider power | Tests configure two agents on the same team with different provider grants and verify each agent's effective provider tool access remains agent-specific. |
-| Workspace context identity is setup/resolver-scoped | Workspace context store and migration tests prove different setup/resolver namespaces cannot silently share one provider-object context, while two teams sharing a setup can intentionally share the same resolved context. |
+| Workspace context identity is workspace/resolver-scoped | Workspace context store and migration tests prove different workspace/resolver namespaces cannot silently share one provider-object context, while two teams sharing a workspace can intentionally share the same resolved context. |
 | Linear candidate mapping still owns Linear domain details | Linear tests build candidate mappings from real temporary agent configs containing `[linear]` fields and assert `app_key`, `app_user_id`, tool access, and validation behavior come from Linear-owned code. |
 | Linear identity uniqueness is explicit | Linear tests classify `app_key`, `oauth_state`, `webhook_secret`, `app_user_id`, and `app_user_name` uniqueness behavior and prove manager-level ambiguity coverage does not depend on Linear duplicate identities being allowed. |
 | Legacy workspace-tool-provider surfaces are classified | Static search and `test/workspace_tool_providers/` coverage prove retained registry protocols/event dispatchers cannot address agents outside team-authorized provider views, or are documented/tested as telemetry-only. |
@@ -993,7 +993,7 @@ contract.
 | Runtime resolution uses authorized mappings | A Linear issue event for Agent A resolves through the collaboration manager and creates/uses an `AgentRuntimeHandle` with the resolved workspace context id. |
 | Runtime rejection is early | A Linear issue event for Agent B, outside the team, is rejected before an `AgentRuntimeHandle` is constructed, before a terminal is started, and before an inbox notification is queued. |
 | Ambiguous provider events fail closed | A provider event identity authorized in two teams is rejected with an ambiguity diagnostic before an `AgentRuntimeHandle` is constructed, before a terminal is started, and before an inbox notification is queued. |
-| Provider-originated rejection diagnostics are useful | Linear/provider event tests prove rejected authenticated events produce visible diagnostics that distinguish no-team, out-of-team, and ambiguous identity cases and include enough provider identity plus team/setup context for an operator to understand why CAO did not deliver an agent message. |
+| Provider-originated rejection diagnostics are useful | Linear/provider event tests prove rejected authenticated events produce visible diagnostics that distinguish no-team, out-of-team, and ambiguous identity cases and include enough provider identity plus team/workspace context for an operator to understand why CAO did not deliver an agent message. |
 | Linear monitor is team-bound | Monitor presence iteration, synthetic event creation, pending-delivery retry, and watermark advancement all use team-authorized provider views; unprocessed no-team, out-of-team, and ambiguous identities do not advance watermarks. |
 | Linear OAuth/webhook source verification is not recipient routing | Linear app service and route tests prove OAuth state, token lookup, webhook secret verification, and stamped webhook metadata authenticate source only and cannot bypass team-authorized event selection. |
 | Default runtime context survives | Starting an agent with no team still creates a terminal in the default workspace context and does not attempt provider-event resolution. |
@@ -1001,19 +1001,19 @@ contract.
 | Diagnostics runtime starts are classified | Diagnostics provider tests prove diagnostic runtime starts use default context unless explicitly testing provider context, surface team diagnostics, and handle existing active terminals intentionally. |
 | Provider conversation idempotency is team-safe | Persistence tests prove processed-event markers, provider-conversation records, and agent runtime notifications are not recorded as successful before team authorization succeeds for no-team, out-of-team, or ambiguous provider events. |
 | Monitoring remains diagnostic-only | Monitoring service/API/CLI/docs tests prove monitoring reads historical terminal inbox records without authorizing collaboration and handles team changes, context switches, peer filters, and rejected cross-team messages as documented. |
-| Collaboration boundaries hold | Public messaging/handoff surfaces allow same-team collaboration and reject different-team or missing-team collaboration with clear text naming both agents and team mismatch. Tests must include two different teams that share one setup and prove they are still rejected. |
+| Collaboration boundaries hold | Public messaging/handoff surfaces allow same-team collaboration and reject different-team or missing-team collaboration with clear text naming both agents and team mismatch. Tests must include two different teams that share one workspace and prove they are still rejected. |
 | Messaging policy is first class | Direct messaging, handoff, delegation, provider-originated teammate lookup, REST inbox writes, and CLI inbox writes go through one public policy owner or equivalent shared guard; tests cover at least two distinct owner surfaces so a bypass cannot survive in a sibling route. |
 | Inbox read/reply cannot bypass policy | `read_inbox_message` and `reply_to_inbox_message` require current caller/receiver ownership plus current team/provider-view authorization; tests prove notification id possession and stored Linear app metadata do not bypass policy. |
-| Collaboration does not compare raw setup ids | Static search/code review verifies collaboration guards call the manager/public team API and do not authorize communication by directly comparing `workspace_setup` ids. |
+| Collaboration does not compare raw workspace ids | Static search/code review verifies collaboration guards call the manager/public team API and do not authorize communication by directly comparing `workspace` ids. |
 | Existing runtime state is classified | Tests cover active terminals and pending inbox notifications when team membership changes or is removed, including runtime context switch notification movement. |
 | Active baton state is classified | Baton service/store/watchdog tests prove active baton records have explicit behavior after team changes or removal, including pass, return, complete, block, reassign, watchdog nudge, watchdog orphan, and stored originator/current-holder/return-stack participants. |
 | Admin recovery surfaces are explicit | Baton HTTP/CLI recovery endpoints are either guarded by message policy or tested/documented as operator/admin recovery actions rather than agent collaboration. |
 | Provider MCP surfaces refresh on team policy changes | Tests prove team membership or team provider-view changes invalidate stale provider-mediated tool exposure through MCP freshness/fingerprint logic. |
 | Agent-facing protocol text matches policy | MCP descriptions, injected callback text, bundled skills, repo-root skills, docs, diagrams/assets, and e2e prompts no longer present terminal id possession as sufficient authority for collaboration. |
-| Diagnostics are visible | Unknown team, team referencing unknown setup, unavailable provider, legacy config conflict, and pruned provider identity diagnostics are visible through the owning API/service surface. |
+| Diagnostics are visible | Unknown team, team referencing unknown workspace, unavailable provider, legacy config conflict, and pruned provider identity diagnostics are visible through the owning API/service surface. |
 | Legacy code paths are removed | Static search and focused tests verify production code no longer uses `[workspace_context]` for behavior, direct resolver-id dispatch is gone from agent-owned routing, no resolver-to-team compatibility table participates in normal loading/runtime behavior, and examples/docs no longer present the legacy model as valid configuration. |
-| Dashboard team management prevents foot guns | API/component/browser tests prove the dashboard exposes a Teams tab for team creation/management, shows team setup and members, changes setup through the team owner surface, renders team-derived setup as read-only/disabled in agent configuration, and never saves an agent-level setup override for a teamed agent. |
-| Dashboard Teams tab works end to end in Safari | Safari verification against the backend-served dashboard creates or edits a team, selects a workspace setup through the Teams tab, confirms member agents render under that team, opens a teamed agent configuration, verifies the workspace setup control is read-only/disabled, changes team membership where applicable, saves, reloads the page, and confirms the persisted team/setup state still renders correctly. |
+| Dashboard team management prevents foot guns | API/component/browser tests prove the dashboard exposes a Teams tab for team creation/management, shows team workspace and members, changes workspace through the team owner surface, renders team-derived workspace as read-only/disabled in agent configuration, and never saves an agent-level workspace override for a teamed agent. |
+| Dashboard Teams tab works end to end in Safari | Safari verification against the backend-served dashboard creates or edits a team, selects a workspace through the Teams tab, confirms member agents render under that team, opens a teamed agent configuration, verifies the workspace control is read-only/disabled, changes team membership where applicable, saves, reloads the page, and confirms the persisted team/workspace state still renders correctly. |
 | UI behavior works if touched | Component tests cover rendered fields/actions, `npm run build` passes, and Safari verifies the backend-served dashboard path that changed. |
 
 The provider-agnostic pruning test is required even before a GitHub provider
@@ -1029,7 +1029,7 @@ existing suites they touch.
 
 Expected verification shape:
 
-- `uv run pytest ...` for agent config, team/setup manager, Linear provider
+- `uv run pytest ...` for agent config, team/workspace manager, Linear provider
   mapping, Linear runtime event handling, and collaboration boundary tests.
 - `npm test -- ...` for dashboard component changes, if the web UI is touched.
 - `npm run build`, if frontend code or generated API types are touched.
@@ -1051,14 +1051,14 @@ Implementation evidence captured on May 17, 2026:
   was restarted, confirming the earlier "No agents configured" view was a stale
   offline tab state rather than persisted agent loss.
 - Safari Teams tab created `safari_review_team`, selected
-  `linear_delivery_setup`, saved it, rendered the created team, edited its
-  display name to `Safari Review Team Updated`, and rendered persisted setup
+  `linear_delivery`, saved it, rendered the created team, edited its
+  display name to `Safari Review Team Updated`, and rendered persisted workspace
   and member state.
 - Safari rendered `cao_delivery` members as `implementation_partner`.
 - Safari opened the teamed `implementation_partner` agent config, entered edit
-  mode, showed team `cao_delivery`, showed derived workspace setup
-  `linear_delivery_setup` in a disabled/read-only field, saved successfully,
-  reloaded, and confirmed the team/setup state still rendered correctly.
+  mode, showed team `cao_delivery`, showed derived workspace
+  `linear_delivery` in a disabled/read-only field, saved successfully,
+  reloaded, and confirmed the team/workspace state still rendered correctly.
 
 ## Definition of Done
 
@@ -1069,34 +1069,34 @@ The work is done only when all of the following are true:
 - Agent config parse/write behavior is verified through real temporary config
   files, including no-team and legacy-conflict cases.
 - CLI agent management surfaces create, show, list, edit, and start agents with
-  clear team membership, derived setup metadata, diagnostics, and documented
+  clear team membership, derived workspace metadata, diagnostics, and documented
   standalone no-team behavior where applicable.
 - The dashboard has a first-class Teams tab where operators can create/manage
   teams, inspect team members, inspect diagnostics, and change the team's
-  workspace setup through the team owner surface.
+  workspace through the team owner surface.
 - Dashboard-managed teams are persisted through one localized
   `WorkspaceTeamService`/store owner surface. Code-owned bootstrap teams seed
-  that owner surface, setup definitions remain code-owned, and no team
+  that owner surface, workspace definitions remain code-owned, and no team
   definition is stored only in process-global mutable registries, API-local
   state, or frontend-only state.
 - Agent configuration in the dashboard treats team membership as the editable
-  agent field and workspace setup as derived metadata. For teamed agents, the
-  setup control is read-only/disabled and cannot save an agent-level setup
+  agent field and workspace as derived metadata. For teamed agents, the
+  workspace control is read-only/disabled and cannot save an agent-level workspace
   override.
 - Safari end-to-end verification against the backend-served dashboard proves
   the Teams tab and agent configuration workflow works: create or edit a team,
-  select a team workspace setup, verify team members render, open a teamed
-  agent configuration, confirm setup is read-only/disabled, save, reload, and
-  confirm persisted team/setup state still renders correctly.
-- Workspace team definitions, workspace setup definitions, candidate
+  select a team workspace, verify team members render, open a teamed
+  agent configuration, confirm workspace is read-only/disabled, save, reload, and
+  confirm persisted team/workspace state still renders correctly.
+- Workspace team definitions, workspace definitions, candidate
   authorization, provider-view creation, diagnostics, and collaboration checks
-  are localized behind one public setup/team subsystem surface.
-- Each workspace setup owns exactly one resolver, and tests fail if a setup
+  are localized behind one public workspace/team subsystem surface.
+- Each workspace owns exactly one resolver, and tests fail if a workspace
   attempts to define more than one.
-- Each workspace team points at exactly one setup, and tests fail when a team
-  references an unknown setup.
-- Workspace context identity is setup/resolver scoped, with migration/backfill
-  coverage and explicit tests for shared-setup sharing versus different-setup
+- Each workspace team points at exactly one workspace, and tests fail when a team
+  references an unknown workspace.
+- Workspace context identity is workspace/resolver scoped, with migration/backfill
+  coverage and explicit tests for shared-workspace sharing versus different-workspace
   collision prevention.
 - Providers create candidate mappings using provider-owned domain logic; team
   authorization decides which candidates become CAO-addressable.
@@ -1125,7 +1125,7 @@ The work is done only when all of the following are true:
 - Provider-originated rejection diagnostics are visible and useful: an operator
   can distinguish authenticated-but-not-addressable events from auth failures,
   no-team agents, out-of-team agents, and ambiguous cross-team matches, with
-  enough provider identity and team/setup context to understand why CAO did not
+  enough provider identity and team/workspace context to understand why CAO did not
   deliver an agent message.
 - Linear monitor reconciliation is team-bound, and watermarks do not advance
   for no-team, out-of-team, or ambiguous identities that were not safely
@@ -1141,7 +1141,7 @@ The work is done only when all of the following are true:
   default-context behavior, team diagnostics, and active-terminal behavior
   tested.
 - Provider-conversation persistence/idempotency writes happen only after team
-  authorization succeeds and carry enough team/setup metadata to avoid stale or
+  authorization succeeds and carry enough team/workspace metadata to avoid stale or
   wrong-team recipient state.
 - Monitoring sessions are terminal/operator diagnostics only; they preserve or
   annotate historical inbox records across team changes according to documented
@@ -1156,10 +1156,10 @@ The work is done only when all of the following are true:
 - Inbox read/reply tools require current caller/receiver ownership and current
   team/provider-view authorization; notification id possession and stored
   provider metadata do not authorize access by themselves.
-- Different teams that share the same workspace setup are still rejected by
+- Different teams that share the same workspace are still rejected by
   collaboration checks.
 - Collaboration guards go through the public team/collaboration manager API and
-  do not authorize communication by directly comparing setup ids.
+  do not authorize communication by directly comparing workspace ids.
 - Existing active terminals, pending inbox notifications, and runtime context
   switch inbox moves have explicit team-change behavior covered by tests.
 - Active baton records have explicit team-change behavior covered by tests for
@@ -1173,11 +1173,11 @@ The work is done only when all of the following are true:
 - Agent-facing protocol text, MCP descriptions, bundled skills, repo-root
   skills, docs, diagrams/assets, and e2e prompts align with same-team message
   policy.
-- Unknown team names, teams that reference unknown setup names, unavailable
+- Unknown team names, teams that reference unknown workspace names, unavailable
   providers, legacy config conflicts, and pruned provider identities produce
   diagnostics visible through the owning service/API surface.
 - Shared names and values introduced by this work, including `[workspace] team`,
-  team ids, setup ids, provider ids, CLI flags, API field names, and dashboard
+  team ids, workspace ids, provider ids, CLI flags, API field names, and dashboard
   option values, have authoritative definitions that consumers import or
   reference instead of copying literals across boundaries.
 - New registries, managers, stores, dashboard APIs, and tests are parallel-safe:

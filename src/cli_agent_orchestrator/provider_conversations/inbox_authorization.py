@@ -7,7 +7,7 @@ from typing import Any, Callable, Mapping, TypeVar
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.services.tool_service import ToolService
-from cli_agent_orchestrator.workspace_setups import default_workspace_collaboration_manager
+from cli_agent_orchestrator.workspaces import default_workspace_collaboration_manager
 
 ErrorT = TypeVar("ErrorT", bound=Exception)
 

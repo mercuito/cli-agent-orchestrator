@@ -46,7 +46,7 @@ def _write_agent(
     agents_root,
     agent_id: str,
     *,
-    workspace_setup: str | None = None,
+    workspace: str | None = None,
     app_key: str | None = None,
     app_user_id: str | None = None,
     app_user_name: str | None = None,
@@ -62,7 +62,7 @@ def _write_agent(
             workdir="/repo",
             session_name=agent_id.replace("_", "-"),
             prompt="",
-            workspace=AgentWorkspaceConfig(team=workspace_setup),
+            workspace=AgentWorkspaceConfig(team=workspace),
             linear=(
                 LinearConfig(
                     app_key=app_key,
@@ -311,7 +311,7 @@ def test_provider_tool_policy_loading_makes_teamed_local_access_inactive(tmp_pat
     _write_agent(
         agents,
         "implementation_partner",
-        workspace_setup="cao_delivery",
+        workspace="cao_delivery",
         app_key="implementation_partner",
         access_token="access-token",
         tool_access=(

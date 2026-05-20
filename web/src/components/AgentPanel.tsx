@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Monitor, Play, Plus, Square, X } from 'lucide-react'
-import { api, AgentStatus, WorkspaceSetupDiagnostic } from '../api'
+import { api, AgentStatus, WorkspaceDiagnostic } from '../api'
 import { useProviderSchema } from '../hooks/useProviderSchema'
 import { useStore } from '../store'
 import { AgentConfigTab } from './agents-tab/AgentConfigTab'
@@ -34,7 +34,7 @@ export function AgentPanel({
   const providerSchema = useProviderSchema()
   const [agents, setAgents] = useState<AgentStatus[]>([])
   const [agentsLoaded, setAgentsLoaded] = useState(false)
-  const [workspaceSetupDiagnostics, setWorkspaceSetupDiagnostics] = useState<WorkspaceSetupDiagnostic[]>([])
+  const [workspaceDiagnostics, setWorkspaceDiagnostics] = useState<WorkspaceDiagnostic[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [startingAgentId, setStartingAgentId] = useState<string | null>(null)
@@ -53,9 +53,9 @@ export function AgentPanel({
         ? previous
         : nextAgents[0]?.agent_id ?? null
     ))
-    return api.listWorkspaceSetupDiagnostics()
-      .then(nextDiagnostics => setWorkspaceSetupDiagnostics(nextDiagnostics))
-      .catch(() => setWorkspaceSetupDiagnostics([]))
+    return api.listWorkspaceDiagnostics()
+      .then(nextDiagnostics => setWorkspaceDiagnostics(nextDiagnostics))
+      .catch(() => setWorkspaceDiagnostics([]))
   }).catch(() => {
     setAgentsLoaded(true)
   })
@@ -280,7 +280,7 @@ export function AgentPanel({
           onStopAgent={handleStopAgent}
           startingAgentId={startingAgentId}
           stoppingAgentId={stoppingAgentId}
-          workspaceSetupDiagnostics={workspaceSetupDiagnostics}
+          workspaceDiagnostics={workspaceDiagnostics}
           renderConfigTab={agent => (
             <AgentConfigTab
               key={agent.agent_id}

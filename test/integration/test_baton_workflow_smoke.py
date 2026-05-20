@@ -6,6 +6,8 @@ observing each state through the HTTP API. No provider/model agents are started.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -15,12 +17,12 @@ from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceCon
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.services import baton_service
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
-    default_workspace_setup_registry,
+    default_workspace_registry,
 )
 
 pytestmark = pytest.mark.integration
@@ -71,14 +73,14 @@ def _agent(agent_id: str) -> Agent:
 
 def _collaboration_manager() -> WorkspaceCollaborationManager:
     return WorkspaceCollaborationManager(
-        setup_registry=default_workspace_setup_registry(),
+        workspace_registry=default_workspace_registry(),
         team_registry=WorkspaceTeamRegistry(
             _TeamStore(
                 (
                     WorkspaceTeam(
                         id="delivery",
                         display_name="Delivery",
-                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        workspace=DEFAULT_WORKSPACE_ID,
                     ),
                 )
             )
@@ -92,6 +94,11 @@ def _collaboration_manager() -> WorkspaceCollaborationManager:
         ),
         provider_adapters={},
     )
+
+
+class _ToolService:
+    def tools_for_agent(self, agent_id: str, *, built_in_tool_names=()):
+        return SimpleNamespace(built_in_cao_tools=tuple(built_in_tool_names))
 
 
 def _create_terminal(terminal_id: str, agent_id: str) -> None:
@@ -112,6 +119,7 @@ def client(live_db, monkeypatch):
         "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
         _collaboration_manager,
     )
+    monkeypatch.setattr(baton_service, "default_tool_service", lambda: _ToolService())
     from test.api.conftest import TestClientWithHost
 
     from cli_agent_orchestrator.api.main import app

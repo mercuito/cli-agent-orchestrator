@@ -114,7 +114,7 @@ or leaked. Treat this inventory as the initial migration checklist for
 - Team membership and role assignment resolution.
 - Provider policy loading and `ProviderToolAccessRequest` generation.
 - Role/provider access expansion back into concrete agent-scoped grants.
-- Provider grants constrained to providers in the team's workspace setup.
+- Provider grants constrained to providers in the team's workspace.
 - Agent config validation/editing for inactive teamed local grants.
 - CLI inspection output that currently shows raw local grants.
 

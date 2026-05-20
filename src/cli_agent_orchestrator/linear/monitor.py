@@ -25,8 +25,8 @@ from cli_agent_orchestrator.linear.workspace_events import (
 )
 from cli_agent_orchestrator.runtime.agent import AgentRuntimeHandle
 from cli_agent_orchestrator.services.agent_manager import AgentManager
-from cli_agent_orchestrator.workspace_setups import (
-    WorkspaceSetupConfigError,
+from cli_agent_orchestrator.workspaces import (
+    WorkspaceConfigError,
     default_workspace_collaboration_manager,
 )
 
@@ -203,7 +203,7 @@ def _team_authorized_monitor_presences(
                 continue
             seen_teams.add(team.id)
             view = manager.provider_view(team.id, PROVIDER)
-        except WorkspaceSetupConfigError as exc:
+        except WorkspaceConfigError as exc:
             diagnostics.append(
                 _diagnostic(
                     "monitor_presence_not_team_authorized",

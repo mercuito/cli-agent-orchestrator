@@ -39,15 +39,15 @@ from cli_agent_orchestrator.provider_conversations.persistence import (
     upsert_thread,
     upsert_work_item,
 )
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
     WorkspaceTeamRole,
-    default_workspace_setup_registry,
+    default_workspace_registry,
 )
-from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 
 
 class _TeamStore:
@@ -109,16 +109,16 @@ def _provider_inbox_collaboration_manager(
         linear=LinearConfig(app_key="other_partner", access_token="token"),
     )
     return WorkspaceCollaborationManager(
-        setup_registry=default_workspace_setup_registry(),
+        workspace_registry=default_workspace_registry(),
         agent_registry=AgentRegistry({agent.id: agent for agent in (implementation, other)}),
-        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        provider_adapters={"linear": LinearWorkspaceAdapter()},
         team_registry=WorkspaceTeamRegistry(
             _TeamStore(
                 (
                     WorkspaceTeam(
                         id="cao_delivery",
                         display_name="CAO Delivery",
-                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        workspace=DEFAULT_WORKSPACE_ID,
                         roles={
                             "member": WorkspaceTeamRole(
                                 display_name="Member",
@@ -129,7 +129,7 @@ def _provider_inbox_collaboration_manager(
                     WorkspaceTeam(
                         id="other_team",
                         display_name="Other Team",
-                        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                        workspace=DEFAULT_WORKSPACE_ID,
                         roles={
                             "member": WorkspaceTeamRole(
                                 display_name="Member",

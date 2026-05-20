@@ -158,7 +158,7 @@ describe('API wrapper', () => {
     const team = {
       id: 'review',
       display_name: 'Review',
-      workspace_setup: 'linear_delivery_setup',
+      workspace: 'linear_delivery',
       roles: {},
       role_assignments: {},
       members: [],
@@ -170,7 +170,7 @@ describe('API wrapper', () => {
     const result = await api.createWorkspaceTeam({
       id: 'review',
       display_name: 'Review',
-      workspace_setup: 'linear_delivery_setup',
+      workspace: 'linear_delivery',
     })
 
     expect(result).toEqual(team)
@@ -180,7 +180,7 @@ describe('API wrapper', () => {
     expect(JSON.parse(opts.body)).toEqual({
       id: 'review',
       display_name: 'Review',
-      workspace_setup: 'linear_delivery_setup',
+      workspace: 'linear_delivery',
     })
   })
 
@@ -189,7 +189,7 @@ describe('API wrapper', () => {
 
     await api.updateWorkspaceTeamMetadata('review/team', {
       display_name: 'Review Team',
-      workspace_setup: 'linear_delivery_setup',
+      workspace: 'linear_delivery',
     })
 
     const [url, opts] = mockFetch.mock.calls[0]
@@ -197,7 +197,7 @@ describe('API wrapper', () => {
     expect(opts.method).toBe('PUT')
     expect(JSON.parse(opts.body)).toEqual({
       display_name: 'Review Team',
-      workspace_setup: 'linear_delivery_setup',
+      workspace: 'linear_delivery',
     })
   })
 

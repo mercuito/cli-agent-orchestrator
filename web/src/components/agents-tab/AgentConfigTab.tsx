@@ -145,11 +145,11 @@ export function AgentConfigTab({
   const rawLocalAccessFallbackNotice =
     Boolean(editing ? workspaceTeamDraft : agent.config.workspace.team)
   const selectedWorkspaceTeam = teams.find(team => team.id === workspaceTeamDraft)
-  const derivedWorkspaceSetup = editing
+  const derivedWorkspace = editing
     ? workspaceTeamDraft
-      ? selectedWorkspaceTeam?.workspace_setup ?? agent.config.workspace.derived_setup ?? 'unknown'
+      ? selectedWorkspaceTeam?.workspace ?? agent.config.workspace.derived_workspace ?? 'unknown'
       : 'default'
-    : agent.config.workspace.derived_setup ?? 'default'
+    : agent.config.workspace.derived_workspace ?? 'default'
 
   return (
     <div className="space-y-4">
@@ -234,10 +234,10 @@ export function AgentConfigTab({
             )}
           </label>
           <label className="block text-xs text-gray-400">
-            Workspace setup
+            Workspace
             <input
-              aria-label={`${agent.agent_id} derived workspace setup`}
-              value={derivedWorkspaceSetup}
+              aria-label={`${agent.agent_id} derived workspace`}
+              value={derivedWorkspace}
               readOnly
               disabled={!!(editing && workspaceTeamDraft)}
               className="mt-1 w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-400 disabled:cursor-not-allowed disabled:opacity-70"

@@ -18,7 +18,7 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.collaboration_policy import require_terminal_workspace_team
-from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
+from cli_agent_orchestrator.workspaces import WorkspaceConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +201,7 @@ def _mark_orphaned(db, row: BatonModel, *, now: datetime) -> None:
     )
     try:
         _queue_watchdog_message(db, receiver_id=row.originator_id, message=message)
-    except WorkspaceSetupConfigError as exc:
+    except WorkspaceConfigError as exc:
         logger.warning(
             "Baton watchdog marked baton %s orphaned but did not notify originator %s: %s",
             row.id,
@@ -277,7 +277,7 @@ def scan_active_batons(
                 continue
             try:
                 require_terminal_workspace_team(holder_id, db=db, role="Baton holder")
-            except WorkspaceSetupConfigError as exc:
+            except WorkspaceConfigError as exc:
                 logger.warning(
                     "Marking baton %s orphaned because holder %s is outside workspace team policy: %s",
                     row.id,

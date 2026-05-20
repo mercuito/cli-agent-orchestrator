@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type AgentStatus, type ProviderRoleAccessSchema, type ToolDescriptor, type WorkspaceSetup, type WorkspaceTeam, type WorkspaceTeamRole } from '../api'
+import { api, type AgentStatus, type ProviderRoleAccessSchema, type ToolDescriptor, type Workspace, type WorkspaceTeam, type WorkspaceTeamRole } from '../api'
 import { useStore } from '../store'
 import { AvailableAgentsPanel } from './teams/AvailableAgentsPanel'
 import { MembersPanel } from './teams/MembersPanel'
@@ -14,7 +14,7 @@ export function WorkspaceTeamsPanel() {
   const { showSnackbar } = useStore()
   const [teams, setTeams] = useState<WorkspaceTeam[]>([])
   const [agents, setAgents] = useState<AgentStatus[]>([])
-  const [setups, setSetups] = useState<WorkspaceSetup[]>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [caoTools, setCaoTools] = useState<ToolDescriptor[]>([])
   const [providerSchemas, setProviderSchemas] = useState<Record<string, ProviderRoleAccessSchema>>({})
   const [agentsLoading, setAgentsLoading] = useState(true)
@@ -27,18 +27,18 @@ export function WorkspaceTeamsPanel() {
     setLoading(true)
     setAgentsLoading(true)
     try {
-      const [nextTeams, nextSetups, nextTools] = await Promise.all([
+      const [nextTeams, nextWorkspaces, nextTools] = await Promise.all([
         api.listWorkspaceTeams(),
-        api.listWorkspaceSetups(),
+        api.listWorkspaces(),
         api.listCaoToolDescriptors(),
       ])
       setTeams(nextTeams)
-      setSetups(nextSetups)
+      setWorkspaces(nextWorkspaces)
       setCaoTools(nextTools)
       setSelectedTeamId(current => current && nextTeams.some(team => team.id === current) ? current : nextTeams[0]?.id ?? null)
       setLoading(false)
 
-      const providers = Array.from(new Set(nextSetups.flatMap(setup => setup.providers)))
+      const providers = Array.from(new Set(nextWorkspaces.flatMap(workspace => workspace.providers)))
       void Promise.all(providers.map(provider =>
         api.getWorkspaceToolProviderRoleAccessSchema(provider)
           .then(schema => [provider, schema] as const)
@@ -63,14 +63,14 @@ export function WorkspaceTeamsPanel() {
   }, [refresh])
 
   const selectedTeam = teams.find(team => team.id === selectedTeamId) ?? null
-  const selectedSetup = selectedTeam ? setups.find(setup => setup.id === selectedTeam.workspace_setup) : undefined
+  const selectedWorkspace = selectedTeam ? workspaces.find(workspace => workspace.id === selectedTeam.workspace) : undefined
   const assignedAgentIds = useMemo(
     () => new Set(teams.flatMap(team => team.member_details.map(member => member.agent_id))),
     [teams],
   )
   const toolOptions = useMemo(
-    () => buildToolOptions(caoTools, agents, selectedSetup, providerSchemas),
-    [agents, caoTools, providerSchemas, selectedSetup],
+    () => buildToolOptions(caoTools, agents, selectedWorkspace, providerSchemas),
+    [agents, caoTools, providerSchemas, selectedWorkspace],
   )
   const mutations = useTeamMutations({ teams, setTeams, selectedTeamId, setSelectedTeamId, showSnackbar })
 
@@ -87,13 +87,13 @@ export function WorkspaceTeamsPanel() {
   }, [selectedRoleId, selectedTeam])
 
   const createTeam = () => {
-    const workspaceSetup = selectedTeam?.workspace_setup || setups[0]?.id
-    if (!workspaceSetup) {
-      showSnackbar({ type: 'error', message: 'Create a workspace setup before adding a team' })
+    const workspace = selectedTeam?.workspace || workspaces[0]?.id
+    if (!workspace) {
+      showSnackbar({ type: 'error', message: 'Create a workspace before adding a team' })
       return
     }
     const id = uniqueTeamId(teams)
-    mutations.createTeam(mutations.emptyTeam(id, 'New Team', workspaceSetup))
+    mutations.createTeam(mutations.emptyTeam(id, 'New Team', workspace))
   }
 
   const createRole = () => {
@@ -134,7 +134,7 @@ export function WorkspaceTeamsPanel() {
           <section className="grid min-w-0 gap-4">
             <TeamHeader
               team={selectedTeam}
-              setups={setups}
+              workspaces={workspaces}
               onMetadataChange={metadata => mutations.updateMetadata(selectedTeam, metadata)}
             />
 

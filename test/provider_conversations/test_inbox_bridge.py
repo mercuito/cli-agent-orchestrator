@@ -25,7 +25,7 @@ from cli_agent_orchestrator.provider_conversations.persistence import (
     upsert_work_item,
 )
 from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
-from cli_agent_orchestrator.workspace_setups import WorkspaceSetupConfigError
+from cli_agent_orchestrator.workspaces import WorkspaceConfigError
 
 AUTHORIZED_AGENT_ID = "implementation_partner"
 AUTHORIZED_RECEIVER_ID = f"agent:{AUTHORIZED_AGENT_ID}:context:default"
@@ -159,7 +159,7 @@ def test_provider_conversation_notification_denies_preview_before_inbox_write(
     _, _, message = _persist_message()
     preview_tool_service.decision = ToolAccessDecision.deny("provider_conversation_denied")
 
-    with pytest.raises(WorkspaceSetupConfigError, match="preview is not authorized"):
+    with pytest.raises(WorkspaceConfigError, match="preview is not authorized"):
         create_notification_for_message(
             provider_message_id=message.id,
             receiver_id=AUTHORIZED_RECEIVER_ID,
@@ -357,7 +357,7 @@ def test_attachment_metadata_does_not_block_semantic_message(test_session):
 def test_provider_conversation_notification_rejects_mismatched_receiver_agent(test_session):
     _, _, message = _persist_message()
 
-    with pytest.raises(WorkspaceSetupConfigError, match="not owned"):
+    with pytest.raises(WorkspaceConfigError, match="not owned"):
         create_notification_for_message(
             provider_message_id=message.id,
             receiver_id="agent:other_agent:context:default",

@@ -1,4 +1,4 @@
-"""Linear-owned workspace setup adapter."""
+"""Linear-owned workspace adapter."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from cli_agent_orchestrator.linear.workspace_tool_provider import (
     normalize_app_key,
     validate_linear_provider_config,
 )
-from cli_agent_orchestrator.workspace_setups import (
-    WorkspaceSetup,
-    WorkspaceSetupConfigError,
+from cli_agent_orchestrator.workspaces import (
+    Workspace,
+    WorkspaceConfigError,
     WorkspaceTeam,
     WorkspaceTeamAuthorizedMapping,
     WorkspaceToolProviderCandidateMapping,
@@ -25,7 +25,7 @@ from cli_agent_orchestrator.workspace_setups import (
 )
 
 
-class LinearWorkspaceSetupAdapter:
+class LinearWorkspaceAdapter:
     """Build team-bound Linear provider views from Linear agent config."""
 
     provider_name = "linear"
@@ -75,7 +75,7 @@ class LinearWorkspaceSetupAdapter:
         self,
         *,
         team: WorkspaceTeam,
-        setup: WorkspaceSetup,
+        workspace: Workspace,
         authorized_mappings: tuple[WorkspaceTeamAuthorizedMapping, ...],
         agent_registry: AgentRegistry,
     ) -> WorkspaceToolProviderView:
@@ -89,15 +89,15 @@ class LinearWorkspaceSetupAdapter:
             presences=presences,
             tool_access={},
             agent_policies_enabled=False,
-            source=f"workspace_team:{team.id}:setup:{setup.id}",
+            source=f"workspace_team:{team.id}:workspace:{workspace.id}",
         )
         try:
             validate_linear_provider_config(config, agent_registry=agent_registry)
         except LinearWorkspaceToolProviderConfigError as exc:
-            raise WorkspaceSetupConfigError(str(exc)) from exc
+            raise WorkspaceConfigError(str(exc)) from exc
         return WorkspaceToolProviderView(
             team_id=team.id,
-            setup_id=setup.id,
+            workspace_id=workspace.id,
             provider_name=self.provider_name,
             value=config,
         )
@@ -110,13 +110,13 @@ class LinearWorkspaceSetupAdapter:
     ) -> tuple[str, object]:
         config = provider_view.value
         if not isinstance(config, LinearProviderConfig):
-            raise WorkspaceSetupConfigError("Linear provider view has invalid config")
+            raise WorkspaceConfigError("Linear provider view has invalid config")
         if not isinstance(event, LinearIssueContextEvent):
-            raise WorkspaceSetupConfigError("Linear setup can only resolve Linear issue events")
+            raise WorkspaceConfigError("Linear workspace can only resolve Linear issue events")
         try:
             presence = _resolve_presence_from_config(config, event)
         except LinearWorkspaceToolProviderConfigError as exc:
-            raise WorkspaceSetupConfigError(str(exc)) from exc
+            raise WorkspaceConfigError(str(exc)) from exc
         return presence.agent_id, presence
 
     def candidate_mappings_for_event(

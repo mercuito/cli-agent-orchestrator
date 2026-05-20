@@ -56,8 +56,8 @@ from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.workspace_contexts import (
     WorkspaceContextResolution,
 )
-from cli_agent_orchestrator.workspace_setups import (
-    WorkspaceSetupConfigError,
+from cli_agent_orchestrator.workspaces import (
+    WorkspaceConfigError,
     default_workspace_collaboration_manager,
 )
 
@@ -347,12 +347,12 @@ def _resolve_linear_event(event: LinearIssueContextEvent) -> LinearResolvedPrese
     manager = default_workspace_collaboration_manager(agent_registry=provider.agent_registry)
     try:
         resolution = manager.resolve_provider_event("linear", event)
-    except WorkspaceSetupConfigError as exc:
+    except WorkspaceConfigError as exc:
         raise LinearWorkspaceToolProviderConfigError(str(exc)) from exc
     presence = resolution.provider_payload
     if not hasattr(presence, "agent_id"):
         raise LinearWorkspaceToolProviderConfigError(
-            "Linear workspace setup resolved invalid presence"
+            "Linear workspace resolved invalid presence"
         )
     return LinearResolvedPresence(
         presence=presence,
@@ -438,7 +438,7 @@ def _resolve_workspace_context_for_event(
     )
     try:
         return manager.resolve_event_context(resolved.agent, event)
-    except WorkspaceSetupConfigError as exc:
+    except WorkspaceConfigError as exc:
         raise LinearWorkspaceToolProviderConfigError(str(exc)) from exc
 
 

@@ -23,7 +23,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
     publish_linear_provider_event,
 )
-from cli_agent_orchestrator.linear.workspace_setup_adapter import LinearWorkspaceSetupAdapter
+from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearPresence,
     LinearResolvedPresence,
@@ -47,13 +47,13 @@ from cli_agent_orchestrator.runtime.agent import (
 )
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.tool_service import ToolAccessDecision, ToolService
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
     WorkspaceTeamRole,
-    default_workspace_setup_registry,
+    default_workspace_registry,
 )
 from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderConversationAccessRequirement,
@@ -136,7 +136,7 @@ def _provider_conversation_collaboration_manager(
     team = WorkspaceTeam(
         id="cao_delivery",
         display_name="CAO Delivery",
-        workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+        workspace=DEFAULT_WORKSPACE_ID,
         roles={
             "member": WorkspaceTeamRole(
                 display_name="Member",
@@ -145,10 +145,10 @@ def _provider_conversation_collaboration_manager(
         },
     )
     return WorkspaceCollaborationManager(
-        setup_registry=default_workspace_setup_registry(),
+        workspace_registry=default_workspace_registry(),
         team_registry=WorkspaceTeamRegistry(_TeamStore((team,))),
         agent_registry=agent_registry,
-        provider_adapters={"linear": LinearWorkspaceSetupAdapter()},
+        provider_adapters={"linear": LinearWorkspaceAdapter()},
     )
 
 
@@ -294,7 +294,7 @@ def test_terminal_config_comes_from_cao_agent_mapping(monkeypatch, resolved_pres
     handle.ensure_started.assert_called_once()
 
 
-def test_agent_without_workspace_setup_gets_default_runtime_context(test_db, resolved_presence):
+def test_agent_without_workspace_gets_default_runtime_context(test_db, resolved_presence):
     resolved = resolved_presence(team=None)
 
     handle = AgentRuntimeHandle(
@@ -440,7 +440,7 @@ def test_context_enabled_linear_event_starts_runtime_in_resolved_issue_context(
     assert captured["workspace_context_id"] == context.id
 
 
-def test_context_enabled_linear_event_fails_closed_for_unknown_setup(
+def test_context_enabled_linear_event_fails_closed_for_unknown_workspace(
     test_db,
     monkeypatch,
     resolved_presence,
@@ -458,7 +458,7 @@ def test_context_enabled_linear_event_fails_closed_for_unknown_setup(
             presence=resolved.presence,
             agent=replace(
                 resolved.agent,
-                workspace=AgentWorkspaceConfig(team="future_setup"),
+                workspace=AgentWorkspaceConfig(team="future_workspace"),
             ),
         )
 
@@ -861,7 +861,7 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
     create_activity.assert_called()
 
 
-def test_out_of_setup_linear_event_rejects_before_runtime_or_inbox_creation(
+def test_out_of_workspace_linear_event_rejects_before_runtime_or_inbox_creation(
     test_db,
     tmp_path,
     monkeypatch,

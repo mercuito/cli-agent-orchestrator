@@ -13,11 +13,11 @@ from cli_agent_orchestrator.models.inbox import (
     MessageStatus,
 )
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
-from cli_agent_orchestrator.workspace_setups import (
-    DEFAULT_WORKSPACE_SETUP_ID,
+from cli_agent_orchestrator.workspaces import (
+    DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
-    WorkspaceSetup,
-    WorkspaceSetupRegistry,
+    Workspace,
+    WorkspaceRegistry,
     WorkspaceTeam,
     WorkspaceTeamRegistry,
     WorkspaceTeamStore,
@@ -289,11 +289,11 @@ def _resolver(_event):
 def _patch_inbox_policy(monkeypatch, tmp_path, *, sender_team: str, receiver_team: str) -> None:
     from cli_agent_orchestrator.services import collaboration_policy
 
-    setup_registry = WorkspaceSetupRegistry(
+    workspace_registry = WorkspaceRegistry(
         (
-            WorkspaceSetup(
-                id=DEFAULT_WORKSPACE_SETUP_ID,
-                display_name="Linear Delivery Setup",
+            Workspace(
+                id=DEFAULT_WORKSPACE_ID,
+                display_name="Linear Delivery",
                 providers=("linear",),
                 resolver=_resolver,
             ),
@@ -305,17 +305,17 @@ def _patch_inbox_policy(monkeypatch, tmp_path, *, sender_team: str, receiver_tea
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
             WorkspaceTeam(
                 id="research",
                 display_name="Research",
-                workspace_setup=DEFAULT_WORKSPACE_SETUP_ID,
+                workspace=DEFAULT_WORKSPACE_ID,
             ),
         ),
     )
     manager = WorkspaceCollaborationManager(
-        setup_registry=setup_registry,
+        workspace_registry=workspace_registry,
         team_registry=WorkspaceTeamRegistry(team_store),
         agent_registry=AgentRegistry(
             {

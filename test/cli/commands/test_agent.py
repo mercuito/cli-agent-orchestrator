@@ -77,9 +77,9 @@ def test_agent_list_prints_current_instance_status(tmp_path, monkeypatch):
     result = CliRunner().invoke(agent_command, ["list"])
 
     assert result.exit_code == 0
-    assert "developer\tcodex\trunning\tteam=none\tsetup=default term-live" in result.output
-    assert "discovery_partner\tcodex\tstopped\tteam=none\tsetup=default" in result.output
-    assert "reviewer\tcodex\tstopped\tteam=none\tsetup=default" in result.output
+    assert "developer\tcodex\trunning\tteam=none\tworkspace=default term-live" in result.output
+    assert "discovery_partner\tcodex\tstopped\tteam=none\tworkspace=default" in result.output
+    assert "reviewer\tcodex\tstopped\tteam=none\tworkspace=default" in result.output
 
 
 def test_agent_help_covers_each_subcommand():

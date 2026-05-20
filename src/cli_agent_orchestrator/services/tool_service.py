@@ -12,10 +12,10 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.services.agent_manager import AgentManager, default_agent_manager
 from cli_agent_orchestrator.utils.tool_mapping import resolve_runtime_capabilities
-from cli_agent_orchestrator.workspace_setups import (
+from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE,
     WorkspaceCollaborationManager,
-    WorkspaceSetupConfigError,
+    WorkspaceConfigError,
     default_workspace_collaboration_manager,
 )
 from cli_agent_orchestrator.workspace_tool_providers.registry import (
@@ -216,12 +216,12 @@ class TeamRoleToolAccessSource:
         try:
             team = self._collaboration_manager.team_for_agent(self._agent)
             if team is None:
-                raise WorkspaceSetupConfigError(
+                raise WorkspaceConfigError(
                     f"caller agent {self._agent.id} has no workspace team"
                 )
-            setup = self._collaboration_manager.setup_for_agent(self._agent)
-            if setup is None:
-                raise WorkspaceSetupConfigError(f"workspace team {team.id} has no setup")
+            workspace = self._collaboration_manager.workspace_for_agent(self._agent)
+            if workspace is None:
+                raise WorkspaceConfigError(f"workspace team {team.id} has no workspace")
         except Exception as exc:
             diagnostics.append(
                 ToolAccessDiagnostic(
@@ -296,16 +296,16 @@ class TeamRoleToolAccessSource:
                     source=f"workspace_team.{team.id}.roles.{role_id}.mcp_servers",
                 )
             )
-        setup_providers = {provider.strip().lower() for provider in setup.providers}
+        workspace_providers = {provider.strip().lower() for provider in workspace.providers}
         provider_grants: list[ProviderRoleToolAccessGrant] = []
         for provider_name, grants in role.providers.items():
-            if provider_name not in setup_providers:
+            if provider_name not in workspace_providers:
                 diagnostics.append(
                     ToolAccessDiagnostic(
-                        code="role_provider_not_in_workspace_setup",
+                        code="role_provider_not_in_workspace",
                         message=(
                             f"Workspace team {team.id} role {role_id} grants provider "
-                            f"{provider_name}, but setup {setup.id} does not include it."
+                            f"{provider_name}, but workspace {workspace.id} does not include it."
                         ),
                         source=f"workspace_team.{team.id}.roles.{role_id}.providers.{provider_name}",
                     )
@@ -326,7 +326,7 @@ class TeamRoleToolAccessSource:
                 )
         provider_conversation_requirements = _role_provider_conversation_requirements(
             role.cao_tools,
-            setup_providers=setup_providers,
+            workspace_providers=workspace_providers,
             requirements_by_provider=self._provider_conversation_requirements,
         )
         return ToolAccessSourceResult(
@@ -892,7 +892,7 @@ class ToolService:
             manager = self._collaboration_manager()
             team = manager.team_for_agent(agent)
             if team is None:
-                raise WorkspaceSetupConfigError(
+                raise WorkspaceConfigError(
                     f"caller agent {agent.id} has no workspace team for provider conversation access"
                 )
             provider_view = manager.provider_view(team.id, normalized_provider)
@@ -1326,13 +1326,13 @@ def _inactive_local_grants(agent: Agent) -> Mapping[str, Any]:
 def _role_provider_conversation_requirements(
     role_cao_tools: Iterable[str],
     *,
-    setup_providers: set[str],
+    workspace_providers: set[str],
     requirements_by_provider: Mapping[str, tuple[ProviderConversationAccessRequirement, ...]],
 ) -> tuple[ProviderConversationAccessRequirement, ...]:
     granted_tools = set(role_cao_tools)
     requirements: list[ProviderConversationAccessRequirement] = []
     for provider_name, provider_requirements in requirements_by_provider.items():
-        if provider_name not in setup_providers:
+        if provider_name not in workspace_providers:
             continue
         for requirement in provider_requirements:
             tool_name = _provider_conversation_operation_tool(requirement.operation)

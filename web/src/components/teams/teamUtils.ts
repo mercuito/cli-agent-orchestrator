@@ -2,7 +2,7 @@ import type {
   AgentStatus,
   ProviderRoleAccessSchema,
   ToolDescriptor,
-  WorkspaceSetup,
+  Workspace,
   WorkspaceTeam,
   WorkspaceTeamRole,
 } from '../../api'
@@ -50,7 +50,7 @@ export function roleToolNames(role: WorkspaceTeamRole) {
 export function buildToolOptions(
   caoTools: ToolDescriptor[],
   agents: AgentStatus[],
-  setup: WorkspaceSetup | undefined,
+  workspace: Workspace | undefined,
   providerSchemas: Record<string, ProviderRoleAccessSchema>,
 ): ToolOption[] {
   const options = new Map<string, ToolOption>()
@@ -80,7 +80,7 @@ export function buildToolOptions(
     })
   })
 
-  setup?.providers.forEach(provider => {
+  workspace?.providers.forEach(provider => {
     providerSchemas[provider]?.tools.forEach(tool => {
       options.set(`provider:${provider}:${tool.name}`, {
         key: `provider:${provider}:${tool.name}`,
