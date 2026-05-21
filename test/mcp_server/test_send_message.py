@@ -1,7 +1,7 @@
 """Tests for send_message MCP tool."""
 
-from contextlib import contextmanager
 import os
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -43,7 +43,9 @@ def _terminal_team_guard(*, sender_team: str = "cao_delivery", receiver_team: st
         return None
 
     with (
-        patch("cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry),
+        patch(
+            "cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry
+        ),
         patch(
             "cli_agent_orchestrator.mcp_server.server.db_module.get_terminal_metadata",
             side_effect=_metadata,
@@ -239,7 +241,10 @@ async def test_send_message_addresses_agent_and_delivers_to_live_idle_terminal(
     result = await send_message(receiver_agent_id="agent-b", body="hello")
 
     assert result["success"] is True
-    send_input.assert_called_once_with("terminal-b", "hello")
+    send_input.assert_called_once_with(
+        "terminal-b",
+        f"hello\n\nnotification_id={result['notification_id']}",
+    )
     persisted = get_inbox_delivery(result["notification_id"])
     assert persisted.notification.receiver_id == "agent-b"
     assert persisted.notification.status == MessageStatus.DELIVERED

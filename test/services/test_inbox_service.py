@@ -10,6 +10,12 @@ from cli_agent_orchestrator.clients.database import (
     create_inbox_notification_event,
     get_inbox_delivery,
 )
+from cli_agent_orchestrator.inbox import readiness as inbox_service
+from cli_agent_orchestrator.inbox.readiness import (
+    LogFileHandler,
+    check_and_send_pending_messages,
+    format_message_batch,
+)
 from cli_agent_orchestrator.models.inbox import (
     InboxDelivery,
     InboxMessageRecord,
@@ -17,12 +23,6 @@ from cli_agent_orchestrator.models.inbox import (
     MessageStatus,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.inbox import readiness as inbox_service
-from cli_agent_orchestrator.inbox.readiness import (
-    LogFileHandler,
-    check_and_send_pending_messages,
-    format_message_batch,
-)
 
 
 def _delivery(
@@ -443,6 +443,32 @@ def test_idle_terminal_delivers_non_message_backed_notification_body(
     assert persisted.message.body == "CAO-123 has new comments."
     assert persisted.targets == []
     assert persisted.notification.status == MessageStatus.DELIVERED
+
+
+def test_plain_notification_preview_includes_notification_id_footer(
+    live_inbox_db,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    # Given
+    notification = create_inbox_notification_event(
+        "terminal-1",
+        "Plain message body.",
+        source_kind="plain",
+        source_id="worker-a",
+    )
+    _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
+
+    # When
+    result = check_and_send_pending_messages("terminal-1")
+
+    # Then
+    assert result is True
+    send_input.assert_called_once_with(
+        "terminal-1",
+        f"Plain message body.\n\nnotification_id={notification.id}",
+    )
 
 
 def test_delivery_failure_marks_notification_failed_without_mutating_durable_message(

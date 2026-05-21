@@ -1,8 +1,8 @@
 """Tests for MCP server handoff logic."""
 
 import asyncio
-from contextlib import contextmanager
 import os
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -40,10 +40,12 @@ def _same_team_guard(
     def _metadata(terminal_id: str):
         if terminal_id == sender_terminal_id:
             return {"id": terminal_id, "agent_id": sender_agent_id}
-        return None
+        return {"id": terminal_id, "agent_id": receiver_agent_id}
 
     with (
-        patch("cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry),
+        patch(
+            "cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry
+        ),
         patch(
             "cli_agent_orchestrator.mcp_server.server.db_module.get_terminal_metadata",
             side_effect=_metadata,
@@ -185,7 +187,9 @@ class TestHandoffMessageContext:
         mock_send.return_value = None
 
         with patch.dict(os.environ, {}, clear=True):
-            result = asyncio.get_event_loop().run_until_complete(_handoff_impl("developer", "Do task"))
+            result = asyncio.get_event_loop().run_until_complete(
+                _handoff_impl("developer", "Do task")
+            )
 
         assert result.success is False
         assert "sender terminal is unknown" in result.message

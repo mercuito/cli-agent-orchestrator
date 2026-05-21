@@ -27,6 +27,14 @@ def _load_fixture() -> dict:
     return json.loads(FIXTURE_PATH.read_text())
 
 
+def _is_stale_claude_oauth_error(error: CatalogDiscoveryError) -> bool:
+    """Return True when Claude Code's cached access token was rejected."""
+    message = str(error).lower()
+    return "anthropic /v1/models returned http 401" in message and (
+        "authentication" in message or "credentials" in message
+    )
+
+
 class TestProviderModelBuilder:
     """Tests for the per-entry filter/mapping logic."""
 
@@ -223,6 +231,30 @@ class TestCapabilityExposure:
 class TestRealAnthropicApi:
     """Live calls to ``api.anthropic.com``. Skipped without local credentials."""
 
+    def test_stale_oauth_error_is_treated_as_live_environment_state(self):
+        # Given
+        error = CatalogDiscoveryError(
+            'Anthropic /v1/models returned HTTP 401: {"type":"error",'
+            '"error":{"type":"authentication_error",'
+            '"message":"Invalid authentication credentials"}}'
+        )
+
+        # When
+        is_stale_credential_error = _is_stale_claude_oauth_error(error)
+
+        # Then
+        assert is_stale_credential_error is True
+
+    def test_non_auth_discovery_error_is_not_treated_as_stale_oauth(self):
+        # Given
+        error = CatalogDiscoveryError("Anthropic /v1/models returned HTTP 500: internal error")
+
+        # When
+        is_stale_credential_error = _is_stale_claude_oauth_error(error)
+
+        # Then
+        assert is_stale_credential_error is False
+
     @pytest.mark.integration
     def test_real_api_returns_non_empty_catalog(self):
         # Given — only run when the dev has a logged-in Claude Code on macOS
@@ -231,7 +263,15 @@ class TestRealAnthropicApi:
         capability = ClaudeModelDiscoveryCapability()
 
         # When
-        catalog = capability.discover_catalog()
+        try:
+            catalog = capability.discover_catalog()
+        except CatalogDiscoveryError as exc:
+            if _is_stale_claude_oauth_error(exc):
+                pytest.skip(
+                    "Claude Code's cached OAuth access token is stale; "
+                    "running `claude` may refresh it without requiring a new login"
+                )
+            raise
 
         # Then
         assert catalog.provider_type == "claude_code"

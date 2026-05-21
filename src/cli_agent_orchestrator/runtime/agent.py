@@ -24,11 +24,11 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.events import CaoEvent
+from cli_agent_orchestrator.inbox import readiness as inbox_readiness
 from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
-from cli_agent_orchestrator.inbox import readiness as inbox_readiness
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.services.agent_manager import (
     AgentManager,
@@ -621,7 +621,7 @@ class AgentRuntimeHandle:
                 delivered=False,
             )
 
-        if db_module.get_oldest_pending_inbox_delivery(self.agent.id) is None:
+        if db_module.get_oldest_pending_inbox_delivery(self.inbox_receiver_id) is None:
             return AgentRuntimeDeliveryResult(
                 status=freshness.status,
                 terminal_id=terminal_id,
@@ -630,7 +630,7 @@ class AgentRuntimeHandle:
             )
 
         try:
-            delivered = inbox_readiness.check_and_send_pending_messages(self.agent.id)
+            delivered = inbox_readiness.check_and_send_pending_messages(self.inbox_receiver_id)
         except Exception as exc:
             logger.error(
                 "Failed to deliver runtime notifications to agent %s terminal %s: %s",

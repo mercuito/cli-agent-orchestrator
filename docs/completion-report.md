@@ -85,3 +85,22 @@ A task is complete only after **two** successive clean review passes are recorde
 
 - Pass 1: 2026-05-21, criteria-focused review found no valid findings after both terminal-id fallbacks were removed; verification included legacy read surface searches, `test/services/test_inbox_read.py test/mcp_server/test_inbox_tools.py`, provider conversation bridge/reply tests, and compileall.
 - Pass 2: 2026-05-21, independent review found no valid findings; verification included criteria catalog, `git diff --check`, static searches for terminal-id caller fallbacks, deleted `provider_conversations.inbox_access` imports, legacy provider read helpers, internal `replyable` aliases, and `uv run pytest test/services/test_inbox_read.py test/mcp_server/test_inbox_tools.py`.
+
+## 0007 — inbox source registry reply
+
+### Review round 1 — 2026-05-21
+
+- **Finding:** Terminal-addressed provider notifications could not be replied to through MCP because the new `inbox.reply` authorization only recognized agent-addressed receiver ids.
+- **Accepted as valid because:** Existing provider notifications may be addressed to the caller's terminal while still belonging to the caller agent, and the registry dispatch must preserve the provider reply path through MCP.
+- **Fix:** Updated `src/cli_agent_orchestrator/inbox/__init__.py` to accept terminal receiver ids whose terminal metadata belongs to the caller agent, and added MCP coverage for terminal-addressed provider replies.
+- **Evidence:** `uv run pytest test/mcp_server/test_inbox_tools.py::test_reply_to_terminal_addressed_provider_notification_routes_through_inbox_reply -q` passed as part of the focused suite.
+
+- **Finding:** Empty reply bodies raised a bare `ValueError`, causing MCP to classify the failure as an unexpected error rather than a normal inbox reply validation error.
+- **Accepted as valid because:** The public `inbox.reply` surface owns body validation for all source kinds, and MCP should return a clear, expected error payload for invalid user input.
+- **Fix:** Added `InboxReplyError` for reply validation failures and taught MCP `reply_to_inbox_message` to return it as a normal error payload.
+- **Evidence:** `uv run pytest test/mcp_server/test_inbox_tools.py::test_reply_to_inbox_message_returns_normal_error_payload_for_empty_body -q` passed as part of the focused suite.
+
+### Clean passes
+
+- Pass 1: 2026-05-21, fresh review found no actionable issues after the terminal ownership and empty-body fixes; residual risk was limited to interactions outside the touched inbox/MCP/provider-conversation surfaces.
+- Pass 2: 2026-05-21, independent review found no actionable issues; residual risk noted only the absence of a literal `source_kind="unknown"` test, with baton/runtime unregistered-source coverage exercising the generic `NotReplyable` path.

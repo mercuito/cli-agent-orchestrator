@@ -33,6 +33,7 @@ from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
     list_terminals_by_agent,
+    list_terminals_by_agent_and_context,
 )
 from cli_agent_orchestrator.inbox.store import (
     get_oldest_pending_inbox_delivery,
@@ -63,6 +64,20 @@ def _truncate_text(text: str, max_chars: int) -> str:
     return text[: max(0, max_chars - len(suffix))].rstrip() + suffix
 
 
+def _format_delivery_body(
+    delivery: InboxDelivery,
+    *,
+    max_chars: int,
+) -> str:
+    footer = (
+        f"\n\nnotification_id={delivery.notification.id}"
+        if delivery.notification.source_kind == "plain"
+        else ""
+    )
+    body = _truncate_text(delivery.notification.body, max(0, max_chars - len(footer)))
+    return f"{body}{footer}"
+
+
 def format_message_batch(
     deliveries: List[InboxDelivery],
     *,
@@ -73,13 +88,13 @@ def format_message_batch(
     if not deliveries:
         return ""
     if len(deliveries) == 1:
-        return _truncate_text(deliveries[0].notification.body, max_total_chars)
+        return _format_delivery_body(deliveries[0], max_chars=max_total_chars)
 
     header = f"Queued {len(deliveries)} messages from {_source_label(deliveries[0])}:"
     lines = [header, ""]
 
     for idx, delivery in enumerate(deliveries, start=1):
-        formatted_message = f"[{idx}] {_truncate_text(delivery.notification.body, max_body_chars)}"
+        formatted_message = f"[{idx}] {_format_delivery_body(delivery, max_chars=max_body_chars)}"
         candidate = "\n".join([*lines, formatted_message])
         if len(candidate) > max_total_chars:
             lines.append("[batch output truncated]")
@@ -93,10 +108,10 @@ def format_message_batch(
 
 
 def check_and_send_pending_messages(receiver_agent_id: str) -> bool:
-    """Check for pending messages and send if the receiver agent is ready.
+    """Check for pending messages and send if the receiver is ready.
 
     Args:
-        receiver_agent_id: Durable receiver agent id to check messages for
+        receiver_agent_id: Durable receiver id to check messages for.
 
     Returns:
         bool: True if a message was sent, False otherwise
@@ -152,11 +167,44 @@ def check_and_send_pending_messages(receiver_agent_id: str) -> bool:
 
 
 def _live_terminal_id_for_agent(agent_id: str) -> str | None:
-    terminals = list_terminals_by_agent(agent_id)
-    if not terminals:
-        return None
-    terminal_id = terminals[0].get("id")
+    receiver = _agent_context_receiver_parts(agent_id)
+    terminals = (
+        list_terminals_by_agent_and_context(receiver[0], receiver[1])
+        if receiver is not None
+        else list_terminals_by_agent(agent_id)
+    )
+    if terminals:
+        terminal_id = terminals[0].get("id")
+        return str(terminal_id) if terminal_id else None
+
+    terminal_metadata = get_terminal_metadata(agent_id)
+    terminal_id = terminal_metadata.get("id") if terminal_metadata else None
     return str(terminal_id) if terminal_id else None
+
+
+def _agent_context_receiver_parts(receiver_id: str) -> tuple[str, str] | None:
+    prefix = "agent:"
+    separator = ":context:"
+    if not receiver_id.startswith(prefix) or separator not in receiver_id:
+        return None
+    agent_id, workspace_context_id = receiver_id[len(prefix) :].split(separator, 1)
+    if not agent_id or not workspace_context_id:
+        return None
+    return agent_id, workspace_context_id
+
+
+def _terminal_receiver_ids(metadata: dict, terminal_id: str) -> list[str]:
+    agent_id = metadata.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id.strip():
+        return [terminal_id]
+
+    receiver_ids: list[str] = []
+    workspace_context_id = metadata.get("workspace_context_id")
+    if isinstance(workspace_context_id, str) and workspace_context_id.strip():
+        receiver_ids.append(f"agent:{agent_id}:context:{workspace_context_id}")
+    receiver_ids.append(agent_id)
+    receiver_ids.append(terminal_id)
+    return list(dict.fromkeys(receiver_ids))
 
 
 class LogFileHandler(FileSystemEventHandler):
@@ -183,13 +231,15 @@ class LogFileHandler(FileSystemEventHandler):
             if metadata is None:
                 logger.debug("No terminal metadata for %s, skipping inbox delivery", terminal_id)
                 return
-            receiver_agent_id = metadata.get("agent_id")
-            if not isinstance(receiver_agent_id, str) or not receiver_agent_id.strip():
+            receiver_ids = _terminal_receiver_ids(metadata, terminal_id)
+            if not receiver_ids:
                 logger.debug("Terminal %s has no agent id, skipping inbox delivery", terminal_id)
                 return
-            if not list_pending_inbox_notifications(receiver_agent_id, limit=1):
-                logger.debug(f"No pending messages for {receiver_agent_id}, skipping")
+            for receiver_id in receiver_ids:
+                if not list_pending_inbox_notifications(receiver_id, limit=1):
+                    continue
+                check_and_send_pending_messages(receiver_id)
                 return
-            check_and_send_pending_messages(receiver_agent_id)
+            logger.debug("No pending messages for terminal %s receivers, skipping", terminal_id)
         except Exception as e:
             logger.error(f"Error handling log change for {terminal_id}: {e}")

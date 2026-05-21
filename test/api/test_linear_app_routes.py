@@ -16,6 +16,7 @@ from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceCon
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.events import CaoEventDispatcher
+from cli_agent_orchestrator.inbox import reply as reply_to_inbox_message
 from cli_agent_orchestrator.linear.app_client import LinearWebhookVerification
 from cli_agent_orchestrator.linear.workspace_events import (
     LinearIssueContextEvent,
@@ -38,7 +39,6 @@ from cli_agent_orchestrator.provider_conversations.persistence import (
 )
 from cli_agent_orchestrator.provider_conversations.reply_service import (
     ProviderConversationReplyDeliveryError,
-    reply_to_inbox_message,
 )
 from cli_agent_orchestrator.runtime.agent import (
     AgentRuntimeDeliveryResult,
@@ -896,9 +896,7 @@ def test_linear_agent_webhook_delivers_after_migration_repairs_runtime_fk_target
     assert len(handle.accepted) == 1
     assert len(_pending_linear_notifications()) == 1
     with engine.connect() as connection:
-        assert "provider_conversation_inbox_notifications" not in inspect(
-            engine
-        ).get_table_names()
+        assert "provider_conversation_inbox_notifications" not in inspect(engine).get_table_names()
         assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
             "inbox_notifications"
         ]
@@ -1448,11 +1446,12 @@ def test_linear_reply_from_inbox_notification_routes_through_linear_provider(
         headers=_linear_headers(),
     )
     notification = _pending_linear_notifications()[0].notification
+    _attach_reply_terminal()
 
     result = reply_to_inbox_message(
         notification.id,
         "Reply through Linear",
-        caller_terminal_id=_attach_reply_terminal(),
+        caller_agent_id="implementation_partner",
     )
 
     create_activity.assert_called_with(
@@ -1482,12 +1481,13 @@ def test_linear_reply_failure_from_inbox_notification_is_visible(client, monkeyp
         headers=_linear_headers(),
     )
     notification = _pending_linear_notifications()[0].notification
+    _attach_reply_terminal()
 
     with pytest.raises(ProviderConversationReplyDeliveryError, match="provider reply failed"):
         reply_to_inbox_message(
             notification.id,
             "This should surface failure",
-            caller_terminal_id=_attach_reply_terminal(),
+            caller_agent_id="implementation_partner",
         )
 
     thread = get_thread("linear", "session-1")

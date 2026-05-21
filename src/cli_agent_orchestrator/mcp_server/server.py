@@ -24,9 +24,12 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.constants import API_BASE_URL
 from cli_agent_orchestrator.inbox import (
     InboxReadError,
+    InboxReplyError,
+    NotReplyable,
     ReadResult,
-    read as read_inbox_notification,
 )
+from cli_agent_orchestrator.inbox import read as read_inbox_notification
+from cli_agent_orchestrator.inbox import reply as reply_inbox_notification
 from cli_agent_orchestrator.mcp_server.freshness import (
     build_agent_mcp_runtime_generation_descriptor,
     build_agent_mcp_surface_descriptor,
@@ -46,24 +49,21 @@ from cli_agent_orchestrator.provider_conversations.linear import get_message_con
 from cli_agent_orchestrator.provider_conversations.reply_service import (
     ProviderConversationReplyError,
 )
-from cli_agent_orchestrator.provider_conversations.reply_service import (
-    reply_to_inbox_message as route_provider_inbox_reply,
-)
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
 from cli_agent_orchestrator.services.tool_service import ToolService, default_tool_service
 from cli_agent_orchestrator.utils.terminal import wait_until_terminal_status
-from cli_agent_orchestrator.workspaces import (
-    WorkspaceConfigError,
-    default_workspace_collaboration_manager,
-)
 from cli_agent_orchestrator.workspace_tool_providers.registry import (
     WorkspaceToolProviderConfigError,
 )
 from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
     ProviderToolAccessConfigError,
     ProviderToolAccessPolicy,
+)
+from cli_agent_orchestrator.workspaces import (
+    WorkspaceConfigError,
+    default_workspace_collaboration_manager,
 )
 
 logger = logging.getLogger(__name__)
@@ -1072,11 +1072,19 @@ def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, A
     """Implementation of reply_to_inbox_message logic."""
     try:
         caller_terminal_id = _require_cao_terminal_id()
-        result = route_provider_inbox_reply(
+        caller_agent_id = _agent_id_for_terminal(caller_terminal_id)
+        result = reply_inbox_notification(
             notification_id,
             body,
-            caller_terminal_id=caller_terminal_id,
+            caller_agent_id=caller_agent_id,
         )
+        if not hasattr(result, "thread"):
+            return {
+                "success": True,
+                "notification_id": notification_id,
+                "reply_notification_id": result.id,
+                "source_kind": result.source_kind,
+            }
         return {
             "success": True,
             "notification_id": result.delivery.notification.id,
@@ -1090,7 +1098,7 @@ def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, A
                 "body": result.outbound_message.body,
             },
         }
-    except ProviderConversationReplyError as exc:
+    except (InboxReadError, InboxReplyError, NotReplyable, ProviderConversationReplyError) as exc:
         payload: Dict[str, Any] = {
             "success": False,
             "error": str(exc),

@@ -20,12 +20,15 @@ from cli_agent_orchestrator.clients.database import (
     create_inbox_notification_event,
     create_terminal,
 )
-from cli_agent_orchestrator.inbox import PlainSource, send as send_inbox_message
+from cli_agent_orchestrator.inbox import PlainSource
+from cli_agent_orchestrator.inbox import send as send_inbox_message
+from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 from cli_agent_orchestrator.mcp_server.server import (
     _read_inbox_message_impl,
     _reply_to_inbox_message_impl,
     read_inbox_message,
 )
+from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
@@ -48,7 +51,6 @@ from cli_agent_orchestrator.workspaces import (
     WorkspaceTeamRole,
     default_workspace_registry,
 )
-from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 
 
 class _TeamStore:
@@ -406,9 +408,7 @@ def test_read_inbox_message_allows_agent_context_receiver(test_session):
     }
 
 
-def test_provider_backed_read_is_not_replyable_when_reply_tool_is_hidden(
-    test_session, monkeypatch
-):
+def test_provider_backed_read_is_not_replyable_when_reply_tool_is_hidden(test_session, monkeypatch):
     monkeypatch.setattr(
         "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_workspace_collaboration_manager",
         lambda: _provider_inbox_collaboration_manager(("read_inbox_message",)),
@@ -702,6 +702,7 @@ def test_provider_backed_read_uses_notification_source_message_id(test_session):
 
 
 def test_reply_to_inbox_message_routes_through_linear_provider(test_session, monkeypatch):
+    # Given
     notification_id = _linear_provider_conversation_notification()
     create_activity = Mock(return_value={"id": "reply-1"})
     monkeypatch.setattr(
@@ -709,8 +710,10 @@ def test_reply_to_inbox_message_routes_through_linear_provider(test_session, mon
         create_activity,
     )
 
+    # When
     result = _reply_to_inbox_message_impl(notification_id, "Reply through CAO")
 
+    # Then
     assert result["success"] is True
     assert result["provider"] == "linear"
     assert result["thread_id"] == "session-1"
@@ -720,6 +723,105 @@ def test_reply_to_inbox_message_routes_through_linear_provider(test_session, mon
         {"type": "response", "body": "Reply through CAO"},
         app_key="implementation_partner",
     )
+    thread = get_thread("linear", "session-1")
+    assert thread is not None
+    messages = list_messages(thread.id)
+    assert messages[-1].direction == "outbound"
+    assert messages[-1].body == "Reply through CAO"
+
+
+def test_reply_to_terminal_addressed_provider_notification_routes_through_inbox_reply(
+    test_session,
+    monkeypatch,
+):
+    # Given
+    _ensure_caller_agent_terminal()
+    thread = upsert_thread(
+        provider="linear",
+        external_id="terminal-addressed-session",
+        kind="conversation",
+        metadata={"linear_app_key": "implementation_partner"},
+    )
+    message = upsert_message(
+        thread_id=thread.id,
+        provider="linear",
+        external_id="terminal-addressed-activity",
+        direction="inbound",
+        kind="prompt",
+        body="Reply to the terminal-addressed notification.",
+    )
+    notification_id = create_notification_for_message(
+        provider_message_id=message.id,
+        receiver_id="terminal-a",
+        authorized_agent_id="implementation_partner",
+    ).delivery.notification.id
+    create_activity = Mock(return_value={"id": "reply-terminal-addressed"})
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.linear.app_client.create_agent_activity",
+        create_activity,
+    )
+
+    # When
+    result = _reply_to_inbox_message_impl(notification_id, "Reply through terminal ownership")
+
+    # Then
+    assert result["success"] is True
+    create_activity.assert_called_once_with(
+        "terminal-addressed-session",
+        {"type": "response", "body": "Reply through terminal ownership"},
+        app_key="implementation_partner",
+    )
+
+
+def test_reply_to_inbox_message_returns_normal_error_payload_for_empty_body(test_session):
+    # Given
+    notification_id = _linear_provider_conversation_notification()
+
+    # When
+    result = _reply_to_inbox_message_impl(notification_id, " ")
+
+    # Then
+    assert result["success"] is False
+    assert result["error_type"] == "InboxReplyError"
+    assert result["error"] == "body is required"
+
+
+def test_reply_to_plain_inbox_message_loops_back_to_sender_terminal(
+    test_session,
+    monkeypatch,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    # Given
+    _ensure_caller_agent_terminal()
+    create_terminal(
+        "terminal-other",
+        "session",
+        "window-other",
+        "codex",
+        agent_id="other_partner",
+        workspace_context_id=db_module.ensure_default_workspace_context("other_partner").id,
+    )
+    notification = create_inbox_notification_event(
+        "agent:implementation_partner",
+        "Plain body from agent A",
+        source_kind="plain",
+        source_id="other_partner",
+    )
+    from cli_agent_orchestrator.inbox import readiness
+
+    terminal_provider_patcher(readiness.provider_manager, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(readiness.terminal_service)
+
+    # When
+    result = _reply_to_inbox_message_impl(notification.id, "Plain reply body")
+
+    # Then
+    assert result["success"] is True
+    assert result["notification_id"] == notification.id
+    send_input.assert_called_once()
+    assert send_input.call_args.args[0] == "terminal-other"
+    assert "Plain reply body" in send_input.call_args.args[1]
 
 
 def test_reply_to_inbox_message_ignores_agent_visible_breadcrumb_for_routing(
@@ -860,7 +962,7 @@ def test_reply_to_inbox_message_rejects_non_receiver_terminal(test_session, monk
     result = _reply_to_inbox_message_impl(notification_id, "Should not route")
 
     assert result["success"] is False
-    assert result["error_type"] == "ProviderConversationReplyError"
+    assert result["error_type"] == "InboxReadError"
     assert "not authorized" in result["error"]
 
 
@@ -885,7 +987,7 @@ def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_sessio
         "reply_error": "no provider reply route",
     }
     assert reply_result["success"] is False
-    assert reply_result["error_type"] == "ProviderConversationReplyUnsupportedSourceError"
+    assert reply_result["error_type"] == "NotReplyable"
 
 
 def test_read_inbox_message_distinguishes_notification_without_backing_message(test_session):
@@ -933,7 +1035,7 @@ def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):
         "reply_error": "no provider reply route",
     }
     assert reply_result["success"] is False
-    assert reply_result["error_type"] == "ProviderConversationReplyUnsupportedSourceError"
+    assert reply_result["error_type"] == "NotReplyable"
     assert len(reply_result["error"]) < 180
 
 

@@ -32,7 +32,9 @@ def test_assign_allows_same_team_collaboration(monkeypatch):
         "load_agent_registry",
         lambda: AgentRegistry({sender.id: sender, receiver.id: receiver}),
     )
-    monkeypatch.setattr(server, "_create_terminal", lambda agent_id, working_directory: ("t1", "codex"))
+    monkeypatch.setattr(
+        server, "_create_terminal", lambda agent_id, working_directory: ("t1", "codex")
+    )
     monkeypatch.setattr(
         server,
         "_deliver_assign_payload",
@@ -52,15 +54,22 @@ def test_assign_delivery_does_not_promise_hidden_send_message(monkeypatch):
     monkeypatch.setattr(server, "ENABLE_SENDER_ID_INJECTION", True)
     monkeypatch.setattr(server, "_terminal_can_invoke_builtin", lambda terminal_id, tool: False)
     monkeypatch.setattr(
+        server.db_module,
+        "get_terminal_metadata",
+        lambda terminal_id: {"id": terminal_id, "agent_id": "receiver"},
+    )
+    monkeypatch.setattr(
         server,
         "_send_to_inbox",
-        lambda terminal_id, message: sent.update({"terminal_id": terminal_id, "message": message}),
+        lambda receiver_agent_id, message: sent.update(
+            {"receiver_agent_id": receiver_agent_id, "message": message}
+        ),
     )
 
     server._deliver_assign_payload("worker-terminal", "please help")
 
     assert sent == {
-        "terminal_id": "worker-terminal",
+        "receiver_agent_id": "receiver",
         "message": "please help\n\n[Assigned by terminal terminal-sender.]",
     }
     assert "send_message" not in sent["message"]

@@ -11,6 +11,7 @@ from cli_agent_orchestrator.agent import write_agent
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.events import CaoCorrelationId, CaoEventDispatcher, CaoEventId
+from cli_agent_orchestrator.inbox import readiness as inbox_service
 from cli_agent_orchestrator.linear.workspace_events import LinearAgentMentionedEvent
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -29,7 +30,6 @@ from cli_agent_orchestrator.runtime.events import (
     AgentRuntimeNotificationDeliveryEvent,
     AgentRuntimeWorkspaceContextSwitchEvent,
 )
-from cli_agent_orchestrator.inbox import readiness as inbox_service
 
 
 @pytest.fixture
@@ -691,7 +691,7 @@ def test_notify_accepts_durable_inbox_state_when_startup_fails(
     assert delivery.agent_participants[0].agent_id == "implementation_partner"
 
 
-def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
+def test_offline_notification_delivers_from_context_inbox_when_runtime_later_starts(
     test_session,
     monkeypatch,
     handle,
@@ -720,7 +720,7 @@ def test_offline_notification_moves_to_terminal_inbox_when_runtime_later_starts(
 
     assert result.delivered is True
     assert _pending_deliveries(handle.inbox_receiver_id) == []
-    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
+    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
     send_input.assert_called_once_with("terminal-1", "Persist me while the agent is offline.")
 
 
@@ -1241,7 +1241,7 @@ def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
     assert handle._last_freshness_result.action == AgentRuntimeFreshnessAction.RESTARTED
     assert _pending_deliveries("terminal-1") == []
     assert _pending_deliveries(handle.inbox_receiver_id) == []
-    assert _all_delivery_statuses("terminal-2") == [MessageStatus.DELIVERED]
+    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
     send_input.assert_called_once_with("terminal-2", "Old terminal pending")
 
 
@@ -1416,7 +1416,7 @@ def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
 
     assert handle.try_deliver_pending().delivered is True
     send_input.assert_called_once_with("terminal-1", "Deliver this after the agent becomes idle.")
-    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
+    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
 
 
 @pytest.mark.parametrize(
@@ -1473,7 +1473,7 @@ def test_notify_delivers_pending_notification_when_agent_is_idle(
     assert result.delivery.attempted is True
     assert result.delivery.delivered is True
     send_input.assert_called_once_with("terminal-1", "A Linear mention is ready.")
-    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
+    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
 
 
 def test_duplicate_notification_source_reuses_existing_inbox_message(

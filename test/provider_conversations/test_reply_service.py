@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -13,6 +14,9 @@ from sqlalchemy.pool import StaticPool
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig, LinearConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base, create_inbox_delivery, create_terminal
+from cli_agent_orchestrator.inbox.models import Notification
+from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
+from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
@@ -26,10 +30,9 @@ from cli_agent_orchestrator.provider_conversations.reply_service import (
     ProviderConversationReplyDeliveryError,
     ProviderConversationReplyNotFoundError,
     ProviderConversationReplyUnsupportedSourceError,
-    reply_to_inbox_message,
+    reply_to_provider_conversation,
 )
 from cli_agent_orchestrator.services.tool_service import ToolAccessDecision
-from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
 from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
@@ -124,7 +127,9 @@ def _ensure_reply_terminal() -> None:
         "window",
         "codex",
         agent_id="implementation_partner",
-        workspace_context_id=db_module.ensure_default_workspace_context("implementation_partner").id,
+        workspace_context_id=db_module.ensure_default_workspace_context(
+            "implementation_partner"
+        ).id,
     )
 
 
@@ -155,10 +160,12 @@ def _provider_conversation_inbox_message() -> tuple[int, int]:
 
 def _reply(notification_id: int, body: str, **kwargs):
     _ensure_reply_terminal()
-    return reply_to_inbox_message(
-        notification_id,
+    delivery = db_module.get_inbox_delivery(notification_id)
+    assert delivery is not None
+    return reply_to_provider_conversation(
+        delivery.notification,
         body,
-        caller_terminal_id="terminal-a",
+        caller_agent_id="implementation_partner",
         **kwargs,
     )
 
@@ -282,10 +289,24 @@ def test_unsupported_provider_records_visible_failed_state(test_session):
 
 
 def test_missing_notification_id_fails_clearly(test_session):
+    notification = Notification(
+        id=999,
+        receiver_agent_id="terminal-a",
+        body="Missing provider message",
+        source_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
+        source_id="999",
+        status=MessageStatus.PENDING,
+        created_at=datetime(2026, 1, 1),
+    )
+
     with pytest.raises(
         ProviderConversationReplyNotFoundError, match="inbox notification 999 not found"
     ):
-        _reply(999, "No inbox")
+        reply_to_provider_conversation(
+            notification,
+            "No inbox",
+            caller_agent_id="implementation_partner",
+        )
 
 
 def test_non_provider_conversation_source_fails_as_unsupported(test_session):

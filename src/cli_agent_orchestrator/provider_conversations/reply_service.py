@@ -8,13 +8,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
+from cli_agent_orchestrator.inbox.models import Notification
+from cli_agent_orchestrator.inbox.source_registry import register_reply_handler
 from cli_agent_orchestrator.models.inbox import InboxDelivery
+from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+    require_inbox_notification_receiver,
+    require_provider_inbox_authorization,
+)
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-)
-from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
-    require_provider_inbox_authorization,
-    require_inbox_notification_receiver,
 )
 from cli_agent_orchestrator.provider_conversations.models import (
     ConversationMessage,
@@ -72,11 +74,11 @@ class ProviderConversationReplyResult:
     outbound_message: ConversationMessageRecord
 
 
-def reply_to_inbox_message(
-    notification_id: int,
+def reply_to_provider_conversation(
+    notification: Notification,
     body: str,
+    caller_agent_id: str,
     *,
-    caller_terminal_id: Optional[str] = None,
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> ProviderConversationReplyResult:
     """Reply to a provider-thread inbox notification."""
@@ -84,12 +86,14 @@ def reply_to_inbox_message(
     if not body:
         raise ProviderConversationReplyError("reply body is required")
 
+    notification_id = notification.id
     delivery = _read_delivery(notification_id)
     if delivery is None:
         raise ProviderConversationReplyNotFoundError(
             f"inbox notification {notification_id} not found"
         )
 
+    caller_terminal_id = _caller_terminal_id_for_agent(caller_agent_id)
     require_inbox_notification_receiver(
         delivery,
         caller_terminal_id=caller_terminal_id,
@@ -168,6 +172,14 @@ def reply_to_inbox_message(
         provider_reply=provider_reply,
         outbound_message=outbound_message,
     )
+
+
+def _caller_terminal_id_for_agent(caller_agent_id: str) -> Optional[str]:
+    terminals = db_module.list_terminals_by_agent(caller_agent_id)
+    if not terminals:
+        return None
+    terminal_id = terminals[0].get("id")
+    return str(terminal_id) if terminal_id else None
 
 
 def _send_provider_thread_reply(
@@ -401,3 +413,6 @@ def _safe_provider_error(error: Exception) -> str:
         return message
     suffix = "..."
     return message[: MAX_PROVIDER_ERROR_CHARS - len(suffix)].rstrip() + suffix
+
+
+register_reply_handler(PROVIDER_CONVERSATION_INBOX_SOURCE_KIND, reply_to_provider_conversation)

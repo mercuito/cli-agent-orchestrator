@@ -1,7 +1,7 @@
 """Tests for assign MCP tool."""
 
-from contextlib import contextmanager
 import os
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -39,10 +39,12 @@ def _same_team_guard(
     def _metadata(terminal_id: str):
         if terminal_id == sender_terminal_id:
             return {"id": terminal_id, "agent_id": sender_agent_id}
-        return None
+        return {"id": terminal_id, "agent_id": receiver_agent_id}
 
     with (
-        patch("cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry),
+        patch(
+            "cli_agent_orchestrator.mcp_server.server.load_agent_registry", return_value=registry
+        ),
         patch(
             "cli_agent_orchestrator.mcp_server.server.db_module.get_terminal_metadata",
             side_effect=_metadata,

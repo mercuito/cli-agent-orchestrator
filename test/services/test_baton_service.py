@@ -11,14 +11,14 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
+from cli_agent_orchestrator.inbox import readiness as inbox_service
 from cli_agent_orchestrator.models.baton import BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.collaboration_policy import (
     require_terminal_same_team_collaboration,
     require_terminal_workspace_team,
 )
-from cli_agent_orchestrator.inbox import readiness as inbox_service
-from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
@@ -407,6 +407,7 @@ def test_pass_baton_pushes_previous_holder_and_sets_receiver(patched_db):
 
 
 def test_pass_baton_notification_delivers_through_semantic_inbox(patched_db, monkeypatch):
+    _create_terminal("reviewer", "reviewer")
     baton_service.create_baton(
         baton_id="baton-1",
         title="T01",
