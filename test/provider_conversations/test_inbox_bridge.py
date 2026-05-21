@@ -13,7 +13,6 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
-    PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
     create_notification_for_persisted_event,
@@ -109,7 +108,7 @@ def _persist_message(
     return work_item, thread, message
 
 
-def test_provider_conversation_notification_uses_thread_source_and_internal_thread_id(
+def test_provider_conversation_notification_uses_provider_message_source(
     test_session, preview_tool_service
 ):
     _, thread, message = _persist_message(
@@ -125,10 +124,10 @@ def test_provider_conversation_notification_uses_thread_source_and_internal_thre
 
     assert result.created is True
     assert result.delivery.message.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
-    assert result.delivery.message.source_id == str(thread.id)
+    assert result.delivery.message.source_id == str(message.id)
     assert result.delivery.message.source_id != thread.external_id
-    assert result.delivery.message.route_kind == PROVIDER_CONVERSATION_INBOX_ROUTE_KIND
-    assert result.delivery.message.route_id == str(thread.id)
+    assert result.delivery.message.route_kind is None
+    assert result.delivery.message.route_id is None
     assert result.delivery.notification.receiver_id == AUTHORIZED_RECEIVER_ID
     assert result.delivery.notification.status == MessageStatus.PENDING
     assert preview_tool_service.calls == [
@@ -168,10 +167,9 @@ def test_provider_conversation_notification_denies_preview_before_inbox_write(
 
     with db_module.SessionLocal() as session:
         assert session.query(db_module.InboxNotificationModel).count() == 0
-        assert session.query(db_module.InboxMessageModel).count() == 0
 
 
-def test_message_backed_notification_body_is_compact_and_message_body_is_durable(test_session):
+def test_notification_body_is_compact_and_source_points_at_provider_message(test_session):
     _, _, message = _persist_message(
         provider="generic-chat",
         body="The worker is blocked on a missing migration test.",
@@ -184,7 +182,7 @@ def test_message_backed_notification_body_is_compact_and_message_body_is_durable
     )
 
     assert result.delivery.message is not None
-    assert result.delivery.message.body == "The worker is blocked on a missing migration test."
+    assert result.delivery.message.source_id == str(message.id)
 
     body = result.delivery.notification.body
     assert "[CAO inbox notification]" in body
@@ -241,7 +239,7 @@ def test_semantic_notification_body_is_bounded(test_session):
     assert len(result.delivery.notification.body) <= 180
     assert "Latest actionable line" in result.delivery.notification.body
     assert result.delivery.notification.body.count("older transcript line") <= 1
-    assert "older transcript line" in result.delivery.message.body
+    assert result.delivery.message.source_id == str(message.id)
 
 
 def test_duplicate_notification_for_same_receiver_and_provider_message_is_idempotent(
@@ -281,7 +279,7 @@ def test_persisted_event_wrapper_bridges_its_message(test_session):
 
     assert result.created is True
     assert result.delivery.message.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
-    assert result.delivery.message.source_id == str(thread.id)
+    assert result.delivery.message.source_id == str(message.id)
 
 
 def test_different_provider_conversation_threads_do_not_coalesce_into_same_source(test_session):
@@ -305,8 +303,8 @@ def test_different_provider_conversation_threads_do_not_coalesce_into_same_sourc
         authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
-    assert first.delivery.message.source_id == str(first_thread.id)
-    assert second.delivery.message.source_id == str(second_thread.id)
+    assert first.delivery.message.source_id == str(first_message.id)
+    assert second.delivery.message.source_id == str(second_message.id)
     assert first.delivery.message.source_id != second.delivery.message.source_id
 
 
@@ -347,10 +345,10 @@ def test_attachment_metadata_does_not_block_semantic_message(test_session):
     )
 
     assert result.created is True
-    assert result.delivery.message.body == "Text that should still notify."
     assert "Attachment/media metadata present." in result.delivery.notification.body
     assert result.delivery.message.origin == {
-        "attachments": [{"content_type": "image/png", "name": "trace.png"}]
+        "attachments": [{"content_type": "image/png", "name": "trace.png"}],
+        "provider_thread_id": 1,
     }
 
 
@@ -378,7 +376,7 @@ def test_semantic_message_origin_does_not_copy_raw_snapshot(test_session):
         authorized_agent_id=AUTHORIZED_AGENT_ID,
     )
 
-    assert result.delivery.message.origin is None
+    assert result.delivery.message.origin == {"provider_thread_id": 1}
 
 
 def test_provider_conversation_sources_use_existing_inbox_batching_behavior(test_session):
@@ -411,7 +409,6 @@ def test_provider_conversation_sources_use_existing_inbox_batching_behavior(test
 
     assert [delivery.message.source_kind for delivery in batch] == [
         PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-        PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     ]
-    assert [delivery.message.source_id for delivery in batch] == [str(thread.id), str(thread.id)]
-    assert [delivery.notification.id for delivery in batch] == [1, 2]
+    assert [delivery.message.source_id for delivery in batch] == [str(first_message.id)]
+    assert [delivery.notification.id for delivery in batch] == [1]

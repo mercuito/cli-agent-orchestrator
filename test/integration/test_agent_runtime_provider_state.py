@@ -732,7 +732,7 @@ def test_linear_agent_session_prompt_survives_stale_refresh_with_exact_body(
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
         assert result.notification.delivery.message is not None
-        assert result.notification.delivery.message.body == prompt_body
+        assert "Preview: testing" in result.notification.delivery.message.body
         assert result.notification.delivery.message.sender_id == "provider_conversation"
 
         refreshed_terminal = db_module.get_terminal_metadata(result.terminal_id)
@@ -932,7 +932,10 @@ async def test_linear_agent_session_terminal_uses_provider_mediated_linear_mcp_t
         assert result.terminal_id is not None
         assert result.terminal_id != initial_terminal.id
         assert result.notification.delivery.message is not None
-        assert result.notification.delivery.message.body == prompt_body
+        assert (
+            "Preview: Please prove CAO-52 Linear tool access."
+            in result.notification.delivery.message.body
+        )
         assert result.notification.delivery.message.sender_id == "provider_conversation"
 
         refreshed_terminal = db_module.get_terminal_metadata(result.terminal_id)

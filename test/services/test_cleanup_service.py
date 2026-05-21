@@ -9,14 +9,9 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients.database import (
-    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     AgentRuntimeNotificationModel,
     Base,
-    InboxMessageModel,
     InboxNotificationModel,
-    InboxNotificationTargetModel,
-    ProviderConversationInboxNotificationModel,
     ProviderConversationMessageModel,
     ProviderConversationThreadModel,
 )
@@ -85,8 +80,8 @@ class TestCleanupOldData:
         # Execute
         cleanup_old_data()
 
-        # terminals, old notifications, orphan targets, and unreferenced durable messages
-        assert mock_db.query.call_count == 6
+        # terminals and old notifications
+        assert mock_db.query.call_count == 2
         assert mock_db.commit.call_count == 2
 
     @patch("cli_agent_orchestrator.services.cleanup_service.SessionLocal")
@@ -237,10 +232,10 @@ class TestCleanupOldData:
                 cleanup_old_data()
 
         # Verify filter was called (exact date comparison is tricky, just verify it was called)
-        assert len(filter_calls) >= 4
+        assert len(filter_calls) >= 3
 
     @patch("cli_agent_orchestrator.services.cleanup_service.RETENTION_DAYS", 7)
-    def test_cleanup_deletes_old_delivered_notifications_but_keeps_referenced_message(
+    def test_cleanup_deletes_old_delivered_notifications_but_keeps_pending_notification(
         self, tmp_path, monkeypatch
     ):
         engine = create_engine("sqlite:///:memory:")
@@ -252,17 +247,8 @@ class TestCleanupOldData:
 
         old = datetime.now() - timedelta(days=10)
         with TestSession() as session:
-            message = InboxMessageModel(
-                sender_id="sender",
-                body="still referenced",
-                source_kind="terminal",
-                source_id="sender",
-                created_at=old,
-            )
-            session.add(message)
-            session.flush()
             delivered = InboxNotificationModel(
-                receiver_id="receiver-a",
+                receiver_agent_id="receiver-a",
                 body="still referenced",
                 source_kind="terminal",
                 source_id="sender",
@@ -270,7 +256,7 @@ class TestCleanupOldData:
                 created_at=old,
             )
             pending = InboxNotificationModel(
-                receiver_id="receiver-b",
+                receiver_agent_id="receiver-b",
                 body="still referenced",
                 source_kind="terminal",
                 source_id="sender",
@@ -278,34 +264,16 @@ class TestCleanupOldData:
                 created_at=old,
             )
             session.add_all([delivered, pending])
-            session.flush()
-            session.add_all(
-                [
-                    InboxNotificationTargetModel(
-                        notification_id=delivered.id,
-                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-                        target_id=str(message.id),
-                        role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
-                    ),
-                    InboxNotificationTargetModel(
-                        notification_id=pending.id,
-                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-                        target_id=str(message.id),
-                        role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
-                    ),
-                ]
-            )
             session.commit()
 
         cleanup_old_data()
 
         with TestSession() as session:
-            assert session.query(InboxMessageModel).count() == 1
             remaining = session.query(InboxNotificationModel).one()
             assert remaining.status == MessageStatus.PENDING.value
 
     @patch("cli_agent_orchestrator.services.cleanup_service.RETENTION_DAYS", 7)
-    def test_cleanup_deletes_unreferenced_old_durable_messages(self, tmp_path, monkeypatch):
+    def test_cleanup_deletes_old_terminal_notification(self, tmp_path, monkeypatch):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(bind=engine)
         TestSession = sessionmaker(bind=engine)
@@ -315,17 +283,8 @@ class TestCleanupOldData:
 
         old = datetime.now() - timedelta(days=10)
         with TestSession() as session:
-            message = InboxMessageModel(
-                sender_id="sender",
-                body="old delivered",
-                source_kind="terminal",
-                source_id="sender",
-                created_at=old,
-            )
-            session.add(message)
-            session.flush()
             notification = InboxNotificationModel(
-                receiver_id="receiver",
+                receiver_agent_id="receiver",
                 body="old delivered",
                 source_kind="terminal",
                 source_id="sender",
@@ -333,25 +292,15 @@ class TestCleanupOldData:
                 created_at=old,
             )
             session.add(notification)
-            session.flush()
-            session.add(
-                InboxNotificationTargetModel(
-                    notification_id=notification.id,
-                    target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-                    target_id=str(message.id),
-                    role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
-                )
-            )
             session.commit()
 
         cleanup_old_data()
 
         with TestSession() as session:
             assert session.query(InboxNotificationModel).count() == 0
-            assert session.query(InboxMessageModel).count() == 0
 
     @patch("cli_agent_orchestrator.services.cleanup_service.RETENTION_DAYS", 7)
-    def test_cleanup_cascades_notification_markers_before_deleting_message(
+    def test_cleanup_cascades_runtime_notification_markers(
         self, tmp_path, monkeypatch
     ):
         TestSession = _fk_enabled_sessionmaker()
@@ -361,13 +310,6 @@ class TestCleanupOldData:
 
         old = datetime.now() - timedelta(days=10)
         with TestSession() as session:
-            durable_message = InboxMessageModel(
-                sender_id="sender",
-                body="old delivered",
-                source_kind="provider_message",
-                source_id="thread-1",
-                created_at=old,
-            )
             thread = ProviderConversationThreadModel(
                 provider="linear",
                 external_id="thread-1",
@@ -376,7 +318,7 @@ class TestCleanupOldData:
                 created_at=old,
                 updated_at=old,
             )
-            session.add_all([durable_message, thread])
+            session.add(thread)
             session.flush()
             provider_message = ProviderConversationMessageModel(
                 thread_id=thread.id,
@@ -390,37 +332,23 @@ class TestCleanupOldData:
                 updated_at=old,
             )
             notification = InboxNotificationModel(
-                receiver_id="receiver",
+                receiver_agent_id="receiver",
                 body="old delivered",
-                source_kind="provider_message",
-                source_id="thread-1",
+                source_kind="provider_conversation",
+                source_id="1",
                 status=MessageStatus.DELIVERED.value,
                 created_at=old,
             )
             session.add_all([provider_message, notification])
             session.flush()
-            session.add_all(
-                [
-                    InboxNotificationTargetModel(
-                        notification_id=notification.id,
-                        target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-                        target_id=str(durable_message.id),
-                        role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
-                    ),
-                    ProviderConversationInboxNotificationModel(
-                        receiver_id="receiver",
-                        provider_message_id=provider_message.id,
-                        inbox_notification_id=notification.id,
-                        created_at=old,
-                    ),
-                    AgentRuntimeNotificationModel(
-                        agent_id="receiver",
-                        source_kind="provider_message",
-                        source_id="thread-1",
-                        inbox_notification_id=notification.id,
-                        created_at=old,
-                    ),
-                ]
+            session.add(
+                AgentRuntimeNotificationModel(
+                    agent_id="receiver",
+                    source_kind="provider_conversation",
+                    source_id="1",
+                    inbox_notification_id=notification.id,
+                    created_at=old,
+                )
             )
             session.commit()
 
@@ -428,8 +356,6 @@ class TestCleanupOldData:
 
         with TestSession() as session:
             assert session.query(InboxNotificationModel).count() == 0
-            assert session.query(ProviderConversationInboxNotificationModel).count() == 0
             assert session.query(AgentRuntimeNotificationModel).count() == 0
-            assert session.query(InboxMessageModel).count() == 0
             assert session.query(ProviderConversationMessageModel).count() == 1
             assert session.query(ProviderConversationThreadModel).count() == 1

@@ -98,25 +98,6 @@ class ProcessedProviderEventModel(Base):
     metadata_json = Column(Text, nullable=True)
 
 
-class ProviderConversationInboxNotificationModel(Base):
-    """Idempotency marker for bridged provider messages sent to terminal inboxes."""
-
-    __tablename__ = "provider_conversation_inbox_notifications"
-    __table_args__ = (UniqueConstraint("receiver_id", "provider_message_id"),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    receiver_id = Column(String, nullable=False)
-    provider_message_id = Column(
-        Integer,
-        ForeignKey("provider_conversation_messages.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    inbox_notification_id = Column(
-        Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=False
-    )
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
-
-
 class AgentRuntimeNotificationModel(Base):
     """Idempotency marker for provider notifications accepted by agent runtime handles."""
 

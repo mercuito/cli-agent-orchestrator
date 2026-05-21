@@ -16,16 +16,11 @@ from cli_agent_orchestrator.clients.cao_event_store import (
     CaoEventModel,
 )
 from cli_agent_orchestrator.clients.inbox_store import (
-    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
-    InboxMessageModel,
     InboxNotificationModel,
-    InboxNotificationTargetModel,
 )
 from cli_agent_orchestrator.clients.provider_conversation_store import (
     AgentRuntimeNotificationModel,
     ProcessedProviderEventModel,
-    ProviderConversationInboxNotificationModel,
     ProviderConversationMessageModel,
     ProviderConversationThreadModel,
     ProviderWorkItemModel,
@@ -73,14 +68,12 @@ def init_db() -> None:
 
 
 def _migrate_ensure_semantic_inbox_tables() -> None:
-    """Create semantic inbox message/notification tables on existing databases."""
+    """Create and cut over the collapsed source-agnostic inbox notification table."""
     try:
         engine = _database_module().engine
-        InboxMessageModel.__table__.create(bind=engine, checkfirst=True)
         InboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
-        InboxNotificationTargetModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
-        logger.warning(f"Migration check for semantic inbox tables failed: {e}")
+        logger.warning(f"Migration check for inbox notification table failed: {e}")
         return
 
     try:
@@ -90,42 +83,56 @@ def _migrate_ensure_semantic_inbox_tables() -> None:
                 return
 
             needs_rebuild = (
+                "receiver_agent_id" not in columns
+                or "receiver_id" in columns
+                or
                 "body" not in columns
                 or "source_kind" not in columns
                 or "source_id" not in columns
                 or "metadata_json" not in columns
                 or "message_id" in columns
+                or "legacy_inbox_id" in columns
             )
-            if not needs_rebuild:
-                return
+            if needs_rebuild:
+                sqlite_migrations.rebuild_table(
+                    conn,
+                    table_name="inbox_notifications",
+                    create_sql=_inbox_notifications_create_sql(),
+                    copy_sql=_inbox_notifications_copy_sql(
+                        columns,
+                        provider_marker_columns=(
+                            sqlite_migrations.table_column_info(
+                                conn, "provider_conversation_inbox_notifications"
+                            )
+                            if sqlite_migrations.table_exists(
+                                conn, "provider_conversation_inbox_notifications"
+                            )
+                            else {}
+                        ),
+                    ),
+                )
+                logger.info("Migration: collapsed inbox notifications into source-owned rows")
 
-            has_legacy_message_target = "message_id" in columns
-            if has_legacy_message_target:
-                _snapshot_inbox_notification_message_targets(conn)
-            sqlite_migrations.rebuild_table(
+            dropped = sqlite_migrations.drop_tables_if_exist(
                 conn,
-                table_name="inbox_notifications",
-                create_sql=_inbox_notifications_create_sql(
-                    include_legacy="legacy_inbox_id" in columns
-                ),
-                copy_sql=_inbox_notifications_copy_sql(
-                    columns,
-                    include_legacy="legacy_inbox_id" in columns,
+                (
+                    "provider_conversation_inbox_notifications",
+                    "inbox_notification_targets",
+                    "inbox_messages",
                 ),
             )
-            if has_legacy_message_target:
-                _copy_inbox_notification_message_targets(conn)
-            logger.info("Migration: rebuilt inbox_notifications for notification contract")
+            if dropped:
+                logger.info("Migration: dropped %s legacy inbox side tables", dropped)
     except Exception as e:
-        logger.warning(f"Migration check for inbox notification contract failed: {e}")
+        logger.warning(f"Migration check for inbox notification cutover failed: {e}")
+        raise
 
 
-def _inbox_notifications_create_sql(*, include_legacy: bool = False) -> str:
-    legacy_column = "legacy_inbox_id INTEGER UNIQUE," if include_legacy else ""
-    return f"""
+def _inbox_notifications_create_sql() -> str:
+    return """
         CREATE TABLE inbox_notifications (
             id INTEGER NOT NULL,
-            receiver_id VARCHAR NOT NULL,
+            receiver_agent_id VARCHAR NOT NULL,
             body TEXT NOT NULL,
             source_kind VARCHAR NOT NULL,
             source_id VARCHAR NOT NULL,
@@ -135,24 +142,19 @@ def _inbox_notifications_create_sql(*, include_legacy: bool = False) -> str:
             delivered_at DATETIME,
             failed_at DATETIME,
             error_detail TEXT,
-            {legacy_column}
             PRIMARY KEY (id)
         )
     """
 
 
-def _column_or_expr(
-    columns: dict[str, sqlite_migrations.ColumnInfo], name: str, fallback: str
-) -> str:
-    return f"old.{name}" if name in columns else fallback
-
-
 def _inbox_notifications_copy_sql(
-    columns: dict[str, sqlite_migrations.ColumnInfo], *, include_legacy: bool = False
+    columns: dict[str, sqlite_migrations.ColumnInfo],
+    *,
+    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
 ) -> str:
     target_columns = [
         "id",
-        "receiver_id",
+        "receiver_agent_id",
         "body",
         "source_kind",
         "source_id",
@@ -165,56 +167,17 @@ def _inbox_notifications_copy_sql(
     ]
     source_exprs = [
         "old.id",
-        "old.receiver_id",
+        _receiver_agent_id_expr(columns),
+        _body_expr(columns),
+        _source_kind_expr(columns, provider_marker_columns=provider_marker_columns),
+        _source_id_expr(columns, provider_marker_columns=provider_marker_columns),
+        _metadata_expr(columns),
+        "old.status",
+        "old.created_at",
+        "old.delivered_at",
+        "old.failed_at",
+        "old.error_detail",
     ]
-    message_body_fallback = "''"
-    message_source_kind_fallback = "'system'"
-    message_source_id_fallback = "'unknown'"
-    if "message_id" in columns:
-        message_body_fallback = (
-            "COALESCE((SELECT inbox_messages.body FROM inbox_messages "
-            "WHERE inbox_messages.id = old.message_id), '')"
-        )
-        message_source_kind_fallback = (
-            "COALESCE((SELECT inbox_messages.source_kind FROM inbox_messages "
-            "WHERE inbox_messages.id = old.message_id), 'system')"
-        )
-        message_source_id_fallback = (
-            "COALESCE((SELECT inbox_messages.source_id FROM inbox_messages "
-            "WHERE inbox_messages.id = old.message_id), 'unknown')"
-        )
-    body_expr = _column_or_expr(
-        columns,
-        "body",
-        message_body_fallback,
-    )
-    source_kind_expr = _column_or_expr(
-        columns,
-        "source_kind",
-        message_source_kind_fallback,
-    )
-    source_id_expr = _column_or_expr(
-        columns,
-        "source_id",
-        message_source_id_fallback,
-    )
-    metadata_expr = _column_or_expr(columns, "metadata_json", "NULL")
-    source_exprs.extend(
-        [
-            body_expr,
-            source_kind_expr,
-            source_id_expr,
-            metadata_expr,
-            "old.status",
-            "old.created_at",
-            "old.delivered_at",
-            "old.failed_at",
-            "old.error_detail",
-        ]
-    )
-    if include_legacy:
-        target_columns.append("legacy_inbox_id")
-        source_exprs.append("old.legacy_inbox_id")
     target_sql = ",\n            ".join(target_columns)
     source_sql = ",\n            ".join(source_exprs)
     return f"""
@@ -227,42 +190,135 @@ def _inbox_notifications_copy_sql(
     """
 
 
-def _snapshot_inbox_notification_message_targets(sqlite_conn) -> None:
-    """Snapshot migration-only notification/message links before table rebuild."""
+def _receiver_agent_id_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
+    if "receiver_agent_id" in columns:
+        return "old.receiver_agent_id"
+    if "receiver_id" in columns:
+        return """
+            COALESCE(
+                (
+                    SELECT terminals.agent_id
+                    FROM terminals
+                    WHERE terminals.id = old.receiver_id
+                      AND terminals.agent_id IS NOT NULL
+                      AND TRIM(terminals.agent_id) != ''
+                ),
+                old.receiver_id
+            )
+            """
+    return "''"
 
-    sqlite_conn.execute("DROP TABLE IF EXISTS temp.inbox_notification_message_targets_migration")
-    sqlite_conn.execute(f"""
-        CREATE TEMP TABLE inbox_notification_message_targets_migration AS
-        SELECT
-            old.id AS notification_id,
-            CAST(old.message_id AS TEXT) AS target_id
-        FROM inbox_notifications AS old
-        WHERE old.message_id IS NOT NULL
-          AND old.message_id IN (SELECT id FROM inbox_messages)
-    """)
+
+def _body_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
+    if "body" in columns:
+        return "old.body"
+    if "message_id" in columns:
+        return """
+            COALESCE(
+                (
+                    SELECT inbox_messages.body
+                    FROM inbox_messages
+                    WHERE inbox_messages.id = old.message_id
+                ),
+                ''
+            )
+            """
+    return "''"
 
 
-def _copy_inbox_notification_message_targets(sqlite_conn) -> None:
-    """Copy migration-only notification/message links into the target table."""
-
-    sqlite_conn.execute(
-        """
-        INSERT OR IGNORE INTO inbox_notification_targets (
-            notification_id,
-            target_kind,
-            target_id,
-            role
-        )
-        SELECT
-            notification_id,
-            ?,
-            target_id,
-            ?
-        FROM temp.inbox_notification_message_targets_migration
-        """,
-        (INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE, INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY),
+def _source_kind_expr(
+    columns: dict[str, sqlite_migrations.ColumnInfo],
+    *,
+    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
+) -> str:
+    provider_message_expr = _provider_message_id_for_notification_expr(
+        columns, provider_marker_columns
     )
-    sqlite_conn.execute("DROP TABLE IF EXISTS temp.inbox_notification_message_targets_migration")
+    if provider_message_expr is not None:
+        return f"""
+            CASE
+                WHEN {provider_message_expr} IS NOT NULL THEN 'provider_conversation'
+                ELSE {_column_or_message_expr(columns, "source_kind", "'system'")}
+            END
+            """
+    return _column_or_message_expr(columns, "source_kind", "'system'")
+
+
+def _source_id_expr(
+    columns: dict[str, sqlite_migrations.ColumnInfo],
+    *,
+    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
+) -> str:
+    provider_message_expr = _provider_message_id_for_notification_expr(
+        columns, provider_marker_columns
+    )
+    if provider_message_expr is not None:
+        return f"""
+            COALESCE(
+                CAST({provider_message_expr} AS TEXT),
+                {_column_or_message_expr(columns, "source_id", "'unknown'")}
+            )
+            """
+    return _column_or_message_expr(columns, "source_id", "'unknown'")
+
+
+def _metadata_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
+    if "metadata_json" in columns:
+        return "old.metadata_json"
+    if "message_id" in columns:
+        return """
+            (
+                SELECT inbox_messages.origin_json
+                FROM inbox_messages
+                WHERE inbox_messages.id = old.message_id
+            )
+            """
+    return "NULL"
+
+
+def _column_or_message_expr(
+    columns: dict[str, sqlite_migrations.ColumnInfo], name: str, fallback: str
+) -> str:
+    if name in columns:
+        return f"old.{name}"
+    if "message_id" in columns:
+        return f"""
+            COALESCE(
+                (
+                    SELECT inbox_messages.{name}
+                    FROM inbox_messages
+                    WHERE inbox_messages.id = old.message_id
+                ),
+                {fallback}
+            )
+            """
+    return fallback
+
+
+def _provider_message_id_for_notification_expr(
+    columns: dict[str, sqlite_migrations.ColumnInfo],
+    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
+) -> Optional[str]:
+    if "provider_message_id" not in provider_marker_columns:
+        return None
+    id_exprs = []
+    if "inbox_notification_id" in provider_marker_columns:
+        id_exprs.append("marker.inbox_notification_id = old.id")
+    if "message_id" in columns and "inbox_message_id" in provider_marker_columns:
+        id_exprs.append("marker.inbox_message_id = old.message_id")
+    if "legacy_inbox_id" in columns and "inbox_message_id" in provider_marker_columns:
+        id_exprs.append("marker.inbox_message_id = old.legacy_inbox_id")
+    if not id_exprs:
+        return None
+    marker_match = " OR ".join(id_exprs)
+    return f"""
+        (
+            SELECT marker.provider_message_id
+            FROM provider_conversation_inbox_notifications AS marker
+            WHERE {marker_match}
+            LIMIT 1
+        )
+        """
 
 
 def _notification_id_migration_expr(
@@ -492,7 +548,6 @@ def _migrate_ensure_provider_conversation_tables() -> None:
         ProviderConversationThreadModel.__table__.create(bind=engine, checkfirst=True)
         ProviderConversationMessageModel.__table__.create(bind=engine, checkfirst=True)
         ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
-        ProviderConversationInboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for provider conversation tables failed: {e}")
         return
@@ -500,99 +555,11 @@ def _migrate_ensure_provider_conversation_tables() -> None:
     try:
         with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
             _migrate_legacy_provider_conversation_table_names(conn)
-            column_info = sqlite_migrations.table_column_info(
-                conn, "provider_conversation_inbox_notifications"
-            )
-            notification_columns = sqlite_migrations.table_columns(conn, "inbox_notifications")
-            if not column_info:
-                return
-
-            notification_fk_is_current = sqlite_migrations.foreign_key_references_table(
-                conn,
-                "provider_conversation_inbox_notifications",
-                "inbox_notification_id",
-                "inbox_notifications",
-            )
-            message_fk_is_current = sqlite_migrations.foreign_key_references_table(
-                conn,
-                "provider_conversation_inbox_notifications",
-                "provider_message_id",
-                "provider_conversation_messages",
-            )
-            needs_rebuild = (
-                "presence_message_id" in column_info
-                or "inbox_message_id" in column_info
-                or "inbox_notification_id" not in column_info
-                or "provider_message_id" not in column_info
-                or not bool(column_info["inbox_notification_id"][3])
-                or not notification_fk_is_current
-                or not message_fk_is_current
-            )
-            if not needs_rebuild:
-                return
-
-            notification_id_expr = _notification_id_migration_expr(
-                column_info, notification_columns
-            )
-            provider_message_expr = _provider_message_id_migration_expr(column_info)
-            sqlite_migrations.rebuild_table(
-                conn,
-                table_name="provider_conversation_inbox_notifications",
-                create_sql="""
-                    CREATE TABLE provider_conversation_inbox_notifications (
-                        id INTEGER NOT NULL,
-                        receiver_id VARCHAR NOT NULL,
-                        provider_message_id INTEGER NOT NULL,
-                        inbox_notification_id INTEGER NOT NULL,
-                        created_at DATETIME NOT NULL,
-                        PRIMARY KEY (id),
-                        UNIQUE (receiver_id, provider_message_id),
-                        FOREIGN KEY(provider_message_id)
-                            REFERENCES provider_conversation_messages (id) ON DELETE CASCADE,
-                        FOREIGN KEY(inbox_notification_id)
-                            REFERENCES inbox_notifications (id) ON DELETE CASCADE
-                    )
-                """,
-                copy_sql=(
-                    f"""
-                    INSERT INTO provider_conversation_inbox_notifications (
-                        id,
-                        receiver_id,
-                        provider_message_id,
-                        inbox_notification_id,
-                        created_at
-                    )
-                    SELECT
-                        old.id,
-                        old.receiver_id,
-                        {provider_message_expr},
-                        {notification_id_expr},
-                        old.created_at
-                    FROM {{old_table}} AS old
-                    WHERE {provider_message_expr} IS NOT NULL
-                      AND {notification_id_expr} IS NOT NULL
-                """
-                    if provider_message_expr is not None and notification_id_expr is not None
-                    else None
-                ),
-            )
-            logger.info(
-                "Migration: rebuilt provider_conversation_inbox_notifications with notification ids"
+            sqlite_migrations.drop_tables_if_exist(
+                conn, ("provider_conversation_inbox_notifications", "presence_inbox_notifications")
             )
     except Exception as e:
-        logger.warning(f"Migration check for provider conversation notification ids failed: {e}")
-
-
-def _provider_message_id_migration_expr(
-    marker_columns: dict[str, sqlite_migrations.ColumnInfo],
-) -> Optional[str]:
-    """Build a migration-only expression for provider conversation message ids."""
-
-    if "provider_message_id" in marker_columns:
-        return "old.provider_message_id"
-    if "presence_message_id" in marker_columns:
-        return "old.presence_message_id"
-    return None
+        logger.warning(f"Migration check for provider conversation cutover failed: {e}")
 
 
 def _migrate_legacy_provider_conversation_table_names(sqlite_conn) -> None:
@@ -610,7 +577,6 @@ def _migrate_legacy_provider_conversation_table_names(sqlite_conn) -> None:
     if not has_legacy_tables:
         return
 
-    notification_columns = sqlite_migrations.table_columns(sqlite_conn, "inbox_notifications")
     with sqlite_migrations.foreign_keys_disabled(sqlite_conn):
         if sqlite_migrations.table_exists(sqlite_conn, "presence_work_items"):
             sqlite_conn.execute("""
@@ -705,34 +671,6 @@ def _migrate_legacy_provider_conversation_table_names(sqlite_conn) -> None:
                     updated_at
                 FROM presence_messages
             """)
-
-        if sqlite_migrations.table_exists(sqlite_conn, "presence_inbox_notifications"):
-            marker_columns = sqlite_migrations.table_column_info(
-                sqlite_conn, "presence_inbox_notifications"
-            )
-            provider_message_expr = _provider_message_id_migration_expr(marker_columns)
-            notification_id_expr = _notification_id_migration_expr(
-                marker_columns, notification_columns
-            )
-            if provider_message_expr is not None and notification_id_expr is not None:
-                sqlite_conn.execute(f"""
-                    INSERT OR IGNORE INTO provider_conversation_inbox_notifications (
-                        id,
-                        receiver_id,
-                        provider_message_id,
-                        inbox_notification_id,
-                        created_at
-                    )
-                    SELECT
-                        old.id,
-                        old.receiver_id,
-                        {provider_message_expr},
-                        {notification_id_expr},
-                        old.created_at
-                    FROM presence_inbox_notifications AS old
-                    WHERE {provider_message_expr} IS NOT NULL
-                      AND {notification_id_expr} IS NOT NULL
-                """)
 
         logger.info("Migration: copied legacy presence tables to provider conversation tables")
 

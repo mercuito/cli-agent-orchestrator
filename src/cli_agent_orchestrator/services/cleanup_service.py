@@ -4,13 +4,8 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import String, cast
-
 from cli_agent_orchestrator.clients.database import (
-    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-    InboxMessageModel,
     InboxNotificationModel,
-    InboxNotificationTargetModel,
     SessionLocal,
     TerminalModel,
 )
@@ -36,8 +31,7 @@ def cleanup_old_data():
             db.commit()
             logger.info(f"Deleted {deleted_terminals} old terminals from database")
 
-        # Delivery notifications own retention state. Durable messages are
-        # deleted only after no notification rows still reference them.
+        # Delivery notifications own inbox retention state.
         with SessionLocal() as db:
             deleted_notifications = (
                 db.query(InboxNotificationModel)
@@ -49,31 +43,10 @@ def cleanup_old_data():
                 )
                 .delete(synchronize_session=False)
             )
-            db.query(InboxNotificationTargetModel).filter(
-                ~db.query(InboxNotificationModel.id)
-                .filter(InboxNotificationModel.id == InboxNotificationTargetModel.notification_id)
-                .exists()
-            ).delete(synchronize_session=False)
-            deleted_messages = (
-                db.query(InboxMessageModel)
-                .filter(
-                    InboxMessageModel.created_at < cutoff_date,
-                    ~db.query(InboxNotificationTargetModel.id)
-                    .filter(
-                        InboxNotificationTargetModel.target_kind
-                        == INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-                        InboxNotificationTargetModel.target_id
-                        == cast(InboxMessageModel.id, String),
-                    )
-                    .exists(),
-                )
-                .delete(synchronize_session=False)
-            )
             db.commit()
             logger.info(
-                "Deleted %s old inbox notifications and %s unreferenced messages from database",
+                "Deleted %s old inbox notifications from database",
                 deleted_notifications,
-                deleted_messages,
             )
 
         # Clean up old terminal log files

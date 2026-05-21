@@ -12,12 +12,8 @@ from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
-    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
     Base,
-    InboxMessageModel,
     InboxNotificationModel,
-    InboxNotificationTargetModel,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
@@ -42,17 +38,8 @@ def _seed_inbox(
     session_maker, *, sender_id, receiver_id, message, created_at, status=MessageStatus.DELIVERED
 ):
     with session_maker() as s:
-        message_row = InboxMessageModel(
-            sender_id=sender_id,
-            body=message,
-            source_kind="terminal",
-            source_id=sender_id,
-            created_at=created_at,
-        )
-        s.add(message_row)
-        s.flush()
         notification_row = InboxNotificationModel(
-            receiver_id=receiver_id,
+            receiver_agent_id=receiver_id,
             body=message,
             source_kind="terminal",
             source_id=sender_id,
@@ -60,15 +47,6 @@ def _seed_inbox(
             created_at=created_at,
         )
         s.add(notification_row)
-        s.flush()
-        s.add(
-            InboxNotificationTargetModel(
-                notification_id=notification_row.id,
-                target_kind=INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-                target_id=str(message_row.id),
-                role=INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
-            )
-        )
         s.commit()
 
 

@@ -611,17 +611,18 @@ def test_oversized_provider_authored_workspace_metadata_is_omitted_from_slim_rea
     assert "x" * 1000 not in encoded
 
 
-def test_provider_backed_read_without_marker_fails_clearly(test_session):
+def test_provider_backed_read_uses_notification_source_message_id(test_session):
     _ensure_caller_agent_terminal()
     thread = upsert_thread(
-        provider="example",
+        provider="linear",
         external_id="thread-with-reply",
         external_url="https://presence.example/thread-with-reply",
         kind="conversation",
+        raw_snapshot={"_cao_linear_app_key": "implementation_partner"},
     )
-    upsert_message(
+    inbound_message = upsert_message(
         thread_id=thread.id,
-        provider="example",
+        provider="linear",
         external_id="message-inbound",
         direction="inbound",
         kind="prompt",
@@ -629,27 +630,23 @@ def test_provider_backed_read_without_marker_fails_clearly(test_session):
     )
     upsert_message(
         thread_id=thread.id,
-        provider="example",
+        provider="linear",
         external_id="message-outbound",
         direction="outbound",
         kind="response",
         body="Previous CAO reply",
     )
-    delivery = create_inbox_delivery(
-        "provider_conversation",
-        "agent:implementation_partner",
-        "Provider conversation update",
-        source_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-        source_id=str(thread.id),
-        route_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-        route_id=str(thread.id),
+    delivery = create_notification_for_message(
+        provider_message_id=inbound_message.id,
+        receiver_id="agent:implementation_partner",
+        authorized_agent_id="implementation_partner",
     )
 
-    result = _read_inbox_message_impl(delivery.notification.id)
+    result = _read_inbox_message_impl(delivery.delivery.notification.id)
 
-    assert result["success"] is False
-    assert result["error_type"] == "InboxReadNotFoundError"
-    assert "provider conversation notification marker" in result["error"]
+    assert result["success"] is True
+    assert result["body"] == "Original provider prompt"
+    assert result["replyable"] is True
 
 
 def test_reply_to_inbox_message_routes_through_linear_provider(test_session, monkeypatch):
@@ -845,9 +842,15 @@ def test_read_inbox_message_distinguishes_notification_without_backing_message(t
 
     result = _read_inbox_message_impl(notification.id)
 
-    assert result["success"] is False
-    assert result["error_type"] == "InboxReadUnsupportedNotificationError"
-    assert "has no CAO message target" in result["error"]
+    assert result == {
+        "success": True,
+        "notification_id": notification.id,
+        "message_id": notification.id,
+        "from": "Linear Issue",
+        "body": "CAO-123 has new comments.",
+        "replyable": False,
+        "reply_error": "no provider reply route",
+    }
 
 
 def test_agent_runtime_backed_message_is_slim_and_not_replyable(test_session):

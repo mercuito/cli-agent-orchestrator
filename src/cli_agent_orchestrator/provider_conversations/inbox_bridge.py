@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Optional, cast
 
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
@@ -22,7 +20,7 @@ from cli_agent_orchestrator.provider_conversations.inbox_read_presentation impor
 from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
 from cli_agent_orchestrator.workspaces import WorkspaceConfigError
 
-PROVIDER_CONVERSATION_INBOX_SOURCE_KIND = "provider_conversation_thread"
+PROVIDER_CONVERSATION_INBOX_SOURCE_KIND = "provider_conversation"
 PROVIDER_CONVERSATION_INBOX_ROUTE_KIND = "provider_conversation_thread"
 PROVIDER_CONVERSATION_INBOX_SENDER_ID = "provider_conversation"
 DEFAULT_PREVIEW_CHARS = 240
@@ -131,10 +129,8 @@ def create_notification_for_message(
             _provider_message_body(message_row, thread_row),
             db=session,
             source_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-            source_id=str(thread_row.id),
-            origin=_provider_message_origin(message_row),
-            route_kind=PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
-            route_id=str(thread_row.id),
+            source_id=str(provider_message_id),
+            notification_metadata=_provider_notification_metadata(message_row, thread_row),
             notification_body=format_provider_conversation_notification(
                 inbox_notification_id=0,
                 message_row=message_row,
@@ -160,49 +156,14 @@ def create_notification_for_message(
         )
         session.flush()
 
-        inserted = session.execute(
-            sqlite_insert(db_module.ProviderConversationInboxNotificationModel)
-            .values(
-                receiver_id=receiver_id,
-                provider_message_id=provider_message_id,
-                inbox_notification_id=delivery.notification.id,
-                created_at=datetime.now(),
-            )
-            .on_conflict_do_nothing(
-                index_elements=[
-                    db_module.ProviderConversationInboxNotificationModel.receiver_id,
-                    db_module.ProviderConversationInboxNotificationModel.provider_message_id,
-                ]
-            )
-        )
-        if inserted.rowcount == 1:
-            refreshed = db_module.get_inbox_delivery(delivery.notification.id, db=session)
-            if refreshed is None:
-                raise RuntimeError(
-                    f"inbox notification {delivery.notification.id} for provider conversation message "
-                    f"{provider_message_id} not found"
-                )
-            session.commit()
-            return ProviderConversationInboxNotification(delivery=refreshed, created=True)
-
-        if delivery.message is None:
+        refreshed = db_module.get_inbox_delivery(delivery.notification.id, db=session)
+        if refreshed is None:
             raise RuntimeError(
-                "message-backed provider conversation notification lost its durable message"
-            )
-        notification_row = session.get(db_module.InboxNotificationModel, delivery.notification.id)
-        if notification_row is not None:
-            session.delete(notification_row)
-        durable_message_row = session.get(db_module.InboxMessageModel, delivery.message.id)
-        if durable_message_row is not None:
-            session.delete(durable_message_row)
-        session.flush()
-        existing = _get_existing_notification(session, receiver_id, provider_message_id)
-        if existing is None:
-            raise RuntimeError(
-                "provider conversation inbox notification insert conflicted without existing row"
+                f"inbox notification {delivery.notification.id} for provider conversation message "
+                f"{provider_message_id} not found"
             )
         session.commit()
-        return ProviderConversationInboxNotification(delivery=existing, created=False)
+        return ProviderConversationInboxNotification(delivery=refreshed, created=True)
 
 
 def _require_provider_preview_authorized(
@@ -341,23 +302,23 @@ def _get_existing_notification(
     session: Session, receiver_id: str, provider_message_id: int
 ) -> Optional[InboxDelivery]:
     row = (
-        session.query(db_module.ProviderConversationInboxNotificationModel)
+        session.query(db_module.InboxNotificationModel)
         .filter(
-            db_module.ProviderConversationInboxNotificationModel.receiver_id == receiver_id,
-            db_module.ProviderConversationInboxNotificationModel.provider_message_id
-            == provider_message_id,
+            db_module.InboxNotificationModel.receiver_agent_id == receiver_id,
+            db_module.InboxNotificationModel.source_kind
+            == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
+            db_module.InboxNotificationModel.source_id == str(provider_message_id),
         )
         .first()
     )
     if row is None:
         return None
 
-    delivery = db_module.get_inbox_delivery(cast(int, row.inbox_notification_id), db=session)
+    delivery = db_module.get_inbox_delivery(cast(int, row.id), db=session)
     if delivery is not None:
         return delivery
     raise RuntimeError(
-        "inbox notification "
-        f"{row.inbox_notification_id} for provider conversation message {provider_message_id} not found"
+        f"inbox notification {row.id} for provider conversation message {provider_message_id} not found"
     )
 
 
@@ -376,6 +337,15 @@ def _provider_message_origin(
 ) -> Optional[dict[str, Any]]:
     metadata = _load_json_object(cast(Optional[str], message_row.metadata_json))
     return dict(metadata) if metadata is not None else None
+
+
+def _provider_notification_metadata(
+    message_row: db_module.ProviderConversationMessageModel,
+    thread_row: db_module.ProviderConversationThreadModel,
+) -> dict[str, Any]:
+    metadata = _provider_message_origin(message_row) or {}
+    metadata["provider_thread_id"] = cast(int, thread_row.id)
+    return metadata
 
 
 def _format_work_item(row: Optional[db_module.ProviderWorkItemModel]) -> Optional[str]:

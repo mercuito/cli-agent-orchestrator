@@ -422,7 +422,8 @@ def test_idle_terminal_delivers_non_message_backed_notification_body(
     assert result is True
     send_input.assert_called_once_with("terminal-1", "CAO-123 has new comments.")
     persisted = get_inbox_delivery(notification.id)
-    assert persisted.message is None
+    assert persisted.message is not None
+    assert persisted.message.body == "CAO-123 has new comments."
     assert persisted.targets == []
     assert persisted.notification.status == MessageStatus.DELIVERED
 

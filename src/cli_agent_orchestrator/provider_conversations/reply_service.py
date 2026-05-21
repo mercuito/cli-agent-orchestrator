@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
+from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
-    PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
+    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
 )
 from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
     require_provider_inbox_authorization,
@@ -89,17 +89,6 @@ def reply_to_inbox_message(
         raise ProviderConversationReplyNotFoundError(
             f"inbox notification {notification_id} not found"
         )
-    message_target = _primary_inbox_message_target(delivery)
-    if message_target is None:
-        raise ProviderConversationReplyUnsupportedSourceError(
-            f"inbox notification {notification_id} has no CAO message target"
-        )
-    message = delivery.message
-    if message is None:
-        raise ProviderConversationReplyNotFoundError(
-            f"inbox message target {message_target.target_id} for inbox notification "
-            f"{notification_id} not found"
-        )
 
     require_inbox_notification_receiver(
         delivery,
@@ -107,21 +96,26 @@ def reply_to_inbox_message(
         error=ProviderConversationReplyError,
     )
 
-    if message.route_kind != PROVIDER_CONVERSATION_INBOX_ROUTE_KIND:
+    if delivery.notification.source_kind != PROVIDER_CONVERSATION_INBOX_SOURCE_KIND:
         raise ProviderConversationReplyUnsupportedSourceError(
-            f"inbox notification {notification_id} route_kind "
-            f"{message.route_kind!r} is not supported for provider conversation replies"
+            f"inbox notification {notification_id} source_kind "
+            f"{delivery.notification.source_kind!r} is not supported for provider conversation replies"
         )
 
-    thread_id = _parse_thread_route_id(delivery)
+    provider_message = _selected_provider_message(delivery.notification.id)
+    if provider_message is None:
+        raise ProviderConversationReplyNotFoundError(
+            f"provider conversation message {delivery.notification.source_id} for inbox notification "
+            f"{notification_id} not found"
+        )
+    thread_id = provider_message.thread_id
     thread = get_thread_by_id(thread_id)
     if thread is None:
         raise ProviderConversationReplyNotFoundError(
             f"provider conversation thread {thread_id} for inbox notification {notification_id} not found"
         )
-    selected_message_metadata, selected_message_raw_snapshot = _selected_provider_message_context(
-        delivery.notification.id
-    )
+    selected_message_metadata = _load_json_object(provider_message.metadata_json)
+    selected_message_raw_snapshot = _load_json_object(provider_message.raw_snapshot_json)
     require_provider_inbox_authorization(
         delivery,
         caller_terminal_id=caller_terminal_id,
@@ -268,61 +262,25 @@ def _read_delivery(notification_id: int) -> Optional[InboxDelivery]:
     return db_module.get_inbox_delivery(notification_id)
 
 
-def _primary_inbox_message_target(delivery: InboxDelivery) -> Optional[InboxNotificationTarget]:
-    for target in delivery.targets:
-        if (
-            target.target_kind == db_module.INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE
-            and target.role == db_module.INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
-        ):
-            return target
-    return None
-
-
-def _parse_thread_route_id(delivery: InboxDelivery) -> int:
-    message = delivery.message
-    if message is None:
-        raise ProviderConversationReplyUnsupportedSourceError(
-            f"inbox notification {delivery.notification.id} is not backed by a CAO message"
-        )
-    if message.route_id is None:
-        raise ProviderConversationReplyNotFoundError(
-            f"inbox notification {delivery.notification.id} does not include a provider conversation thread route id"
-        )
-
-    try:
-        return int(message.route_id)
-    except ValueError as exc:
-        raise ProviderConversationReplyNotFoundError(
-            f"inbox notification {delivery.notification.id} has invalid provider conversation thread route id "
-            f"{message.route_id!r}"
-        ) from exc
-
-
-def _selected_provider_message_context(
+def _selected_provider_message(
     inbox_notification_id: int,
-) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+) -> Optional[db_module.ProviderConversationMessageModel]:
+    delivery = _read_delivery(inbox_notification_id)
+    if delivery is None:
+        return None
+    try:
+        provider_message_id = int(delivery.notification.source_id)
+    except ValueError:
+        return None
     with db_module.SessionLocal() as session:
-        marker = (
-            session.query(db_module.ProviderConversationInboxNotificationModel)
-            .filter(
-                db_module.ProviderConversationInboxNotificationModel.inbox_notification_id
-                == inbox_notification_id
-            )
-            .first()
-        )
-        if marker is None:
-            return None, None
         message_row = (
             session.query(db_module.ProviderConversationMessageModel)
-            .filter(db_module.ProviderConversationMessageModel.id == marker.provider_message_id)
+            .filter(db_module.ProviderConversationMessageModel.id == provider_message_id)
             .first()
         )
         if message_row is None:
-            return None, None
-        return (
-            _load_json_object(message_row.metadata_json),
-            _load_json_object(message_row.raw_snapshot_json),
-        )
+            return None
+        return message_row
 
 
 def _load_json_object(value: Optional[str]) -> Optional[Dict[str, Any]]:

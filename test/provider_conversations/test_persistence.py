@@ -225,13 +225,14 @@ def test_provider_conversation_migration_copies_legacy_presence_tables(tmp_path,
         "provider_work_items",
         "provider_conversation_threads",
         "provider_conversation_messages",
-        "provider_conversation_inbox_notifications",
+        "processed_provider_events",
     }.issubset(table_names)
+    assert "provider_conversation_inbox_notifications" not in table_names
+    assert "presence_inbox_notifications" not in table_names
     assert {
         "presence_work_items",
         "presence_threads",
         "presence_messages",
-        "presence_inbox_notifications",
     }.issubset(table_names)
     with engine.connect() as connection:
         assert (
@@ -251,12 +252,6 @@ def test_provider_conversation_migration_copies_legacy_presence_tables(tmp_path,
                 "SELECT thread_id FROM provider_conversation_messages WHERE id = 601"
             ).scalar_one()
             == 501
-        )
-        assert (
-            connection.exec_driver_sql(
-                "SELECT provider_message_id FROM provider_conversation_inbox_notifications WHERE id = 701"
-            ).scalar_one()
-            == 601
         )
 
 

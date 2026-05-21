@@ -299,7 +299,7 @@ def test_non_provider_conversation_source_fails_as_unsupported(test_session):
 
     with pytest.raises(
         ProviderConversationReplyUnsupportedSourceError,
-        match="route_kind None is not supported",
+        match="source_kind 'terminal' is not supported",
     ):
         _reply(delivery.notification.id, "No provider conversation target")
 
@@ -311,12 +311,10 @@ def test_missing_provider_conversation_thread_source_fails_clearly(test_session)
         "Provider conversation update",
         source_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
         source_id="999",
-        route_kind=PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-        route_id="999",
     )
 
     with pytest.raises(
         ProviderConversationReplyNotFoundError,
-        match=f"provider conversation thread 999 for inbox notification {delivery.notification.id} not found",
+        match=f"provider conversation message 999 for inbox notification {delivery.notification.id} not found",
     ):
         _reply(delivery.notification.id, "No durable thread")

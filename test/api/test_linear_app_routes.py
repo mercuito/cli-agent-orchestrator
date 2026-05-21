@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import event as sa_event
+from sqlalchemy import inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -134,26 +135,10 @@ def _test_file_session(monkeypatch: pytest.MonkeyPatch, tmp_path):
     return engine
 
 
-def _break_notification_marker_fks(engine) -> None:
+def _break_agent_runtime_notification_fks(engine) -> None:
     with engine.begin() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
-        connection.exec_driver_sql("DROP TABLE provider_conversation_inbox_notifications")
         connection.exec_driver_sql("DROP TABLE agent_runtime_notifications")
-        connection.exec_driver_sql("""
-            CREATE TABLE provider_conversation_inbox_notifications (
-                id INTEGER NOT NULL,
-                receiver_id VARCHAR NOT NULL,
-                provider_message_id INTEGER NOT NULL,
-                inbox_notification_id INTEGER NOT NULL,
-                created_at DATETIME NOT NULL,
-                PRIMARY KEY (id),
-                UNIQUE (receiver_id, provider_message_id),
-                FOREIGN KEY(provider_message_id)
-                    REFERENCES provider_conversation_messages (id) ON DELETE CASCADE,
-                FOREIGN KEY(inbox_notification_id)
-                    REFERENCES "inbox_notifications_old" (id) ON DELETE CASCADE
-            )
-        """)
     with engine.connect() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         connection.exec_driver_sql("""
@@ -825,12 +810,14 @@ def test_linear_agent_webhook_creates_provider_conversation_records_and_inbox_no
     assert len(handle.accepted) == 1
     thread = get_thread("linear", "session-1")
     assert thread is not None
+    provider_messages = list_messages(thread.id)
+    assert len(provider_messages) == 1
     messages = _pending_linear_notifications()
     assert len(messages) == 1
     assert messages[0].message.sender_id == "provider_conversation"
     assert messages[0].message.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND
-    assert messages[0].message.source_id == str(thread.id)
-    assert messages[0].message.route_id == str(thread.id)
+    assert messages[0].message.source_id == str(provider_messages[0].id)
+    assert messages[0].message.route_id is None
     assert "Please wire this into the inbox." in messages[0].message.body
     assert get_processed_event("linear", "delivery-1").event_type == "agent_session_prompted"
 
@@ -875,19 +862,19 @@ def test_linear_agent_webhook_routes_session_comment_body_without_prompt_context
     assert response.json()["routed"] is True
     assert len(handle.accepted) == 1
     delivery = _pending_linear_notifications()[0]
-    assert delivery.message.body == "testing"
+    assert "testing" in delivery.message.body
     encoded = str(delivery.message.body) + str(delivery.notification.body)
     assert "Do not deliver this" not in encoded
     assert prompt_context not in encoded
 
 
-def test_linear_agent_webhook_delivers_after_migration_repairs_marker_fk_targets(
+def test_linear_agent_webhook_delivers_after_migration_repairs_runtime_fk_targets(
     client,
     tmp_path,
     monkeypatch,
 ):
     engine = _test_file_session(monkeypatch, tmp_path)
-    _break_notification_marker_fks(engine)
+    _break_agent_runtime_notification_fks(engine)
     db_module._migrate_ensure_provider_conversation_tables()
     db_module._migrate_ensure_agent_runtime_tables()
     handle = _use_mapped_linear_runtime(monkeypatch)
@@ -909,9 +896,9 @@ def test_linear_agent_webhook_delivers_after_migration_repairs_marker_fk_targets
     assert len(handle.accepted) == 1
     assert len(_pending_linear_notifications()) == 1
     with engine.connect() as connection:
-        assert _notification_fk_targets(
-            connection, "provider_conversation_inbox_notifications"
-        ) == ["inbox_notifications"]
+        assert "provider_conversation_inbox_notifications" not in inspect(
+            engine
+        ).get_table_names()
         assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
             "inbox_notifications"
         ]
@@ -998,7 +985,7 @@ def test_linear_agent_webhook_suppresses_app_created_bootstrap_then_routes_user_
     assert thread is not None
     messages = list_messages(thread.id)
     assert [message.body for message in messages] == ["testing"]
-    assert _pending_linear_notifications()[0].message.body == "testing"
+    assert "testing" in _pending_linear_notifications()[0].message.body
 
 
 def test_linear_agent_webhook_policy_denial_suppresses_discovery_runtime_and_comments(

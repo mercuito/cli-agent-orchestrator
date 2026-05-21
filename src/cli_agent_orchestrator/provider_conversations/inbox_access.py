@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxDelivery, InboxNotificationTarget
+from cli_agent_orchestrator.models.inbox import InboxDelivery
 from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
-    PROVIDER_CONVERSATION_INBOX_ROUTE_KIND,
+    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
 )
 from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
     provider_inbox_authorization_decision,
@@ -64,17 +64,6 @@ def read_inbox_message(
         delivery = _read_delivery(session, notification_id)
         if delivery is None:
             raise InboxReadNotFoundError(f"inbox notification {notification_id} not found")
-        message_target = _primary_inbox_message_target(delivery)
-        if message_target is None:
-            raise InboxReadUnsupportedNotificationError(
-                f"inbox notification {notification_id} has no CAO message target"
-            )
-        message = delivery.message
-        if message is None:
-            raise InboxReadNotFoundError(
-                f"inbox message target {message_target.target_id} for inbox notification "
-                f"{notification_id} not found"
-            )
 
         require_inbox_notification_receiver(
             delivery,
@@ -82,28 +71,30 @@ def read_inbox_message(
             error=InboxReadError,
         )
 
-        if message.route_kind != PROVIDER_CONVERSATION_INBOX_ROUTE_KIND:
+        if delivery.notification.source_kind != PROVIDER_CONVERSATION_INBOX_SOURCE_KIND:
             return InboxReadResult(
                 delivery=delivery,
                 from_label=_plain_source_label(session, delivery),
-                body=message.body,
+                body=delivery.notification.body,
                 replyable=False,
                 reply_error="no provider reply route",
                 workspace=None,
             )
 
-        if message.route_id is None:
-            raise InboxReadNotFoundError(
-                f"inbox notification {notification_id} does not include a provider conversation thread route id"
-            )
         try:
-            thread_id = int(message.route_id)
+            provider_message_id = int(delivery.notification.source_id)
         except ValueError as exc:
             raise InboxReadNotFoundError(
-                f"inbox notification {notification_id} has invalid provider conversation thread route id "
-                f"{message.route_id!r}"
+                f"inbox notification {notification_id} has invalid provider conversation message id "
+                f"{delivery.notification.source_id!r}"
             ) from exc
 
+        message_row = _selected_provider_message_row(
+            session,
+            provider_message_id=provider_message_id,
+            inbox_notification_id=delivery.notification.id,
+        )
+        thread_id = cast(int, message_row.thread_id)
         thread_row = (
             session.query(db_module.ProviderConversationThreadModel)
             .filter(db_module.ProviderConversationThreadModel.id == thread_id)
@@ -114,12 +105,12 @@ def read_inbox_message(
                 f"provider conversation thread {thread_id} for inbox notification {notification_id} not found"
             )
 
-        message_row = _selected_provider_message_row(
-            session,
-            inbox_notification_id=delivery.notification.id,
-        )
         message_metadata = _message_metadata(message_row)
-        origin = message.origin if isinstance(message.origin, Mapping) else None
+        origin = (
+            delivery.notification.metadata
+            if isinstance(delivery.notification.metadata, Mapping)
+            else None
+        )
         require_provider_inbox_authorization(
             delivery,
             caller_terminal_id=caller_terminal_id,
@@ -195,45 +186,23 @@ def _read_delivery(session: Any, notification_id: int) -> Optional[InboxDelivery
     return db_module.get_inbox_delivery(notification_id, db=session)
 
 
-def _primary_inbox_message_target(delivery: InboxDelivery) -> Optional[InboxNotificationTarget]:
-    for target in delivery.targets:
-        if (
-            target.target_kind == db_module.INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE
-            and target.role == db_module.INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY
-        ):
-            return target
-    return None
-
-
 def _selected_provider_message_row(
     session: Any,
     *,
+    provider_message_id: int,
     inbox_notification_id: int,
 ) -> Optional[db_module.ProviderConversationMessageModel]:
-    marker = (
-        session.query(db_module.ProviderConversationInboxNotificationModel)
-        .filter(
-            db_module.ProviderConversationInboxNotificationModel.inbox_notification_id
-            == inbox_notification_id
-        )
+    message_row = (
+        session.query(db_module.ProviderConversationMessageModel)
+        .filter(db_module.ProviderConversationMessageModel.id == provider_message_id)
         .first()
     )
-    if marker is not None:
-        message_row = (
-            session.query(db_module.ProviderConversationMessageModel)
-            .filter(db_module.ProviderConversationMessageModel.id == marker.provider_message_id)
-            .first()
+    if message_row is None:
+        raise InboxReadNotFoundError(
+            f"provider conversation message {provider_message_id} for inbox notification "
+            f"{inbox_notification_id} not found"
         )
-        if message_row is None:
-            raise InboxReadNotFoundError(
-                f"provider conversation message {marker.provider_message_id} for inbox notification "
-                f"{inbox_notification_id} not found"
-            )
-        return cast(Optional[db_module.ProviderConversationMessageModel], message_row)
-
-    raise InboxReadNotFoundError(
-        f"provider conversation notification marker for inbox notification {inbox_notification_id} not found"
-    )
+    return cast(Optional[db_module.ProviderConversationMessageModel], message_row)
 
 
 def _message_metadata(

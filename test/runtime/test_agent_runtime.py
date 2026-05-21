@@ -130,7 +130,7 @@ def _all_delivery_statuses(receiver_id: str) -> list[MessageStatus]:
     with db_module.SessionLocal() as session:
         rows = (
             session.query(db_module.InboxNotificationModel)
-            .filter(db_module.InboxNotificationModel.receiver_id == receiver_id)
+            .filter(db_module.InboxNotificationModel.receiver_agent_id == receiver_id)
             .order_by(
                 db_module.InboxNotificationModel.created_at.asc(),
                 db_module.InboxNotificationModel.id.asc(),

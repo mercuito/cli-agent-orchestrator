@@ -22,15 +22,11 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import String, cast, or_
+from sqlalchemy import or_
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import (
-    INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-    INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
-    InboxMessageModel,
     InboxNotificationModel,
-    InboxNotificationTargetModel,
     MonitoringSessionModel,
 )
 
@@ -219,22 +215,11 @@ def get_session_messages(
             raise SessionNotFound(session_id)
 
         q = (
-            db.query(InboxNotificationModel, InboxMessageModel)
-            .join(
-                InboxNotificationTargetModel,
-                InboxNotificationTargetModel.notification_id == InboxNotificationModel.id,
-            )
-            .join(
-                InboxMessageModel,
-                InboxNotificationTargetModel.target_id == cast(InboxMessageModel.id, String),
-            )
+            db.query(InboxNotificationModel)
             .filter(
-                InboxNotificationTargetModel.target_kind
-                == INBOX_NOTIFICATION_TARGET_KIND_INBOX_MESSAGE,
-                InboxNotificationTargetModel.role == INBOX_NOTIFICATION_TARGET_ROLE_PRIMARY,
                 or_(
-                    InboxMessageModel.sender_id == session_row.terminal_id,
-                    InboxNotificationModel.receiver_id == session_row.terminal_id,
+                    InboxNotificationModel.source_id == session_row.terminal_id,
+                    InboxNotificationModel.receiver_agent_id == session_row.terminal_id,
                 ),
             )
         )
@@ -242,33 +227,33 @@ def get_session_messages(
         if peers:
             q = q.filter(
                 or_(
-                    InboxMessageModel.sender_id.in_(peers),
-                    InboxNotificationModel.receiver_id.in_(peers),
+                    InboxNotificationModel.source_id.in_(peers),
+                    InboxNotificationModel.receiver_agent_id.in_(peers),
                 )
             )
 
-        q = q.filter(InboxMessageModel.created_at >= session_row.started_at)
+        q = q.filter(InboxNotificationModel.created_at >= session_row.started_at)
         if session_row.ended_at is not None:
-            q = q.filter(InboxMessageModel.created_at <= session_row.ended_at)
+            q = q.filter(InboxNotificationModel.created_at <= session_row.ended_at)
 
         # Apply caller-provided sub-window on top of the session window
         if started_after is not None:
-            q = q.filter(InboxMessageModel.created_at >= started_after)
+            q = q.filter(InboxNotificationModel.created_at >= started_after)
         if started_before is not None:
-            q = q.filter(InboxMessageModel.created_at <= started_before)
+            q = q.filter(InboxNotificationModel.created_at <= started_before)
 
-        q = q.order_by(InboxMessageModel.created_at.asc(), InboxNotificationModel.id.asc())
+        q = q.order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
 
         return [
             {
                 "id": notification.id,
                 "notification_id": notification.id,
-                "message_id": message.id,
-                "sender_id": message.sender_id,
-                "receiver_id": notification.receiver_id,
-                "message": message.body,
+                "message_id": notification.id,
+                "sender_id": notification.source_id,
+                "receiver_id": notification.receiver_agent_id,
+                "message": notification.body,
                 "status": notification.status,
-                "created_at": message.created_at,
+                "created_at": notification.created_at,
             }
-            for notification, message in q.all()
+            for notification in q.all()
         ]
