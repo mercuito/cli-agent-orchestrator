@@ -353,6 +353,21 @@ class TestInboxOperations:
         assert read.notification == notification
         assert read.targets == []
 
+    def test_plain_notification_read_shape_reports_sender_agent(self, live_inbox_db):
+        """Plain agent notifications keep the sender agent in legacy read rows."""
+        notification = create_inbox_notification_event(
+            "receiver-agent",
+            "hello",
+            source_kind="plain",
+            source_id="sender-agent",
+        )
+
+        read = get_inbox_delivery(notification.id)
+
+        assert read.message.sender_id == "sender-agent"
+        assert read.message.source_kind == "plain"
+        assert read.message.source_id == "sender-agent"
+
     def test_message_backed_notification_metadata_is_bounded(self, live_inbox_db):
         """Provider/system metadata must stay bounded on message-backed notifications."""
         with pytest.raises(ValueError, match="notification metadata exceeds"):

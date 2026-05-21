@@ -43,3 +43,17 @@ A task is complete only after **two** successive clean review passes are recorde
 
 - Pass 1: 2026-05-21, criteria review found the schema/caller cutover aligned with the issue checklist after the unused helper removal.
 - Pass 2: 2026-05-21, legacy-reference sweep found no deleted ORM models/helpers, no new `inbox/` package, and no prompt/protocol production diff.
+
+## 0005 — inbox plain send
+
+### Review round 1 — 2026-05-21
+
+- **Finding:** Plain-source notifications persisted `source_id` correctly, but the legacy read-shaped `InboxMessageRecord.sender_id` was synthesized as `"plain"` instead of the sender agent id.
+- **Accepted as valid because:** `PlainSource(sender_agent_id)` is the public send contract for this slice, and downstream read/status views should not lose the sender identity for plain agent messages.
+- **Fix:** Updated `src/cli_agent_orchestrator/inbox/store.py` so plain notifications synthesize `sender_id` from `source_id`, matching terminal-backed notifications.
+- **Evidence:** `uv run pytest test/clients/test_database.py::TestInboxOperations::test_plain_notification_read_shape_reports_sender_agent -q` failed before the fix and passed after it.
+
+### Clean passes
+
+- Pass 1: 2026-05-21, acceptance checklist review found the new `inbox/` public API, agent-addressed POST route, MCP parameter rename, moved readiness handler, and tracer test aligned after the sender-id fix.
+- Pass 2: 2026-05-21, criteria sweep found no test-only inbox production seams, no backend terminal POST route, and no remaining production imports of `services.inbox_service`.

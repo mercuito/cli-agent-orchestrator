@@ -44,12 +44,12 @@ from cli_agent_orchestrator.agent import (
     LinearToolAccessConfig,
     configure_agents_root,
     load_agent,
+    load_agent_registry,
     patch_agent_config,
     write_agent,
 )
 from cli_agent_orchestrator.clients.database import (
     TerminalAgentAlreadyRunningError,
-    create_inbox_delivery,
     get_baton_record,
     get_terminal_metadata,
     init_db,
@@ -68,6 +68,8 @@ from cli_agent_orchestrator.constants import (
     TERMINAL_LOG_DIR,
 )
 from cli_agent_orchestrator.linear.routes import router as linear_router
+from cli_agent_orchestrator.inbox import PlainSource, send as send_inbox_message
+from cli_agent_orchestrator.inbox.readiness import LogFileHandler
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
@@ -79,7 +81,6 @@ from cli_agent_orchestrator.services import (
     baton_service,
     baton_watchdog_service,
     flow_service,
-    inbox_service,
     monitoring_service,
     session_service,
     terminal_service,
@@ -98,10 +99,6 @@ from cli_agent_orchestrator.services.agent_timeline import (
 )
 from cli_agent_orchestrator.services.baton_feature import is_baton_enabled
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
-from cli_agent_orchestrator.services.collaboration_policy import (
-    require_terminal_same_team_collaboration,
-)
-from cli_agent_orchestrator.services.inbox_service import LogFileHandler
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 from cli_agent_orchestrator.services.tool_service import (
     AgentToolAccess,
@@ -177,15 +174,20 @@ def _agent_dashboard_request_authorized(
     )
 
 
-def _require_inbox_message_policy(sender_id: str, receiver_id: str) -> None:
-    """Enforce team collaboration policy before terminal inbox persistence."""
+def _require_inbox_message_policy(sender_agent_id: str, receiver_agent_id: str) -> None:
+    """Enforce team collaboration policy before agent inbox persistence."""
     try:
-        require_terminal_same_team_collaboration(sender_id, receiver_id)
-    except WorkspaceConfigError as exc:
+        registry = load_agent_registry()
+        manager = default_workspace_collaboration_manager(agent_registry=registry)
+        manager.require_same_team_collaboration(
+            sender=registry.get(sender_agent_id.strip()),
+            receiver=registry.get(receiver_agent_id.strip()),
+        )
+    except (AgentConfigError, WorkspaceConfigError) as exc:
         detail = str(exc)
         status_code = (
             status.HTTP_404_NOT_FOUND
-            if "terminal not found" in detail
+            if "not found" in detail or "Unknown" in detail
             else status.HTTP_403_FORBIDDEN
         )
         raise HTTPException(status_code=status_code, detail=detail) from exc
@@ -2067,14 +2069,18 @@ async def delete_terminal(terminal_id: TerminalId) -> Dict:
         )
 
 
-@app.post("/terminals/{receiver_id}/inbox/messages")
+@app.post("/agents/{agent_id}/inbox/messages")
 async def create_inbox_message_endpoint(
-    receiver_id: TerminalId, sender_id: str, message: str
+    agent_id: str, sender_agent_id: str, body: str
 ) -> Dict:
     """Create inbox message and attempt immediate delivery."""
-    _require_inbox_message_policy(sender_id, receiver_id)
+    _require_inbox_message_policy(sender_agent_id, agent_id)
     try:
-        delivery = create_inbox_delivery(sender_id, receiver_id, message)
+        notification = send_inbox_message(
+            agent_id,
+            body,
+            source=PlainSource(sender_agent_id),
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -2083,24 +2089,15 @@ async def create_inbox_message_endpoint(
             detail=f"Failed to create inbox message: {str(e)}",
         )
 
-    # Best-effort immediate delivery. If the receiver terminal is idle, the
-    # message is delivered now; otherwise the watchdog will deliver it when
-    # the terminal becomes idle. Delivery failures must not cause the API
-    # to report an error — the message was already persisted above.
-    try:
-        inbox_service.check_and_send_pending_messages(receiver_id)
-    except Exception as e:
-        logger.warning(f"Immediate delivery attempt failed for {receiver_id}: {e}")
-
     return {
         "success": True,
-        "notification_id": delivery.notification.id,
-        "message_id": delivery.message.id if delivery.message is not None else None,
-        "sender_id": delivery.message.sender_id if delivery.message is not None else None,
-        "receiver_id": delivery.notification.receiver_id,
-        "source_kind": delivery.notification.source_kind,
-        "source_id": delivery.notification.source_id,
-        "created_at": delivery.notification.created_at.isoformat(),
+        "notification_id": notification.id,
+        "message_id": notification.id,
+        "sender_id": sender_agent_id,
+        "receiver_id": notification.receiver_agent_id,
+        "source_kind": notification.source_kind,
+        "source_id": notification.source_id,
+        "created_at": notification.created_at.isoformat(),
     }
 
 

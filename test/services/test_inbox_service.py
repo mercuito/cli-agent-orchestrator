@@ -17,8 +17,8 @@ from cli_agent_orchestrator.models.inbox import (
     MessageStatus,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.services import inbox_service
-from cli_agent_orchestrator.services.inbox_service import (
+from cli_agent_orchestrator.inbox import readiness as inbox_service
+from cli_agent_orchestrator.inbox.readiness import (
     LogFileHandler,
     check_and_send_pending_messages,
     format_message_batch,
@@ -64,6 +64,23 @@ def live_inbox_db(runtime_inbox_db_session):
     return runtime_inbox_db_session
 
 
+@pytest.fixture(autouse=True)
+def agent_addressed_terminal_compat(monkeypatch):
+    """Keep legacy readiness unit tests focused on delivery behavior.
+
+    The tracer test covers real agent-id resolution through terminal metadata.
+    These older tests exercise batching, status checks, and failure handling.
+    """
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.inbox.readiness._live_terminal_id_for_agent",
+        lambda receiver_agent_id: receiver_agent_id,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.inbox.readiness.get_terminal_metadata",
+        lambda terminal_id: {"agent_id": terminal_id},
+    )
+
+
 def _provider_with_status(terminal_provider_patcher, status: TerminalStatus):
     return terminal_provider_patcher(inbox_service.provider_manager, status)
 
@@ -71,7 +88,7 @@ def _provider_with_status(terminal_provider_patcher, status: TerminalStatus):
 class TestCheckAndSendPendingMessages:
     """Tests for check_and_send_pending_messages function."""
 
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
     def test_no_pending_messages(self, mock_get_oldest):
         """Test when no pending messages exist."""
         mock_get_oldest.return_value = None
@@ -80,11 +97,11 @@ class TestCheckAndSendPendingMessages:
 
         assert result is False
 
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.services.inbox_service.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
     )
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
     def test_provider_not_found(self, mock_get_oldest, mock_get_batch, mock_provider_manager):
         """Test when provider not found."""
         mock_message = _delivery(1, "test message")
@@ -95,11 +112,11 @@ class TestCheckAndSendPendingMessages:
         with pytest.raises(ValueError, match="Provider not found"):
             check_and_send_pending_messages("test-terminal")
 
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.services.inbox_service.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
     )
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
     def test_terminal_not_ready(self, mock_get_oldest, mock_get_batch, mock_provider_manager):
         """Test when terminal not ready."""
         mock_message = _delivery(1, "test message")
@@ -113,13 +130,13 @@ class TestCheckAndSendPendingMessages:
 
         assert result is False
 
-    @patch("cli_agent_orchestrator.services.inbox_service.update_inbox_notification_statuses")
-    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.inbox.readiness.update_inbox_notification_statuses")
+    @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
+    @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.services.inbox_service.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
     )
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
     def test_message_sent_successfully(
         self,
         mock_get_oldest,
@@ -142,13 +159,13 @@ class TestCheckAndSendPendingMessages:
         mock_terminal_service.send_input.assert_called_once_with("test-terminal", "test message")
         mock_update_statuses.assert_called_once_with([1], MessageStatus.DELIVERED)
 
-    @patch("cli_agent_orchestrator.services.inbox_service.update_inbox_notification_statuses")
-    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.inbox.readiness.update_inbox_notification_statuses")
+    @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
+    @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.services.inbox_service.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
     )
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
     def test_message_send_failure(
         self,
         mock_get_oldest,
@@ -173,13 +190,13 @@ class TestCheckAndSendPendingMessages:
             [1], MessageStatus.FAILED, error_detail="Send failed"
         )
 
-    @patch("cli_agent_orchestrator.services.inbox_service.update_inbox_notification_statuses")
-    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.inbox.readiness.update_inbox_notification_statuses")
+    @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
+    @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.services.inbox_service.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
     )
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
     def test_same_source_batch_sent_as_one_payload(
         self,
         mock_get_oldest,
@@ -205,13 +222,13 @@ class TestCheckAndSendPendingMessages:
         mock_provider.get_status.assert_called_once()
         mock_update_statuses.assert_called_once_with([1, 2], MessageStatus.DELIVERED)
 
-    @patch("cli_agent_orchestrator.services.inbox_service.update_inbox_notification_statuses")
-    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.inbox.readiness.update_inbox_notification_statuses")
+    @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
+    @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.services.inbox_service.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
     )
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
     def test_batch_send_failure_marks_selected_messages_failed(
         self,
         mock_get_oldest,
@@ -251,8 +268,8 @@ class TestCheckAndSendPendingMessages:
 class TestLogFileHandler:
     """Tests for LogFileHandler class."""
 
-    @patch("cli_agent_orchestrator.services.inbox_service.check_and_send_pending_messages")
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_inbox_notifications")
+    @patch("cli_agent_orchestrator.inbox.readiness.check_and_send_pending_messages")
+    @patch("cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications")
     def test_on_modified_triggers_delivery(self, mock_get_messages, mock_check_send):
         """Any log-file modification for a terminal with pending messages
         should delegate to check_and_send_pending_messages."""
@@ -267,8 +284,8 @@ class TestLogFileHandler:
 
         mock_check_send.assert_called_once_with("test-terminal")
 
-    @patch("cli_agent_orchestrator.services.inbox_service.check_and_send_pending_messages")
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_inbox_notifications")
+    @patch("cli_agent_orchestrator.inbox.readiness.check_and_send_pending_messages")
+    @patch("cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications")
     def test_handle_log_change_no_pending_messages(self, mock_get_messages, mock_check_send):
         """No DB row for this terminal means nothing to deliver — skip the
         expensive status check entirely."""
@@ -298,7 +315,7 @@ class TestLogFileHandler:
 
         handler.on_modified(event)  # should not raise
 
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_inbox_notifications")
+    @patch("cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications")
     def test_handle_log_change_exception(self, mock_get_messages):
         """_handle_log_change must swallow exceptions so a single DB hiccup
         doesn't kill the watchdog thread."""
@@ -320,14 +337,14 @@ class TestAutoDeliveryRegression:
     delivered automatically. Deleting the fast-path fixes this.
     """
 
-    @patch("cli_agent_orchestrator.services.inbox_service.update_inbox_notification_statuses")
-    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
-    @patch("cli_agent_orchestrator.services.inbox_service.provider_manager")
+    @patch("cli_agent_orchestrator.inbox.readiness.update_inbox_notification_statuses")
+    @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
+    @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.services.inbox_service.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
     )
-    @patch("cli_agent_orchestrator.services.inbox_service.get_oldest_pending_inbox_delivery")
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_inbox_notifications")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications")
     def test_watchdog_delivers_even_when_log_has_no_idle_marker(
         self,
         mock_get_pending,
@@ -442,7 +459,7 @@ def test_delivery_failure_marks_notification_failed_without_mutating_durable_mes
     )
     _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
     monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
+        "cli_agent_orchestrator.inbox.readiness.terminal_service.send_input",
         MagicMock(side_effect=RuntimeError("tmux send failed")),
     )
 

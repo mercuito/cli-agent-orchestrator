@@ -6,6 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
+from cli_agent_orchestrator.inbox import PlainSource
+from cli_agent_orchestrator.inbox.models import Notification
 from cli_agent_orchestrator.models.inbox import (
     InboxDelivery,
     InboxMessageRecord,
@@ -151,117 +153,91 @@ class TestGetInboxMessagesEndpoint:
 
 
 class TestCreateInboxMessageEndpoint:
-    """POST /terminals/{receiver_id}/inbox/messages."""
+    """POST /agents/{agent_id}/inbox/messages."""
 
     def test_create_message_returns_notification_and_durable_message_ids(self, client):
-        delivery = InboxDelivery(
-            message=InboxMessageRecord(
-                id=41,
-                sender_id="sender1",
-                body="Hello world",
-                source_kind="terminal",
-                source_id="sender1",
-                origin=None,
-                route_kind=None,
-                route_id=None,
-                created_at=datetime(2026, 5, 7, 12, 0, 0),
-            ),
-            notification=InboxNotification(
-                id=7,
-                receiver_id="abcdef12",
-                body="Hello world",
-                source_kind="terminal",
-                source_id="sender1",
-                metadata=None,
-                status=MessageStatus.PENDING,
-                created_at=datetime(2026, 5, 7, 12, 0, 0),
-            ),
+        notification = Notification(
+            id=7,
+            receiver_agent_id="abcdef12",
+            body="Hello world",
+            source_kind="plain",
+            source_id="sender1",
+            metadata=None,
+            status=MessageStatus.PENDING,
+            created_at=datetime(2026, 5, 7, 12, 0, 0),
         )
         with (
             patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
-            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
-            patch(
-                "cli_agent_orchestrator.api.main.inbox_service.check_and_send_pending_messages"
-            ) as mock_deliver,
+            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
         ):
-            mock_create.return_value = delivery
+            mock_send.return_value = notification
 
             response = client.post(
-                "/terminals/abcdef12/inbox/messages",
-                params={"sender_id": "sender1", "message": "Hello world"},
+                "/agents/abcdef12/inbox/messages",
+                params={"sender_agent_id": "sender1", "body": "Hello world"},
             )
 
         assert response.status_code == 200
         body = response.json()
         assert body["notification_id"] == 7
-        assert body["message_id"] == 41
+        assert body["message_id"] == 7
         assert "id" not in body
-        mock_create.assert_called_once_with("sender1", "abcdef12", "Hello world")
-        mock_deliver.assert_called_once_with("abcdef12")
-
-    def test_rejects_cross_team_message_before_inbox_persistence(
-        self, client, monkeypatch, tmp_path
-    ):
-        _patch_inbox_policy(
-            monkeypatch,
-            tmp_path,
-            sender_team="delivery",
-            receiver_team="research",
+        mock_send.assert_called_once_with(
+            "abcdef12",
+            "Hello world",
+            source=PlainSource("sender1"),
         )
 
-        with patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create:
+    def test_rejects_cross_team_message_before_inbox_persistence(self, client):
+        from fastapi import HTTPException
+
+        with (
+            patch(
+                "cli_agent_orchestrator.api.main._require_inbox_message_policy",
+                side_effect=HTTPException(
+                    status_code=403,
+                    detail="Workspace team collaboration rejected",
+                ),
+            ),
+            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
+        ):
             response = client.post(
-                "/terminals/bbbbbbbb/inbox/messages",
-                params={"sender_id": "aaaaaaaa", "message": "Hello world"},
+                "/agents/receiver/inbox/messages",
+                params={"sender_agent_id": "sender", "body": "Hello world"},
             )
 
         assert response.status_code == 403
         assert "Workspace team collaboration rejected" in response.json()["detail"]
-        mock_create.assert_not_called()
+        mock_send.assert_not_called()
 
-    def test_allows_same_team_message_before_inbox_persistence(self, client, monkeypatch, tmp_path):
-        _patch_inbox_policy(
-            monkeypatch,
-            tmp_path,
-            sender_team="delivery",
-            receiver_team="delivery",
-        )
-        delivery = InboxDelivery(
-            message=InboxMessageRecord(
-                id=42,
-                sender_id="aaaaaaaa",
-                body="Hello world",
-                source_kind="terminal",
-                source_id="aaaaaaaa",
-                origin=None,
-                route_kind=None,
-                route_id=None,
-                created_at=datetime(2026, 5, 7, 12, 0, 0),
-            ),
-            notification=InboxNotification(
-                id=8,
-                receiver_id="bbbbbbbb",
-                body="Hello world",
-                source_kind="terminal",
-                source_id="aaaaaaaa",
-                metadata=None,
-                status=MessageStatus.PENDING,
-                created_at=datetime(2026, 5, 7, 12, 0, 0),
-            ),
+    def test_allows_same_team_message_before_inbox_persistence(self, client):
+        notification = Notification(
+            id=8,
+            receiver_agent_id="receiver",
+            body="Hello world",
+            source_kind="plain",
+            source_id="sender",
+            metadata=None,
+            status=MessageStatus.PENDING,
+            created_at=datetime(2026, 5, 7, 12, 0, 0),
         )
         with (
-            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
-            patch("cli_agent_orchestrator.api.main.inbox_service.check_and_send_pending_messages"),
+            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
+            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
         ):
-            mock_create.return_value = delivery
+            mock_send.return_value = notification
 
             response = client.post(
-                "/terminals/bbbbbbbb/inbox/messages",
-                params={"sender_id": "aaaaaaaa", "message": "Hello world"},
+                "/agents/receiver/inbox/messages",
+                params={"sender_agent_id": "sender", "body": "Hello world"},
             )
 
         assert response.status_code == 200
-        mock_create.assert_called_once_with("aaaaaaaa", "bbbbbbbb", "Hello world")
+        mock_send.assert_called_once_with(
+            "receiver",
+            "Hello world",
+            source=PlainSource("sender"),
+        )
 
 
 def _agent(agent_id: str, team: str) -> Agent:

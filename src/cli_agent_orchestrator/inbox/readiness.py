@@ -1,22 +1,14 @@
-"""Inbox service with watchdog for automatic message delivery.
+"""Inbox readiness and terminal delivery.
 
-This module provides the inbox functionality for agent-to-agent communication,
-using file system monitoring to detect when agents become idle and can receive
-messages.
-
-Architecture:
-- Messages are queued in semantic inbox message and notification tables
-- LogFileHandler monitors terminal log files for changes using watchdog
-- When a log file is modified and there are pending messages for that
-  terminal, the accurate ``provider.get_status()`` is consulted; if the
-  terminal is IDLE or COMPLETED, pending messages are delivered via
-  ``terminal_service.send_input()`` (types into the tmux pane)
+This module keeps terminal readiness as an implementation detail of the
+agent-addressed inbox. Notifications are stored against durable agent ids;
+delivery resolves the receiver's live terminal only when a send attempt runs.
 
 Message Flow:
-1. Agent A calls ``send_message(terminal_id, message)`` — queued as a pending notification
+1. Agent A calls ``send_message(receiver_agent_id, body)`` — queued as a pending notification
 2. Agent B's pipe-pane log file is appended to (TUI redraws, output, etc.)
-3. ``LogFileHandler.on_modified()`` fires → checks the DB for pending messages
-4. If pending + terminal is idle/completed → deliver, mark DELIVERED
+3. ``LogFileHandler.on_modified()`` resolves the terminal to its agent
+4. If pending + live terminal is idle/completed → deliver, mark DELIVERED
 5. On send failure, mark FAILED
 
 Design note — no pre-filter on the log contents:
@@ -39,6 +31,10 @@ from typing import List
 from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 
 from cli_agent_orchestrator.clients.database import (
+    get_terminal_metadata,
+    list_terminals_by_agent,
+)
+from cli_agent_orchestrator.inbox.store import (
     get_oldest_pending_inbox_delivery,
     list_pending_inbox_deliveries_for_effective_source,
     list_pending_inbox_notifications,
@@ -96,28 +92,35 @@ def format_message_batch(
     return result
 
 
-def check_and_send_pending_messages(terminal_id: str) -> bool:
-    """Check for pending messages and send if terminal is ready.
+def check_and_send_pending_messages(receiver_agent_id: str) -> bool:
+    """Check for pending messages and send if the receiver agent is ready.
 
     Args:
-        terminal_id: Terminal ID to check messages for
+        receiver_agent_id: Durable receiver agent id to check messages for
 
     Returns:
         bool: True if a message was sent, False otherwise
 
     Raises:
-        ValueError: If provider not found for terminal
+        ValueError: If provider not found for the receiver's terminal
     """
-    oldest_delivery = get_oldest_pending_inbox_delivery(terminal_id)
+    oldest_delivery = get_oldest_pending_inbox_delivery(receiver_agent_id)
     if oldest_delivery is None:
         return False
 
-    deliveries = list_pending_inbox_deliveries_for_effective_source(terminal_id, oldest_delivery)
+    terminal_id = _live_terminal_id_for_agent(receiver_agent_id)
+    if terminal_id is None:
+        logger.debug("No live terminal for agent %s", receiver_agent_id)
+        return False
+
+    deliveries = list_pending_inbox_deliveries_for_effective_source(
+        receiver_agent_id, oldest_delivery
+    )
     if not deliveries:
         logger.warning(
-            "Oldest pending notification %s selected no deliverable batch for terminal %s",
+            "Oldest pending notification %s selected no deliverable batch for agent %s",
             oldest_delivery.notification.id,
-            terminal_id,
+            receiver_agent_id,
         )
         return False
     notification_ids = [delivery.notification.id for delivery in deliveries]
@@ -148,6 +151,14 @@ def check_and_send_pending_messages(terminal_id: str) -> bool:
         raise
 
 
+def _live_terminal_id_for_agent(agent_id: str) -> str | None:
+    terminals = list_terminals_by_agent(agent_id)
+    if not terminals:
+        return None
+    terminal_id = terminals[0].get("id")
+    return str(terminal_id) if terminal_id else None
+
+
 class LogFileHandler(FileSystemEventHandler):
     """Handler for terminal log file changes."""
 
@@ -159,7 +170,7 @@ class LogFileHandler(FileSystemEventHandler):
             self._handle_log_change(terminal_id)
 
     def _handle_log_change(self, terminal_id: str):
-        """Handle log file change and attempt message delivery.
+        """Handle log file change and attempt message delivery for its agent.
 
         Short-circuits on the cheap DB check so we don't pay for
         ``provider.get_status()`` (tmux subprocess call) when there is
@@ -168,9 +179,17 @@ class LogFileHandler(FileSystemEventHandler):
         truth for the idle-detection and delivery semantics.
         """
         try:
-            if not list_pending_inbox_notifications(terminal_id, limit=1):
-                logger.debug(f"No pending messages for {terminal_id}, skipping")
+            metadata = get_terminal_metadata(terminal_id)
+            if metadata is None:
+                logger.debug("No terminal metadata for %s, skipping inbox delivery", terminal_id)
                 return
-            check_and_send_pending_messages(terminal_id)
+            receiver_agent_id = metadata.get("agent_id")
+            if not isinstance(receiver_agent_id, str) or not receiver_agent_id.strip():
+                logger.debug("Terminal %s has no agent id, skipping inbox delivery", terminal_id)
+                return
+            if not list_pending_inbox_notifications(receiver_agent_id, limit=1):
+                logger.debug(f"No pending messages for {receiver_agent_id}, skipping")
+                return
+            check_and_send_pending_messages(receiver_agent_id)
         except Exception as e:
             logger.error(f"Error handling log change for {terminal_id}: {e}")

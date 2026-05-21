@@ -29,7 +29,7 @@ from cli_agent_orchestrator.runtime.events import (
     AgentRuntimeNotificationDeliveryEvent,
     AgentRuntimeWorkspaceContextSwitchEvent,
 )
-from cli_agent_orchestrator.services import inbox_service
+from cli_agent_orchestrator.inbox import readiness as inbox_service
 
 
 @pytest.fixture

@@ -495,7 +495,7 @@ def _deliver_handoff_payload(terminal_id: str, provider: str, message: str) -> N
     else:
         handoff_message = message
 
-    _send_to_inbox(terminal_id, handoff_message)
+    _send_to_inbox(_agent_id_for_terminal(terminal_id), handoff_message)
 
 
 def _deliver_assign_payload(terminal_id: str, message: str) -> None:
@@ -517,15 +517,15 @@ def _deliver_assign_payload(terminal_id: str, message: str) -> None:
         else:
             message += f"\n\n[Assigned by terminal {sender_id}.]"
 
-    _send_to_inbox(terminal_id, message)
+    _send_to_inbox(_agent_id_for_terminal(terminal_id), message)
 
 
-def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
-    """Send message to another terminal's inbox (queued delivery when IDLE).
+def _send_to_inbox(receiver_agent_id: str, body: str) -> Dict[str, Any]:
+    """Send message to another agent's inbox (queued delivery when IDLE).
 
     Args:
-        receiver_id: Target terminal ID
-        message: Message content
+        receiver_agent_id: Target durable agent ID
+        body: Message content
 
     Returns:
         Dict with message details
@@ -534,17 +534,25 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
         ValueError: If CAO_TERMINAL_ID not set
         Exception: If API call fails
     """
-    sender_id = os.getenv("CAO_TERMINAL_ID")
-    if not sender_id:
-        raise ValueError("CAO_TERMINAL_ID not set - cannot determine sender")
-    _require_workspace_team_terminal_collaboration(receiver_id)
+    sender_agent_id = _sender_agent_id_for_workspace_team_guard()
+    _require_workspace_team_collaboration(receiver_agent_id)
 
     response = requests.post(
-        f"{API_BASE_URL}/terminals/{receiver_id}/inbox/messages",
-        params={"sender_id": sender_id, "message": message},
+        f"{API_BASE_URL}/agents/{quote(receiver_agent_id, safe='')}/inbox/messages",
+        params={"sender_agent_id": sender_agent_id, "body": body},
     )
     response.raise_for_status()
     return response.json()
+
+
+def _agent_id_for_terminal(terminal_id: str) -> str:
+    metadata = db_module.get_terminal_metadata(terminal_id)
+    if metadata is None:
+        raise ValueError(f"Terminal {terminal_id!r} is unknown")
+    agent_id = metadata.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id.strip():
+        raise ValueError(f"Terminal {terminal_id!r} has no CAO agent")
+    return agent_id.strip()
 
 
 def _extract_error_detail(response: requests.Response, fallback: str) -> str:
@@ -903,21 +911,21 @@ async def terminate(
 
 
 # Implementation function for send_message
-def _send_message_impl(receiver_id: str, message: str) -> Dict[str, Any]:
+def _send_message_impl(receiver_agent_id: str, body: str) -> Dict[str, Any]:
     """Implementation of send_message logic."""
     try:
         # Auto-inject sender terminal ID suffix when enabled
         if ENABLE_SENDER_ID_INJECTION:
             sender_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
-            if _terminal_can_invoke_builtin(receiver_id, "send_message"):
-                message += (
+            if _agent_can_invoke_builtin(receiver_agent_id, "send_message"):
+                body += (
                     f"\n\n[Message from terminal {sender_id}. "
                     "Use send_message MCP tool for any follow-up work.]"
                 )
             else:
-                message += f"\n\n[Message from terminal {sender_id}.]"
+                body += f"\n\n[Message from terminal {sender_id}.]"
 
-        return _send_to_inbox(receiver_id, message)
+        return _send_to_inbox(receiver_agent_id, body)
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -934,27 +942,35 @@ def _terminal_can_invoke_builtin(terminal_id: str, tool_name: str) -> bool:
     return decision.allowed
 
 
+def _agent_can_invoke_builtin(agent_id: str, tool_name: str) -> bool:
+    terminals = db_module.list_terminals_by_agent(agent_id)
+    if not terminals:
+        return False
+    terminal_id = terminals[0].get("id")
+    return isinstance(terminal_id, str) and _terminal_can_invoke_builtin(terminal_id, tool_name)
+
+
 @_deferred_tool()
 async def send_message(
-    receiver_id: str = Field(
-        description="Target terminal ID to send message to, subject to same-workspace-team policy"
+    receiver_agent_id: str = Field(
+        description="Target CAO agent ID to send message to, subject to same-workspace-team policy"
     ),
-    message: str = Field(description="Message content to send"),
+    body: str = Field(description="Message content to send"),
 ) -> Dict[str, Any]:
-    """Send a message to another terminal's inbox.
+    """Send a message to another agent's inbox.
 
     The message is accepted only when sender and receiver belong to the same workspace team.
-    It will be delivered when the destination terminal is IDLE.
+    It will be delivered when the destination agent's live terminal is IDLE.
     Messages are delivered in order (oldest first).
 
     Args:
-        receiver_id: Terminal ID of the receiver
-        message: Message content to send
+        receiver_agent_id: Durable CAO agent ID of the receiver
+        body: Message content to send
 
     Returns:
         Dict with success status and message details
     """
-    return _send_message_impl(receiver_id, message)
+    return _send_message_impl(receiver_agent_id, body)
 
 
 def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:

@@ -17,7 +17,8 @@ from cli_agent_orchestrator.services.collaboration_policy import (
     require_terminal_same_team_collaboration,
     require_terminal_workspace_team,
 )
-from cli_agent_orchestrator.services import baton_service, inbox_service
+from cli_agent_orchestrator.inbox import readiness as inbox_service
+from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_ID,
     WorkspaceCollaborationManager,
@@ -421,12 +422,12 @@ def test_pass_baton_notification_delivers_through_semantic_inbox(patched_db, mon
     queued = _messages("reviewer")
     idle_provider = type("IdleProvider", (), {"get_status": lambda self: TerminalStatus.IDLE})()
     monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.provider_manager.get_provider",
+        "cli_agent_orchestrator.inbox.readiness.provider_manager.get_provider",
         lambda terminal_id: idle_provider,
     )
     sent = []
     monkeypatch.setattr(
-        "cli_agent_orchestrator.services.inbox_service.terminal_service.send_input",
+        "cli_agent_orchestrator.inbox.readiness.terminal_service.send_input",
         lambda terminal_id, message: sent.append((terminal_id, message)),
     )
 

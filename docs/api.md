@@ -163,31 +163,32 @@ Delete a terminal.
 
 ---
 
-## Inbox (Terminal-to-Terminal Messaging)
+## Inbox (Agent-to-Agent Messaging)
 
-### POST /terminals/{receiver_id}/inbox/messages
-Send a message to another terminal's inbox.
+### POST /agents/{agent_id}/inbox/messages
+Send a plain message to another agent's inbox.
 
 **Parameters:**
-- `sender_id` (string, required): Sender terminal ID
-- `message` (string, required): Message content
+- `sender_agent_id` (string, required): Sender CAO agent ID
+- `body` (string, required): Message content
 
 **Response:**
 ```json
 {
   "success": true,
   "notification_id": 123,
-  "message_id": 456,
+  "message_id": 123,
   "sender_id": "string",
   "receiver_id": "string",
+  "source_kind": "plain",
+  "source_id": "string",
   "created_at": "timestamp"
 }
 ```
 
 **Behavior:**
-- Messages are queued and delivered when the receiver terminal is IDLE
-- `notification_id` identifies the per-recipient delivery record; `message_id`
-  identifies the durable backing message
+- Messages are queued and delivered when the receiver agent's live terminal is IDLE
+- `notification_id` and `message_id` both identify the persisted inbox notification for this slice
 - Messages are delivered in order (oldest first)
 - Delivery is automatic via watchdog file monitoring
 

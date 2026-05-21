@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from cli_agent_orchestrator.agent import AgentConfigError
 from cli_agent_orchestrator.api.main import app
+from cli_agent_orchestrator.inbox.models import Notification
+from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import Terminal
 
 
@@ -448,82 +450,77 @@ class TestDeleteTerminalEndpoint:
 
 
 class TestCreateInboxMessageEndpoint:
-    """Test POST /terminals/{receiver_id}/inbox/messages endpoint."""
+    """Test POST /agents/{agent_id}/inbox/messages endpoint."""
 
     def test_create_inbox_message_success(self, client):
         """POST creates an inbox message and returns success."""
-        mock_delivery = MagicMock()
-        mock_delivery.notification.id = 1
-        mock_delivery.notification.receiver_id = "abcd1234"
-        mock_delivery.notification.source_kind = "terminal"
-        mock_delivery.notification.source_id = "sender1"
-        mock_delivery.notification.created_at.isoformat.return_value = "2026-03-13T12:00:00"
-        mock_delivery.message.id = 10
-        mock_delivery.message.sender_id = "sender1"
-        mock_delivery.message.source_kind = "terminal"
-        mock_delivery.message.source_id = "sender1"
+        notification = Notification(
+            id=1,
+            receiver_agent_id="receiver",
+            body="hello",
+            source_kind="plain",
+            source_id="sender",
+            status=MessageStatus.PENDING,
+            created_at="2026-03-13T12:00:00",
+        )
 
         with (
             patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
-            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
-            patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
+            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
         ):
-            mock_create.return_value = mock_delivery
+            mock_send.return_value = notification
 
             response = client.post(
-                "/terminals/abcd1234/inbox/messages",
-                params={"sender_id": "sender1", "message": "hello"},
+                "/agents/receiver/inbox/messages",
+                params={"sender_agent_id": "sender", "body": "hello"},
             )
 
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
             assert data["notification_id"] == 1
-            assert data["message_id"] == 10
-            assert data["sender_id"] == "sender1"
-            assert data["source_kind"] == "terminal"
-            assert data["source_id"] == "sender1"
+            assert data["message_id"] == 1
+            assert data["sender_id"] == "sender"
+            assert data["source_kind"] == "plain"
+            assert data["source_id"] == "sender"
 
     def test_create_inbox_message_delivery_failure_still_succeeds(self, client):
-        """Immediate delivery failure should not fail the API response."""
-        mock_delivery = MagicMock()
-        mock_delivery.notification.id = 2
-        mock_delivery.notification.receiver_id = "abcd1234"
-        mock_delivery.notification.source_kind = "terminal"
-        mock_delivery.notification.source_id = "sender1"
-        mock_delivery.notification.created_at.isoformat.return_value = "2026-03-13T12:00:00"
-        mock_delivery.message.id = 20
-        mock_delivery.message.sender_id = "sender1"
-        mock_delivery.message.source_kind = "terminal"
-        mock_delivery.message.source_id = "sender1"
+        """send() owns immediate delivery; API returns persisted notification."""
+        notification = Notification(
+            id=2,
+            receiver_agent_id="receiver",
+            body="hello",
+            source_kind="plain",
+            source_id="sender",
+            status=MessageStatus.PENDING,
+            created_at="2026-03-13T12:00:00",
+        )
 
         with (
             patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
-            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
-            patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
+            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
         ):
-            mock_create.return_value = mock_delivery
-            mock_inbox.check_and_send_pending_messages.side_effect = Exception("TMux busy")
+            mock_send.return_value = notification
 
             response = client.post(
-                "/terminals/abcd1234/inbox/messages",
-                params={"sender_id": "sender1", "message": "hello"},
+                "/agents/receiver/inbox/messages",
+                params={"sender_agent_id": "sender", "body": "hello"},
             )
 
             assert response.status_code == 200
             assert response.json()["success"] is True
 
     def test_create_inbox_message_not_found(self, client):
-        """POST returns 404 when terminal not found."""
+        """POST returns 404 when receiver agent is not found."""
         with (
             patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
-            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
+            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
         ):
-            mock_create.side_effect = ValueError("Terminal not found")
+            mock_send.side_effect = ValueError("Agent not found")
 
             response = client.post(
-                "/terminals/deadbeef/inbox/messages",
-                params={"sender_id": "sender1", "message": "hello"},
+                "/agents/deadbeef/inbox/messages",
+                params={"sender_agent_id": "sender", "body": "hello"},
             )
 
             assert response.status_code == 404
@@ -532,13 +529,13 @@ class TestCreateInboxMessageEndpoint:
         """POST returns 500 on internal error."""
         with (
             patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
-            patch("cli_agent_orchestrator.api.main.create_inbox_delivery") as mock_create,
+            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
         ):
-            mock_create.side_effect = Exception("DB error")
+            mock_send.side_effect = Exception("DB error")
 
             response = client.post(
-                "/terminals/abcd1234/inbox/messages",
-                params={"sender_id": "sender1", "message": "hello"},
+                "/agents/receiver/inbox/messages",
+                params={"sender_agent_id": "sender", "body": "hello"},
             )
 
             assert response.status_code == 500
