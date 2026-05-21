@@ -52,7 +52,8 @@ class ReadResult(BaseModel):
 
     notification: Notification
     body: str
-    replyable: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    can_reply: bool = False
 
 
 class Reply(BaseModel):

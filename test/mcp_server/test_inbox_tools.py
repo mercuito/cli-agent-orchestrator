@@ -20,6 +20,7 @@ from cli_agent_orchestrator.clients.database import (
     create_inbox_notification_event,
     create_terminal,
 )
+from cli_agent_orchestrator.inbox import PlainSource, send as send_inbox_message
 from cli_agent_orchestrator.mcp_server.server import (
     _read_inbox_message_impl,
     _reply_to_inbox_message_impl,
@@ -307,19 +308,18 @@ def _linear_provider_conversation_notification_with_prompt_context(prompt_contex
 async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_workspace_null(
     test_session,
 ):
+    _ensure_caller_agent_terminal()
     create_terminal(
         "terminal-sender",
         "session",
         "window",
         "codex",
-        agent_id="implementation_partner",
-        workspace_context_id=db_module.ensure_default_workspace_context(
-            "implementation_partner"
-        ).id,
+        agent_id="other_partner",
+        workspace_context_id=db_module.ensure_default_workspace_context("other_partner").id,
     )
     delivery = create_inbox_delivery(
         "terminal-sender",
-        "terminal-a",
+        "agent:implementation_partner",
         "I finished the patch. Can you review it?",
     )
 
@@ -329,7 +329,7 @@ async def test_read_inbox_message_returns_terminal_backed_slim_payload_with_work
         "success": True,
         "notification_id": delivery.notification.id,
         "message_id": delivery.message.id,
-        "from": "Implementation Partner",
+        "from": "Other Partner",
         "body": "I finished the patch. Can you review it?",
         "replyable": False,
         "reply_error": "no provider reply route",
@@ -353,6 +353,57 @@ def test_provider_backed_read_returns_slim_payload_without_raw_context(test_sess
     assert "provider_context" not in result
     assert "inbox_message" not in result
     assert "reply" not in result
+
+
+def test_plain_agent_notification_read_returns_body_and_replyability(test_session, monkeypatch):
+    # Given
+    _ensure_caller_agent_terminal()
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.inbox.readiness.check_and_send_pending_messages",
+        lambda _receiver_agent_id: False,
+    )
+    notification = send_inbox_message(
+        "implementation_partner",
+        "Plain body",
+        source=PlainSource("other_partner"),
+    )
+
+    # When
+    result = _read_inbox_message_impl(notification.id)
+
+    # Then
+    assert result == {
+        "success": True,
+        "notification_id": notification.id,
+        "message_id": notification.id,
+        "from": "Other Partner",
+        "body": "Plain body",
+        "replyable": True,
+    }
+
+
+def test_read_inbox_message_allows_agent_context_receiver(test_session):
+    # Given
+    _ensure_caller_agent_terminal()
+    notification = create_inbox_notification_event(
+        "agent:implementation_partner:context:ctx-1",
+        "Context-scoped body",
+        source_kind="plain",
+        source_id="other_partner",
+    )
+
+    # When
+    result = _read_inbox_message_impl(notification.id)
+
+    # Then
+    assert result == {
+        "success": True,
+        "notification_id": notification.id,
+        "message_id": notification.id,
+        "from": "Other Partner",
+        "body": "Context-scoped body",
+        "replyable": True,
+    }
 
 
 def test_provider_backed_read_is_not_replyable_when_reply_tool_is_hidden(
@@ -504,9 +555,10 @@ def test_provider_backed_read_missing_backing_thread_fails_clearly(test_session)
 
 
 def test_read_inbox_message_uses_bounded_sender_fallback_without_internal_ids(test_session):
+    _ensure_caller_agent_terminal()
     delivery = create_inbox_delivery(
         "missing-terminal-id",
-        "terminal-a",
+        "agent:implementation_partner",
         "Plain terminal message",
     )
 
@@ -813,7 +865,12 @@ def test_reply_to_inbox_message_rejects_non_receiver_terminal(test_session, monk
 
 
 def test_read_and_reply_fail_clearly_for_non_replyable_inbox_message(test_session):
-    delivery = create_inbox_delivery("terminal-sender", "terminal-a", "Plain terminal message")
+    _ensure_caller_agent_terminal()
+    delivery = create_inbox_delivery(
+        "terminal-sender",
+        "agent:implementation_partner",
+        "Plain terminal message",
+    )
 
     read_result = _read_inbox_message_impl(delivery.notification.id)
     reply_result = _reply_to_inbox_message_impl(delivery.notification.id, "No provider target")

@@ -22,6 +22,11 @@ from cli_agent_orchestrator.agent import (
 )
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.constants import API_BASE_URL
+from cli_agent_orchestrator.inbox import (
+    InboxReadError,
+    ReadResult,
+    read as read_inbox_notification,
+)
 from cli_agent_orchestrator.mcp_server.freshness import (
     build_agent_mcp_runtime_generation_descriptor,
     build_agent_mcp_surface_descriptor,
@@ -34,15 +39,10 @@ from cli_agent_orchestrator.mcp_server.provider_tools import (
 )
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.provider_conversations.inbox_access import (
-    InboxReadError,
+from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_access import (
-    read_inbox_message as read_provider_inbox_message,
-)
-from cli_agent_orchestrator.provider_conversations.inbox_access import (
-    read_result_to_dict,
-)
+from cli_agent_orchestrator.provider_conversations.linear import get_message_context
 from cli_agent_orchestrator.provider_conversations.reply_service import (
     ProviderConversationReplyError,
 )
@@ -977,17 +977,82 @@ def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:
     """Implementation of read_inbox_message logic."""
     try:
         caller_terminal_id = _require_cao_terminal_id()
-        return read_result_to_dict(
-            read_provider_inbox_message(
-                notification_id,
+        caller_agent_id = _agent_id_for_terminal(caller_terminal_id)
+        read_result = read_inbox_notification(notification_id, caller_agent_id=caller_agent_id)
+        if read_result.notification.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND:
+            return _provider_read_result_to_dict(
+                read_result,
                 caller_terminal_id=caller_terminal_id,
             )
-        )
+        return _inbox_read_result_to_dict(read_result)
     except InboxReadError as exc:
         return {"success": False, "error": str(exc), "error_type": type(exc).__name__}
     except Exception as exc:
         logger.exception("Failed to read inbox notification %s", notification_id)
         return {"success": False, "error": str(exc), "error_type": "InboxReadUnexpectedError"}
+
+
+def _provider_read_result_to_dict(
+    result: ReadResult,
+    *,
+    caller_terminal_id: str,
+) -> Dict[str, Any]:
+    context = get_message_context(
+        result.notification.source_id,
+        notification_id=result.notification.id,
+        caller_terminal_id=caller_terminal_id,
+    )
+    payload: Dict[str, Any] = {
+        "success": True,
+        "notification_id": result.notification.id,
+        "message_id": result.notification.id,
+        "from": context.from_label,
+        "body": context.body,
+        "replyable": context.can_reply,
+    }
+    if context.breadcrumb is not None:
+        payload["breadcrumb"] = context.breadcrumb
+    if context.reply_error:
+        payload["reply_error"] = context.reply_error
+    return payload
+
+
+def _inbox_read_result_to_dict(result: ReadResult) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "success": True,
+        "notification_id": result.notification.id,
+        "message_id": result.notification.id,
+        "from": _inbox_source_label(result.notification.source_kind, result.notification.source_id),
+        "body": result.body,
+        "replyable": result.can_reply,
+    }
+    if not result.can_reply:
+        payload["reply_error"] = "no provider reply route"
+    return payload
+
+
+def _inbox_source_label(source_kind: str, source_id: str) -> str:
+    if source_kind == "plain":
+        return _display_from_token(source_id)
+    if source_kind == "terminal":
+        metadata = db_module.get_terminal_metadata(source_id)
+        if metadata is not None and metadata.get("agent_id"):
+            return _display_from_token(str(metadata["agent_id"]))
+        return "Terminal sender"
+    return _display_from_token(source_kind)
+
+
+def _display_from_token(value: str) -> str:
+    label = value.replace("_", " ").replace("-", " ").replace(":", " ").strip()
+    return _bounded_label(label.title() if label else "Inbox sender")
+
+
+def _bounded_label(value: str, max_chars: int = 120) -> str:
+    label = " ".join(value.split())
+    if len(label) <= max_chars:
+        return label
+    suffix = "..."
+    return label[: max(0, max_chars - len(suffix))].rstrip() + suffix
 
 
 @_deferred_tool()

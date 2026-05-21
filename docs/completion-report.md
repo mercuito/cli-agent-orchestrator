@@ -57,3 +57,31 @@ A task is complete only after **two** successive clean review passes are recorde
 
 - Pass 1: 2026-05-21, acceptance checklist review found the new `inbox/` public API, agent-addressed POST route, MCP parameter rename, moved readiness handler, and tracer test aligned after the sender-id fix.
 - Pass 2: 2026-05-21, criteria sweep found no test-only inbox production seams, no backend terminal POST route, and no remaining production imports of `services.inbox_service`.
+
+## 0006 — inbox read
+
+### Review round 1 — 2026-05-21
+
+- **Finding:** The new read result kept internal `replyable` compatibility names while the issue defines `ReadResult.can_reply`.
+- **Accepted as valid because:** `do-not-assume-backwards-compatibility` and `migration-discipline` forbid preserving old names unless the plan explicitly requires them. The MCP response is allowed to keep the issue-required `"replyable"` JSON key, but internal read surfaces must use the new `can_reply` vocabulary.
+- **Fix:** Removed the `ReadResult.replyable` alias and renamed the Linear read helper field to `can_reply`; the MCP mapper now translates `can_reply` to the response key.
+- **Evidence:** Static search found no internal `.replyable`, `replyable: bool`, or `def replyable` matches under `src/` or `test/`.
+
+### Review round 2 — 2026-05-21
+
+- **Finding:** MCP read retried `inbox.read` with the caller terminal id after an agent-id authorization failure, preserving terminal-addressed receiver compatibility.
+- **Accepted as valid because:** The task defines `inbox.read(notification_id, caller_agent_id)` as the new shape, and the plan does not authorize a compatibility period for terminal-addressed reads.
+- **Fix:** Removed the terminal-id retry and migrated affected MCP tests to agent-addressed receiver notifications.
+- **Evidence:** `rg` found no `_read_inbox_notification_for_mcp_caller` or `caller_agent_id=caller_terminal_id` matches under `src/` or `test/`.
+
+### Review round 3 — 2026-05-21
+
+- **Finding:** MCP read still fell back to using the caller terminal id when terminal metadata could not resolve an agent id.
+- **Accepted as valid because:** That was another silent bridge from terminal identity to the new agent-id caller contract.
+- **Fix:** MCP read now requires `_agent_id_for_terminal(caller_terminal_id)` to resolve successfully before calling `inbox.read`; the sender fallback test now uses an agent-addressed receiver.
+- **Evidence:** `uv run pytest test/services/test_inbox_read.py test/services/test_inbox_service.py test/api/test_inbox_messages.py test/provider_conversations test/mcp_server/test_inbox_tools.py -q` passed with 92 tests.
+
+### Clean passes
+
+- Pass 1: 2026-05-21, criteria-focused review found no valid findings after both terminal-id fallbacks were removed; verification included legacy read surface searches, `test/services/test_inbox_read.py test/mcp_server/test_inbox_tools.py`, provider conversation bridge/reply tests, and compileall.
+- Pass 2: 2026-05-21, independent review found no valid findings; verification included criteria catalog, `git diff --check`, static searches for terminal-id caller fallbacks, deleted `provider_conversations.inbox_access` imports, legacy provider read helpers, internal `replyable` aliases, and `uv run pytest test/services/test_inbox_read.py test/mcp_server/test_inbox_tools.py`.

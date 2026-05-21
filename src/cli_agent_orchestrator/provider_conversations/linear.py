@@ -1,4 +1,4 @@
-"""CAO inbox read surface for terminal and provider-backed notifications."""
+"""Linear-owned inbox read context helpers."""
 
 from __future__ import annotations
 
@@ -7,86 +7,50 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.models.inbox import InboxDelivery
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
-    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-)
+from cli_agent_orchestrator.inbox import InboxReadError, InboxReadNotFoundError
 from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
     provider_inbox_authorization_decision,
     require_provider_inbox_authorization,
-    require_inbox_notification_receiver,
 )
 from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 
 
-class InboxReadError(ValueError):
-    """Base error for CAO inbox read failures."""
-
-
-class InboxReadNotFoundError(InboxReadError):
-    """Raised when the requested inbox notification or backing provider data is missing."""
-
-
-class InboxReadUnsupportedNotificationError(InboxReadError):
-    """Raised when a valid inbox notification has no CAO-readable backing message."""
-
-
 @dataclass(frozen=True)
-class InboxReadResult:
-    """Message-first read result for one CAO inbox notification."""
+class MessageContext:
+    """Linear-specific context attached to an MCP inbox read response."""
 
-    delivery: InboxDelivery
     from_label: str
     body: str
-    replyable: bool
-    workspace: Optional[Dict[str, Any]] = None
+    can_reply: bool
+    breadcrumb: Optional[Dict[str, Any]] = None
     reply_error: Optional[str] = None
-    thread: Optional[Dict[str, Any]] = None
-    context: Optional[Dict[str, Any]] = None
 
 
 MAX_WORKSPACE_JSON_CHARS = 1000
 MAX_METADATA_JSON_CHARS = 4000
-MAX_CONTEXT_JSON_CHARS = 4000
-MAX_CONTEXT_VALUE_CHARS = 3500
 
 
-def read_inbox_message(
-    notification_id: int,
+def get_message_context(
+    source_id: str,
     *,
-    caller_terminal_id: Optional[str] = None,
-) -> InboxReadResult:
-    """Read one CAO inbox notification through the slim shared inbox surface."""
+    notification_id: int,
+    caller_terminal_id: str,
+) -> MessageContext:
+    """Return Linear breadcrumb and work-item context for one provider inbox source."""
 
     with db_module.SessionLocal() as session:
-        delivery = _read_delivery(session, notification_id)
+        delivery = db_module.get_inbox_delivery(notification_id, db=session)
         if delivery is None:
             raise InboxReadNotFoundError(f"inbox notification {notification_id} not found")
 
-        require_inbox_notification_receiver(
-            delivery,
-            caller_terminal_id=caller_terminal_id,
-            error=InboxReadError,
-        )
-
-        if delivery.notification.source_kind != PROVIDER_CONVERSATION_INBOX_SOURCE_KIND:
-            return InboxReadResult(
-                delivery=delivery,
-                from_label=_plain_source_label(session, delivery),
-                body=delivery.notification.body,
-                replyable=False,
-                reply_error="no provider reply route",
-                workspace=None,
-            )
-
         try:
-            provider_message_id = int(delivery.notification.source_id)
+            provider_message_id = int(source_id)
         except ValueError as exc:
             raise InboxReadNotFoundError(
                 f"inbox notification {notification_id} has invalid provider conversation message id "
-                f"{delivery.notification.source_id!r}"
+                f"{source_id!r}"
             ) from exc
 
         message_row = _selected_provider_message_row(
@@ -114,7 +78,7 @@ def read_inbox_message(
         require_provider_inbox_authorization(
             delivery,
             caller_terminal_id=caller_terminal_id,
-            provider=thread_row.provider,
+            provider=cast(str, thread_row.provider),
             operation="read",
             thread_metadata=_thread_metadata(thread_row),
             thread_raw_snapshot=_thread_raw_snapshot(thread_row),
@@ -124,15 +88,15 @@ def read_inbox_message(
         )
 
         reply_error = None
-        replyable = True
+        can_reply = True
         if not thread_row.provider or not thread_row.external_id:
-            replyable = False
+            can_reply = False
             reply_error = "backing provider thread ref is missing"
         else:
             reply_decision = provider_inbox_authorization_decision(
                 delivery,
                 caller_terminal_id=caller_terminal_id,
-                provider=thread_row.provider,
+                provider=cast(str, thread_row.provider),
                 operation="reply",
                 thread_metadata=_thread_metadata(thread_row),
                 thread_raw_snapshot=_thread_raw_snapshot(thread_row),
@@ -141,49 +105,24 @@ def read_inbox_message(
                 error=InboxReadError,
             )
             if not reply_decision.allowed:
-                replyable = False
+                can_reply = False
                 reply_error = (
                     "reply_to_inbox_message is not authorized by ToolService: "
                     f"{reply_decision.reason}"
                 )
 
-        return InboxReadResult(
-            delivery=delivery,
+        workspace = _provider_conversation_workspace(origin) or _provider_conversation_workspace(
+            message_metadata
+        )
+        return MessageContext(
             from_label=_provider_conversation_source_label(
                 origin, message_metadata, message_row, thread_row
             ),
             body=_provider_conversation_body(message_row, thread_row),
-            replyable=replyable,
+            can_reply=can_reply,
             reply_error=reply_error,
-            workspace=_provider_conversation_workspace(origin)
-            or _provider_conversation_workspace(message_metadata),
-            thread={"provider": cast(Optional[str], thread_row.provider)},
-            context=_provider_conversation_context(origin)
-            or _provider_conversation_context(message_metadata),
+            breadcrumb=_workspace_breadcrumb(workspace),
         )
-
-
-def read_result_to_dict(result: InboxReadResult) -> Dict[str, Any]:
-    """Convert a read result into the slim default MCP shape."""
-    breadcrumb = _workspace_breadcrumb(result.workspace)
-
-    payload: Dict[str, Any] = {
-        "success": True,
-        "notification_id": result.delivery.notification.id,
-        "message_id": result.delivery.message.id if result.delivery.message is not None else None,
-        "from": result.from_label,
-        "body": result.body,
-        "replyable": result.replyable,
-    }
-    if breadcrumb is not None:
-        payload["breadcrumb"] = breadcrumb
-    if result.reply_error:
-        payload["reply_error"] = result.reply_error
-    return payload
-
-
-def _read_delivery(session: Any, notification_id: int) -> Optional[InboxDelivery]:
-    return db_module.get_inbox_delivery(notification_id, db=session)
 
 
 def _selected_provider_message_row(
@@ -191,7 +130,7 @@ def _selected_provider_message_row(
     *,
     provider_message_id: int,
     inbox_notification_id: int,
-) -> Optional[db_module.ProviderConversationMessageModel]:
+) -> db_module.ProviderConversationMessageModel:
     message_row = (
         session.query(db_module.ProviderConversationMessageModel)
         .filter(db_module.ProviderConversationMessageModel.id == provider_message_id)
@@ -202,7 +141,7 @@ def _selected_provider_message_row(
             f"provider conversation message {provider_message_id} for inbox notification "
             f"{inbox_notification_id} not found"
         )
-    return cast(Optional[db_module.ProviderConversationMessageModel], message_row)
+    return cast(db_module.ProviderConversationMessageModel, message_row)
 
 
 def _message_metadata(
@@ -285,31 +224,6 @@ def _load_bounded_json_object(metadata_json: Optional[str]) -> Optional[Dict[str
     return metadata if isinstance(metadata, dict) else None
 
 
-def _plain_source_label(session: Any, delivery: InboxDelivery) -> str:
-    message = delivery.message
-    if message is None:
-        if delivery.notification.source_kind:
-            return _display_from_token(str(delivery.notification.source_kind))
-        return "Inbox sender"
-    terminal = (
-        session.query(db_module.TerminalModel)
-        .filter(db_module.TerminalModel.id == message.sender_id)
-        .first()
-    )
-    if terminal is not None and terminal.agent_id:
-        return _display_from_token(cast(str, terminal.agent_id))
-
-    sender_id = str(cast(str, message.sender_id) or "")
-    if sender_id.startswith("agent:"):
-        return _display_from_token(sender_id.split(":", 1)[1])
-
-    if message.source_kind and message.source_kind != "terminal":
-        return _display_from_token(str(message.source_kind))
-    if message.source_kind == "terminal":
-        return "Terminal sender"
-    return "Inbox sender"
-
-
 def _provider_conversation_source_label(
     origin: Optional[Mapping[str, Any]],
     metadata: Optional[Mapping[str, Any]],
@@ -336,36 +250,6 @@ def _provider_conversation_body(
     return "(no text body)"
 
 
-def _provider_conversation_context(
-    metadata: Optional[Mapping[str, Any]],
-) -> Optional[Dict[str, Any]]:
-    presentation = _presentation(metadata)
-    if presentation is None:
-        return None
-    context = presentation.get("context")
-    return _bounded_context(context) if isinstance(context, Mapping) else None
-
-
-def _bounded_context(value: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
-    context: Dict[str, Any] = {}
-    for key, item in value.items():
-        if not isinstance(key, str):
-            return None
-        if isinstance(item, str):
-            context[key] = _truncate_text(item, max_chars=MAX_CONTEXT_VALUE_CHARS)
-        elif item is None or isinstance(item, (int, float, bool)):
-            context[key] = item
-        else:
-            return None
-    try:
-        encoded = json.dumps(context, sort_keys=True)
-    except (TypeError, ValueError):
-        return None
-    if len(encoded) > MAX_CONTEXT_JSON_CHARS:
-        return None
-    return context
-
-
 def _provider_label(provider: Optional[str]) -> str:
     if provider:
         return _display_from_token(provider)
@@ -390,10 +274,3 @@ def _bounded_label(value: str, max_chars: int = 120) -> str:
         return label
     suffix = "..."
     return label[: max(0, max_chars - len(suffix))].rstrip() + suffix
-
-
-def _truncate_text(value: str, *, max_chars: int) -> str:
-    if len(value) <= max_chars:
-        return value
-    suffix = "..."
-    return value[: max(0, max_chars - len(suffix))].rstrip() + suffix
