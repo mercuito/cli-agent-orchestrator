@@ -24,7 +24,6 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.events import CaoEvent
-from cli_agent_orchestrator.inbox import readiness as inbox_readiness
 from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
@@ -169,6 +168,7 @@ class AgentRuntimeHandle:
         self.workspace_context_id = workspace_context_id
         self.agent = registered_agent.for_workspace_context(workspace_context_id)
         self._last_freshness_result: Optional[AgentRuntimeFreshnessResult] = None
+        self._last_agent_ready_delivery_error: str | None = None
 
     @property
     def inbox_receiver_id(self) -> str:
@@ -212,6 +212,7 @@ class AgentRuntimeHandle:
                     fresh=self._existing_terminal_is_fresh(existing.id),
                 ),
                 causing_event=None,
+                publish_ready_event=False,
             )
             return existing
 
@@ -233,6 +234,7 @@ class AgentRuntimeHandle:
                 fresh=True,
             ),
             causing_event=None,
+            publish_ready_event=False,
         )
         return started
 
@@ -590,6 +592,11 @@ class AgentRuntimeHandle:
         publish_lifecycle_event: bool = True,
     ) -> AgentRuntimeDeliveryResult:
         """Best-effort delivery of pending notifications when the runtime is ready."""
+        self._last_agent_ready_delivery_error = None
+        terminal_id_before_freshness = self._terminal_id()
+        pending_before_ready_event_ids = self._pending_delivery_ids_for_receivers(
+            self._runtime_delivery_receiver_ids(terminal_id_before_freshness)
+        )
         freshness = (
             self.ensure_fresh_started(
                 causing_event=causing_event,
@@ -621,35 +628,20 @@ class AgentRuntimeHandle:
                 delivered=False,
             )
 
-        if db_module.get_oldest_pending_inbox_delivery(self.inbox_receiver_id) is None:
-            return AgentRuntimeDeliveryResult(
-                status=freshness.status,
-                terminal_id=terminal_id,
-                attempted=False,
-                delivered=False,
-            )
-
-        try:
-            delivered = inbox_readiness.check_and_send_pending_messages(self.inbox_receiver_id)
-        except Exception as exc:
-            logger.error(
-                "Failed to deliver runtime notifications to agent %s terminal %s: %s",
-                self.agent.id,
-                terminal_id,
-                exc,
-            )
+        if self._last_agent_ready_delivery_error is not None:
             return AgentRuntimeDeliveryResult(
                 status=freshness.status,
                 terminal_id=terminal_id,
                 attempted=True,
                 delivered=False,
-                error=str(exc),
+                error=self._last_agent_ready_delivery_error,
             )
+        delivered = self._any_delivery_completed(pending_before_ready_event_ids)
 
         return AgentRuntimeDeliveryResult(
             status=freshness.status,
             terminal_id=terminal_id,
-            attempted=True,
+            attempted=bool(pending_before_ready_event_ids),
             delivered=delivered,
         )
 
@@ -911,6 +903,40 @@ class AgentRuntimeHandle:
     def _terminal_id(self) -> Optional[str]:
         terminal = self._terminal()
         return terminal.id if terminal is not None else None
+
+    def _runtime_delivery_receiver_ids(self, terminal_id: str | None) -> tuple[str, ...]:
+        if terminal_id is None:
+            return (self.inbox_receiver_id,)
+        return (self.inbox_receiver_id, terminal_id)
+
+    def _pending_delivery_ids_for_receivers(self, receiver_ids: tuple[str, ...]) -> set[int]:
+        normalized_receiver_ids = tuple(dict.fromkeys(receiver_ids))
+        if not normalized_receiver_ids:
+            return set()
+        with db_module.SessionLocal() as session:
+            rows = (
+                session.query(db_module.InboxNotificationModel.id)
+                .filter(
+                    db_module.InboxNotificationModel.receiver_agent_id.in_(normalized_receiver_ids),
+                    db_module.InboxNotificationModel.status == MessageStatus.PENDING.value,
+                )
+                .all()
+            )
+        return {int(row[0]) for row in rows}
+
+    def _any_delivery_completed(self, notification_ids: set[int]) -> bool:
+        if not notification_ids:
+            return False
+        with db_module.SessionLocal() as session:
+            return (
+                session.query(db_module.InboxNotificationModel.id)
+                .filter(
+                    db_module.InboxNotificationModel.id.in_(list(notification_ids)),
+                    db_module.InboxNotificationModel.status == MessageStatus.DELIVERED.value,
+                )
+                .first()
+                is not None
+            )
 
     def _desired_runtime_fingerprint(self) -> str:
         runtime_inputs = terminal_service.resolve_terminal_runtime_inputs(
@@ -1268,23 +1294,52 @@ class AgentRuntimeHandle:
         *,
         causing_event: CaoEvent | None,
         publish_event: bool = True,
+        publish_ready_event: bool = True,
     ) -> AgentRuntimeFreshnessResult:
-        if not publish_event:
-            return result
-        runtime_events.publish_runtime_event(
-            runtime_events.lifecycle_event(
-                agent_id=self.agent.id,
-                workspace_context_id=self.workspace_context_id,
-                action=result.action.value,
-                runtime_status=result.status.value,
+        if publish_event:
+            runtime_events.publish_runtime_event(
+                runtime_events.lifecycle_event(
+                    agent_id=self.agent.id,
+                    workspace_context_id=self.workspace_context_id,
+                    action=result.action.value,
+                    runtime_status=result.status.value,
+                    terminal_id=result.terminal_id,
+                    ready=result.ready,
+                    fresh=result.fresh,
+                    error=result.error,
+                    causing_event=causing_event,
+                )
+            )
+        if publish_ready_event and result.ready and result.terminal_id is not None:
+            self._publish_agent_ready_event(
                 terminal_id=result.terminal_id,
-                ready=result.ready,
-                fresh=result.fresh,
-                error=result.error,
                 causing_event=causing_event,
             )
-        )
         return result
+
+    def _publish_agent_ready_event(
+        self,
+        *,
+        terminal_id: str,
+        causing_event: CaoEvent | None,
+    ) -> None:
+        try:
+            runtime_events.publish_runtime_event(
+                runtime_events.agent_ready_event(
+                    agent_id=self.agent.id,
+                    terminal_id=terminal_id,
+                    causing_event=causing_event,
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to publish agent ready event for agent %s terminal %s: %s",
+                self.agent.id,
+                terminal_id,
+                exc,
+            )
+            self._last_agent_ready_delivery_error = str(exc)
+            return
 
     def _publish_workspace_context_switch_event(
         self,

@@ -5,10 +5,21 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Generic, NewType, Protocol, TypeVar, get_type_hints, runtime_checkable
+from typing import (
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NewType,
+    Protocol,
+    TypeVar,
+    get_type_hints,
+    runtime_checkable,
+)
 
 __all__ = [
     "AgentParticipant",
+    "AgentReady",
     "CaoAllEventHandler",
     "CaoCausationId",
     "CaoCorrelationId",
@@ -73,6 +84,22 @@ class AgentParticipant:
         _normalize_token(self.agent_id, "agent_id")
         if self.role is not None:
             _normalize_token(self.role, "agent participant role")
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentReady:
+    """A CAO agent's terminal has reached a delivery-ready runtime state."""
+
+    event_name: ClassVar[str] = "agent_ready"
+    kind: Literal["cao.agent_ready"] = "cao.agent_ready"
+
+    event_id: CaoEventId
+    source: CaoEventSourceRef
+    occurred_at: CaoEventOccurredAt
+    correlation_id: CaoCorrelationId | None = None
+    causation_id: CaoCausationId | None = None
+    agent_id: str
+    agent_participants: tuple[AgentParticipant, ...]
 
 
 @runtime_checkable
@@ -275,9 +302,6 @@ class CaoEventDispatcher:
         )
 
 
-_DEFAULT_CAO_EVENT_DISPATCHER = CaoEventDispatcher.persistent()
-
-
 def default_cao_event_dispatcher() -> CaoEventDispatcher:
     """Return CAO's process-local framework-wide event dispatcher."""
 
@@ -360,3 +384,6 @@ def _validate_event_instance(event: CaoEvent) -> type[CaoEvent]:
         _normalize_token(event.causation_id, "causation_id")
     agent_participants_for(event)
     return event_type
+
+
+_DEFAULT_CAO_EVENT_DISPATCHER = CaoEventDispatcher.persistent((AgentReady,))

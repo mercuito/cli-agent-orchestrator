@@ -35,8 +35,15 @@ from cli_agent_orchestrator.clients.database import (
     list_terminals_by_agent,
     list_terminals_by_agent_and_context,
 )
+from cli_agent_orchestrator.events import (
+    AgentReady,
+    CaoEventDispatcher,
+    InvalidCaoEventError,
+    default_cao_event_dispatcher,
+)
 from cli_agent_orchestrator.inbox.store import (
     get_oldest_pending_inbox_delivery,
+    list_pending_agent_inbox_receiver_ids,
     list_pending_inbox_deliveries_for_effective_source,
     list_pending_inbox_notifications,
     update_inbox_notification_statuses,
@@ -50,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BATCH_BODY_CHARS = 2000
 DEFAULT_MAX_BATCH_TOTAL_CHARS = 12000
+AGENT_READY_INBOX_DELIVERY_SUBSCRIPTION_ID = "inbox.agent-ready-delivery"
 
 
 def _source_label(delivery: InboxDelivery) -> str:
@@ -166,6 +174,46 @@ def check_and_send_pending_messages(receiver_agent_id: str) -> bool:
         raise
 
 
+def subscribe_to_agent_ready(dispatcher: CaoEventDispatcher | None = None) -> CaoEventDispatcher:
+    """Subscribe inbox delivery to AgentReady events on a dispatcher."""
+
+    event_dispatcher = dispatcher or default_cao_event_dispatcher()
+    event_dispatcher.register_events((AgentReady,))
+    try:
+        event_dispatcher.subscribe(
+            event_type=AgentReady,
+            handler=_handle_agent_ready,
+            subscription_id=AGENT_READY_INBOX_DELIVERY_SUBSCRIPTION_ID,
+        )
+    except InvalidCaoEventError as exc:
+        if "Duplicate CAO event subscription_id" not in str(exc):
+            raise
+    return event_dispatcher
+
+
+def _handle_agent_ready(event: AgentReady) -> bool:
+    delivered = False
+    for receiver_id in _pending_receiver_ids_for_ready_agent(event.agent_id):
+        delivered = check_and_send_pending_messages(receiver_id) or delivered
+    return delivered
+
+
+def _pending_receiver_ids_for_ready_agent(agent_id: str) -> list[str]:
+    terminal_receiver_ids = [
+        str(terminal["id"]) for terminal in list_terminals_by_agent(agent_id) if terminal.get("id")
+    ]
+    receiver_ids = [
+        agent_id,
+        *list_pending_agent_inbox_receiver_ids(agent_id),
+        *terminal_receiver_ids,
+    ]
+    return [
+        receiver_id
+        for receiver_id in dict.fromkeys(receiver_ids)
+        if list_pending_inbox_notifications(receiver_id, limit=1)
+    ]
+
+
 def _live_terminal_id_for_agent(agent_id: str) -> str | None:
     receiver = _agent_context_receiver_parts(agent_id)
     terminals = (
@@ -243,3 +291,6 @@ class LogFileHandler(FileSystemEventHandler):
             logger.debug("No pending messages for terminal %s receivers, skipping", terminal_id)
         except Exception as e:
             logger.error(f"Error handling log change for {terminal_id}: {e}")
+
+
+subscribe_to_agent_ready()

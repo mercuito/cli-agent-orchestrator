@@ -12,6 +12,7 @@ from pydantic.dataclasses import dataclass
 
 from cli_agent_orchestrator.events import (
     AgentParticipant,
+    AgentReady,
     CaoCausationId,
     CaoCorrelationId,
     CaoEvent,
@@ -30,6 +31,7 @@ RUNTIME_AGENT_PARTICIPANT_ROLE_NOTIFICATION_RECEIVER = "notification_receiver"
 RUNTIME_AGENT_PARTICIPANT_ROLE_DELIVERY_TARGET = "delivery_target"
 RUNTIME_AGENT_PARTICIPANT_ROLE_LIFECYCLE_AGENT = "lifecycle_agent"
 RUNTIME_AGENT_PARTICIPANT_ROLE_CONTEXT_SWITCH_AGENT = "context_switch_agent"
+RUNTIME_AGENT_PARTICIPANT_ROLE_READY_AGENT = "ready_agent"
 
 
 def _now() -> CaoEventOccurredAt:
@@ -174,6 +176,7 @@ class RuntimeWorkspaceEvent:
 
 
 RUNTIME_CAO_EVENTS = (
+    AgentReady,
     AgentRuntimeNotificationAcceptedEvent,
     AgentRuntimeNotificationDeliveryEvent,
     AgentRuntimeLifecycleEvent,
@@ -236,6 +239,32 @@ def notification_accepted_event(
         agent_participants=_agent_participants(
             agent_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_NOTIFICATION_RECEIVER,
+        ),
+    )
+
+
+def agent_ready_event(
+    *,
+    agent_id: str,
+    terminal_id: str,
+    causing_event: CaoEvent | None = None,
+) -> AgentReady:
+    """Build an event announcing that an agent runtime can receive delivery."""
+
+    return AgentReady(
+        event_id=_runtime_event_id(
+            AgentReady.event_name,
+            agent_id,
+            terminal_id,
+        ),
+        source=_runtime_source_ref(terminal_id),
+        occurred_at=_now(),
+        correlation_id=_correlation_for(causing_event),
+        causation_id=_causation_for(causing_event),
+        agent_id=agent_id,
+        agent_participants=_agent_participants(
+            agent_id,
+            RUNTIME_AGENT_PARTICIPANT_ROLE_READY_AGENT,
         ),
     )
 

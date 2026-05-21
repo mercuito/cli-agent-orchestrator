@@ -10,7 +10,12 @@ import pytest
 from cli_agent_orchestrator.agent import write_agent
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import create_inbox_delivery
-from cli_agent_orchestrator.events import CaoCorrelationId, CaoEventDispatcher, CaoEventId
+from cli_agent_orchestrator.events import (
+    AgentReady,
+    CaoCorrelationId,
+    CaoEventDispatcher,
+    CaoEventId,
+)
 from cli_agent_orchestrator.inbox import readiness as inbox_service
 from cli_agent_orchestrator.linear.workspace_events import LinearAgentMentionedEvent
 from cli_agent_orchestrator.models.inbox import MessageStatus
@@ -78,8 +83,9 @@ def handle(agent) -> AgentRuntimeHandle:
 
 @pytest.fixture
 def recorded_runtime_events(monkeypatch):
-    dispatcher = CaoEventDispatcher()
+    dispatcher = CaoEventDispatcher.persistent()
     runtime_events.register_runtime_cao_events(dispatcher)
+    inbox_service.subscribe_to_agent_ready(dispatcher)
     published = []
     dispatcher.subscribe_all(
         handler=lambda event: published.append(event),
@@ -724,6 +730,127 @@ def test_offline_notification_delivers_from_context_inbox_when_runtime_later_sta
     send_input.assert_called_once_with("terminal-1", "Persist me while the agent is offline.")
 
 
+def test_ready_event_delivers_context_pending_notification_when_runtime_starts(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    # Given
+    dispatcher = CaoEventDispatcher.persistent()
+    runtime_events.register_runtime_cao_events(dispatcher)
+    dispatcher.register_events((AgentReady,))
+    seen_ready_agent_ids: list[str] = []
+    dispatcher.subscribe(
+        event_type=AgentReady,
+        handler=lambda event: seen_ready_agent_ids.append(event.agent_id),
+        subscription_id="test-record-agent-ready",
+    )
+    inbox_service.subscribe_to_agent_ready(dispatcher)
+    monkeypatch.setattr(runtime_events, "default_cao_event_dispatcher", lambda: dispatcher)
+    create_inbox_delivery(
+        "provider_conversation",
+        handle.inbox_receiver_id,
+        "Deliver after ready event.",
+    )
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
+
+    def create_started_terminal(agent):
+        db_module.create_terminal(
+            "terminal-1",
+            "cao-implementation-partner",
+            "developer-5678",
+            "codex",
+            agent_id=agent.id,
+            workspace_context_id=handle.workspace_context_id,
+        )
+        return _created_terminal_result("terminal-1")
+
+    monkeypatch.setattr(
+        runtime_agent.terminal_service,
+        "create_terminal_for_agent",
+        Mock(side_effect=create_started_terminal),
+    )
+
+    # When
+    result = handle.ensure_fresh_started()
+
+    # Then
+    assert result.ready is True
+    assert seen_ready_agent_ids == ["implementation_partner"]
+    send_input.assert_called_once_with("terminal-1", "Deliver after ready event.")
+    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
+    assert any(
+        isinstance(record.event, AgentReady)
+        for record in db_module.list_cao_events_by_agent("implementation_partner")
+    )
+
+
+def test_ready_event_delivers_terminal_scoped_pending_notification_for_ready_terminal(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    # Given
+    dispatcher = CaoEventDispatcher.persistent()
+    runtime_events.register_runtime_cao_events(dispatcher)
+    inbox_service.subscribe_to_agent_ready(dispatcher)
+    monkeypatch.setattr(runtime_events, "default_cao_event_dispatcher", lambda: dispatcher)
+    _create_terminal()
+    _mark_terminal_fresh(handle)
+    create_inbox_delivery(
+        "provider_conversation",
+        "terminal-1",
+        "Deliver terminal-scoped pending.",
+    )
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
+
+    # When
+    result = handle.ensure_fresh_started()
+
+    # Then
+    assert result.ready is True
+    send_input.assert_called_once_with("terminal-1", "Deliver terminal-scoped pending.")
+    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
+
+
+def test_ready_event_delivery_result_reports_partial_batch_delivery(
+    test_session,
+    monkeypatch,
+    handle,
+    terminal_provider_patcher,
+    terminal_send_patcher,
+):
+    # Given
+    dispatcher = CaoEventDispatcher.persistent()
+    runtime_events.register_runtime_cao_events(dispatcher)
+    inbox_service.subscribe_to_agent_ready(dispatcher)
+    monkeypatch.setattr(runtime_events, "default_cao_event_dispatcher", lambda: dispatcher)
+    _create_terminal()
+    _mark_terminal_fresh(handle)
+    create_inbox_delivery("worker-a", handle.inbox_receiver_id, "first source")
+    create_inbox_delivery("worker-b", handle.inbox_receiver_id, "other source")
+    _provider(terminal_provider_patcher, TerminalStatus.IDLE)
+    send_input = terminal_send_patcher(inbox_service.terminal_service)
+
+    # When
+    result = handle.try_deliver_pending()
+
+    # Then
+    assert result.attempted is True
+    assert result.delivered is True
+    send_input.assert_called_once_with("terminal-1", "first source")
+    assert _all_delivery_statuses(handle.inbox_receiver_id) == [
+        MessageStatus.DELIVERED,
+        MessageStatus.PENDING,
+    ]
+
+
 def test_fresh_idle_runtime_is_reused_for_delivery(
     test_session,
     handle,
@@ -771,6 +898,7 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     assert [type(event) for event in recorded_runtime_events] == [
         AgentRuntimeNotificationAcceptedEvent,
         AgentRuntimeLifecycleEvent,
+        AgentReady,
         AgentRuntimeNotificationDeliveryEvent,
     ]
     accepted = recorded_runtime_events[0]
@@ -801,7 +929,17 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     assert lifecycle.correlation_id == CaoCorrelationId("linear-session-1")
     assert lifecycle.causation_id == "linear:event:mention-1"
 
-    delivery = recorded_runtime_events[2]
+    ready = recorded_runtime_events[2]
+    assert isinstance(ready, AgentReady)
+    assert ready.agent_id == "implementation_partner"
+    assert (
+        ready.agent_participants[0].role
+        == runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_READY_AGENT
+    )
+    assert ready.correlation_id == CaoCorrelationId("linear-session-1")
+    assert ready.causation_id == "linear:event:mention-1"
+
+    delivery = recorded_runtime_events[3]
     assert isinstance(delivery, AgentRuntimeNotificationDeliveryEvent)
     assert delivery.inbox_notification_id == result.notification.delivery.notification.id
     assert delivery.source_kind == "linear_event"

@@ -104,3 +104,40 @@ A task is complete only after **two** successive clean review passes are recorde
 
 - Pass 1: 2026-05-21, fresh review found no actionable issues after the terminal ownership and empty-body fixes; residual risk was limited to interactions outside the touched inbox/MCP/provider-conversation surfaces.
 - Pass 2: 2026-05-21, independent review found no actionable issues; residual risk noted only the absence of a literal `source_kind="unknown"` test, with baton/runtime unregistered-source coverage exercising the generic `NotReplyable` path.
+
+## 0008 — agent ready event
+
+### Review round 1 — 2026-05-21
+
+- **Finding:** Runtime delivery results treated any boolean returned by any `AgentReady` subscriber as proof that inbox delivery happened.
+- **Accepted as valid because:** `CaoEventDispatcher` subscriber results are generic; unrelated observers may return booleans, so runtime delivery status must not depend on unscoped handler return values.
+- **Fix:** `AgentRuntimeHandle.try_deliver_pending` now derives `attempted` and `delivered` from runtime-owned pending notification state before and after the `AgentReady` publication, while keeping subscriber exceptions as delivery errors.
+- **Evidence:** `uv run pytest test/runtime/test_agent_runtime.py test/services/test_inbox_service.py test/events/test_core.py test/events/test_cao_event_persistence.py` passed.
+
+- **Finding:** The tracer test used a non-persistent event dispatcher, while production publishes through a persistent dispatcher that stores events before subscribers run.
+- **Accepted as valid because:** A serialization or persistence regression for `AgentReady` would block production subscriber delivery and should be covered by the tracer path.
+- **Fix:** The tracer now uses `CaoEventDispatcher.persistent()` and asserts the persisted `AgentReady` is visible through the CAO event store.
+- **Evidence:** `uv run pytest test/runtime/test_agent_runtime.py test/services/test_inbox_service.py test/events/test_core.py test/events/test_cao_event_persistence.py` passed.
+
+### Review round 2 — 2026-05-21
+
+- **Finding:** Runtime counted terminal-scoped pending notifications before publishing `AgentReady`, but the inbox subscriber only attempted agent/context receiver delivery and the after-check omitted the terminal receiver.
+- **Accepted as valid because:** Terminal receiver ids remain runtime-owned pending delivery state, so delivery status must not report success for a pending receiver the `AgentReady` subscriber never attempted.
+- **Fix:** `inbox.readiness` now includes live terminal receiver ids for the ready agent, and `AgentRuntimeHandle.try_deliver_pending` checks the pre-ready terminal and final terminal receiver state before deciding delivery succeeded.
+- **Evidence:** `uv run pytest test/runtime/test_agent_runtime.py test/services/test_inbox_service.py test/events/test_core.py test/events/test_cao_event_persistence.py` passed, including `test_ready_event_delivers_terminal_scoped_pending_notification_for_ready_terminal`.
+
+### Clean passes
+
+- Pass 1: 2026-05-21, fresh criteria review found no actionable issues; residual risk was limited to the draft PR/orientation-comment process not being verifiable from the working tree alone.
+
+### Review round 3 — 2026-05-21
+
+- **Finding:** `AgentRuntimeHandle.try_deliver_pending` reported `delivered=True` only when every pending notification for the runtime receiver set was gone after `AgentReady`, but readiness intentionally delivers the oldest effective-source batch and leaves other-source pending notifications queued.
+- **Accepted as valid because:** A successful delivery attempt can deliver one batch while unrelated pending work remains; runtime delivery status should describe whether pre-event pending delivery happened, not whether the whole receiver queue is empty.
+- **Fix:** Runtime now snapshots the pre-`AgentReady` pending notification ids for the context/terminal receiver set and reports delivery when any of those ids transitions to `DELIVERED`.
+- **Evidence:** `uv run pytest test/runtime/test_agent_runtime.py -k ready_event_delivery_result_reports_partial_batch_delivery` failed before the fix and passed after it; `uv run pytest test/runtime/test_agent_runtime.py test/services/test_inbox_service.py test/events/test_core.py test/events/test_cao_event_persistence.py` passed with 90 tests.
+
+### Clean passes after round 3
+
+- Pass 1: 2026-05-21, fresh review found no actionable issues after the partial-batch delivery fix; residual process note was limited to the draft PR/orientation-comment item not being verifiable from the working tree.
+- Pass 2: 2026-05-21, independent review found no actionable issues; verified default registration, persistent dispatch, runtime/inbox boundary, terminal-scoped delivery, partial-batch delivery, generated event payload types, and review ledger state.

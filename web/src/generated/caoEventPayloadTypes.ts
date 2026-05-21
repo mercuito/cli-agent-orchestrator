@@ -15,6 +15,36 @@ export interface components {
              */
             role: string | null;
         };
+        /** AgentReady */
+        AgentReady: {
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Participants */
+            agent_participants: components["schemas"]["AgentParticipant"][];
+            /**
+             * Causation Id
+             * @default null
+             */
+            causation_id: string | null;
+            /**
+             * Correlation Id
+             * @default null
+             */
+            correlation_id: string | null;
+            /** Event Id */
+            event_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "cao.agent_ready";
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            source: components["schemas"]["CaoEventSourceRef"];
+        };
         /**
          * AgentRuntimeLifecycleEvent
          * @description Runtime lifecycle reconciliation started, reused, refreshed, deferred, or failed.
@@ -213,7 +243,7 @@ export interface components {
             /** To Workspace Context Id */
             to_workspace_context_id: string;
         };
-        CaoEventPayload: components["schemas"]["LinearAgentMentionedEvent"] | components["schemas"]["LinearIssueDelegatedToAgentEvent"] | components["schemas"]["LinearAgentSessionPromptedEvent"] | components["schemas"]["LinearAgentSessionLifecycleActivityEvent"] | components["schemas"]["LinearAgentSessionStopRequestedEvent"] | components["schemas"]["LinearIssueCreatedEvent"] | components["schemas"]["AgentRuntimeNotificationAcceptedEvent"] | components["schemas"]["AgentRuntimeNotificationDeliveryEvent"] | components["schemas"]["AgentRuntimeLifecycleEvent"] | components["schemas"]["AgentRuntimeWorkspaceContextSwitchEvent"] | components["schemas"]["RuntimeWorkspaceEvent"];
+        CaoEventPayload: components["schemas"]["LinearAgentMentionedEvent"] | components["schemas"]["LinearIssueDelegatedToAgentEvent"] | components["schemas"]["LinearAgentSessionPromptedEvent"] | components["schemas"]["LinearAgentSessionLifecycleActivityEvent"] | components["schemas"]["LinearAgentSessionStopRequestedEvent"] | components["schemas"]["LinearIssueCreatedEvent"] | components["schemas"]["AgentReady"] | components["schemas"]["AgentRuntimeNotificationAcceptedEvent"] | components["schemas"]["AgentRuntimeNotificationDeliveryEvent"] | components["schemas"]["AgentRuntimeLifecycleEvent"] | components["schemas"]["AgentRuntimeWorkspaceContextSwitchEvent"] | components["schemas"]["RuntimeWorkspaceEvent"];
         /** CaoEventSourceRef */
         CaoEventSourceRef: {
             /** Source Id */
@@ -1177,6 +1207,7 @@ export interface components {
 export type $defs = Record<string, never>;
 export type operations = Record<string, never>;
 
+export const AGENT_READY = 'cli_agent_orchestrator.events.AgentReady' as const
 export const AGENT_RUNTIME_LIFECYCLE_EVENT = 'cli_agent_orchestrator.runtime.events.AgentRuntimeLifecycleEvent' as const
 export const AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT = 'cli_agent_orchestrator.runtime.events.AgentRuntimeNotificationAcceptedEvent' as const
 export const AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT = 'cli_agent_orchestrator.runtime.events.AgentRuntimeNotificationDeliveryEvent' as const
@@ -1190,6 +1221,7 @@ export const LINEAR_ISSUE_DELEGATED_TO_AGENT_EVENT = 'cli_agent_orchestrator.lin
 export const RUNTIME_WORKSPACE_EVENT = 'cli_agent_orchestrator.runtime.events.RuntimeWorkspaceEvent' as const
 
 export const CAO_EVENT_TYPE_KEYS = {
+  AGENT_READY,
   AGENT_RUNTIME_LIFECYCLE_EVENT,
   AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT,
   AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
@@ -1208,6 +1240,7 @@ export type CaoEventTypeKey = typeof CAO_EVENT_TYPE_KEYS[keyof typeof CAO_EVENT_
 export type CaoEventPayload = components['schemas']['CaoEventPayload']
 
 export type CaoEventPayloadByTypeKey = {
+  'cli_agent_orchestrator.events.AgentReady': Extract<CaoEventPayload, { kind: 'cao.agent_ready' }>
   'cli_agent_orchestrator.runtime.events.AgentRuntimeLifecycleEvent': Extract<CaoEventPayload, { kind: 'cao_runtime.agent_runtime_lifecycle' }>
   'cli_agent_orchestrator.runtime.events.AgentRuntimeNotificationAcceptedEvent': Extract<CaoEventPayload, { kind: 'cao_runtime.agent_runtime_notification_accepted' }>
   'cli_agent_orchestrator.runtime.events.AgentRuntimeNotificationDeliveryEvent': Extract<CaoEventPayload, { kind: 'cao_runtime.agent_runtime_notification_delivery' }>
