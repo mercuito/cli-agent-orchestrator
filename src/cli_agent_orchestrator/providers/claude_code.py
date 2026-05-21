@@ -16,6 +16,7 @@ import requests  # type: ignore[import-untyped]
 
 from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.constants import CAO_AGENT_ID_ENV
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import (
@@ -547,8 +548,8 @@ class ClaudeCodeProvider(BaseProvider):
                     command_parts.extend(["--append-system-prompt", escaped_prompt])
 
                 # Add MCP config if present.
-                # Forward CAO_TERMINAL_ID so MCP servers (e.g. cao-mcp-server)
-                # can identify the current terminal for handoff/assign operations.
+                # Forward CAO_AGENT_ID so MCP servers (e.g. cao-mcp-server)
+                # can identify the current agent for handoff/assign operations.
                 # Claude Code does not automatically forward parent shell env vars
                 # to MCP subprocesses, so we inject it explicitly via the env field.
                 mcp_servers = tool_service_for_loaded_agent(
@@ -567,9 +568,8 @@ class ClaudeCodeProvider(BaseProvider):
                             )
 
                         env = mcp_config[server_name].get("env", {})
-                        if "CAO_TERMINAL_ID" not in env:
-                            env["CAO_TERMINAL_ID"] = self.terminal_id
-                            mcp_config[server_name]["env"] = env
+                        env[CAO_AGENT_ID_ENV] = self._agent_id
+                        mcp_config[server_name]["env"] = env
 
                     mcp_json = json.dumps({"mcpServers": mcp_config})
                     command_parts.extend(["--mcp-config", mcp_json])

@@ -68,8 +68,8 @@ class TestHandoffMessageContext:
         mock_send.return_value = None
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
-            _same_team_guard("supervisor-abc123"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
         ):
             with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
                 mock_response = MagicMock()
@@ -86,7 +86,7 @@ class TestHandoffMessageContext:
         mock_send.assert_called_once()
         sent_message = mock_send.call_args[0][1]
         assert sent_message.startswith("[CAO Handoff]")
-        assert "supervisor-abc123" in sent_message
+        assert "supervisor" in sent_message
         assert "Implement hello world" in sent_message
         assert "Do NOT use send_message" in sent_message
 
@@ -100,8 +100,8 @@ class TestHandoffMessageContext:
         mock_send.return_value = None
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
-            _same_team_guard("supervisor-abc123"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
             patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests,
         ):
             mock_response = MagicMock()
@@ -129,8 +129,8 @@ class TestHandoffMessageContext:
         mock_send.return_value = None
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
-            _same_team_guard("supervisor-abc123"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
             patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests,
         ):
             mock_response = MagicMock()
@@ -153,14 +153,14 @@ class TestHandoffMessageContext:
     def test_codex_handoff_context_includes_supervisor_id_from_env(
         self, mock_create, mock_wait, mock_send
     ):
-        """Supervisor terminal ID should come from CAO_TERMINAL_ID env var."""
+        """Supervisor agent ID should come from CAO_AGENT_ID env var."""
         mock_create.return_value = ("dev-terminal-4", "codex")
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-xyz789"}),
-            _same_team_guard("sup-xyz789"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
         ):
             with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
                 mock_response = MagicMock()
@@ -174,14 +174,14 @@ class TestHandoffMessageContext:
                 )
 
         sent_message = mock_send.call_args[0][1]
-        assert "sup-xyz789" in sent_message
+        assert "supervisor" in sent_message
         assert "Build feature X" in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server.wait_until_terminal_status")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_codex_handoff_context_fallback_when_no_env(self, mock_create, mock_wait, mock_send):
-        """When CAO_TERMINAL_ID is not set, team-aware handoff is rejected."""
+        """When CAO_AGENT_ID is not set, team-aware handoff is rejected."""
         mock_create.return_value = ("dev-terminal-5", "codex")
         mock_wait.side_effect = [True, True]
         mock_send.return_value = None
@@ -192,7 +192,7 @@ class TestHandoffMessageContext:
             )
 
         assert result.success is False
-        assert "sender terminal is unknown" in result.message
+        assert "sender agent is unknown" in result.message
         mock_create.assert_not_called()
         mock_send.assert_not_called()
 
@@ -207,8 +207,8 @@ class TestHandoffMessageContext:
 
         original = "Implement the task described in /path/to/task.md. Write tests."
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-111"}),
-            _same_team_guard("sup-111"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
         ):
             with patch("cli_agent_orchestrator.mcp_server.server.requests") as mock_requests:
                 mock_response = MagicMock()

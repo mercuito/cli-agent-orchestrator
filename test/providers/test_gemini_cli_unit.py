@@ -135,7 +135,7 @@ class TestGeminiCliProviderInitialization:
         settings = json.loads(settings_file.read_text())
         assert "cao-mcp-server" in settings["mcpServers"]
         assert settings["mcpServers"]["cao-mcp-server"]["command"] == "cao-mcp-server"
-        assert settings["mcpServers"]["cao-mcp-server"]["env"]["CAO_TERMINAL_ID"] == "term-1"
+        assert settings["mcpServers"]["cao-mcp-server"]["env"]["CAO_AGENT_ID"] == "developer"
         # Command should be plain gemini launch (no chained mcp add)
         call_args = mock_tmux.send_keys.call_args_list[1]
         command = call_args[0][2]
@@ -730,7 +730,7 @@ class TestGeminiCliProviderBuildCommand:
         settings = json.loads((settings_dir / "settings.json").read_text())
         assert settings["mcpServers"]["test-server"]["command"] == "npx"
         assert settings["mcpServers"]["test-server"]["args"] == ["test-pkg"]
-        assert settings["mcpServers"]["test-server"]["env"]["CAO_TERMINAL_ID"] == "term-1"
+        assert settings["mcpServers"]["test-server"]["env"]["CAO_AGENT_ID"] == "dev"
 
     @patch("cli_agent_orchestrator.providers.gemini_cli.load_agent")
     def test_build_command_with_pydantic_mcp_config(self, mock_load, tmp_path):
@@ -756,7 +756,7 @@ class TestGeminiCliProviderBuildCommand:
         settings = json.loads((settings_dir / "settings.json").read_text())
         assert settings["mcpServers"]["my-server"]["command"] == "node"
         assert settings["mcpServers"]["my-server"]["args"] == ["server.js"]
-        assert settings["mcpServers"]["my-server"]["env"]["CAO_TERMINAL_ID"] == "term-1"
+        assert settings["mcpServers"]["my-server"]["env"]["CAO_AGENT_ID"] == "dev"
 
     @patch("cli_agent_orchestrator.providers.gemini_cli.tmux_client")
     @patch("cli_agent_orchestrator.providers.gemini_cli.load_agent")

@@ -84,7 +84,7 @@ def test_session(monkeypatch):
         "cli_agent_orchestrator.linear.inbox_authorization.default_workspace_collaboration_manager",
         _provider_inbox_collaboration_manager,
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-a")
+    monkeypatch.setenv("CAO_AGENT_ID", "implementation_partner")
     yield
 
 
@@ -452,7 +452,7 @@ def test_read_inbox_message_rejects_non_receiver_terminal(test_session, monkeypa
         agent_id="other_partner",
         workspace_context_id=db_module.ensure_default_workspace_context("other_partner").id,
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-other")
+    monkeypatch.setenv("CAO_AGENT_ID", "other_partner")
 
     result = _read_inbox_message_impl(notification_id)
 
@@ -957,7 +957,7 @@ def test_reply_to_inbox_message_rejects_non_receiver_terminal(test_session, monk
         agent_id="other_partner",
         workspace_context_id=db_module.ensure_default_workspace_context("other_partner").id,
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-other")
+    monkeypatch.setenv("CAO_AGENT_ID", "other_partner")
 
     result = _reply_to_inbox_message_impl(notification_id, "Should not route")
 

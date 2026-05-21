@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+OLD_TERMINAL_ENV = "CAO_" + "TERMINAL_ID"
+
 
 @pytest.fixture
 def tmux():
@@ -61,6 +63,9 @@ class TestCreateSession:
 
         assert result == "my-window"
         tmux.server.new_session.assert_called_once()
+        env = tmux.server.new_session.call_args.kwargs["environment"]
+        assert env["CAO_AGENT_ID"] == "tid1"
+        assert OLD_TERMINAL_ENV not in env
 
     def test_create_session_window_name_none(self, tmux, tmp_path):
         mock_window = MagicMock()
@@ -93,6 +98,9 @@ class TestCreateWindow:
         result = tmux.create_window("ses", "agent-window", "tid2", str(tmp_path))
 
         assert result == "agent-window"
+        env = mock_session.new_window.call_args.kwargs["environment"]
+        assert env["CAO_AGENT_ID"] == "tid2"
+        assert OLD_TERMINAL_ENV not in env
 
     def test_create_window_session_not_found(self, tmux, tmp_path):
         tmux.server.sessions.get.return_value = None

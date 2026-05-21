@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Copilot CLI provider** — Native GitHub Copilot CLI provider (#82)
 - **Web UI dashboard** — React-based web interface for managing sessions, spawning agents, viewing live terminal status, configuring agent directories, and interacting with agents from the browser (#108)
 - **Provider override in agents** — Agents can now specify a `provider` field to override the default provider, enabling cross-provider workflows (#101)
-- **Auto-inject sender terminal ID** — New `CAO_ENABLE_SENDER_ID_INJECTION` env var automatically appends sender terminal ID and callback instructions to `assign` and `send_message` messages, removing the need for manual prompt engineering (#98)
+- **Auto-inject sender agent ID** — New `CAO_ENABLE_SENDER_ID_INJECTION` env var automatically appends sender agent ID and callback instructions to `assign` and `send_message` messages, removing the need for manual prompt engineering (#98)
 - Cross-provider example agents and updated README with `gemini_cli` documentation (#109)
 
 ### Fixed
@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix inbox message delivery failing for TUI-based providers: inbox service passed `tail_lines=5` to `get_status()` but TUI providers need 50+ lines to find the idle prompt; messages stayed PENDING forever because the supervisor was never detected as IDLE
 - Fix inbox watchdog log tail check (`_has_idle_pattern`) using only 5 lines, which missed the idle prompt for full-screen TUI providers where the prompt sits mid-screen with 30+ padding lines below; increased to 100 lines so the watchdog reliably triggers delivery when the terminal goes IDLE
 - Fix shell command injection risk in Q CLI and Kiro CLI providers: replace f-string command interpolation with `shlex.join()` for safe shell escaping of `agent_id` values
-- Fix Claude Code provider not forwarding `CAO_TERMINAL_ID` to MCP server subprocesses: inject `CAO_TERMINAL_ID` into MCP server `env` config, matching other providers
+- Fix Claude Code provider not forwarding `CAO_AGENT_ID` to MCP server subprocesses: inject `CAO_AGENT_ID` into MCP server `env` config, matching other providers
 - Fix Claude Code provider failing to launch due to tmux `send-keys` corrupting single quotes in long commands; resolved by main branch's paste-buffer approach (`load-buffer` + `paste-buffer -p`)
 - Add missing `wait_for_shell` call to Claude Code provider `initialize()` to match other providers
 - Update Claude Code `IDLE_PROMPT_PATTERN` to match both `>` and `❯` prompt styles
@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `IDLE_PROMPT_STRICT_PATTERN` for extraction: matches only empty prompt lines (`› ` without text) to distinguish idle prompts from user input lines
 - Rewrite `extract_last_message_from_script()` to use user-message-based extraction as primary approach (works for both label and bullet formats) with assistant-marker fallback
 - Fix Codex MCP `tool_timeout_sec` not taking effect: change value from `600` (TOML integer) to `600.0` (TOML float) because Codex deserializes via `Option<f64>` and silently rejects integers, falling back to the 60s default
-- Fix handoff worker agents not returning results: prepend `[CAO Handoff]` context to the message in `_handoff_impl()` so the worker agent knows this is a blocking handoff and should output results directly instead of attempting to call `send_message` back to the supervisor (which fails because the worker doesn't have the supervisor's terminal ID)
+- Fix handoff worker agents not returning results: prepend `[CAO Handoff]` context to the message in `_handoff_impl()` so the worker agent knows this is a blocking handoff and should output results directly instead of attempting to call `send_message` back to the supervisor (which fails because the worker doesn't have the supervisor's agent ID)
 - Fix Codex TUI footer causing false IDLE during handoff: `› Summarize recent commits` in the TUI status bar matched `USER_PREFIX_PATTERN` as a user message, preventing COMPLETED detection; now detects TUI footer (`? for shortcuts` / `context left`) and excludes bottom lines from user-message matching
 - Fix Codex TUI progress spinner causing false COMPLETED: `• Working (0s • esc to interrupt)` matched `ASSISTANT_PREFIX_PATTERN` while TUI `›` hint matched idle prompt; added `TUI_PROGRESS_PATTERN` check to return PROCESSING when spinner is active
 - Fix Codex output extraction returning TUI chrome: apply same TUI footer detection to `extract_last_message_from_script()` and use `cutoff_pos` as extraction boundary when no strict idle prompt found
@@ -103,7 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Trust prompt handling tests (6 tests) and workspace confirmation tests (4 tests)
 - Codex provider agent support: inject system prompt via `-c developer_instructions` config override, mirroring Claude Code's `--append-system-prompt` behavior
 - Codex provider MCP server support: inject MCP servers from agents via `-c mcp_servers.<name>.<field>=<value>` config overrides (per-session, no global config changes), enabling tools like `handoff` and `send_message` for multi-agent orchestration
-- Codex MCP server `CAO_TERMINAL_ID` environment forwarding: automatically adds `env_vars=["CAO_TERMINAL_ID"]` to all MCP server configs so handoff can create new agent windows in the same tmux session
+- Codex MCP server `CAO_AGENT_ID` environment forwarding: automatically adds `env_vars=["CAO_AGENT_ID"]` to all MCP server configs so handoff can create new agent windows in the same tmux session
 - Codex `_build_codex_command()` method with `shlex.join()` for safe shell escaping and proper quote/backslash/newline handling
 - Codex launch flags: `--no-alt-screen` (inline mode for reliable tmux capture) and `--disable shell_snapshot` (prevent SIGTTIN in tmux)
 - Codex `_handle_trust_prompt()` to auto-accept workspace trust dialog during initialization
@@ -111,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Codex bullet-format status detection tests: `TestCodexBulletFormatStatusDetection` (7 tests) for COMPLETED, PROCESSING, IDLE, code blocks, error detection, multi-turn, and TUI status bar using real `•` bullet response format
 - Codex bullet-format extraction tests: `TestCodexBulletFormatExtraction` (5 tests) for single-line, multi-line, code block, multi-turn, and no-trailing-prompt extraction from `•` bullet format
 - Codex TUI spinner status detection tests: `test_get_status_processing_tui_spinner`, `test_get_status_processing_tui_thinking_spinner`, `test_get_status_processing_dynamic_spinner_text` (3 tests) verifying PROCESSING is returned when TUI progress spinner is active
-- Handoff message context tests: `TestHandoffMessageContext` (6 tests) in `test/mcp_server/test_handoff.py` verifying `[CAO Handoff]` prefix is prepended only for Codex provider, includes supervisor terminal ID, and preserves the original message
+- Handoff message context tests: `TestHandoffMessageContext` (6 tests) in `test/mcp_server/test_handoff.py` verifying `[CAO Handoff]` prefix is prepended only for Codex provider, includes supervisor agent ID, and preserves the original message
 - Multi-agent communication protocol section added to `developer.md` and `reviewer.md` agents explaining handoff vs assign behavior
 - End-to-end test suite (`test/e2e/`) with 15 tests covering handoff, assign, and send_message flows across all 3 providers (codex, claude_code, kiro_cli); uses real `data_analyst` and `report_generator` agents from `examples/assign/`; gated behind `@pytest.mark.e2e` marker, excluded from default `pytest` runs
 - Provider documentation: `docs/claude-code.md` and `docs/kiro-cli.md` covering status detection, message extraction, configuration, implementation notes, E2E testing, and troubleshooting

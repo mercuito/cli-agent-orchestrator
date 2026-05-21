@@ -69,13 +69,13 @@ class TestSendMessageSenderIdInjection:
         mock_inbox.return_value = {"success": True}
         mock_can_invoke.return_value = True
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-xyz"}):
+        with patch.dict(os.environ, {"CAO_AGENT_ID": "sender-xyz"}):
             result = _send_message_impl("receiver-123", "Here are the results")
 
         sent_message = mock_inbox.call_args[0][1]
         assert sent_message.startswith("Here are the results")
-        assert "[Message from terminal sender-xyz" in sent_message
-        assert "Use send_message MCP tool for any follow-up work.]" in sent_message
+        assert "[Message from agent sender-xyz" in sent_message
+        assert "Use send_message(receiver_agent_id=..., body=...) for any follow-up work.]" in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", True)
     @patch("cli_agent_orchestrator.mcp_server.server._agent_can_invoke_builtin")
@@ -89,13 +89,13 @@ class TestSendMessageSenderIdInjection:
         mock_inbox.return_value = {"success": True}
         mock_can_invoke.return_value = False
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-xyz"}):
+        with patch.dict(os.environ, {"CAO_AGENT_ID": "sender-xyz"}):
             result = _send_message_impl("receiver-123", "Here are the results")
 
         sent_message = mock_inbox.call_args[0][1]
         assert result == {"success": True}
-        assert sent_message.endswith("[Message from terminal sender-xyz.]")
-        assert "Use send_message MCP tool" not in sent_message
+        assert sent_message.endswith("[Message from agent sender-xyz.]")
+        assert "Use send_message(" not in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", False)
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
@@ -105,7 +105,7 @@ class TestSendMessageSenderIdInjection:
 
         mock_inbox.return_value = {"success": True}
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-xyz"}):
+        with patch.dict(os.environ, {"CAO_AGENT_ID": "sender-xyz"}):
             result = _send_message_impl("receiver-123", "Here are the results")
 
         sent_message = mock_inbox.call_args[0][1]
@@ -115,7 +115,7 @@ class TestSendMessageSenderIdInjection:
     @patch("cli_agent_orchestrator.mcp_server.server._agent_can_invoke_builtin")
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     def test_send_message_sender_id_fallback_unknown(self, mock_inbox, mock_can_invoke):
-        """When CAO_TERMINAL_ID is not set, suffix should use 'unknown'."""
+        """When CAO_AGENT_ID is not set, suffix should use 'unknown'."""
         from cli_agent_orchestrator.mcp_server.server import _send_message_impl
 
         mock_inbox.return_value = {"success": True}
@@ -125,7 +125,7 @@ class TestSendMessageSenderIdInjection:
             result = _send_message_impl("receiver-123", "Status update")
 
         sent_message = mock_inbox.call_args[0][1]
-        assert "[Message from terminal unknown" in sent_message
+        assert "[Message from agent unknown" in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", True)
     @patch("cli_agent_orchestrator.mcp_server.server._agent_can_invoke_builtin")
@@ -138,12 +138,12 @@ class TestSendMessageSenderIdInjection:
         mock_can_invoke.return_value = True
         original = "Task complete. Here are the deliverables."
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-999"}):
+        with patch.dict(os.environ, {"CAO_AGENT_ID": "sender-999"}):
             _send_message_impl("receiver-123", original)
 
         sent_message = mock_inbox.call_args[0][1]
         assert sent_message.startswith(original)
-        assert sent_message.index("[Message from terminal") > len(original)
+        assert sent_message.index("[Message from agent") > len(original)
 
 
 class TestSendMessageTeamPolicy:
@@ -151,7 +151,7 @@ class TestSendMessageTeamPolicy:
         from cli_agent_orchestrator.mcp_server.server import _send_to_inbox
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-term"}),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "sender"}),
             _terminal_team_guard(receiver_team="other_team"),
             patch("cli_agent_orchestrator.mcp_server.server.requests.post") as mock_post,
         ):
@@ -165,7 +165,7 @@ class TestSendMessageTeamPolicy:
         from cli_agent_orchestrator.mcp_server.server import _send_to_inbox
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sender-term"}),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "sender"}),
             _terminal_team_guard(),
             patch("cli_agent_orchestrator.mcp_server.server.requests.post") as mock_post,
         ):
@@ -224,7 +224,7 @@ async def test_send_message_addresses_agent_and_delivers_to_live_idle_terminal(
             headers={"Host": "localhost"},
         )
 
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-a")
+    monkeypatch.setenv("CAO_AGENT_ID", "agent-a")
     monkeypatch.setattr(
         "cli_agent_orchestrator.mcp_server.server.load_agent_registry",
         lambda: registry,

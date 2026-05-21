@@ -92,12 +92,11 @@ compatibility command.
 
 **Problem:** Claude Code doesn't automatically forward parent shell environment variables to MCP subprocesses.
 
-**Fix:** When building the MCP config, explicitly inject `CAO_TERMINAL_ID` into the env:
+**Fix:** When building the MCP config, explicitly inject `CAO_AGENT_ID` into the env:
 ```python
 env = mcp_config[server_name].get("env", {})
-if "CAO_TERMINAL_ID" not in env:
-    env["CAO_TERMINAL_ID"] = self.terminal_id
-    mcp_config[server_name]["env"] = env
+env["CAO_AGENT_ID"] = self._agent_id
+mcp_config[server_name]["env"] = env
 ```
 
 ## 10. Nested Session Detection
@@ -153,7 +152,7 @@ When writing handoff/assign logic, never flatten `["*"]` to `None` before passin
 
 **Fix:** After `wait_for_shell()`, send an echo round-trip with a unique marker to verify the shell is fully initialized:
 ```python
-marker = f"CAO_SHELL_READY_{self.terminal_id}"
+marker = f"CAO_SHELL_READY_{self._agent_id}"
 tmux_client.send_keys(session, window, f"echo {marker}")
 # Poll until marker appears in output
 ```
@@ -262,7 +261,7 @@ Clean up the temp directory in `cleanup()`.
 
 | Test | What it validates | Why it matters |
 |------|-------------------|----------------|
-| `test_supervisor_handoff` | Supervisor terminal uses the `handoff()` MCP tool to delegate a task to a `report_generator` worker → verify the supervisor receives the worker's output and incorporates it into its final response | **Tests the supervisor's ability to use MCP tools.** Unlike `test_handoff_simple_function` (which sends tasks via API), this test verifies the supervisor agent autonomously calls the handoff MCP tool. If MCP config injection (`CAO_TERMINAL_ID`) is broken, the supervisor can't find the MCP server and falls back to answering directly — producing a plausible but wrong response. |
+| `test_supervisor_handoff` | Supervisor terminal uses the `handoff()` MCP tool to delegate a task to a `report_generator` worker → verify the supervisor receives the worker's output and incorporates it into its final response | **Tests the supervisor's ability to use MCP tools.** Unlike `test_handoff_simple_function` (which sends tasks via API), this test verifies the supervisor agent autonomously calls the handoff MCP tool. If MCP config injection (`CAO_AGENT_ID`) is broken, the supervisor can't find the MCP server and falls back to answering directly — producing a plausible but wrong response. |
 | `test_supervisor_assign_and_handoff` | Supervisor uses both `assign()` and `handoff()` MCP tools in a single workflow — assigns worker(s) and hands off to another → verify the supervisor produces a final output that incorporates delegated results | **The ultimate integration test.** Exercises assign (non-blocking) + handoff (blocking) + status detection under concurrent load. If the supervisor fails to receive assign callbacks (broken `send_message` delivery), it will do the analysis work itself instead of waiting for workers. The test catches this by checking that the output references delegated results rather than self-generated analysis. |
 
 ### Running the full suite

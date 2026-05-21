@@ -16,6 +16,7 @@ from typing import Any, Mapping, Optional, cast
 from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.database import get_terminal_metadata
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.constants import CAO_AGENT_ID_ENV
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import (
@@ -648,14 +649,16 @@ class CodexProvider(BaseProvider):
                             command_parts.extend(["-c", f"{prefix}.args={args_toml}"])
                         if "env" in cfg and cfg["env"]:
                             for env_key, env_val in cfg["env"].items():
+                                if env_key == CAO_AGENT_ID_ENV:
+                                    env_val = self._agent_id
                                 command_parts.extend(["-c", f'{prefix}.env.{env_key}="{env_val}"'])
-                        # Forward CAO_TERMINAL_ID so MCP servers (e.g. cao-mcp-server)
-                        # can identify the current session for handoff/assign operations.
+                        # Forward CAO_AGENT_ID so MCP servers (e.g. cao-mcp-server)
+                        # can identify the current agent for handoff/assign operations.
                         # Codex does not forward env vars to MCP subprocesses by default;
                         # env_vars lists names to inherit from the parent shell environment.
                         env_vars = cfg.get("env_vars", [])
-                        if "CAO_TERMINAL_ID" not in env_vars:
-                            env_vars = list(env_vars) + ["CAO_TERMINAL_ID"]
+                        if CAO_AGENT_ID_ENV not in env_vars:
+                            env_vars = list(env_vars) + [CAO_AGENT_ID_ENV]
                         env_vars_toml = "[" + ", ".join(f'"{v}"' for v in env_vars) + "]"
                         command_parts.extend(["-c", f"{prefix}.env_vars={env_vars_toml}"])
                         # Set a generous tool timeout for MCP calls like handoff, which

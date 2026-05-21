@@ -394,7 +394,7 @@ class TestCopilotCliProviderMisc:
         )
         runtime_cfg = json.loads(provider._build_runtime_mcp_config())
         assert "cao-mcp-server" in runtime_cfg["mcpServers"]
-        assert runtime_cfg["mcpServers"]["cao-mcp-server"]["env"]["CAO_TERMINAL_ID"] == "abc12345"
+        assert runtime_cfg["mcpServers"]["cao-mcp-server"]["env"]["CAO_AGENT_ID"] == "repo-agent"
         mock_tool_service.return_value.materialized_mcp_servers_for_agent.assert_called_once_with(
             "repo-agent"
         )

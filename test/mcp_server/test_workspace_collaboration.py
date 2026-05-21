@@ -21,7 +21,7 @@ def test_assign_allows_same_team_collaboration(monkeypatch):
     receiver = _agent("receiver", "cao_delivery")
     sent = {}
 
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
+    monkeypatch.setenv("CAO_AGENT_ID", sender.id)
     monkeypatch.setattr(
         server.db_module,
         "get_terminal_metadata",
@@ -50,7 +50,7 @@ def test_assign_allows_same_team_collaboration(monkeypatch):
 def test_assign_delivery_does_not_promise_hidden_send_message(monkeypatch):
     sent = {}
 
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
+    monkeypatch.setenv("CAO_AGENT_ID", "sender")
     monkeypatch.setattr(server, "ENABLE_SENDER_ID_INJECTION", True)
     monkeypatch.setattr(server, "_terminal_can_invoke_builtin", lambda terminal_id, tool: False)
     monkeypatch.setattr(
@@ -70,7 +70,7 @@ def test_assign_delivery_does_not_promise_hidden_send_message(monkeypatch):
 
     assert sent == {
         "receiver_agent_id": "receiver",
-        "message": "please help\n\n[Assigned by terminal terminal-sender.]",
+        "message": "please help\n\n[Assigned by agent sender.]",
     }
     assert "send_message" not in sent["message"]
 
@@ -80,7 +80,7 @@ def test_assign_rejects_different_or_missing_team_before_terminal_creation(monke
     receiver = _agent("receiver", "other_team")
     create_terminal_calls = []
 
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
+    monkeypatch.setenv("CAO_AGENT_ID", sender.id)
     monkeypatch.setattr(
         server.db_module,
         "get_terminal_metadata",
@@ -123,7 +123,14 @@ def test_baton_create_rejects_different_team_before_service_call(monkeypatch):
     receiver = _agent("receiver", "other_team")
     service_calls = []
 
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
+    monkeypatch.setenv("CAO_AGENT_ID", sender.id)
+    monkeypatch.setattr(
+        server.db_module,
+        "list_terminals_by_agent",
+        lambda agent_id: [{"id": "terminal-sender", "agent_id": sender.id}]
+        if agent_id == sender.id
+        else [],
+    )
     monkeypatch.setattr(
         server.db_module,
         "get_terminal_metadata",
@@ -156,7 +163,14 @@ def test_baton_pass_rejects_missing_team_before_service_call(monkeypatch):
     receiver = _agent("receiver", None)
     service_calls = []
 
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-sender")
+    monkeypatch.setenv("CAO_AGENT_ID", sender.id)
+    monkeypatch.setattr(
+        server.db_module,
+        "list_terminals_by_agent",
+        lambda agent_id: [{"id": "terminal-sender", "agent_id": sender.id}]
+        if agent_id == sender.id
+        else [],
+    )
     monkeypatch.setattr(
         server.db_module,
         "get_terminal_metadata",

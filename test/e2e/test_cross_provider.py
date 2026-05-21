@@ -56,7 +56,7 @@ DATA_ANALYST_KEYWORDS = [
     "analysis",
     "calculate",
     "send_message",
-    "CAO_TERMINAL_ID",
+    "CAO_AGENT_ID",
 ]
 
 

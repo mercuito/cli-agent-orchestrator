@@ -42,8 +42,8 @@ cao agent start developer
 ```bash
 # In the tmux window, paste your prompt at the Codex prompt.
 
-# Optional: print the CAO terminal id (useful for API automation / MCP)
-echo "$CAO_TERMINAL_ID"
+# Optional: print the CAO agent id (useful for API automation / MCP)
+echo "$CAO_AGENT_ID"
 ```
 
 Optional automation from another terminal (send input + get extracted last message):

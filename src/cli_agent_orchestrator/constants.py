@@ -40,6 +40,9 @@ DEFAULT_PROVIDER = ProviderType.KIRO_CLI.value
 # =============================================================================
 # Tmux Configuration
 # =============================================================================
+# Agent-visible CAO identity injected into managed terminal environments.
+CAO_AGENT_ID_ENV = "CAO_AGENT_ID"
+
 # Maximum lines of terminal history to capture when analyzing output
 # Higher values provide more context but increase memory usage
 TMUX_HISTORY_LINES = 200

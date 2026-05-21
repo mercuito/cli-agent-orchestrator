@@ -15,6 +15,7 @@ from typing import Optional
 from libtmux.exc import LibTmuxException
 
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.constants import CAO_AGENT_ID_ENV
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
@@ -169,7 +170,7 @@ class CopilotCliProvider(BaseProvider):
             ).items():
                 entry = dict(config)
                 env = dict(entry.get("env", {}))
-                env["CAO_TERMINAL_ID"] = self.terminal_id
+                env[CAO_AGENT_ID_ENV] = self._agent_id or self.terminal_id
                 entry["env"] = env
                 entry["disabled"] = not bool(entry.pop("enabled", True))
                 merged_servers[name] = entry

@@ -74,7 +74,7 @@ src/cli_agent_orchestrator/
 │   ├── inbox_service.py   # Terminal-to-terminal messaging with watchdog
 │   └── flow_service.py    # Scheduled flow execution
 ├── clients/               # Client Layer: External systems
-│   ├── tmux.py            # Tmux operations (sets CAO_TERMINAL_ID, send_keys, send_keys_via_paste for bracketed paste)
+│   ├── tmux.py            # Tmux operations (sets CAO_AGENT_ID, send_keys, send_keys_via_paste for bracketed paste)
 │   └── database.py        # SQLite with terminals & inbox_messages tables
 ├── providers/             # Provider Layer: CLI tool integration
 │   ├── base.py            # Abstract provider interface (mark_input_received hook)
@@ -105,7 +105,7 @@ agent_runtime.ensure_started()
   ↓
 terminal_service.create_terminal_for_agent()
   ↓
-tmux_client.create_session(terminal_id)  # Sets CAO_TERMINAL_ID
+tmux_client.create_session(terminal_id)  # Sets CAO_AGENT_ID
   ↓
 database.create_terminal()
   ↓
@@ -120,9 +120,9 @@ Returns Terminal model
 
 ### Inbox Message Flow
 ```
-MCP: send_message(receiver_id, message)
+MCP: send_message(receiver_agent_id, body)
   ↓
-API: POST /terminals/{receiver_id}/inbox/messages
+API: POST /agents/{receiver_agent_id}/inbox/messages
   ↓
 database.create_inbox_message()  # Status: PENDING
   ↓
@@ -142,7 +142,7 @@ MCP: handoff(agent_id, message)
   ↓
 API: POST /sessions/{session}/terminals
   ↓
-Wait for terminal IDLE
+Wait for agent IDLE
   ↓
 API: POST /terminals/{id}/input
   ↓

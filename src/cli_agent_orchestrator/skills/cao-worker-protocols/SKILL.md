@@ -47,24 +47,24 @@ Do not call `send_message` for ordinary handoff completion unless the task expli
 
 ## Rules for Assigned Tasks
 
-When the task came through `assign`, the task message should include a callback terminal ID. After you finish the work:
+When the task came through `assign`, the task message should include a callback agent ID. After you finish the work:
 
-1. Extract the callback terminal ID from the task message.
+1. Extract the callback agent ID from the task message.
 2. Format the result clearly and concisely.
 3. If `send_message` is available, call
-   `send_message(receiver_id=..., message=...)` with the completed result.
+   `send_message(receiver_agent_id=..., body=...)` with the completed result.
    If it is not available, provide the result in your normal response and state
    that callback delivery is unavailable in this role.
 
-`send_message` is governed by workspace team policy. A callback terminal ID
+`send_message` is governed by workspace team policy. A callback agent ID
 identifies the intended route, but CAO can still reject the message if the
 agents are no longer in the same workspace team.
 
-When `send_message` is available, do not stop after writing a normal response if the assignment explicitly requires a callback. The requesting terminal depends on that callback delivery to receive the result. If `send_message` is not available, provide the result in your normal response and state that callback delivery is unavailable in this role.
+When `send_message` is available, do not stop after writing a normal response if the assignment explicitly requires a callback. The requesting agent depends on that callback delivery to receive the result. If `send_message` is not available, provide the result in your normal response and state that callback delivery is unavailable in this role.
 
-Assigned tasks may include callback instructions directly in the main message or in an appended suffix such as `[Assigned by terminal ...]`. Treat that callback terminal ID as authoritative.
+Assigned tasks may include callback instructions directly in the main message or in an appended suffix such as `[Assigned by agent ...]`. Treat that callback agent ID as authoritative.
 
-Your own `CAO_TERMINAL_ID` identifies your terminal, not the callback target. Send results to the receiver specified in the task.
+Your own `CAO_AGENT_ID` identifies your agent, not the callback target. Send results to the receiver specified in the task.
 
 ## Rules for Baton-Controlled Tasks
 
@@ -75,7 +75,7 @@ the next baton action.
 
 Use baton tools this way when they are available:
 
-- `pass_baton`: send control to another agent for their next move.
+- `pass_baton`: send control to another terminal holder for its next move.
 - `return_baton`: send control back to the previous holder on the return stack.
 - `complete_baton`: mark the tracked obligation done and notify the originator.
 - `block_baton`: mark the tracked obligation blocked when you cannot continue.
@@ -89,7 +89,7 @@ makes the workflow harder to recover and can trigger misleading nudges.
 
 ### Pass, Return, Complete, or Block
 
-Pass the baton when another agent owes the next move. Include a self-contained
+Pass the baton when another terminal holder owes the next move. Include a self-contained
 message with the baton id, task context, artifacts to inspect, and the expected
 next action.
 
@@ -107,7 +107,7 @@ again. For example, reviewers should return findings or approval to the
 implementer instead of messaging the supervisor directly.
 
 Complete the baton when the tracked workflow is done from your side and no
-other worker owes a next move. Include the final result and artifact paths.
+other holder owes a next move. Include the final result and artifact paths.
 
 Block the baton when you cannot proceed without outside intervention. State the
 blocking reason, what was already done, and what decision or input is needed.
@@ -134,7 +134,7 @@ If the task asks you to create files, write them before reporting completion. Wh
 
 ## Reliability Guidelines
 
-- Parse the callback terminal ID before you start expensive work.
+- Parse the callback agent ID before you start expensive work.
 - If `send_message` is available and the task requires a callback, call it directly rather than ending with prose alone.
 - If you are holding a baton and baton tools are available, use the baton transfer tool instead of `send_message` for pass, return, complete, or block.
 - Keep callback messages structured so the supervisor can merge them into a larger workflow.

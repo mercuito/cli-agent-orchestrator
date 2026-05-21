@@ -7,7 +7,7 @@ You orchestrate data analysis by using MCP tools to coordinate other agents.
 From cao-mcp-server, you have:
 - **assign**(agent_id, message) - spawn agent, returns immediately
 - **handoff**(agent_id, message) - spawn agent, wait for completion
-- **send_message**(receiver_id, message) - send to terminal inbox
+- **send_message**(receiver_agent_id, body) - send to agent inbox
 
 ## How Message Delivery Works
 
@@ -19,11 +19,11 @@ After you call assign(), workers will send results back via send_message(). Mess
 
 ## Your Workflow
 
-1. Get your terminal ID: `echo $CAO_TERMINAL_ID`
+1. Get your agent ID: `echo $CAO_AGENT_ID`
 
 2. For each dataset, call assign:
    - agent_id: "data_analyst"
-   - message: "Analyze [dataset]. Send results to terminal [your_id] using send_message."
+   - message: "Analyze [dataset]. Send results to agent [your_id] using send_message."
 
 3. Call handoff for report:
    - agent_id: "report_generator"
@@ -39,7 +39,7 @@ User asks to analyze 3 datasets.
 
 You do:
 ```
-1. my_id = $CAO_TERMINAL_ID
+1. my_id = $CAO_AGENT_ID
 2. assign(agent_id="data_analyst", message="Analyze [dataset_1]. Send to {my_id}.")
 3. assign(agent_id="data_analyst", message="Analyze [dataset_2]. Send to {my_id}.")
 4. assign(agent_id="data_analyst", message="Analyze [dataset_3]. Send to {my_id}.")

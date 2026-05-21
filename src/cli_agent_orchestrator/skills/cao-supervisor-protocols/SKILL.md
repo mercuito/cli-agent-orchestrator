@@ -19,7 +19,7 @@ When granted by `cao-mcp-server`, supervisors may orchestrate work with:
 
 - `assign(agent_id, message)` for asynchronous work that returns immediately.
 - `handoff(agent_id, message)` for synchronous work that blocks until the worker finishes.
-- `send_message(receiver_id, message)` for direct messages to an existing terminal.
+- `send_message(receiver_agent_id, body)` for direct messages to an existing agent.
 
 Some CAO deployments and team roles may also expose baton tools:
 
@@ -34,7 +34,7 @@ Some CAO deployments and team roles may also expose baton tools:
 Baton tools are the planned transfer surface for tracked async control. Use
 them when they are available and the workflow asks for baton control.
 
-Your own terminal ID is available in the `CAO_TERMINAL_ID` environment variable. Use it when you need workers to send results back to you.
+Your own agent ID is available in the `CAO_AGENT_ID` environment variable. Use it when you need workers to send results back to you.
 
 ## Choosing Between Assign, Handoff, and Baton
 
@@ -85,7 +85,7 @@ In a review loop, expect this shape:
 
 ```text
 supervisor:  create_baton(holder=implementer)
-implementer: pass_baton(to=reviewer)
+implementer: pass_baton(receiver_id=reviewer_terminal)
 reviewer:    return_baton()
 implementer: complete_baton()
 ```
@@ -114,16 +114,16 @@ If you need multiple worker results, dispatch them all first, then end the turn.
 
 ## Callback Pattern
 
-When you use `assign`, include the callback terminal ID in the task message.
-Tell the worker exactly which terminal should receive the result and instruct
+When you use `assign`, include the callback agent ID in the task message.
+Tell the worker exactly which agent should receive the result and instruct
 the worker to use `send_message` only if that tool is available to them. The
-callback is still subject to CAO workspace team policy; terminal ID possession
+callback delivery is still subject to CAO workspace team policy; agent ID possession
 is not sufficient authority if the agents are not in the same team.
 
 Example pattern:
 
 ```text
-Analyze dataset A. Send results back to terminal abc123 if send_message is available; otherwise provide the result in your normal response.
+Analyze dataset A. Send results back to agent abc123 if send_message is available; otherwise provide the result in your normal response.
 ```
 
 Some CAO deployments also append an automatic callback suffix to assigned messages. Treat that appended context as helpful reinforcement, but still write task messages that are explicit and self-contained.
@@ -149,7 +149,7 @@ When sending direct messages, include enough context that the receiver can act w
 
 ## Practical Workflow
 
-1. Read or determine your terminal ID.
+1. Read or determine your agent ID.
 2. Dispatch asynchronous workers with `assign` and include callback instructions.
 3. If baton control is available and useful, create batons for async work that needs tracked ownership.
 4. Use `handoff`, when available, only for steps that must finish before you can continue.

@@ -35,7 +35,7 @@ def test_create_terminal_uses_agent_start_from_existing_terminal(mock_post, mock
         {"terminal": {"id": "terminal-2", "provider": "claude_code"}}
     )
 
-    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-1"}):
+    with patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor-1"}):
         terminal_id, provider = server._create_terminal("reviewer")
 
     assert (terminal_id, provider) == ("terminal-2", "claude_code")

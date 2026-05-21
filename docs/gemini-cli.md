@@ -93,15 +93,15 @@ MCP servers from agents are registered by writing directly to `~/.gemini/setting
     "cao-mcp-server": {
       "command": "npx",
       "args": ["-y", "cao-mcp-server"],
-      "env": { "CAO_TERMINAL_ID": "abc12345" }
+      "env": { "CAO_AGENT_ID": "abc12345" }
     }
   }
 }
 ```
 
-### CAO_TERMINAL_ID Forwarding
+### CAO_AGENT_ID Forwarding
 
-`CAO_TERMINAL_ID` is injected into the MCP server's `env` field in `settings.json`. This ensures tools like `handoff` and `assign` create new agent windows in the same tmux session.
+`CAO_AGENT_ID` is injected into the MCP server's `env` field in `settings.json`. This gives CAO MCP tools the durable caller identity they need for `handoff`, `assign`, and inbox routing.
 
 ### MCP Server Cleanup
 

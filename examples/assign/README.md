@@ -102,13 +102,13 @@ This blocks until report_generator completes and returns the template.
 ```
 Use assign for parallel tasks:
 
-1. Get your terminal ID: my_id = CAO_TERMINAL_ID
+1. Get your agent ID: my_id = CAO_AGENT_ID
 
 2. Assign with callback instructions:
    assign(
      agent_id="data_analyst",
      message="Analyze dataset [values]. 
-              Send results to terminal {my_id} using send_message."
+              Send results to agent {my_id} using send_message."
    )
 
 3. Continue immediately (non-blocking)
@@ -128,11 +128,11 @@ Use assign for parallel tasks:
 Use send_message to return results:
 
 send_message(
-  receiver_id="abc12345",
-  message="Dataset A analysis: mean=3.0, median=3.0, std=1.414"
+  receiver_agent_id="abc12345",
+  body="Dataset A analysis: mean=3.0, median=3.0, std=1.414"
 )
 
-Message will be delivered to terminal abc12345's inbox.
+Message will be delivered to agent abc12345's inbox.
 ```
 
 ## Agent Details
@@ -197,7 +197,7 @@ Generate a professional report with the analysis results.
 
 ### Step 1: Supervisor Gets Terminal ID
 ```
-Supervisor checks CAO_TERMINAL_ID (e.g., "super123")
+Supervisor checks CAO_AGENT_ID (e.g., "super123")
 Needs this for Data Analysts to send results back
 ```
 
@@ -226,9 +226,9 @@ Receives template back
 
 ### Step 4: Data Analysts Send Results Back
 ```
-Data Analyst 1 → send_message(receiver_id="super123", message="Dataset A results...")
-Data Analyst 2 → send_message(receiver_id="super123", message="Dataset B results...")
-Data Analyst 3 → send_message(receiver_id="super123", message="Dataset C results...")
+Data Analyst 1 → send_message(receiver_agent_id="super123", body="Dataset A results...")
+Data Analyst 2 → send_message(receiver_agent_id="super123", body="Dataset B results...")
+Data Analyst 3 → send_message(receiver_agent_id="super123", body="Dataset C results...")
 
 Messages queued in Supervisor's inbox
 ```
@@ -257,7 +257,7 @@ sequenceDiagram
 
     User->>Supervisor: Analyze 3 datasets & create report
     
-    Note over Supervisor: Get terminal ID: "super123"
+    Note over Supervisor: Get agent ID: "super123"
     
     Supervisor->>DA1: assign(Dataset A)
     Supervisor->>DA2: assign(Dataset B)
@@ -341,8 +341,8 @@ See `test/e2e/test_assign.py` for the test implementation.
 
 ## Tips
 
-- Always get your terminal ID before assigning
-- Include callback terminal ID in all assign messages
+- Always get your agent ID before assigning
+- Include callback agent ID in all assign messages
 - Assign all parallel tasks quickly (don't wait between assigns)
 - Use handoff for work that must complete before final assembly
 - Check inbox for incoming results from assigned workers

@@ -199,7 +199,7 @@ def send_handoff_message(terminal_id: str, message: str, provider: str) -> None:
     """Send a message to the terminal, with [CAO Handoff] prefix for codex."""
     if provider == "codex":
         full_message = (
-            "[CAO Handoff] Supervisor terminal ID: test-supervisor-e2e. "
+            "[CAO Handoff] Supervisor agent ID: test-supervisor-e2e. "
             "This is a blocking handoff \u2014 the orchestrator will automatically "
             "capture your response when you finish. Complete the task and output "
             "your results directly. Do NOT use send_message to notify the supervisor "

@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+OLD_TERMINAL_ENV = "CAO_" + "TERMINAL_ID"
+
 
 def test_create_terminal_codex_sets_codex_home_env(
     tmp_path: Path,
@@ -59,7 +61,12 @@ def test_create_terminal_codex_sets_codex_home_env(
 
         # Expect CODEX_HOME env to be passed through to tmux create_session
         create_kwargs = mock_tmux.create_session.call_args.kwargs
+        create_args = mock_tmux.create_session.call_args.args
+        assert create_args[2] == agent.id
         assert create_kwargs["environment"]["CODEX_HOME"] == str(codex_home)
+        # TmuxClient injects CAO_AGENT_ID after merging provider runtime env.
+        assert "CAO_AGENT_ID" not in create_kwargs["environment"]
+        assert OLD_TERMINAL_ENV not in create_kwargs["environment"]
 
 
 def test_create_terminal_raw_codex_runtime_has_no_agent_launch_context(tmp_path: Path):
@@ -209,7 +216,12 @@ def test_create_terminal_agent_codex_runtime_passes_provider_data_dir(
     assert db_create.call_args.kwargs["agent_id"] == "implementation_partner"
     assert db_create.call_args.kwargs["workspace_context_id"] == default_context_id
     create_kwargs = mock_tmux.create_session.call_args.kwargs
+    create_args = mock_tmux.create_session.call_args.args
+    assert create_args[2] == "implementation_partner"
     assert create_kwargs["environment"]["CODEX_HOME"] == str(codex_home)
+    # TmuxClient injects CAO_AGENT_ID after merging provider runtime env.
+    assert "CAO_AGENT_ID" not in create_kwargs["environment"]
+    assert OLD_TERMINAL_ENV not in create_kwargs["environment"]
 
 
 def test_create_terminal_agent_launch_context_uses_resolved_launch_values(

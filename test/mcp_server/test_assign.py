@@ -71,16 +71,16 @@ class TestAssignSenderIdInjection:
         mock_can_invoke.return_value = True
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
-            _same_team_guard("supervisor-abc123"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
         ):
             result = _assign_impl("developer", "Analyze the logs")
 
         assert result["success"] is True
         sent_message = mock_send.call_args[0][1]
         assert sent_message.startswith("Analyze the logs")
-        assert "[Assigned by terminal supervisor-abc123" in sent_message
-        assert "send results back to terminal supervisor-abc123 using send_message]" in sent_message
+        assert "[Assigned by agent supervisor" in sent_message
+        assert "send_message(receiver_agent_id='supervisor', body=...)]" in sent_message
 
     @patch("cli_agent_orchestrator.mcp_server.server.ENABLE_SENDER_ID_INJECTION", False)
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
@@ -93,8 +93,8 @@ class TestAssignSenderIdInjection:
         mock_send.return_value = None
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "supervisor-abc123"}),
-            _same_team_guard("supervisor-abc123"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
         ):
             result = _assign_impl("developer", "Analyze the logs")
 
@@ -106,7 +106,7 @@ class TestAssignSenderIdInjection:
     @patch("cli_agent_orchestrator.mcp_server.server._send_to_inbox")
     @patch("cli_agent_orchestrator.mcp_server.server._create_terminal")
     def test_assign_sender_id_fallback_unknown(self, mock_create, mock_send):
-        """When CAO_TERMINAL_ID is not set, team-aware assignment is rejected."""
+        """When CAO_AGENT_ID is not set, team-aware assignment is rejected."""
         from cli_agent_orchestrator.mcp_server.server import _assign_impl
 
         mock_create.return_value = ("worker-3", "codex")
@@ -116,7 +116,7 @@ class TestAssignSenderIdInjection:
             result = _assign_impl("developer", "Build feature X")
 
         assert result["success"] is False
-        assert "sender terminal is unknown" in result["message"]
+        assert "sender agent is unknown" in result["message"]
         mock_create.assert_not_called()
         mock_send.assert_not_called()
 
@@ -132,14 +132,14 @@ class TestAssignSenderIdInjection:
         original = "Do the task described in /path/to/task.md"
 
         with (
-            patch.dict(os.environ, {"CAO_TERMINAL_ID": "sup-111"}),
-            _same_team_guard("sup-111"),
+            patch.dict(os.environ, {"CAO_AGENT_ID": "supervisor"}),
+            _same_team_guard("supervisor-terminal"),
         ):
             _assign_impl("developer", original)
 
         sent_message = mock_send.call_args[0][1]
         assert sent_message.startswith(original)
-        assert sent_message.index("[Assigned by terminal") > len(original)
+        assert sent_message.index("[Assigned by agent") > len(original)
 
 
 class TestBuildAssignDescription:
@@ -186,15 +186,15 @@ class TestBuildAssignDescription:
         assert "automatically be appended" in desc
 
     def test_sender_id_enabled_omits_manual_callback_instructions(self):
-        """When injection is on, no manual CAO_TERMINAL_ID instructions are included."""
+        """When injection is on, no manual CAO_AGENT_ID instructions are included."""
         desc = _build_assign_description(enable_sender_id=True, enable_workdir=False)
-        assert "CAO_TERMINAL_ID" not in desc
+        assert "CAO_AGENT_ID" not in desc
         assert "send results back" not in desc
 
     def test_sender_id_disabled_includes_manual_callback_instructions(self):
         """When injection is off, the description instructs the caller to include callback info."""
         desc = _build_assign_description(enable_sender_id=False, enable_workdir=False)
-        assert "CAO_TERMINAL_ID" in desc
+        assert "CAO_AGENT_ID" in desc
         assert "send results back" in desc
         assert "Example message:" in desc
 
@@ -253,7 +253,7 @@ class TestBuildAssignDescription:
         assert "automatically be appended" in desc
         assert "## Working Directory" in desc
         assert "working_directory:" in desc
-        assert "CAO_TERMINAL_ID" not in desc
+        assert "CAO_AGENT_ID" not in desc
 
     def test_sender_id_true_workdir_false(self):
         """Injection on, workdir off: no Working Directory section."""
@@ -265,14 +265,14 @@ class TestBuildAssignDescription:
     def test_sender_id_false_workdir_true(self):
         """Injection off, workdir on: manual callback instructions + Working Directory."""
         desc = _build_assign_description(enable_sender_id=False, enable_workdir=True)
-        assert "CAO_TERMINAL_ID" in desc
+        assert "CAO_AGENT_ID" in desc
         assert "## Working Directory" in desc
         assert "working_directory:" in desc
 
     def test_sender_id_false_workdir_false(self):
         """Both flags off: manual callback instructions, no Working Directory section."""
         desc = _build_assign_description(enable_sender_id=False, enable_workdir=False)
-        assert "CAO_TERMINAL_ID" in desc
+        assert "CAO_AGENT_ID" in desc
         assert "## Working Directory" not in desc
         assert "working_directory:" not in desc
 

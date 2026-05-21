@@ -192,7 +192,7 @@ async def test_provider_preflight_failure_stops_mcp_startup_before_serving_tools
     assert "unknown hook: missing_hook" in str(exc_info.value)
 
     mcp = FastMCP("provider-contract-builtins", mask_error_details=False)
-    monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-a")
+    monkeypatch.setenv("CAO_AGENT_ID", "terminal-a")
     monkeypatch.setattr(server, "mcp", mcp)
     run = Mock()
     monkeypatch.setattr(mcp, "run", run)

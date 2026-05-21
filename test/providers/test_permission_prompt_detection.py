@@ -207,7 +207,7 @@ class TestNonPermissionCases:
     def test_n9_message_received(self, mock_tmux):
         """N9: Inbox message delivered, agent idle."""
         mock_tmux.get_history.return_value = (
-            "[developer] 12% > [Message from terminal 9445aa60] " "Hello from supervisor"
+            "[developer] 12% > [Message from agent 9445aa60] " "Hello from supervisor"
         )
         provider = make_provider("developer")
         assert provider.get_status() == TerminalStatus.IDLE
@@ -309,8 +309,8 @@ class TestPermissionPromptEdgeCases:
             "\r\x1b[35C\r\x1b[K"
             "\x1b[38;5;6m[cao-code-explorer-expert] \x1b[0m\x1b[32m15% \x1b[0m"
             "\x1b[38;5;39m\u03bb \x1b[0m\x1b[38;5;93m> \x1b[0m"
-            "[Assigned by terminal 63878fc7. When done, send results back to "
-            "terminal 63878fc7 using send_message]"
+            "[Assigned by agent 63878fc7. When done, send results back using "
+            "send_message(receiver_agent_id='63878fc7', body=...)]"
         )
         provider = make_provider("cao-code-explorer-expert")
         assert provider.get_status() == TerminalStatus.WAITING_USER_ANSWER

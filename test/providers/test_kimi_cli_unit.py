@@ -574,7 +574,7 @@ class TestKimiCliProviderBuildCommand:
 
     @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_with_mcp_config(self, mock_load, tmp_path):
-        """Test command with MCP server configuration including CAO_TERMINAL_ID injection."""
+        """Test command with MCP server configuration including CAO_AGENT_ID injection."""
         mock_profile = MagicMock()
         mock_profile.prompt = None
         mock_profile.mcp_servers = {"test-server": {"command": "npx", "args": ["test"]}}
@@ -587,9 +587,9 @@ class TestKimiCliProviderBuildCommand:
 
         assert "--mcp-config" in command
         assert "test-server" in command
-        # CAO_TERMINAL_ID should be injected into MCP server env
-        assert "CAO_TERMINAL_ID" in command
-        assert "term-1" in command
+        # CAO_AGENT_ID should be injected into MCP server env
+        assert "CAO_AGENT_ID" in command
+        assert "dev" in command
         # No --config flag (modifies config.toml directly to avoid breaking OAuth)
         assert "--config" not in command
 
@@ -640,12 +640,12 @@ class TestKimiCliProviderBuildCommand:
 
         assert "--mcp-config" in command
         assert "my-server" in command
-        # CAO_TERMINAL_ID should be injected into MCP server env
-        assert "CAO_TERMINAL_ID" in command
+        # CAO_AGENT_ID should be injected into MCP server env
+        assert "CAO_AGENT_ID" in command
 
     @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_mcp_preserves_existing_env(self, mock_load):
-        """Test that CAO_TERMINAL_ID injection preserves existing env vars."""
+        """Test that CAO_AGENT_ID injection preserves existing env vars."""
         mock_profile = MagicMock()
         mock_profile.prompt = None
         mock_profile.mcp_servers = {
@@ -668,18 +668,18 @@ class TestKimiCliProviderBuildCommand:
         config = json.loads(mcp_json)
 
         assert config["test-server"]["env"]["MY_VAR"] == "my_value"
-        assert config["test-server"]["env"]["CAO_TERMINAL_ID"] == "abc123"
+        assert config["test-server"]["env"]["CAO_AGENT_ID"] == "dev"
 
     @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
-    def test_build_command_mcp_does_not_override_existing_terminal_id(self, mock_load):
-        """Test that existing CAO_TERMINAL_ID in env is not overwritten."""
+    def test_build_command_mcp_overrides_existing_cao_agent_id(self, mock_load):
+        """Managed CAO identity must override any MCP env value from agent config."""
         mock_profile = MagicMock()
         mock_profile.prompt = None
         mock_profile.mcp_servers = {
             "test-server": {
                 "command": "npx",
                 "args": ["test"],
-                "env": {"CAO_TERMINAL_ID": "existing-id"},
+                "env": {"CAO_AGENT_ID": "existing-id"},
             }
         }
         mock_load.return_value = mock_profile
@@ -693,8 +693,7 @@ class TestKimiCliProviderBuildCommand:
         mcp_json = parts[1].strip().strip("'")
         config = json.loads(mcp_json)
 
-        # Should keep the existing value, not override
-        assert config["test-server"]["env"]["CAO_TERMINAL_ID"] == "existing-id"
+        assert config["test-server"]["env"]["CAO_AGENT_ID"] == "dev"
 
     @patch("cli_agent_orchestrator.providers.kimi_cli.load_agent")
     def test_build_command_mcp_tool_timeout(self, mock_load, tmp_path):

@@ -107,9 +107,9 @@ class NewCliProvider(BaseProvider):
                     command_parts.extend(["--system-prompt", agent.prompt])
 
                 # Add MCP config if present
-                # Inject CAO_TERMINAL_ID so MCP servers can identify this terminal
+                # Inject CAO_AGENT_ID so MCP servers can identify this agent
                 if agent.mcp_servers:
-                    # Build MCP config dict, injecting CAO_TERMINAL_ID
+                    # Build MCP config dict, injecting CAO_AGENT_ID
                     pass  # Implementation depends on CLI's MCP config format
 
             except Exception as e:
@@ -257,6 +257,6 @@ By checking COMPLETED first (response marker + idle prompt), you correctly detec
 2. Performance — patterns compiled once, not per-call
 3. Visibility — easy to see all patterns in one place at the top of the file
 
-### Why inject CAO_TERMINAL_ID into MCP env?
+### Why inject CAO_AGENT_ID into MCP env?
 
-MCP servers (like cao-mcp-server) need to know which terminal they're running in for handoff/assign operations. Some CLIs don't forward parent env vars to MCP subprocesses, so you must inject it explicitly.
+MCP servers (like cao-mcp-server) need to know which durable agent they're running for during handoff/assign operations. Some CLIs don't forward parent env vars to MCP subprocesses, so you must inject it explicitly.

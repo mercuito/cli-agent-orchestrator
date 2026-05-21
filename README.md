@@ -278,21 +278,21 @@ CAO provides a local HTTP server that processes orchestration requests. CLI agen
 
 ### How It Works
 
-Each agent terminal is assigned a unique `CAO_TERMINAL_ID` environment variable. The server uses this ID to:
+Each agent terminal is assigned a unique `CAO_AGENT_ID` environment variable. The server uses this ID to:
 
 - Route messages between agents
 - Track terminal status (IDLE, PROCESSING, COMPLETED, ERROR)
 - Manage terminal-to-terminal communication via inbox
 - Coordinate orchestration operations
 
-When an agent calls an MCP tool, the server identifies the caller by their `CAO_TERMINAL_ID` and orchestrates accordingly.
+When an agent calls an MCP tool, the server identifies the caller by their `CAO_AGENT_ID` and orchestrates accordingly.
 
 ### Provider Selection (Assign/Handoff)
 
 When `handoff`/`assign` spawns a worker terminal, CAO determines which provider to use:
 
 1. If the worker's `agent.toml` sets `cli_provider = "..."`, that provider is used.
-2. Otherwise, if `CAO_TERMINAL_ID` is set (tool called from inside a CAO terminal), the worker inherits the caller's provider.
+2. Otherwise, if `CAO_AGENT_ID` is set (tool called from inside a CAO terminal), the worker inherits the caller's provider.
 3. Otherwise, CAO uses `DEFAULT_PROVIDER`.
 
 ### Orchestration Modes
@@ -317,7 +317,7 @@ Example: Sequential code review workflow
 
 - Creates a new terminal with the specified agent
 - Sends the task message with callback instructions
-- Returns immediately with the terminal ID
+- Returns immediately with the agent ID
 - Agent continues working in the background
 - Assigned agent sends results back to supervisor via `send_message` when complete
 - Messages are queued for delivery if the supervisor is busy (common in parallel workflows)

@@ -86,7 +86,7 @@ CAO injects `cao-mcp-server` at runtime via:
 
 Implementation:
 
-- Add `cao-mcp-server` with `CAO_TERMINAL_ID`
+- Add `cao-mcp-server` with `CAO_AGENT_ID`
 - Pass the merged MCP payload inline as JSON
 
 ## Configuration

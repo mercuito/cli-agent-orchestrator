@@ -104,9 +104,9 @@ The provider automatically modifies `~/.kimi/config.toml` to set `tool_call_time
 
 Without this override, the supervisor Kimi CLI agent receives a `ToolError("Timeout while calling MCP tool handoff")` after 60 seconds, even though the worker is still processing.
 
-### CAO_TERMINAL_ID Forwarding
+### CAO_AGENT_ID Forwarding
 
-Kimi CLI does not automatically forward parent shell environment variables to MCP subprocesses. The provider explicitly injects `CAO_TERMINAL_ID` into the `env` field of each MCP server config so that tools like `handoff` and `assign` can create new agent windows in the same tmux session (instead of creating separate sessions). Existing `env` entries are preserved, and an existing `CAO_TERMINAL_ID` value is never overwritten.
+Kimi CLI does not automatically forward parent shell environment variables to MCP subprocesses. The provider explicitly injects `CAO_AGENT_ID` into the `env` field of each MCP server config so CAO MCP tools have the durable caller identity they need for `handoff`, `assign`, and inbox routing. Existing non-CAO `env` entries are preserved, and CAO's managed identity overrides any configured `CAO_AGENT_ID` value.
 
 ## Command Flags
 

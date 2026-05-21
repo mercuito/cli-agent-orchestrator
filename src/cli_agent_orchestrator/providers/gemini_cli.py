@@ -38,6 +38,7 @@ from typing import Any, Mapping, Optional
 
 from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.constants import CAO_AGENT_ID_ENV
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
@@ -146,7 +147,7 @@ def _is_cao_managed_gemini_mcp_entry(entry: object) -> bool:
     env = entry.get("env")
     if not isinstance(env, dict):
         return False
-    return bool(env.get("CAO_MANAGED_MCP_SERVER") or env.get("CAO_TERMINAL_ID"))
+    return bool(env.get("CAO_MANAGED_MCP_SERVER") or env.get(CAO_AGENT_ID_ENV))
 
 
 class GeminiCliProvider(BaseProvider):
@@ -393,10 +394,10 @@ class GeminiCliProvider(BaseProvider):
                 "command": cfg.get("command", ""),
                 "args": cfg.get("args", []),
             }
-            # Forward CAO_TERMINAL_ID so MCP servers (e.g. cao-mcp-server)
-            # can identify the current terminal for handoff/assign operations.
+            # Forward CAO_AGENT_ID so MCP servers (e.g. cao-mcp-server)
+            # can identify the current agent for handoff/assign operations.
             env = dict(cfg.get("env", {}))
-            env["CAO_TERMINAL_ID"] = self.terminal_id
+            env[CAO_AGENT_ID_ENV] = self._agent_id or self.terminal_id
             env["CAO_MANAGED_MCP_SERVER"] = "1"
             entry["env"] = env
 

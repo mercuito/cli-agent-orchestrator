@@ -21,7 +21,7 @@ from cli_agent_orchestrator.agent import (
     load_agent_registry,
 )
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.constants import API_BASE_URL
+from cli_agent_orchestrator.constants import API_BASE_URL, CAO_AGENT_ID_ENV
 from cli_agent_orchestrator.inbox import (
     InboxReadError,
     InboxReplyError,
@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 # Environment variable to enable/disable working_directory parameter
 ENABLE_WORKING_DIRECTORY = os.getenv("CAO_ENABLE_WORKING_DIRECTORY", "false").lower() == "true"
 
-# Environment variable to enable/disable automatic sender terminal ID injection
+# Environment variable to enable/disable automatic sender agent ID injection
 ENABLE_SENDER_ID_INJECTION = os.getenv("CAO_ENABLE_SENDER_ID_INJECTION", "false").lower() == "true"
 
 # Create MCP server
@@ -86,7 +86,7 @@ mcp = FastMCP(
 
     - Use specific agents (provider is inferred from profile metadata when set)
     - Provide clear and concise messages
-    - Ensure you're running within a CAO terminal (CAO_TERMINAL_ID must be set)
+    - Ensure you're running within a CAO terminal (CAO_AGENT_ID must be set)
     """,
 )
 
@@ -168,7 +168,7 @@ def _register_tools(
     built_in_names = built_in_cao_tool_names(pending)
     if not terminal_id:
         logger.warning(
-            "No CAO_TERMINAL_ID is available; ToolService cannot resolve MCP "
+            "No CAO terminal context is available; ToolService cannot resolve MCP "
             "tool registration, so built-in CAO MCP tools are not registered"
         )
         allowed: set[str] = set()
@@ -428,22 +428,10 @@ def _require_workspace_team_collaboration(receiver_agent_id: str) -> None:
 
 
 def _sender_agent_id_for_workspace_team_guard() -> str:
-    sender_terminal_id = os.getenv("CAO_TERMINAL_ID")
-    if not sender_terminal_id:
+    sender_agent_id = os.getenv(CAO_AGENT_ID_ENV)
+    if not sender_agent_id or not sender_agent_id.strip():
         raise WorkspaceConfigError(
-            "Workspace team collaboration rejected: sender terminal is unknown"
-        )
-    sender_metadata = db_module.get_terminal_metadata(sender_terminal_id)
-    if sender_metadata is None:
-        raise WorkspaceConfigError(
-            f"Workspace team collaboration rejected: sender terminal {sender_terminal_id} "
-            "is unknown"
-        )
-    sender_agent_id = sender_metadata.get("agent_id")
-    if not isinstance(sender_agent_id, str) or not sender_agent_id.strip():
-        raise WorkspaceConfigError(
-            f"Workspace team collaboration rejected: sender terminal {sender_terminal_id} "
-            "has no CAO agent"
+            "Workspace team collaboration rejected: sender agent is unknown"
         )
     return sender_agent_id.strip()
 
@@ -483,9 +471,9 @@ def _deliver_handoff_payload(terminal_id: str, provider: str, message: str) -> N
     # this is a blocking handoff and should simply output results rather than
     # attempting to call send_message back to the supervisor.
     if provider == "codex":
-        supervisor_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
+        supervisor_id = os.environ.get(CAO_AGENT_ID_ENV, "unknown")
         handoff_message = (
-            f"[CAO Handoff] Supervisor terminal ID: {supervisor_id}. "
+            f"[CAO Handoff] Supervisor agent ID: {supervisor_id}. "
             "This is a blocking handoff — the orchestrator will automatically "
             "capture your response when you finish. Complete the task and output "
             "your results directly. Do NOT use send_message to notify the supervisor "
@@ -503,19 +491,20 @@ def _deliver_assign_payload(terminal_id: str, message: str) -> None:
 
     Routing via the inbox keeps assign on the same channel as send_message
     so monitoring sessions capture it. The supervisor is the sender (via
-    CAO_TERMINAL_ID). Callback guidance is appended only when ToolService says
+    CAO_AGENT_ID). Callback guidance is appended only when ToolService says
     the receiving terminal can invoke send_message.
     """
-    # Auto-inject sender terminal ID suffix when enabled
+    # Auto-inject sender agent ID suffix when enabled
     if ENABLE_SENDER_ID_INJECTION:
-        sender_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
+        sender_id = os.environ.get(CAO_AGENT_ID_ENV, "unknown")
         if _terminal_can_invoke_builtin(terminal_id, "send_message"):
             message += (
-                f"\n\n[Assigned by terminal {sender_id}. "
-                f"When done, send results back to terminal {sender_id} using send_message]"
+                f"\n\n[Assigned by agent {sender_id}. "
+                "When done, send results back using "
+                f"send_message(receiver_agent_id={sender_id!r}, body=...)]"
             )
         else:
-            message += f"\n\n[Assigned by terminal {sender_id}.]"
+            message += f"\n\n[Assigned by agent {sender_id}.]"
 
     _send_to_inbox(_agent_id_for_terminal(terminal_id), message)
 
@@ -531,7 +520,7 @@ def _send_to_inbox(receiver_agent_id: str, body: str) -> Dict[str, Any]:
         Dict with message details
 
     Raises:
-        ValueError: If CAO_TERMINAL_ID not set
+        ValueError: If CAO_AGENT_ID not set
         Exception: If API call fails
     """
     sender_agent_id = _sender_agent_id_for_workspace_team_guard()
@@ -553,6 +542,30 @@ def _agent_id_for_terminal(terminal_id: str) -> str:
     if not isinstance(agent_id, str) or not agent_id.strip():
         raise ValueError(f"Terminal {terminal_id!r} has no CAO agent")
     return agent_id.strip()
+
+
+def _require_cao_agent_id() -> str:
+    agent_id = os.getenv(CAO_AGENT_ID_ENV)
+    if not agent_id or not agent_id.strip():
+        raise ValueError("CAO_AGENT_ID not set - CAO MCP tools must run inside a CAO terminal")
+    return agent_id.strip()
+
+
+def _terminal_id_for_agent(agent_id: str) -> str:
+    terminals = db_module.list_terminals_by_agent(agent_id)
+    if not terminals:
+        raise ValueError(
+            f"CAO_AGENT_ID {agent_id!r} has no live terminal - "
+            "CAO MCP tools must run inside a managed CAO terminal"
+        )
+    terminal_id = terminals[0].get("id")
+    if not isinstance(terminal_id, str) or not terminal_id.strip():
+        raise ValueError(f"CAO agent {agent_id!r} has no resolvable terminal")
+    return terminal_id.strip()
+
+
+def _current_terminal_id() -> str:
+    return _terminal_id_for_agent(_require_cao_agent_id())
 
 
 def _extract_error_detail(response: requests.Response, fallback: str) -> str:
@@ -693,7 +706,7 @@ if ENABLE_WORKING_DIRECTORY:
 
         ## Requirements
 
-        - Must be called from within a CAO terminal (CAO_TERMINAL_ID environment variable)
+        - Must be called from within a CAO terminal (CAO_AGENT_ID environment variable)
         - Target session must exist and be accessible
         - If working_directory is provided, it must exist and be accessible
 
@@ -740,7 +753,7 @@ else:
 
         ## Requirements
 
-        - Must be called from within a CAO terminal (CAO_TERMINAL_ID environment variable)
+        - Must be called from within a CAO terminal (CAO_AGENT_ID environment variable)
         - Target session must exist and be accessible
 
         Args:
@@ -764,7 +777,7 @@ def _assign_impl(
         # Create terminal
         terminal_id, _ = _create_terminal(agent_id, working_directory)
 
-        # Deliver via inbox (auto-injects sender terminal ID suffix when enabled)
+        # Deliver via inbox (auto-injects sender agent ID suffix when enabled)
         _deliver_assign_payload(terminal_id, message)
 
         return {
@@ -784,7 +797,7 @@ def _build_assign_description(enable_sender_id: bool, enable_workdir: bool) -> s
         desc = """\
 Assigns a task to another agent without blocking.
 
-The sender's terminal ID will automatically be appended to the message. Callback instructions
+The sender's agent ID will automatically be appended to the message. Callback instructions
 are appended only when the receiving terminal is allowed to invoke the callback tool. Callback
 delivery still goes through workspace team message policy and may be rejected if the agents are
 not in the same workspace team."""
@@ -792,12 +805,12 @@ not in the same workspace team."""
         desc = """\
 Assigns a task to another agent without blocking.
 
-In the message to the worker agent include the terminal ID that should receive results. Tell the
+In the message to the worker agent include the agent ID that should receive results. Tell the
 worker to use send_message only when that tool is available to them; otherwise they should provide
 results through their normal visible response channel.
-**IMPORTANT**: The terminal id of each agent is available in environment variable CAO_TERMINAL_ID.
-When assigning, first find out your own CAO_TERMINAL_ID value, then include the terminal_id value in the message to the worker agent for callback routing. Terminal id possession is not authorization; send_message is subject to same-workspace-team policy and may be rejected.
-Example message: "Analyze the logs. When done, send results back to terminal ee3f93b3 if send_message is available; otherwise provide the result in your normal response.\""""
+**IMPORTANT**: The durable CAO agent ID is available in environment variable CAO_AGENT_ID.
+When assigning, first find out your own CAO_AGENT_ID value, then include the receiver_agent_id value in the message to the worker agent for callback routing. Agent id possession is not authorization; send_message is subject to same-workspace-team policy and may be rejected.
+Example message: "Analyze the logs. When done, send results back using send_message(receiver_agent_id='supervisor', body=...) if send_message is available; otherwise provide the result in your normal response.\""""
 
     if enable_workdir:
         desc += """
@@ -914,16 +927,16 @@ async def terminate(
 def _send_message_impl(receiver_agent_id: str, body: str) -> Dict[str, Any]:
     """Implementation of send_message logic."""
     try:
-        # Auto-inject sender terminal ID suffix when enabled
+        # Auto-inject sender agent ID suffix when enabled
         if ENABLE_SENDER_ID_INJECTION:
-            sender_id = os.environ.get("CAO_TERMINAL_ID", "unknown")
+            sender_id = os.environ.get(CAO_AGENT_ID_ENV, "unknown")
             if _agent_can_invoke_builtin(receiver_agent_id, "send_message"):
                 body += (
-                    f"\n\n[Message from terminal {sender_id}. "
-                    "Use send_message MCP tool for any follow-up work.]"
+                    f"\n\n[Message from agent {sender_id}. "
+                    "Use send_message(receiver_agent_id=..., body=...) for any follow-up work.]"
                 )
             else:
-                body += f"\n\n[Message from terminal {sender_id}.]"
+                body += f"\n\n[Message from agent {sender_id}.]"
 
         return _send_to_inbox(receiver_agent_id, body)
     except Exception as e:
@@ -976,8 +989,8 @@ async def send_message(
 def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:
     """Implementation of read_inbox_message logic."""
     try:
-        caller_terminal_id = _require_cao_terminal_id()
-        caller_agent_id = _agent_id_for_terminal(caller_terminal_id)
+        caller_agent_id = _require_cao_agent_id()
+        caller_terminal_id = _terminal_id_for_agent(caller_agent_id)
         read_result = read_inbox_notification(notification_id, caller_agent_id=caller_agent_id)
         if read_result.notification.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND:
             return _provider_read_result_to_dict(
@@ -1071,8 +1084,7 @@ async def read_inbox_message(
 def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, Any]:
     """Implementation of reply_to_inbox_message logic."""
     try:
-        caller_terminal_id = _require_cao_terminal_id()
-        caller_agent_id = _agent_id_for_terminal(caller_terminal_id)
+        caller_agent_id = _require_cao_agent_id()
         result = reply_inbox_notification(
             notification_id,
             body,
@@ -1123,13 +1135,6 @@ async def reply_to_inbox_message(
     return _reply_to_inbox_message_impl(notification_id, body)
 
 
-def _require_cao_terminal_id() -> str:
-    terminal_id = os.getenv("CAO_TERMINAL_ID")
-    if not terminal_id:
-        raise ValueError("CAO_TERMINAL_ID not set - baton tools must run inside a CAO terminal")
-    return terminal_id
-
-
 def _baton_to_dict(baton: Baton) -> Dict[str, Any]:
     return baton.model_dump(mode="json")
 
@@ -1151,7 +1156,7 @@ def _baton_success(baton: Baton, message: str) -> Dict[str, Any]:
 
 def _baton_error(exc: Exception) -> Dict[str, Any]:
     if isinstance(exc, ValueError):
-        error_type = "missing_context" if "CAO_TERMINAL_ID" in str(exc) else "invalid_request"
+        error_type = "missing_context" if "CAO_AGENT_ID" in str(exc) else "invalid_request"
     elif isinstance(exc, baton_service.BatonNotFound):
         error_type = "not_found"
     elif isinstance(exc, baton_service.BatonAuthorizationError):
@@ -1194,7 +1199,7 @@ def _create_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _require_cao_terminal_id()
+        actor_id = _current_terminal_id()
         _require_workspace_team_terminal_collaboration(holder_id)
         baton = baton_service.create_baton(
             title=title,
@@ -1217,7 +1222,7 @@ def _pass_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _require_cao_terminal_id()
+        actor_id = _current_terminal_id()
         _require_workspace_team_terminal_collaboration(receiver_id)
         baton = baton_service.pass_baton(
             baton_id=baton_id,
@@ -1239,7 +1244,7 @@ def _return_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _require_cao_terminal_id()
+        actor_id = _current_terminal_id()
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
@@ -1263,7 +1268,7 @@ def _complete_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _require_cao_terminal_id()
+        actor_id = _current_terminal_id()
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
@@ -1285,7 +1290,7 @@ def _block_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _require_cao_terminal_id()
+        actor_id = _current_terminal_id()
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
@@ -1303,7 +1308,7 @@ def _block_baton_impl(
 
 def _get_my_batons_impl(status: Optional[str] = None) -> Dict[str, Any]:
     try:
-        actor_id = _require_cao_terminal_id()
+        actor_id = _current_terminal_id()
         status_filter = _parse_baton_status(status)
         batons = db_module.list_batons_held_by(actor_id, status=status_filter)
         return {
@@ -1318,7 +1323,7 @@ def _get_my_batons_impl(status: Optional[str] = None) -> Dict[str, Any]:
 
 def _get_baton_impl(baton_id: str) -> Dict[str, Any]:
     try:
-        actor_id = _require_cao_terminal_id()
+        actor_id = _current_terminal_id()
         baton = db_module.get_baton_record(baton_id)
         if baton is None:
             raise baton_service.BatonNotFound(baton_id)
@@ -1429,15 +1434,26 @@ async def get_baton(
 def main():
     """Main entry point for the MCP server.
 
-    Resolves the per-terminal tool allowlist (if any) and registers the
+    Resolves the per-agent terminal tool allowlist (if any) and registers the
     matching subset of tools with FastMCP, then starts the MCP loop.
 
-    ``CAO_TERMINAL_ID`` is injected into this subprocess by the parent
+    ``CAO_AGENT_ID`` is injected into this subprocess by the parent
     provider (codex/claude/etc.) via the ``env_vars`` directive in its MCP
     config. Without it, ToolService cannot resolve agent access and startup
     fails closed by registering no agent-facing MCP tools.
     """
-    terminal_id = os.environ.get("CAO_TERMINAL_ID")
+    agent_id = os.environ.get(CAO_AGENT_ID_ENV)
+    terminal_id = None
+    if agent_id and agent_id.strip():
+        try:
+            terminal_id = _terminal_id_for_agent(agent_id.strip())
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve terminal for CAO agent %r: %s. "
+                "Registering no agent-facing MCP tools.",
+                agent_id,
+                exc,
+            )
     service = default_tool_service()
     provider_registered: list[str] = []
     if terminal_id:
@@ -1455,7 +1471,7 @@ def main():
     )
     logger.info(
         f"Registered {len(registered)}/{len(_PENDING_TOOLS)} MCP tools "
-        f"(terminal_id={terminal_id or 'missing-terminal'}): "
+        f"(agent_id={agent_id or 'missing-agent'}, terminal_id={terminal_id or 'missing-terminal'}): "
         f"{sorted(registered)}; provider-mediated={sorted(provider_registered)}"
     )
     mcp.run()

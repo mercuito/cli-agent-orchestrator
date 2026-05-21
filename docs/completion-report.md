@@ -162,3 +162,32 @@ A task is complete only after **two** successive clean review passes are recorde
 
 - Pass 1: 2026-05-21, fresh review found no actionable issues; verification included old-import searches, deleted-package checks, Linear reply registration smoke tests, `test/linear/test_reply_registration.py`, and the criteria catalog.
 - Pass 2: 2026-05-21, independent review found no actionable issues; verification included the MCP reply tracer, the moved persistence mypy probe, `git diff --check`, old-import searches, deleted-package checks, and Linear reply registration import probes.
+
+## 0010 — CAO agent ID env
+
+### Review round 1 — 2026-05-21
+
+- **Finding:** Managed MCP identity could be spoofed by provider MCP config that set `CAO_AGENT_ID`.
+- **Accepted as valid because:** `no-global-state-reads` requires the managed launch context to be authoritative, and external config must not override the CAO-assigned durable agent id.
+- **Fix:** Updated Claude Code, Kimi, and Codex provider MCP command construction so configured env values cannot override the managed `CAO_AGENT_ID`.
+- **Evidence:** `uv run pytest test/providers/test_codex_provider_unit.py test/providers/test_claude_code_unit.py test/providers/test_gemini_cli_unit.py test/providers/test_copilot_cli_unit.py test/providers/test_kimi_cli_unit.py test/providers/test_permission_prompt_detection.py -q` passed as part of the focused 514-test run.
+
+- **Finding:** Provider docs and provider-template lessons still documented the old terminal env var or set agent identity from `self.terminal_id`.
+- **Accepted as valid because:** The issue requires live source and prompt/provider guidance to move to `CAO_AGENT_ID`, with no active `CAO_TERMINAL_ID` references.
+- **Fix:** Updated provider docs and provider creation references to describe `CAO_AGENT_ID` as the durable agent identity, including managed override behavior.
+- **Evidence:** `rg -n 'CAO_TERMINAL_ID' src test examples skills README.md CODEBASE.md CHANGELOG.md docs/codex-cli.md docs/gemini-cli.md docs/kimi-cli.md docs/copilot-cli.md` returned no matches.
+
+- **Finding:** Several prompt surfaces still showed positional or old `message` examples for `send_message`, and one generated assign description omitted the `body` keyword.
+- **Accepted as valid because:** Agent-visible guidance must match the post-0005 `send_message(receiver_agent_id=..., body=...)` contract.
+- **Fix:** Updated MCP assign/message injection, examples, agent prompt files, and skill guidance to use `body=...`.
+- **Evidence:** `uv run pytest test/mcp_server/test_send_message.py test/mcp_server/test_handoff.py test/mcp_server/test_assign.py test/mcp_server/test_baton_tools.py test/mcp_server/test_inbox_tools.py test/mcp_server/test_tool_filtering.py test/mcp_server/test_workspace_collaboration.py test/mcp_server/test_create_terminal.py -q` passed as part of the focused 514-test run.
+
+- **Finding:** Baton guidance was accidentally described as agent-scoped in places even though baton tools still use terminal-scoped `holder_id` and `receiver_id`.
+- **Accepted as valid because:** Issue 0010 migrates MCP agent messaging and env identity, but baton ownership remains terminal/holder-scoped.
+- **Fix:** Restored baton wording to terminal/holder language in worker and supervisor skill guidance while keeping `send_message` guidance agent-addressed.
+- **Evidence:** Static search for `pass_baton.*agent`, `agent owes`, and `worker owes` across baton skill docs returned no baton-scoping regressions.
+
+### Clean passes
+
+- Pass 1: 2026-05-21, fresh review found no actionable issues after the managed identity, provider doc, send_message prompt, and baton wording fixes.
+- Pass 2: 2026-05-21, independent review found no actionable issues after the baton terminal/holder wording cleanup; verification included `git diff --check`, `uv run python -m compileall -q src test`, live old-env searches, baton wording searches, and `uv run pytest ... -q` passing 514 focused tests.

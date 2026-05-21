@@ -84,7 +84,7 @@ COMPLETION_TIMEOUT = 180
 
 # Task message matching the examples/assign/ workflow.
 # The data_analyst profile expects: dataset values, metrics to calculate,
-# and a callback terminal ID. We omit the send_message callback here
+# and a callback agent ID. We omit the send_message callback here
 # to avoid MCP tool invocation side effects during testing.
 # The send_message callback is validated separately in test_send_message.py.
 DATA_ANALYST_TASK = (
@@ -214,7 +214,7 @@ def _run_assign_with_callback_test(provider: str):
     try:
         # Step 1: Create supervisor terminal (will stay idle, waiting for callback)
         supervisor_id, actual_session = create_terminal(provider, "developer", session_name)
-        assert supervisor_id, "Supervisor terminal ID should not be empty"
+        assert supervisor_id, "Supervisor agent ID should not be empty"
 
         # Step 2: Wait for supervisor to be IDLE
         start = time.time()
@@ -469,7 +469,7 @@ class TestGeminiCliAssign:
 
         Gemini CLI's data_analyst profile heavily prioritises calling send_message
         over printing results directly. The response often contains tool-call
-        references (e.g. ``CAO_TERMINAL_ID``, ``send_message``) rather than raw
+        references (e.g. ``CAO_AGENT_ID``, ``send_message``) rather than raw
         statistical numbers, so we accept broader keywords.
         """
         _run_assign_test(
@@ -480,7 +480,7 @@ class TestGeminiCliAssign:
             + [
                 "analysis",
                 "send_message",
-                "CAO_TERMINAL_ID",
+                "CAO_AGENT_ID",
             ],
         )
 

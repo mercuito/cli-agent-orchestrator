@@ -62,12 +62,18 @@ def _patch_team_terminals(monkeypatch, *terminal_ids: str) -> None:
             return {"id": terminal_id, "agent_id": terminal_id}
         return None
 
+    def _terminals_for_agent(agent_id: str):
+        if agent_id in terminal_ids:
+            return [{"id": agent_id, "agent_id": agent_id}]
+        return []
+
     monkeypatch.setattr(server, "load_agent_registry", lambda: registry)
     monkeypatch.setattr(server.db_module, "get_terminal_metadata", _metadata)
+    monkeypatch.setattr(server.db_module, "list_terminals_by_agent", _terminals_for_agent)
 
 
 def test_create_baton_infers_originator_from_cao_terminal_id(patched_db, monkeypatch):
-    monkeypatch.setenv("CAO_TERMINAL_ID", "originator")
+    monkeypatch.setenv("CAO_AGENT_ID", "originator")
     _patch_team_terminals(monkeypatch, "originator", "impl")
 
     result = server._create_baton_impl(
@@ -91,7 +97,7 @@ def test_create_baton_infers_originator_from_cao_terminal_id(patched_db, monkeyp
 
 
 def test_baton_tool_requires_cao_terminal_id(patched_db, monkeypatch):
-    monkeypatch.delenv("CAO_TERMINAL_ID", raising=False)
+    monkeypatch.delenv("CAO_AGENT_ID", raising=False)
 
     result = server._create_baton_impl(
         title="T03",
@@ -102,7 +108,7 @@ def test_baton_tool_requires_cao_terminal_id(patched_db, monkeypatch):
     assert result == {
         "success": False,
         "error_type": "missing_context",
-        "error": "CAO_TERMINAL_ID not set - baton tools must run inside a CAO terminal",
+        "error": "CAO_AGENT_ID not set - CAO MCP tools must run inside a CAO terminal",
     }
 
 
@@ -113,7 +119,7 @@ def test_pass_baton_non_holder_returns_actionable_error(patched_db, monkeypatch)
         originator_id="originator",
         holder_id="impl",
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "reviewer")
+    monkeypatch.setenv("CAO_AGENT_ID", "reviewer")
     _patch_team_terminals(monkeypatch, "reviewer", "other")
 
     result = server._pass_baton_impl(
@@ -139,7 +145,7 @@ def test_pass_baton_waiting_receiver_returns_invalid_transition(patched_db, monk
         actor_id="impl",
         receiver_id="reviewer",
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "reviewer")
+    monkeypatch.setenv("CAO_AGENT_ID", "reviewer")
     _patch_team_terminals(monkeypatch, "reviewer", "impl")
 
     result = server._pass_baton_impl(
@@ -172,7 +178,8 @@ def test_get_my_batons_lists_current_holder_with_optional_status(patched_db, mon
         actor_id="impl",
         reason="waiting on contract",
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "impl")
+    monkeypatch.setenv("CAO_AGENT_ID", "impl")
+    _patch_team_terminals(monkeypatch, "impl")
 
     all_result = server._get_my_batons_impl()
     active_result = server._get_my_batons_impl(status="active")
@@ -194,7 +201,8 @@ def test_get_baton_returns_events_for_involved_terminal(patched_db, monkeypatch)
         originator_id="originator",
         holder_id="impl",
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "impl")
+    monkeypatch.setenv("CAO_AGENT_ID", "impl")
+    _patch_team_terminals(monkeypatch, "impl")
 
     result = server._get_baton_impl("baton-1")
 
@@ -210,7 +218,8 @@ def test_get_baton_rejects_uninvolved_terminal(patched_db, monkeypatch):
         originator_id="originator",
         holder_id="impl",
     )
-    monkeypatch.setenv("CAO_TERMINAL_ID", "stranger")
+    monkeypatch.setenv("CAO_AGENT_ID", "stranger")
+    _patch_team_terminals(monkeypatch, "stranger")
 
     result = server._get_baton_impl("baton-1")
 

@@ -302,7 +302,7 @@ class TestRegisterTools:
         assert mcp_instance.tool.call_count == 2
 
 class TestMainStartupFiltering:
-    """Integration of the pieces: main() reads CAO_TERMINAL_ID, resolves,
+    """Integration of the pieces: main() reads CAO_AGENT_ID, resolves,
     registers. These tests exercise main() with mcp.run() patched so the
     server doesn't actually start."""
 
@@ -314,7 +314,14 @@ class TestMainStartupFiltering:
     def test_main_passes_terminal_context_to_toolservice_registration(
         self, mock_register, mock_register_provider, mock_mcp, monkeypatch
     ):
-        monkeypatch.setenv("CAO_TERMINAL_ID", "term-xyz")
+        monkeypatch.setenv("CAO_AGENT_ID", "agent-xyz")
+        monkeypatch.setattr(
+            server.db_module,
+            "list_terminals_by_agent",
+            lambda agent_id: [{"id": "term-xyz", "agent_id": "agent-xyz"}]
+            if agent_id == "agent-xyz"
+            else [],
+        )
         mock_register.return_value = ["assign", "send_message"]
         mock_register_provider.return_value = []
 
@@ -341,7 +348,7 @@ class TestMainStartupFiltering:
         self, mock_register, mock_register_provider, mock_mcp, monkeypatch
     ):
         """If startup has no terminal context, registration remains fail-closed."""
-        monkeypatch.delenv("CAO_TERMINAL_ID", raising=False)
+        monkeypatch.delenv("CAO_AGENT_ID", raising=False)
         mock_register.return_value = []
 
         server.main()

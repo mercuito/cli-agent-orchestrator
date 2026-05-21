@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 import libtmux
 
-from cli_agent_orchestrator.constants import TMUX_HISTORY_LINES
+from cli_agent_orchestrator.constants import CAO_AGENT_ID_ENV, TMUX_HISTORY_LINES
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ class TmuxClient:
         self,
         session_name: str,
         window_name: str,
-        terminal_id: str,
+        agent_id: str,
         working_directory: Optional[str] = None,
         environment: Optional[Dict[str, str]] = None,
     ) -> str:
@@ -139,12 +139,12 @@ class TmuxClient:
                 for k, v in os.environ.items()
                 if k in allowed_vars or not any(k.startswith(p) for p in blocked_prefixes)
             }
-            base_environment["CAO_TERMINAL_ID"] = terminal_id
             # Caller-supplied env vars (e.g. per-terminal CODEX_HOME) override
             # the nested-session filter so per-agent provider config reaches
             # the spawned shell.
             if environment:
                 base_environment.update(environment)
+            base_environment[CAO_AGENT_ID_ENV] = agent_id
 
             session = self.server.new_session(
                 session_name=session_name,
@@ -168,7 +168,7 @@ class TmuxClient:
         self,
         session_name: str,
         window_name: str,
-        terminal_id: str,
+        agent_id: str,
         working_directory: Optional[str] = None,
         environment: Optional[Dict[str, str]] = None,
     ) -> str:
@@ -183,7 +183,7 @@ class TmuxClient:
             window = session.new_window(
                 window_name=window_name,
                 start_directory=working_directory,
-                environment={**({"CAO_TERMINAL_ID": terminal_id}), **(environment or {})},
+                environment={**(environment or {}), CAO_AGENT_ID_ENV: agent_id},
             )
 
             logger.info(

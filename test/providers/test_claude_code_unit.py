@@ -573,7 +573,7 @@ class TestClaudeCodeProviderMisc:
 
     @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     def test_build_command_mcp_injects_terminal_id(self, mock_load):
-        """Test that _build_claude_command injects CAO_TERMINAL_ID into MCP server env."""
+        """Test that _build_claude_command injects CAO_AGENT_ID into MCP server env."""
         mock_agent = MagicMock()
         mock_agent.prompt = ""
         mock_agent.mcp_servers = {
@@ -594,11 +594,11 @@ class TestClaudeCodeProviderMisc:
             mcp_json_str = mcp_json_str[1:-1]
         mcp_data = json.loads(mcp_json_str)
         server_env = mcp_data["mcpServers"]["cao-mcp-server"]["env"]
-        assert server_env["CAO_TERMINAL_ID"] == "term-42"
+        assert server_env["CAO_AGENT_ID"] == "test-agent"
 
     @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
     def test_build_command_mcp_preserves_existing_env(self, mock_load):
-        """Test that existing env vars in MCP config are preserved when injecting CAO_TERMINAL_ID."""
+        """Test that existing env vars in MCP config are preserved when injecting CAO_AGENT_ID."""
         mock_agent = MagicMock()
         mock_agent.prompt = ""
         mock_agent.mcp_servers = {
@@ -622,18 +622,18 @@ class TestClaudeCodeProviderMisc:
         # Original vars preserved
         assert server_env["MY_VAR"] == "my_value"
         assert server_env["OTHER"] == "other_value"
-        # CAO_TERMINAL_ID added
-        assert server_env["CAO_TERMINAL_ID"] == "term-99"
+        # CAO_AGENT_ID added
+        assert server_env["CAO_AGENT_ID"] == "test-agent"
 
     @patch("cli_agent_orchestrator.providers.claude_code.load_agent")
-    def test_build_command_mcp_does_not_override_existing_terminal_id(self, mock_load):
-        """Test that an existing CAO_TERMINAL_ID in MCP env is NOT overwritten."""
+    def test_build_command_mcp_overrides_existing_cao_agent_id(self, mock_load):
+        """Managed CAO identity must override any MCP env value from agent config."""
         mock_agent = MagicMock()
         mock_agent.prompt = ""
         mock_agent.mcp_servers = {
             "my-server": {
                 "command": "my-server",
-                "env": {"CAO_TERMINAL_ID": "user-provided-id"},
+                "env": {"CAO_AGENT_ID": "user-provided-id"},
             }
         }
         mock_agent.reasoning_effort = None
@@ -648,8 +648,7 @@ class TestClaudeCodeProviderMisc:
             mcp_json_str = mcp_json_str[1:-1]
         mcp_data = json.loads(mcp_json_str)
         server_env = mcp_data["mcpServers"]["my-server"]["env"]
-        # Should keep the user-provided value, NOT overwrite with term-99
-        assert server_env["CAO_TERMINAL_ID"] == "user-provided-id"
+        assert server_env["CAO_AGENT_ID"] == "test-agent"
 
 
 class TestClaudeCodeProviderStartupPrompts:

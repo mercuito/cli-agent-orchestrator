@@ -37,6 +37,7 @@ from typing import Any, Optional, cast
 
 from cli_agent_orchestrator.agent import load_agent
 from cli_agent_orchestrator.clients.tmux import tmux_client
+from cli_agent_orchestrator.constants import CAO_AGENT_ID_ENV
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
@@ -253,14 +254,13 @@ class KimiCliProvider(BaseProvider):
                                 exclude_none=True
                             )
 
-                        # Forward CAO_TERMINAL_ID so MCP servers (e.g. cao-mcp-server)
-                        # can identify the current terminal for handoff/assign operations.
+                        # Forward CAO_AGENT_ID so MCP servers (e.g. cao-mcp-server)
+                        # can identify the current agent for handoff/assign operations.
                         # Kimi CLI does not automatically forward parent shell env vars
                         # to MCP subprocesses, so we inject it explicitly via the env field.
                         env = mcp_config[server_name].get("env", {})
-                        if "CAO_TERMINAL_ID" not in env:
-                            env["CAO_TERMINAL_ID"] = self.terminal_id
-                            mcp_config[server_name]["env"] = env
+                        env[CAO_AGENT_ID_ENV] = self._agent_id
+                        mcp_config[server_name]["env"] = env
 
                     command_parts.extend(["--mcp-config", json.dumps(mcp_config)])
 

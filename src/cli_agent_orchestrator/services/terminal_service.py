@@ -286,7 +286,7 @@ def _create_terminal_core(
             tmux_client.create_session(
                 session_name,
                 window_name,
-                terminal_id,
+                agent_launch.agent_id,
                 working_directory,
                 environment=env,
             )
@@ -295,7 +295,11 @@ def _create_terminal_core(
             if not tmux_client.session_exists(session_name):
                 raise ValueError(f"Session '{session_name}' not found")
             window_name = tmux_client.create_window(
-                session_name, window_name, terminal_id, working_directory, environment=env
+                session_name,
+                window_name,
+                agent_launch.agent_id,
+                working_directory,
+                environment=env,
             )
 
         # Step 3: Persist terminal metadata to database

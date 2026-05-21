@@ -111,10 +111,10 @@ cao agent start codex_developer
 
 In the tmux window, type your prompt at the Codex prompt.
 
-To get the CAO terminal id (useful for API automation / MCP), run:
+To get the CAO agent id (useful for API automation / MCP), run:
 
 ```bash
-echo "$CAO_TERMINAL_ID"
+echo "$CAO_AGENT_ID"
 ```
 
 ### 2. Automate send/get-output via HTTP API
@@ -214,7 +214,7 @@ PY
 - `IDLE_PROMPT_STRICT_PATTERN` matches only empty prompt lines (`› ` or `❯ ` without trailing text) for extraction boundary detection.
 - Output mode `last` uses `CodexProvider.extract_last_message_from_script()`, which extracts text between the last user message and the next idle prompt.
 - Exiting a Codex terminal uses `/exit` (`POST /terminals/{terminal_id}/exit`).
-- **Handoff message context**: `_handoff_impl()` prepends a `[CAO Handoff]` prefix to the task message so the worker agent knows this is a blocking handoff. Without this, Codex agents proactively try to use `send_message` to notify the supervisor, which fails because the worker doesn't have the supervisor's terminal ID. The prefix tells the agent to simply output results and finish — the orchestrator captures the response automatically.
+- **Handoff message context**: `_handoff_impl()` prepends a `[CAO Handoff]` prefix to the task message so the worker agent knows this is a blocking handoff. Without this, Codex agents proactively try to use `send_message` to notify the supervisor, which fails because the worker doesn't have the supervisor's agent id. The prefix tells the agent to simply output results and finish — the orchestrator captures the response automatically.
 - **TUI footer handling** (`--no-alt-screen` mode): Codex always renders a TUI footer at the bottom, even during processing. The footer format varies by version: v0.110 and earlier use `› [suggestion hint]` + `? for shortcuts` + `N% context left`; v0.111+ (PR #13202) use `› [suggestion hint]` + `model · N% left · path`. `TUI_FOOTER_PATTERN` detects both formats, and `_compute_tui_footer_cutoff()` finds the precise start of the footer area. Both `get_status()` and `extract_last_message_from_script()` use this cutoff to exclude footer lines from user-message matching — preventing false IDLE and extraction contamination.
 - **TUI progress spinner**: During processing, Codex shows `• [text] (Ns • esc to interrupt)` inline. The `•` would falsely match `ASSISTANT_PREFIX_PATTERN`, and the TUI `›` hint would match idle prompt — triggering false COMPLETED. `TUI_PROGRESS_PATTERN` detects the spinner and returns PROCESSING before the COMPLETED check.
 
