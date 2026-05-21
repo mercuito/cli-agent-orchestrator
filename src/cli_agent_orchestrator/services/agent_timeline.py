@@ -8,6 +8,7 @@ from typing import Any
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import CaoEventRecord
+from cli_agent_orchestrator.runtime.events import register_runtime_cao_events
 from cli_agent_orchestrator.services.agent_manager import (
     AgentManager,
     AgentStatus,
@@ -64,6 +65,7 @@ class AgentTimelineService:
 
     def __init__(self, agent_manager: AgentManager) -> None:
         self._agent_manager = agent_manager
+        register_runtime_cao_events()
 
     def timeline_for_agent(self, agent_id: str) -> AgentTimelineRead:
         """Return one agent's participant-index timeline."""

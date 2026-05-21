@@ -83,8 +83,7 @@ trivy fs --scanners vuln --severity HIGH,CRITICAL .
 
 CAO enforces tool restrictions from each durable agent's `agent.toml`. Use
 `runtime_capabilities` for broad provider-native access, `cao_tools` for named
-CAO MCP tools, provider-native `tools` for external CLI settings, and provider
-sections such as `[linear.tool_access.*]` for mediated provider tools.
+CAO MCP tools, and provider-native `tools` for external CLI settings.
 
 ### CAO Tool Vocabulary
 

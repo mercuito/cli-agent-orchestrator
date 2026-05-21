@@ -142,7 +142,7 @@ class DuplicateIdentityProviderAdapter(RecordingProviderAdapter):
 def _resolver(_event):
     return WorkspaceContextResolution(
         workspace_context_id="wctx",
-        resolver_id="linear_planning",
+        resolver_id="example_planning",
         boundary_provider_id="test",
         boundary_object_type="issue",
         boundary_object_id="CAO-1",
@@ -154,7 +154,7 @@ def _workspace_registry() -> WorkspaceRegistry:
         (
             Workspace(
                 id=DEFAULT_WORKSPACE_ID,
-                display_name="Linear Delivery",
+                display_name="CAO Default",
                 providers=("test",),
                 resolver=_resolver,
             ),
@@ -232,7 +232,7 @@ def test_team_store_canonical_workspace_round_trips_without_legacy_key(tmp_path)
     assert "workspace_setup" not in payload["teams"][0]
 
 
-def test_team_store_migrates_legacy_workspace_setup_key(tmp_path):
+def test_team_store_rejects_legacy_workspace_setup_key(tmp_path):
     # Given
     store_path = tmp_path / "workspace-teams.json"
     store_path.write_text(
@@ -249,44 +249,12 @@ def test_team_store_migrates_legacy_workspace_setup_key(tmp_path):
         )
     )
 
-    # When
-    team = WorkspaceTeamStore(store_path).get("delivery")
-    payload = json.loads(store_path.read_text())
-
-    # Then
-    assert team.workspace == DEFAULT_WORKSPACE_ID
-    assert payload["teams"][0]["workspace"] == DEFAULT_WORKSPACE_ID
-    assert "workspace_setup" not in payload["teams"][0]
+    # When / Then
+    with pytest.raises(WorkspaceConfigError, match="workspace_setup is no longer supported"):
+        WorkspaceTeamStore(store_path).list()
 
 
-def test_team_store_migrates_legacy_default_workspace_id(tmp_path):
-    # Given
-    store_path = tmp_path / "workspace-teams.json"
-    store_path.write_text(
-        json.dumps(
-            {
-                "teams": [
-                    {
-                        "id": "delivery",
-                        "display_name": "Delivery",
-                        "workspace_setup": "linear_delivery_setup",
-                    }
-                ]
-            }
-        )
-    )
-
-    # When
-    team = WorkspaceTeamStore(store_path).get("delivery")
-    payload = json.loads(store_path.read_text())
-
-    # Then
-    assert team.workspace == DEFAULT_WORKSPACE_ID
-    assert payload["teams"][0]["workspace"] == DEFAULT_WORKSPACE_ID
-    assert "workspace_setup" not in payload["teams"][0]
-
-
-def test_team_store_rejects_conflicting_workspace_fields(tmp_path):
+def test_team_store_rejects_workspace_setup_even_with_workspace(tmp_path):
     # Given
     store_path = tmp_path / "workspace-teams.json"
     store_path.write_text(
@@ -305,7 +273,7 @@ def test_team_store_rejects_conflicting_workspace_fields(tmp_path):
     )
 
     # When / Then
-    with pytest.raises(WorkspaceConfigError, match="conflicting workspace and workspace_setup"):
+    with pytest.raises(WorkspaceConfigError, match="workspace_setup is no longer supported"):
         WorkspaceTeamStore(store_path).list()
 
 
@@ -727,7 +695,7 @@ def test_manager_reports_unknown_team_workspace_and_unavailable_provider(tmp_pat
         (
             Workspace(
                 id=DEFAULT_WORKSPACE_ID,
-                display_name="Linear Delivery",
+                display_name="CAO Default",
                 providers=("missing",),
                 resolver=_resolver,
             ),
@@ -769,7 +737,7 @@ def test_workspace_rejects_multiple_resolvers():
     with pytest.raises(WorkspaceConfigError, match="exactly one resolver"):
         Workspace(
             id=DEFAULT_WORKSPACE_ID,
-            display_name="Linear Delivery",
+            display_name="CAO Default",
             providers=("test",),
             resolver=(_resolver, _resolver),  # type: ignore[arg-type]
         )

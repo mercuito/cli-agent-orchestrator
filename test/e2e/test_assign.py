@@ -57,23 +57,23 @@ from cli_agent_orchestrator.constants import API_BASE_URL
 # ---------------------------------------------------------------------------
 
 
-def _send_inbox_message(sender_id: str, receiver_id: str, message: str):
-    """Send a message to a terminal's inbox via the API."""
+def _send_inbox_message(sender_agent_id: str, receiver_agent_id: str, message: str):
+    """Send a message to an agent's inbox via the API."""
     resp = requests.post(
-        f"{API_BASE_URL}/terminals/{receiver_id}/inbox/messages",
-        params={"sender_id": sender_id, "message": message},
+        f"{API_BASE_URL}/agents/{receiver_agent_id}/inbox/messages",
+        params={"sender_agent_id": sender_agent_id, "body": message},
     )
     assert resp.status_code == 200, f"Inbox message send failed: {resp.status_code} {resp.text}"
     return resp.json()
 
 
-def _get_inbox_messages(terminal_id: str, status_filter: str = None):
-    """Get inbox messages for a terminal."""
+def _get_inbox_messages(agent_id: str, status_filter: str = None):
+    """Get inbox messages for an agent."""
     params = {"limit": 50}
     if status_filter:
         params["status"] = status_filter
     resp = requests.get(
-        f"{API_BASE_URL}/terminals/{terminal_id}/inbox/messages",
+        f"{API_BASE_URL}/agents/{agent_id}/inbox/messages",
         params=params,
     )
     assert resp.status_code == 200, f"Get inbox messages failed: {resp.status_code} {resp.text}"
@@ -282,7 +282,7 @@ def _run_assign_with_callback_test(provider: str):
 
         callback_message = f"Results from data_analyst ({worker_id}):\n{worker_output}"
         result = _send_inbox_message(worker_id, supervisor_id, callback_message)
-        assert result.get("message_id"), "Callback message should have an ID"
+        assert result.get("notification_id"), "Callback message should have an ID"
 
         # Step 7: Verify message is DELIVERED to supervisor (not stuck PENDING).
         # This is the critical assertion — it proves the inbox delivery pipeline
@@ -291,7 +291,7 @@ def _run_assign_with_callback_test(provider: str):
         for _ in range(24):  # 24 * 5s = 120s
             time.sleep(5)
             messages = _get_inbox_messages(supervisor_id, status_filter="delivered")
-            if any(m.get("sender_id") == worker_id for m in messages):
+            if any(m.get("sender_agent_id") == worker_id for m in messages):
                 delivered = True
                 break
         assert delivered, (

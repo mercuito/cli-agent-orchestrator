@@ -46,16 +46,13 @@ class TestRemovedAgentTemplateEndpoints:
 class TestWorkspaceToolProviderRoutes:
     """Workspace tool provider dashboard API routes."""
 
-    def test_role_access_schema_uses_workspace_tool_provider_route(self, client):
-        response = client.get("/workspace-tool-providers/linear/role-access-schema")
+    def test_removed_provider_role_access_schema_returns_404(self, client):
+        response = client.get("/workspace-tool-providers/example/role-access-schema")
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["provider"] == "linear"
-        assert {tool["name"] for tool in data["tools"]} >= {"cao_linear.get_issue"}
+        assert response.status_code == 404
 
     def test_old_workspace_provider_route_is_not_registered(self, client):
-        response = client.get("/workspace-providers/linear/role-access-schema")
+        response = client.get("/workspace-providers/example/role-access-schema")
 
         assert response.status_code == 404
 
@@ -660,8 +657,8 @@ class TestLifespan:
             mock_observer.join.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_lifespan_keeps_api_running_when_workspace_tool_provider_startup_fails(self):
-        """lifespan disables workspace tool providers instead of taking down the API."""
+    async def test_lifespan_fails_when_workspace_tool_provider_startup_fails(self):
+        """lifespan fails closed when enabled workspace providers cannot load."""
         from cli_agent_orchestrator.api.main import lifespan
         from cli_agent_orchestrator.workspace_tool_providers import WorkspaceToolProviderConfigError
 
@@ -676,7 +673,7 @@ class TestLifespan:
             patch("cli_agent_orchestrator.api.main.cleanup_old_data"),
             patch(
                 "cli_agent_orchestrator.api.main.initialize_enabled_workspace_tool_providers",
-                side_effect=WorkspaceToolProviderConfigError("bad Linear credentials"),
+                side_effect=WorkspaceToolProviderConfigError("bad provider credentials"),
             ),
             patch(
                 "cli_agent_orchestrator.api.main.PollingObserver",
@@ -691,12 +688,11 @@ class TestLifespan:
                 side_effect=stub_background_loop,
             ),
         ):
-            async with lifespan(app):
-                assert app.state.workspace_tool_providers == []
-                mock_observer.start.assert_called_once()
+            with pytest.raises(WorkspaceToolProviderConfigError, match="bad provider credentials"):
+                async with lifespan(app):
+                    pass
 
-            mock_observer.stop.assert_called_once()
-            mock_observer.join.assert_called_once()
+            mock_observer.start.assert_not_called()
 
 
 # ── main() entry point ───────────────────────────────────────────────

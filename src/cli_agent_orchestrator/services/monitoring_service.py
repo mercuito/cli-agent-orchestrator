@@ -1,14 +1,14 @@
 """Monitoring sessions service.
 
 A monitoring session is a recording window over the inbox table, scoped to
-a terminal. See ``docs/plans/monitoring-sessions.md`` for the design.
+a durable CAO agent.
 
 Model (single-session, query-time filtering):
-  - At most one active session per terminal at any time. ``create_session``
-    is idempotent — if an active session exists for the target terminal, it
+  - At most one active session per agent at any time. ``create_session``
+    is idempotent — if an active session exists for the target agent, it
     is returned unchanged rather than a duplicate being created.
   - Sessions do not carry peer sets or time scopes. They capture all inbox
-    activity involving the terminal for the session's lifetime.
+    activity involving the agent for the session's lifetime.
   - Filtering (by peer, by time sub-window) happens at read time via
     ``get_session_messages`` kwargs.
 
@@ -20,15 +20,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-
-from sqlalchemy import or_
+from typing import Any, Dict, List, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import (
-    InboxNotificationModel,
-    MonitoringSessionModel,
-)
+from cli_agent_orchestrator.clients.database import MonitoringSessionModel
+from cli_agent_orchestrator.inbox import list_notifications_involving_agent
 
 
 class MonitoringError(Exception):
@@ -52,7 +48,7 @@ class SessionAlreadyEnded(MonitoringError):
 def _session_to_dict(session: MonitoringSessionModel) -> Dict[str, Any]:
     return {
         "id": session.id,
-        "terminal_id": session.terminal_id,
+        "agent_id": session.agent_id,
         "label": session.label,
         "started_at": session.started_at,
         "ended_at": session.ended_at,
@@ -66,12 +62,12 @@ def _session_to_dict(session: MonitoringSessionModel) -> Dict[str, Any]:
 
 
 def create_session(
-    terminal_id: str,
+    agent_id: str,
     label: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Start monitoring a terminal. Idempotent w.r.t. the active state.
+    """Start monitoring an agent. Idempotent w.r.t. the active state.
 
-    If ``terminal_id`` already has an active session (``ended_at IS NULL``),
+    If ``agent_id`` already has an active session (``ended_at IS NULL``),
     the existing session is returned unchanged — the label argument is
     ignored in that case. This matches the "recording or not" mental
     model: clicking "Monitor" when already recording is a no-op, not an
@@ -81,7 +77,7 @@ def create_session(
         existing = (
             db.query(MonitoringSessionModel)
             .filter(
-                MonitoringSessionModel.terminal_id == terminal_id,
+                MonitoringSessionModel.agent_id == agent_id,
                 MonitoringSessionModel.ended_at.is_(None),
             )
             .first()
@@ -91,7 +87,7 @@ def create_session(
 
         session_row = MonitoringSessionModel(
             id=str(uuid.uuid4()),
-            terminal_id=terminal_id,
+            agent_id=agent_id,
             label=label,
             started_at=datetime.now(),
             ended_at=None,
@@ -147,7 +143,7 @@ def delete_session(session_id: str) -> None:
 
 
 def list_sessions(
-    terminal_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
     status: Optional[str] = None,
     label: Optional[str] = None,
     started_after: Optional[datetime] = None,
@@ -159,8 +155,8 @@ def list_sessions(
     with db_module.SessionLocal() as db:
         q = db.query(MonitoringSessionModel)
 
-        if terminal_id is not None:
-            q = q.filter(MonitoringSessionModel.terminal_id == terminal_id)
+        if agent_id is not None:
+            q = q.filter(MonitoringSessionModel.agent_id == agent_id)
 
         if status == "active":
             q = q.filter(MonitoringSessionModel.ended_at.is_(None))
@@ -195,7 +191,7 @@ def get_session_messages(
     """Return inbox messages captured by the session, with optional filters.
 
     Base filter (always applied):
-      (sender = terminal OR receiver = terminal)
+      (sender = session agent OR receiver = session agent)
       AND created_at >= session.started_at
       AND (session.ended_at IS NULL OR created_at <= session.ended_at)
 
@@ -214,46 +210,32 @@ def get_session_messages(
         if session_row is None:
             raise SessionNotFound(session_id)
 
-        q = (
-            db.query(InboxNotificationModel)
-            .filter(
-                or_(
-                    InboxNotificationModel.source_id == session_row.terminal_id,
-                    InboxNotificationModel.receiver_agent_id == session_row.terminal_id,
-                ),
-            )
-        )
+        session_agent_id = str(session_row.agent_id)
 
-        if peers:
-            q = q.filter(
-                or_(
-                    InboxNotificationModel.source_id.in_(peers),
-                    InboxNotificationModel.receiver_agent_id.in_(peers),
-                )
-            )
-
-        q = q.filter(InboxNotificationModel.created_at >= session_row.started_at)
-        if session_row.ended_at is not None:
-            q = q.filter(InboxNotificationModel.created_at <= session_row.ended_at)
-
-        # Apply caller-provided sub-window on top of the session window
-        if started_after is not None:
-            q = q.filter(InboxNotificationModel.created_at >= started_after)
-        if started_before is not None:
-            q = q.filter(InboxNotificationModel.created_at <= started_before)
-
-        q = q.order_by(InboxNotificationModel.created_at.asc(), InboxNotificationModel.id.asc())
+        window_started_at = cast(datetime, session_row.started_at)
+        window_ended_at = cast(Optional[datetime], session_row.ended_at)
+        if started_after is not None and started_after > window_started_at:
+            window_started_at = started_after
+        if started_before is not None and (
+            window_ended_at is None or started_before < window_ended_at
+        ):
+            window_ended_at = started_before
 
         return [
             {
                 "id": notification.id,
                 "notification_id": notification.id,
-                "message_id": notification.id,
-                "sender_id": notification.source_id,
-                "receiver_id": notification.receiver_agent_id,
-                "message": notification.body,
+                "sender_agent_id": notification.sender_agent_id,
+                "receiver_agent_id": notification.receiver_agent_id,
+                "body": notification.body,
                 "status": notification.status,
                 "created_at": notification.created_at,
             }
-            for notification in q.all()
+            for notification in list_notifications_involving_agent(
+                session_agent_id,
+                db=db,
+                peers=peers,
+                started_at=window_started_at,
+                ended_at=window_ended_at,
+            )
         ]

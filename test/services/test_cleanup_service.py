@@ -11,10 +11,8 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.clients.database import (
     AgentRuntimeNotificationModel,
     Base,
-    InboxNotificationModel,
-    ProviderConversationMessageModel,
-    ProviderConversationThreadModel,
 )
+from cli_agent_orchestrator.inbox.store import InboxNotificationModel
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.services import cleanup_service
 from cli_agent_orchestrator.services.cleanup_service import cleanup_old_data
@@ -248,18 +246,16 @@ class TestCleanupOldData:
         old = datetime.now() - timedelta(days=10)
         with TestSession() as session:
             delivered = InboxNotificationModel(
+                sender_agent_id="sender",
                 receiver_agent_id="receiver-a",
                 body="still referenced",
-                source_kind="terminal",
-                source_id="sender",
                 status=MessageStatus.DELIVERED.value,
                 created_at=old,
             )
             pending = InboxNotificationModel(
+                sender_agent_id="sender",
                 receiver_agent_id="receiver-b",
                 body="still referenced",
-                source_kind="terminal",
-                source_id="sender",
                 status=MessageStatus.PENDING.value,
                 created_at=old,
             )
@@ -284,10 +280,9 @@ class TestCleanupOldData:
         old = datetime.now() - timedelta(days=10)
         with TestSession() as session:
             notification = InboxNotificationModel(
+                sender_agent_id="sender",
                 receiver_agent_id="receiver",
                 body="old delivered",
-                source_kind="terminal",
-                source_id="sender",
                 status=MessageStatus.DELIVERED.value,
                 created_at=old,
             )
@@ -310,42 +305,19 @@ class TestCleanupOldData:
 
         old = datetime.now() - timedelta(days=10)
         with TestSession() as session:
-            thread = ProviderConversationThreadModel(
-                provider="linear",
-                external_id="thread-1",
-                kind="conversation",
-                state="active",
-                created_at=old,
-                updated_at=old,
-            )
-            session.add(thread)
-            session.flush()
-            provider_message = ProviderConversationMessageModel(
-                thread_id=thread.id,
-                provider="linear",
-                external_id="message-1",
-                direction="inbound",
-                kind="comment",
-                body="cleanup cascade proof",
-                state="received",
-                created_at=old,
-                updated_at=old,
-            )
             notification = InboxNotificationModel(
+                sender_agent_id="sender",
                 receiver_agent_id="receiver",
                 body="old delivered",
-                source_kind="provider_conversation",
-                source_id="1",
                 status=MessageStatus.DELIVERED.value,
                 created_at=old,
             )
-            session.add_all([provider_message, notification])
+            session.add(notification)
             session.flush()
             session.add(
                 AgentRuntimeNotificationModel(
                     agent_id="receiver",
-                    source_kind="provider_conversation",
-                    source_id="1",
+                    idempotency_key="runtime_notification:1",
                     inbox_notification_id=notification.id,
                     created_at=old,
                 )
@@ -357,5 +329,3 @@ class TestCleanupOldData:
         with TestSession() as session:
             assert session.query(InboxNotificationModel).count() == 0
             assert session.query(AgentRuntimeNotificationModel).count() == 0
-            assert session.query(ProviderConversationMessageModel).count() == 1
-            assert session.query(ProviderConversationThreadModel).count() == 1

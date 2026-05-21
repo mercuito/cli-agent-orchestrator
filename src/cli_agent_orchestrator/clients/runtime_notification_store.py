@@ -10,27 +10,26 @@ from cli_agent_orchestrator.clients.database_core import Base
 
 
 class MonitoringSessionModel(Base):
-    """A monitoring session is a recording window over terminal inbox activity."""
+    """A monitoring session is a recording window over agent inbox activity."""
 
     __tablename__ = "monitoring_sessions"
 
     id = Column(String, primary_key=True)
-    terminal_id = Column(String, nullable=False)
+    agent_id = Column(String, nullable=False)
     label = Column(String, nullable=True)
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
 
 
 class AgentRuntimeNotificationModel(Base):
-    """Idempotency marker for provider notifications accepted by agent runtime handles."""
+    """Idempotency marker for notifications accepted by agent runtime handles."""
 
     __tablename__ = "agent_runtime_notifications"
-    __table_args__ = (UniqueConstraint("agent_id", "source_kind", "source_id"),)
+    __table_args__ = (UniqueConstraint("agent_id", "idempotency_key"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     agent_id = Column(String, nullable=False)
-    source_kind = Column(String, nullable=False)
-    source_id = Column(String, nullable=False)
+    idempotency_key = Column(String, nullable=False)
     inbox_notification_id = Column(
         Integer, ForeignKey("inbox_notifications.id", ondelete="CASCADE"), nullable=False
     )

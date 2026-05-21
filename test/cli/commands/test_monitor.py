@@ -37,14 +37,14 @@ class _FakeResponse:
 
 def _session_payload(
     session_id: str = "sess-1",
-    terminal_id: str = "term-A",
+    agent_id: str = "term-A",
     label: Optional[str] = None,
     started_at: str = "2026-04-18T10:00:00",
     ended_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
         "id": session_id,
-        "terminal_id": terminal_id,
+        "agent_id": agent_id,
         "label": label,
         "started_at": started_at,
         "ended_at": ended_at,
@@ -62,14 +62,14 @@ class TestStart:
         runner = CliRunner()
         with patch(f"{MODULE}.requests.post") as mock_post:
             mock_post.return_value = _FakeResponse(status_code=201, payload=_session_payload())
-            result = runner.invoke(monitor, ["start", "--terminal", "term-A"])
+            result = runner.invoke(monitor, ["start", "--agent", "term-A"])
 
         assert result.exit_code == 0
         assert "sess-1" in result.output
         _, kwargs = mock_post.call_args
         assert mock_post.call_args.args[0].endswith("/monitoring/sessions")
         # Peer field gone from the start body
-        assert kwargs["json"] == {"terminal_id": "term-A", "label": None}
+        assert kwargs["json"] == {"agent_id": "term-A", "label": None}
 
     def test_with_label(self):
         runner = CliRunner()
@@ -77,7 +77,7 @@ class TestStart:
             mock_post.return_value = _FakeResponse(
                 status_code=201, payload=_session_payload(label="rev")
             )
-            result = runner.invoke(monitor, ["start", "--terminal", "term-A", "--label", "rev"])
+            result = runner.invoke(monitor, ["start", "--agent", "term-A", "--label", "rev"])
 
         assert result.exit_code == 0
         assert mock_post.call_args.kwargs["json"]["label"] == "rev"
@@ -88,7 +88,7 @@ class TestStart:
         runner = CliRunner()
         result = runner.invoke(
             monitor,
-            ["start", "--terminal", "term-A", "--peer", "P1"],
+            ["start", "--agent", "term-A", "--peer", "P1"],
         )
         assert result.exit_code != 0
 
@@ -96,7 +96,7 @@ class TestStart:
         runner = CliRunner()
         with patch(f"{MODULE}.requests.post") as mock_post:
             mock_post.return_value = _FakeResponse(status_code=201, payload=_session_payload())
-            result = runner.invoke(monitor, ["start", "--terminal", "term-A", "--json"])
+            result = runner.invoke(monitor, ["start", "--agent", "term-A", "--json"])
         assert result.exit_code == 0
         assert json.loads(result.output)["id"] == "sess-1"
 

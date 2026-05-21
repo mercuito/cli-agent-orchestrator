@@ -15,24 +15,17 @@ from cli_agent_orchestrator.clients.cao_event_store import (
     CaoEventAgentParticipantModel,
     CaoEventModel,
 )
-from cli_agent_orchestrator.clients.inbox_store import (
-    InboxNotificationModel,
-)
-from cli_agent_orchestrator.clients.provider_conversation_store import (
+from cli_agent_orchestrator.clients.flow_store import FlowModel
+from cli_agent_orchestrator.clients.runtime_notification_store import (
     AgentRuntimeNotificationModel,
+    MonitoringSessionModel,
 )
-from cli_agent_orchestrator.linear.conversation_store import (
-    ProcessedProviderEventModel,
-    ProviderConversationMessageModel,
-    ProviderConversationThreadModel,
-    ProviderWorkItemModel,
-)
+from cli_agent_orchestrator.inbox import ensure_notification_table
 from cli_agent_orchestrator.clients.workspace_context_store import (
     ContextWorkspaceModel,
     WorkspaceContextModel,
     WorkspaceContextObjectMappingModel,
 )
-from cli_agent_orchestrator.linear.monitor_store import LinearMonitorWatermarkModel
 
 logger = logging.getLogger(__name__)
 
@@ -49,31 +42,31 @@ def init_db() -> None:
     db_module.Base.metadata.create_all(bind=db_module.engine)
     _migrate_ensure_semantic_inbox_tables()
     _migrate_ensure_baton_tables()
-    _migrate_ensure_provider_conversation_tables()
+    _migrate_ensure_flow_tables()
     _migrate_ensure_agent_runtime_tables()
-    _migrate_ensure_linear_monitor_tables()
     _migrate_ensure_workspace_context_tables()
     _migrate_ensure_cao_event_tables()
     _migrate_drop_legacy_inbox_notification_ids()
-    _migrate_ensure_provider_conversation_tables()
     _migrate_ensure_agent_runtime_tables()
-    _migrate_ensure_linear_monitor_tables()
     _migrate_ensure_workspace_context_tables()
     _migrate_ensure_cao_event_tables()
+    _migrate_drop_removed_linear_cao_events()
     _migrate_drop_legacy_inbox_table()
     _migrate_add_allowed_tools()
     _migrate_add_terminal_agent_id()
     _migrate_enforce_single_terminal_per_agent()
     _migrate_add_terminal_workspace_context_id()
     _migrate_backfill_terminal_workspace_context_id()
+    _migrate_monitoring_sessions_agent_ids()
     _migrate_drop_monitoring_session_peers()
+    _migrate_drop_linear_and_provider_conversation_tables()
 
 
 def _migrate_ensure_semantic_inbox_tables() -> None:
-    """Create and cut over the collapsed source-agnostic inbox notification table."""
+    """Create and cut over the collapsed agent-to-agent inbox notification table."""
     try:
         engine = _database_module().engine
-        InboxNotificationModel.__table__.create(bind=engine, checkfirst=True)
+        ensure_notification_table(engine)
     except Exception as e:
         logger.warning(f"Migration check for inbox notification table failed: {e}")
         return
@@ -85,13 +78,13 @@ def _migrate_ensure_semantic_inbox_tables() -> None:
                 return
 
             needs_rebuild = (
-                "receiver_agent_id" not in columns
+                "sender_agent_id" not in columns
+                or "receiver_agent_id" not in columns
                 or "receiver_id" in columns
-                or
-                "body" not in columns
-                or "source_kind" not in columns
-                or "source_id" not in columns
-                or "metadata_json" not in columns
+                or "body" not in columns
+                or "source_kind" in columns
+                or "source_id" in columns
+                or "metadata_json" in columns
                 or "message_id" in columns
                 or "legacy_inbox_id" in columns
             )
@@ -100,25 +93,13 @@ def _migrate_ensure_semantic_inbox_tables() -> None:
                     conn,
                     table_name="inbox_notifications",
                     create_sql=_inbox_notifications_create_sql(),
-                    copy_sql=_inbox_notifications_copy_sql(
-                        columns,
-                        provider_marker_columns=(
-                            sqlite_migrations.table_column_info(
-                                conn, "provider_conversation_inbox_notifications"
-                            )
-                            if sqlite_migrations.table_exists(
-                                conn, "provider_conversation_inbox_notifications"
-                            )
-                            else {}
-                        ),
-                    ),
+                    copy_sql=_inbox_notifications_copy_sql(columns),
                 )
-                logger.info("Migration: collapsed inbox notifications into source-owned rows")
+                logger.info("Migration: collapsed inbox notifications into agent-owned rows")
 
             dropped = sqlite_migrations.drop_tables_if_exist(
                 conn,
                 (
-                    "provider_conversation_inbox_notifications",
                     "inbox_notification_targets",
                     "inbox_messages",
                 ),
@@ -134,11 +115,9 @@ def _inbox_notifications_create_sql() -> str:
     return """
         CREATE TABLE inbox_notifications (
             id INTEGER NOT NULL,
+            sender_agent_id VARCHAR NOT NULL,
             receiver_agent_id VARCHAR NOT NULL,
             body TEXT NOT NULL,
-            source_kind VARCHAR NOT NULL,
-            source_id VARCHAR NOT NULL,
-            metadata_json TEXT,
             status VARCHAR NOT NULL,
             created_at DATETIME NOT NULL,
             delivered_at DATETIME,
@@ -151,16 +130,12 @@ def _inbox_notifications_create_sql() -> str:
 
 def _inbox_notifications_copy_sql(
     columns: dict[str, sqlite_migrations.ColumnInfo],
-    *,
-    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
 ) -> str:
     target_columns = [
         "id",
+        "sender_agent_id",
         "receiver_agent_id",
         "body",
-        "source_kind",
-        "source_id",
-        "metadata_json",
         "status",
         "created_at",
         "delivered_at",
@@ -169,11 +144,9 @@ def _inbox_notifications_copy_sql(
     ]
     source_exprs = [
         "old.id",
+        _sender_agent_id_expr(columns),
         _receiver_agent_id_expr(columns),
         _body_expr(columns),
-        _source_kind_expr(columns, provider_marker_columns=provider_marker_columns),
-        _source_id_expr(columns, provider_marker_columns=provider_marker_columns),
-        _metadata_expr(columns),
         "old.status",
         "old.created_at",
         "old.delivered_at",
@@ -192,11 +165,37 @@ def _inbox_notifications_copy_sql(
     """
 
 
+def _sender_agent_id_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
+    if "sender_agent_id" in columns:
+        return _normalize_agent_id_expr("old.sender_agent_id", "'system'")
+    if "source_id" in columns or "message_id" in columns:
+        source_id_expr = _column_or_message_expr(columns, "source_id", "'system'")
+        source_kind_expr = _column_or_message_expr(columns, "source_kind", "'system'")
+        return f"""
+            COALESCE(
+                CASE
+                    WHEN {source_kind_expr} IN ('terminal', 'plain') THEN (
+                        SELECT terminals.agent_id
+                        FROM terminals
+                        WHERE terminals.id = {source_id_expr}
+                          AND terminals.agent_id IS NOT NULL
+                          AND TRIM(terminals.agent_id) != ''
+                    )
+                    ELSE NULL
+                END,
+                'system'
+            )
+            """
+    if "sender_id" in columns:
+        return _normalize_agent_id_expr("old.sender_id", "'system'")
+    return "'system'"
+
+
 def _receiver_agent_id_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
     if "receiver_agent_id" in columns:
-        return "old.receiver_agent_id"
+        return _normalize_agent_id_expr("old.receiver_agent_id", "''")
     if "receiver_id" in columns:
-        return """
+        return f"""
             COALESCE(
                 (
                     SELECT terminals.agent_id
@@ -205,10 +204,29 @@ def _receiver_agent_id_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) ->
                       AND terminals.agent_id IS NOT NULL
                       AND TRIM(terminals.agent_id) != ''
                 ),
-                old.receiver_id
+                {_normalize_agent_alias_expr("old.receiver_id")},
+                ''
             )
             """
     return "''"
+
+
+def _normalize_agent_id_expr(value_expr: str, fallback_expr: str) -> str:
+    alias_expr = _normalize_agent_alias_expr(value_expr)
+    return f"COALESCE({alias_expr}, NULLIF(TRIM({value_expr}), ''), {fallback_expr})"
+
+
+def _normalize_agent_alias_expr(value_expr: str) -> str:
+    stripped = f"substr({value_expr}, 7)"
+    return f"""
+        CASE
+            WHEN {value_expr} LIKE 'agent:%:%'
+                THEN NULLIF(substr({stripped}, 1, instr({stripped}, ':') - 1), '')
+            WHEN {value_expr} LIKE 'agent:%'
+                THEN NULLIF({stripped}, '')
+            ELSE NULL
+        END
+        """
 
 
 def _body_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
@@ -228,56 +246,6 @@ def _body_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
     return "''"
 
 
-def _source_kind_expr(
-    columns: dict[str, sqlite_migrations.ColumnInfo],
-    *,
-    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
-) -> str:
-    provider_message_expr = _provider_message_id_for_notification_expr(
-        columns, provider_marker_columns
-    )
-    if provider_message_expr is not None:
-        return f"""
-            CASE
-                WHEN {provider_message_expr} IS NOT NULL THEN 'provider_conversation'
-                ELSE {_column_or_message_expr(columns, "source_kind", "'system'")}
-            END
-            """
-    return _column_or_message_expr(columns, "source_kind", "'system'")
-
-
-def _source_id_expr(
-    columns: dict[str, sqlite_migrations.ColumnInfo],
-    *,
-    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
-) -> str:
-    provider_message_expr = _provider_message_id_for_notification_expr(
-        columns, provider_marker_columns
-    )
-    if provider_message_expr is not None:
-        return f"""
-            COALESCE(
-                CAST({provider_message_expr} AS TEXT),
-                {_column_or_message_expr(columns, "source_id", "'unknown'")}
-            )
-            """
-    return _column_or_message_expr(columns, "source_id", "'unknown'")
-
-
-def _metadata_expr(columns: dict[str, sqlite_migrations.ColumnInfo]) -> str:
-    if "metadata_json" in columns:
-        return "old.metadata_json"
-    if "message_id" in columns:
-        return """
-            (
-                SELECT inbox_messages.origin_json
-                FROM inbox_messages
-                WHERE inbox_messages.id = old.message_id
-            )
-            """
-    return "NULL"
-
-
 def _column_or_message_expr(
     columns: dict[str, sqlite_migrations.ColumnInfo], name: str, fallback: str
 ) -> str:
@@ -295,32 +263,6 @@ def _column_or_message_expr(
             )
             """
     return fallback
-
-
-def _provider_message_id_for_notification_expr(
-    columns: dict[str, sqlite_migrations.ColumnInfo],
-    provider_marker_columns: dict[str, sqlite_migrations.ColumnInfo],
-) -> Optional[str]:
-    if "provider_message_id" not in provider_marker_columns:
-        return None
-    id_exprs = []
-    if "inbox_notification_id" in provider_marker_columns:
-        id_exprs.append("marker.inbox_notification_id = old.id")
-    if "message_id" in columns and "inbox_message_id" in provider_marker_columns:
-        id_exprs.append("marker.inbox_message_id = old.message_id")
-    if "legacy_inbox_id" in columns and "inbox_message_id" in provider_marker_columns:
-        id_exprs.append("marker.inbox_message_id = old.legacy_inbox_id")
-    if not id_exprs:
-        return None
-    marker_match = " OR ".join(id_exprs)
-    return f"""
-        (
-            SELECT marker.provider_message_id
-            FROM provider_conversation_inbox_notifications AS marker
-            WHERE {marker_match}
-            LIMIT 1
-        )
-        """
 
 
 def _notification_id_migration_expr(
@@ -362,6 +304,33 @@ def _migrate_ensure_baton_tables() -> None:
         BatonEventModel.__table__.create(bind=engine, checkfirst=True)
     except Exception as e:
         logger.warning(f"Migration check for baton tables failed: {e}")
+
+
+def _migrate_ensure_flow_tables() -> None:
+    """Create and backfill flow metadata columns on existing databases."""
+    try:
+        engine = _database_module().engine
+        FlowModel.__table__.create(bind=engine, checkfirst=True)
+        with engine.begin() as connection:
+            columns = {
+                str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(flows)")
+            }
+            if "agent_id" not in columns:
+                connection.exec_driver_sql("ALTER TABLE flows ADD COLUMN agent_id VARCHAR")
+                connection.exec_driver_sql(
+                    "UPDATE flows SET agent_id = 'code_supervisor' WHERE agent_id IS NULL"
+                )
+            if "provider" not in columns:
+                connection.exec_driver_sql("ALTER TABLE flows ADD COLUMN provider VARCHAR")
+                connection.exec_driver_sql(
+                    "UPDATE flows SET provider = ? WHERE provider IS NULL",
+                    (constants.DEFAULT_PROVIDER,),
+                )
+            if "script" not in columns:
+                connection.exec_driver_sql("ALTER TABLE flows ADD COLUMN script VARCHAR")
+                connection.exec_driver_sql("UPDATE flows SET script = '' WHERE script IS NULL")
+    except Exception as e:
+        logger.warning(f"Migration check for flow tables failed: {e}")
 
 
 def _migrate_ensure_workspace_context_tables() -> None:
@@ -531,150 +500,63 @@ def _migrate_ensure_cao_event_tables() -> None:
         """)
 
 
+def _migrate_drop_removed_linear_cao_events() -> None:
+    """Remove durable Linear CAO event rows whose event classes no longer exist."""
+    engine = _database_module().engine
+    event_table = CaoEventModel.__tablename__
+    participant_table = CaoEventAgentParticipantModel.__tablename__
+    event_id_column = CaoEventModel.event_id.name
+    participant_event_id_column = CaoEventAgentParticipantModel.event_id.name
+    kind_column = CaoEventModel.kind.name
+    event_name_column = CaoEventModel.event_name.name
+    with engine.begin() as connection:
+        table_names = {
+            str(row[0])
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if event_table not in table_names:
+            return
+        event_columns = {
+            str(row[1]) for row in connection.exec_driver_sql(f"PRAGMA table_info({event_table})")
+        }
+        if kind_column not in event_columns:
+            return
+        removed_event_ids = [
+            str(row[0])
+            for row in connection.exec_driver_sql(
+                f"""
+                SELECT {event_id_column}
+                FROM {event_table}
+                WHERE {kind_column} LIKE 'linear.%'
+                   OR {event_name_column} LIKE 'linear.%'
+                """
+            ).fetchall()
+        ]
+        if not removed_event_ids:
+            return
+        for event_id in removed_event_ids:
+            if participant_table in table_names:
+                connection.exec_driver_sql(
+                    f"DELETE FROM {participant_table} WHERE {participant_event_id_column} = ?",
+                    (event_id,),
+                )
+            connection.exec_driver_sql(
+                f"DELETE FROM {event_table} WHERE {event_id_column} = ?",
+                (event_id,),
+            )
+        logger.info("Migration: dropped %s removed Linear CAO event rows", len(removed_event_ids))
+
+
 def _cao_event_kind_by_legacy_type_key() -> dict[str, str]:
     from cli_agent_orchestrator.events.serialization import cao_event_kind
-    from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
     from cli_agent_orchestrator.runtime.events import RUNTIME_CAO_EVENTS
 
     return {
         f"{event_type.__module__}.{event_type.__qualname__}": cao_event_kind(event_type)
-        for event_type in (*LINEAR_CAO_EVENTS, *RUNTIME_CAO_EVENTS)
+        for event_type in RUNTIME_CAO_EVENTS
     }
-
-
-def _migrate_ensure_provider_conversation_tables() -> None:
-    """Create provider conversation/work-item tables on existing databases."""
-    try:
-        engine = _database_module().engine
-        ProviderWorkItemModel.__table__.create(bind=engine, checkfirst=True)
-        ProviderConversationThreadModel.__table__.create(bind=engine, checkfirst=True)
-        ProviderConversationMessageModel.__table__.create(bind=engine, checkfirst=True)
-        ProcessedProviderEventModel.__table__.create(bind=engine, checkfirst=True)
-    except Exception as e:
-        logger.warning(f"Migration check for provider conversation tables failed: {e}")
-        return
-
-    try:
-        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
-            _migrate_legacy_provider_conversation_table_names(conn)
-            sqlite_migrations.drop_tables_if_exist(
-                conn, ("provider_conversation_inbox_notifications", "presence_inbox_notifications")
-            )
-    except Exception as e:
-        logger.warning(f"Migration check for provider conversation cutover failed: {e}")
-
-
-def _migrate_legacy_provider_conversation_table_names(sqlite_conn) -> None:
-    """Copy old presence-named physical tables into provider-conversation tables."""
-
-    has_legacy_tables = any(
-        sqlite_migrations.table_exists(sqlite_conn, table_name)
-        for table_name in (
-            "presence_work_items",
-            "presence_threads",
-            "presence_messages",
-            "presence_inbox_notifications",
-        )
-    )
-    if not has_legacy_tables:
-        return
-
-    with sqlite_migrations.foreign_keys_disabled(sqlite_conn):
-        if sqlite_migrations.table_exists(sqlite_conn, "presence_work_items"):
-            sqlite_conn.execute("""
-                INSERT OR IGNORE INTO provider_work_items (
-                    id,
-                    provider,
-                    external_id,
-                    external_url,
-                    identifier,
-                    title,
-                    state,
-                    raw_snapshot_json,
-                    metadata_json,
-                    created_at,
-                    updated_at
-                )
-                SELECT
-                    id,
-                    provider,
-                    external_id,
-                    external_url,
-                    identifier,
-                    title,
-                    state,
-                    raw_snapshot_json,
-                    metadata_json,
-                    created_at,
-                    updated_at
-                FROM presence_work_items
-            """)
-
-        if sqlite_migrations.table_exists(sqlite_conn, "presence_threads"):
-            sqlite_conn.execute("""
-                INSERT OR IGNORE INTO provider_conversation_threads (
-                    id,
-                    provider,
-                    external_id,
-                    external_url,
-                    work_item_id,
-                    kind,
-                    state,
-                    prompt_context,
-                    raw_snapshot_json,
-                    metadata_json,
-                    created_at,
-                    updated_at
-                )
-                SELECT
-                    id,
-                    provider,
-                    external_id,
-                    external_url,
-                    work_item_id,
-                    kind,
-                    state,
-                    prompt_context,
-                    raw_snapshot_json,
-                    metadata_json,
-                    created_at,
-                    updated_at
-                FROM presence_threads
-            """)
-
-        if sqlite_migrations.table_exists(sqlite_conn, "presence_messages"):
-            sqlite_conn.execute("""
-                INSERT OR IGNORE INTO provider_conversation_messages (
-                    id,
-                    thread_id,
-                    provider,
-                    external_id,
-                    direction,
-                    kind,
-                    body,
-                    state,
-                    raw_snapshot_json,
-                    metadata_json,
-                    created_at,
-                    updated_at
-                )
-                SELECT
-                    id,
-                    thread_id,
-                    provider,
-                    external_id,
-                    direction,
-                    kind,
-                    body,
-                    state,
-                    raw_snapshot_json,
-                    metadata_json,
-                    created_at,
-                    updated_at
-                FROM presence_messages
-            """)
-
-        logger.info("Migration: copied legacy presence tables to provider conversation tables")
 
 
 def _migrate_ensure_agent_runtime_tables() -> None:
@@ -703,6 +585,9 @@ def _migrate_ensure_agent_runtime_tables() -> None:
             needs_rebuild = (
                 "inbox_message_id" in column_info
                 or "inbox_notification_id" not in column_info
+                or "idempotency_key" not in column_info
+                or "source_kind" in column_info
+                or "source_id" in column_info
                 or not bool(column_info["inbox_notification_id"][3])
                 or not notification_fk_is_current
             )
@@ -712,6 +597,7 @@ def _migrate_ensure_agent_runtime_tables() -> None:
             notification_id_expr = _notification_id_migration_expr(
                 column_info, notification_columns
             )
+            idempotency_key_expr = _agent_runtime_idempotency_key_expr(column_info)
             sqlite_migrations.rebuild_table(
                 conn,
                 table_name="agent_runtime_notifications",
@@ -719,12 +605,11 @@ def _migrate_ensure_agent_runtime_tables() -> None:
                     CREATE TABLE agent_runtime_notifications (
                         id INTEGER NOT NULL,
                         agent_id VARCHAR NOT NULL,
-                        source_kind VARCHAR NOT NULL,
-                        source_id VARCHAR NOT NULL,
+                        idempotency_key VARCHAR NOT NULL,
                         inbox_notification_id INTEGER NOT NULL,
                         created_at DATETIME NOT NULL,
                         PRIMARY KEY (id),
-                        UNIQUE (agent_id, source_kind, source_id),
+                        UNIQUE (agent_id, idempotency_key),
                         FOREIGN KEY(inbox_notification_id)
                             REFERENCES inbox_notifications (id) ON DELETE CASCADE
                     )
@@ -734,16 +619,14 @@ def _migrate_ensure_agent_runtime_tables() -> None:
                     INSERT INTO agent_runtime_notifications (
                         id,
                         agent_id,
-                        source_kind,
-                        source_id,
+                        idempotency_key,
                         inbox_notification_id,
                         created_at
                     )
                     SELECT
                         old.id,
                         old.agent_id,
-                        old.source_kind,
-                        old.source_id,
+                        {idempotency_key_expr},
                         {notification_id_expr},
                         old.created_at
                     FROM {{old_table}} AS old
@@ -758,14 +641,16 @@ def _migrate_ensure_agent_runtime_tables() -> None:
         logger.warning(f"Migration check for agent runtime notification ids failed: {e}")
 
 
-def _migrate_ensure_linear_monitor_tables() -> None:
-    """Create Linear-owned monitor watermark tables on existing databases."""
-    try:
-        LinearMonitorWatermarkModel.__table__.create(
-            bind=_database_module().engine, checkfirst=True
-        )
-    except Exception as e:
-        logger.warning(f"Migration check for Linear monitor tables failed: {e}")
+def _agent_runtime_idempotency_key_expr(
+    columns: dict[str, sqlite_migrations.ColumnInfo],
+) -> str:
+    if "idempotency_key" in columns:
+        return "old.idempotency_key"
+    if "source_kind" in columns and "source_id" in columns:
+        return "old.source_kind || ':' || old.source_id"
+    if "sender_kind" in columns and "sender_id" in columns:
+        return "old.sender_kind || ':' || old.sender_id"
+    return "'legacy:' || old.id"
 
 
 def _migrate_drop_legacy_inbox_notification_ids() -> None:
@@ -800,6 +685,73 @@ def _migrate_drop_legacy_inbox_table() -> None:
         logger.warning(f"Migration check for legacy inbox table failed: {e}")
 
 
+def _migrate_monitoring_sessions_agent_ids() -> None:
+    """Rebuild monitoring sessions to be keyed by durable CAO agent ids."""
+
+    try:
+        engine = _database_module().engine
+        MonitoringSessionModel.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        logger.warning(f"Migration check for monitoring_sessions table failed: {e}")
+        return
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            columns = sqlite_migrations.table_column_info(conn, "monitoring_sessions")
+            if not columns or "agent_id" in columns and "terminal_id" not in columns:
+                return
+
+            if "terminal_id" in columns:
+                agent_id_expr = """
+                    (
+                        SELECT terminals.agent_id
+                        FROM terminals
+                        WHERE terminals.id = old.terminal_id
+                          AND terminals.agent_id IS NOT NULL
+                          AND TRIM(terminals.agent_id) != ''
+                    )
+                """
+                where_clause = f"WHERE {agent_id_expr} IS NOT NULL"
+            else:
+                agent_id_expr = "NULLIF(TRIM(old.agent_id), '')"
+                where_clause = f"WHERE {agent_id_expr} IS NOT NULL"
+
+            sqlite_migrations.rebuild_table(
+                conn,
+                table_name="monitoring_sessions",
+                create_sql="""
+                    CREATE TABLE monitoring_sessions (
+                        id VARCHAR NOT NULL,
+                        agent_id VARCHAR NOT NULL,
+                        label VARCHAR,
+                        started_at DATETIME NOT NULL,
+                        ended_at DATETIME,
+                        PRIMARY KEY (id)
+                    )
+                """,
+                copy_sql=f"""
+                    INSERT INTO monitoring_sessions (
+                        id,
+                        agent_id,
+                        label,
+                        started_at,
+                        ended_at
+                    )
+                    SELECT
+                        old.id,
+                        {agent_id_expr},
+                        old.label,
+                        old.started_at,
+                        old.ended_at
+                    FROM {{old_table}} AS old
+                    {where_clause}
+                """,
+            )
+            logger.info("Migration: rebuilt monitoring_sessions with agent ids")
+    except Exception as e:
+        logger.warning(f"Migration check for monitoring session agent ids failed: {e}")
+
+
 def _migrate_drop_monitoring_session_peers() -> None:
     """Drop the obsolete ``monitoring_session_peers`` table."""
 
@@ -810,6 +762,28 @@ def _migrate_drop_monitoring_session_peers() -> None:
                 logger.info("Migration: dropped obsolete monitoring_session_peers table")
     except Exception as e:
         logger.warning(f"Migration check for monitoring_session_peers failed: {e}")
+
+
+def _migrate_drop_linear_and_provider_conversation_tables() -> None:
+    """Drop tables owned by the removed Linear provider and conversation cache."""
+
+    try:
+        with sqlite_migrations.migration_connection(constants.DATABASE_FILE) as conn:
+            dropped = sqlite_migrations.drop_tables_if_exist(
+                conn,
+                (
+                    "provider_conversation_inbox_notifications",
+                    "provider_conversation_messages",
+                    "provider_conversation_threads",
+                    "processed_provider_events",
+                    "provider_work_items",
+                    "linear_monitor_watermarks",
+                ),
+            )
+            if dropped:
+                logger.info("Migration: dropped %s Linear/provider conversation tables", dropped)
+    except Exception as e:
+        logger.warning(f"Migration check for Linear/provider conversation table drop failed: {e}")
 
 
 def _migrate_add_allowed_tools() -> None:

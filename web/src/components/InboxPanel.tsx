@@ -3,7 +3,7 @@ import { api, InboxMessage } from '../api'
 import { X, Send, Mail, Loader2 } from 'lucide-react'
 
 interface InboxPanelProps {
-  terminalId: string
+  agentId: string
   onClose: () => void
 }
 
@@ -45,7 +45,7 @@ function MessageStatusBadge({ status }: { status: InboxMessage['status'] }) {
   )
 }
 
-export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
+export function InboxPanel({ agentId, onClose }: InboxPanelProps) {
   const [messages, setMessages] = useState<InboxMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<StatusFilter>('all')
@@ -57,7 +57,7 @@ export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
   const fetchMessages = async () => {
     try {
       const status = filter === 'all' ? undefined : filter
-      const data = await api.getInboxMessages(terminalId, 50, status)
+      const data = await api.getInboxMessages(agentId, 50, status)
       setMessages(data)
     } catch {
       // silently fail — will retry
@@ -71,7 +71,7 @@ export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
     fetchMessages()
     const interval = setInterval(fetchMessages, 5000)
     return () => clearInterval(interval)
-  }, [terminalId, filter])
+  }, [agentId, filter])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -94,7 +94,7 @@ export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
     if (!text || sending) return
     setSending(true)
     try {
-      await api.sendInboxMessage(terminalId, 'ui', text)
+      await api.sendInboxMessage(agentId, agentId, text)
       setSendText('')
       await fetchMessages()
     } catch {
@@ -110,7 +110,7 @@ export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
     }
   }
 
-  const isReceiver = (msg: InboxMessage) => msg.receiver_id === terminalId
+  const isReceiver = (msg: InboxMessage) => msg.receiver_agent_id === agentId
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
@@ -127,7 +127,7 @@ export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-white">Agent Inbox</h3>
-              <p className="text-[11px] text-gray-500">Messages between agents in this session <span className="font-mono">({terminalId})</span></p>
+              <p className="text-[11px] text-gray-500">Messages between agents in this session <span className="font-mono">({agentId})</span></p>
             </div>
           </div>
           <button
@@ -175,7 +175,7 @@ export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
               const incoming = isReceiver(msg)
               return (
                 <div
-                  key={msg.id}
+                  key={msg.notification_id}
                   className={`flex flex-col ${incoming ? 'items-start' : 'items-end'}`}
                 >
                   <div
@@ -187,11 +187,11 @@ export function InboxPanel({ terminalId, onClose }: InboxPanelProps) {
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-[10px] font-mono text-gray-500">
-                        {incoming ? msg.sender_id.slice(0, 8) : msg.receiver_id.slice(0, 8)}
+                        {incoming ? msg.sender_agent_id.slice(0, 8) : msg.receiver_agent_id.slice(0, 8)}
                       </span>
                       <MessageStatusBadge status={msg.status} />
                     </div>
-                    <p className="text-sm text-gray-200 whitespace-pre-wrap break-words">{msg.message}</p>
+                    <p className="text-sm text-gray-200 whitespace-pre-wrap break-words">{msg.body}</p>
                     {msg.created_at && (
                       <p className="text-[10px] text-gray-600 mt-1">{formatRelativeTime(msg.created_at)}</p>
                     )}

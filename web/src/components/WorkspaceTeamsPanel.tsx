@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type AgentStatus, type ProviderRoleAccessSchema, type ToolDescriptor, type Workspace, type WorkspaceTeam, type WorkspaceTeamRole } from '../api'
+import { api, type AgentStatus, type ToolDescriptor, type Workspace, type WorkspaceTeam, type WorkspaceTeamRole } from '../api'
 import { useStore } from '../store'
 import { AvailableAgentsPanel } from './teams/AvailableAgentsPanel'
 import { MembersPanel } from './teams/MembersPanel'
@@ -16,7 +16,6 @@ export function WorkspaceTeamsPanel() {
   const [agents, setAgents] = useState<AgentStatus[]>([])
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [caoTools, setCaoTools] = useState<ToolDescriptor[]>([])
-  const [providerSchemas, setProviderSchemas] = useState<Record<string, ProviderRoleAccessSchema>>({})
   const [agentsLoading, setAgentsLoading] = useState(true)
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null)
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
@@ -38,15 +37,6 @@ export function WorkspaceTeamsPanel() {
       setSelectedTeamId(current => current && nextTeams.some(team => team.id === current) ? current : nextTeams[0]?.id ?? null)
       setLoading(false)
 
-      const providers = Array.from(new Set(nextWorkspaces.flatMap(workspace => workspace.providers)))
-      void Promise.all(providers.map(provider =>
-        api.getWorkspaceToolProviderRoleAccessSchema(provider)
-          .then(schema => [provider, schema] as const)
-          .catch(() => null),
-      )).then(schemas => {
-        setProviderSchemas(Object.fromEntries(schemas.filter(Boolean) as Array<[string, ProviderRoleAccessSchema]>))
-      })
-
       void api.listAgents()
         .then(setAgents)
         .catch(() => setAgents([]))
@@ -63,14 +53,13 @@ export function WorkspaceTeamsPanel() {
   }, [refresh])
 
   const selectedTeam = teams.find(team => team.id === selectedTeamId) ?? null
-  const selectedWorkspace = selectedTeam ? workspaces.find(workspace => workspace.id === selectedTeam.workspace) : undefined
   const assignedAgentIds = useMemo(
     () => new Set(teams.flatMap(team => team.member_details.map(member => member.agent_id))),
     [teams],
   )
   const toolOptions = useMemo(
-    () => buildToolOptions(caoTools, agents, selectedWorkspace, providerSchemas),
-    [agents, caoTools, providerSchemas, selectedWorkspace],
+    () => buildToolOptions(caoTools, agents),
+    [agents, caoTools],
   )
   const mutations = useTeamMutations({ teams, setTeams, selectedTeamId, setSelectedTeamId, showSnackbar })
 

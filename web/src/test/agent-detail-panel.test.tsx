@@ -35,7 +35,6 @@ function agentStatus(overrides: Partial<AgentStatus> = {}): AgentStatus {
       runtime_capabilities: null,
       codex_config: {},
       workspace: { team: null, derived_workspace: null, diagnostics: [] },
-      linear: null,
     },
     active: false,
     active_terminal_id: null,
@@ -126,19 +125,19 @@ describe('AgentDetailPanel', () => {
           workspaceDiagnostics={[
             {
               code: 'pruned_provider_identity',
-              message: 'Workspace team cao_delivery pruned linear tool access for discovery',
+              message: 'Workspace team cao_delivery pruned example tool access for discovery',
               team_id: 'cao_delivery',
-              workspace_id: 'linear_delivery',
+              workspace_id: 'cao_default',
               agent_id: 'aria',
-              provider_name: 'linear',
+              provider_name: 'example',
             },
             {
               code: 'unavailable_provider',
-              message: 'Workspace team cao_delivery workspace linear_delivery requires unavailable provider linear',
+              message: 'Workspace team cao_delivery workspace cao_default requires unavailable provider example',
               team_id: 'cao_delivery',
-              workspace_id: 'linear_delivery',
+              workspace_id: 'cao_default',
               agent_id: null,
-              provider_name: 'linear',
+              provider_name: 'example',
             },
           ]}
           onStartAgent={vi.fn()}
@@ -149,8 +148,8 @@ describe('AgentDetailPanel', () => {
         />,
       )
 
-      expect(screen.queryByText(/pruned linear tool access/)).not.toBeInTheDocument()
-      expect(screen.getByText(/requires unavailable provider linear/)).toBeInTheDocument()
+      expect(screen.queryByText(/pruned example tool access/)).not.toBeInTheDocument()
+      expect(screen.getByText(/requires unavailable provider example/)).toBeInTheDocument()
     })
 
     it('renders current MCP tool access as the primary available tools section', () => {
@@ -167,9 +166,9 @@ describe('AgentDetailPanel', () => {
               description: 'Send a message to another CAO agent.',
             },
             {
-              source: { kind: 'provider', name: 'linear' },
-              name: 'cao_linear.get_issue',
-              description: 'Read a Linear issue.',
+              source: { kind: 'provider', name: 'example' },
+              name: 'cao_example.get_item',
+              description: 'Read an example work item.',
             },
           ],
         },
@@ -190,14 +189,14 @@ describe('AgentDetailPanel', () => {
       // Then
       expect(screen.getByText('Available tools')).toBeInTheDocument()
       expect(screen.queryByText('ToolService access')).not.toBeInTheDocument()
-      expect(screen.queryByText('cao_linear.get_issue')).not.toBeInTheDocument()
+      expect(screen.queryByText('cao_example.get_item')).not.toBeInTheDocument()
 
       fireEvent.click(screen.getByText('Available tools'))
 
       expect(screen.getByText('send_message')).toBeInTheDocument()
-      expect(screen.getByText('cao_linear.get_issue')).toBeInTheDocument()
+      expect(screen.getByText('cao_example.get_item')).toBeInTheDocument()
       expect(screen.getByText('cao builtin / cao')).toBeInTheDocument()
-      expect(screen.getByText('provider / linear')).toBeInTheDocument()
+      expect(screen.getByText('provider / example')).toBeInTheDocument()
       expect(screen.getByText(/running terminal may need a restart/i)).toBeInTheDocument()
       expect(screen.getByText(/managed by ToolService/i)).toBeInTheDocument()
     })
@@ -238,9 +237,9 @@ describe('AgentDetailPanel', () => {
               description: 'Send a message.',
             },
             {
-              source: { kind: 'provider', name: 'linear' },
-              name: 'cao_linear.get_issue',
-              description: 'Read a Linear issue.',
+              source: { kind: 'provider', name: 'example' },
+              name: 'cao_example.get_item',
+              description: 'Read an example work item.',
             },
           ],
         },
@@ -248,16 +247,15 @@ describe('AgentDetailPanel', () => {
           agent_id: 'aria',
           team_id: null,
           role_id: null,
-          registered_tools: ['send_message', 'cao_linear.get_issue', '@cao-mcp-server'],
-          allowed_tools: ['send_message', 'cao_linear.get_issue'],
+          registered_tools: ['send_message', 'cao_example.get_item', '@cao-mcp-server'],
+          allowed_tools: ['send_message', 'cao_example.get_item'],
           blocked_tools: [],
           built_in_cao_tools: ['send_message'],
-          provider_mediated_tools: { linear: ['cao_linear.get_issue'] },
+          provider_mediated_tools: { example: ['cao_example.get_item'] },
           materialized_mcp_servers: { 'cao-mcp-server': {} },
           runtime_capabilities: ['fs_read', '@cao-mcp-server'],
           source_markers: {},
           inactive_local_grants: {},
-          provider_conversation_requirements: [],
           diagnostics: [],
         },
       })
@@ -292,19 +290,18 @@ describe('AgentDetailPanel', () => {
           agent_id: 'aria',
           team_id: null,
           role_id: null,
-          registered_tools: ['send_message', 'cao_linear.get_issue', '@cao-mcp-server'],
-          allowed_tools: ['send_message', 'cao_linear.get_issue'],
+          registered_tools: ['send_message', 'cao_example.get_item', '@cao-mcp-server'],
+          allowed_tools: ['send_message', 'cao_example.get_item'],
           blocked_tools: [],
           built_in_cao_tools: ['send_message'],
-          provider_mediated_tools: { linear: ['cao_linear.get_issue'] },
+          provider_mediated_tools: { example: ['cao_example.get_item'] },
           materialized_mcp_servers: { 'cao-mcp-server': {} },
           runtime_capabilities: ['fs_read', '@cao-mcp-server'],
           source_markers: {
             send_message: 'agent_config:cao_tools',
-            'cao_linear.get_issue': 'linear:tool_access.workflow',
+            'cao_example.get_item': 'example:tool_access.workflow',
           },
           inactive_local_grants: { local: ['legacy_tool'] },
-          provider_conversation_requirements: [],
           diagnostics: [{ code: 'debug', message: 'Tool access mismatch detected', source: 'test' }],
         },
       })
@@ -323,9 +320,9 @@ describe('AgentDetailPanel', () => {
 
       expect(screen.getByText('allowed:')).toBeInTheDocument()
       expect(screen.getByText('send_message')).toBeInTheDocument()
-      expect(screen.getByText('cao_linear.get_issue')).toBeInTheDocument()
+      expect(screen.getByText('cao_example.get_item')).toBeInTheDocument()
       expect(screen.getByText('agent_config:cao_tools')).toBeInTheDocument()
-      expect(screen.getByText('linear:tool_access.workflow')).toBeInTheDocument()
+      expect(screen.getByText('example:tool_access.workflow')).toBeInTheDocument()
       expect(screen.getByText(/Inactive agent-local grants: local/)).toBeInTheDocument()
       expect(screen.getByText('Tool access mismatch detected')).toBeInTheDocument()
     })

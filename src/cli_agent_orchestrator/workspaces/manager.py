@@ -22,8 +22,7 @@ from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
 
-DEFAULT_WORKSPACE_ID = "linear_delivery"
-LEGACY_WORKSPACE_IDS = {"linear_delivery_setup": DEFAULT_WORKSPACE_ID}
+DEFAULT_WORKSPACE_ID = "cao_default"
 DEFAULT_WORKSPACE_TEAM_ID = "cao_delivery"
 WORKSPACE_TEAMS_FILENAME = "workspace-teams.json"
 DEFAULT_WORKSPACE_TEAM_MEMBER_ROLE = "member"
@@ -53,8 +52,6 @@ class Workspace:
     def __post_init__(self) -> None:
         _required_token(self.id, "workspace id")
         _required_token(self.display_name, "workspace display name")
-        if not self.providers:
-            raise WorkspaceConfigError(f"Workspace {self.id} must declare providers")
         normalized = tuple(_normalize_provider(provider) for provider in self.providers)
         if len(set(normalized)) != len(normalized):
             raise WorkspaceConfigError(
@@ -1124,17 +1121,13 @@ class _ReadOnlyTeamStore(WorkspaceTeamStore):
 
 
 def default_workspace_registry() -> WorkspaceRegistry:
-    from cli_agent_orchestrator.linear.workspace_context_resolver import (
-        resolve_linear_workspace_event,
-    )
-
     return WorkspaceRegistry(
         (
             Workspace(
                 id=DEFAULT_WORKSPACE_ID,
-                display_name="Linear Delivery",
-                providers=("linear",),
-                resolver=resolve_linear_workspace_event,
+                display_name="CAO Default",
+                providers=(),
+                resolver=lambda _event: None,
             ),
         )
     )
@@ -1162,19 +1155,16 @@ def default_workspace_team_service(
     agents_root: str | Path | None = None,
     team_store_path: str | Path | None = None,
 ) -> WorkspaceTeamService:
-    from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
-
     resolved_agents_root = (
         Path(agents_root) if agents_root is not None else agent_config.AGENTS_ROOT
     )
     registry = agent_registry or load_agent_registry(agents_root=resolved_agents_root)
     workspace_registry = default_workspace_registry()
-    adapters = {"linear": LinearWorkspaceAdapter()}
     return WorkspaceTeamService(
         workspace_registry=workspace_registry,
         team_store=default_workspace_team_store(path=team_store_path),
         agent_registry=registry,
-        available_providers=tuple(adapters),
+        available_providers=(),
         agents_root=resolved_agents_root,
     )
 
@@ -1184,8 +1174,6 @@ def default_workspace_collaboration_manager(
     agent_registry: AgentRegistry | None = None,
     team_store_path: str | Path | None = None,
 ) -> WorkspaceCollaborationManager:
-    from cli_agent_orchestrator.linear.workspace_adapter import LinearWorkspaceAdapter
-
     registry = agent_registry or load_agent_registry()
     workspace_registry = default_workspace_registry()
     team_store = default_workspace_team_store(path=team_store_path)
@@ -1193,7 +1181,7 @@ def default_workspace_collaboration_manager(
         workspace_registry=workspace_registry,
         team_registry=WorkspaceTeamRegistry(team_store),
         agent_registry=registry,
-        provider_adapters={"linear": LinearWorkspaceAdapter()},
+        provider_adapters={},
     )
 
 
@@ -1213,34 +1201,12 @@ def _required_json_token(raw: Mapping[str, Any], key: str, label: str) -> str:
 def _workspace_from_json(raw_team: Mapping[str, Any]) -> tuple[str, bool]:
     has_workspace = "workspace" in raw_team
     has_legacy_workspace = "workspace_setup" in raw_team
-    if not has_workspace and not has_legacy_workspace:
-        raise WorkspaceConfigError("workspace team workspace id must be a non-empty string")
-    if has_workspace and has_legacy_workspace:
-        workspace = _required_json_token(raw_team, "workspace", "workspace team workspace id")
-        legacy_workspace = _required_json_token(
-            raw_team,
-            "workspace_setup",
-            "legacy workspace team workspace id",
-        )
-        if workspace != legacy_workspace:
-            raise WorkspaceConfigError(
-                "Workspace team entry has conflicting workspace and workspace_setup values"
-            )
-        return _canonical_workspace_id(workspace), True
     if has_legacy_workspace:
-        legacy_workspace = _required_json_token(
-            raw_team,
-            "workspace_setup",
-            "legacy workspace team workspace id",
-        )
-        return _canonical_workspace_id(legacy_workspace), True
+        raise WorkspaceConfigError("workspace_setup is no longer supported; use workspace")
+    if not has_workspace:
+        raise WorkspaceConfigError("workspace team workspace id must be a non-empty string")
     workspace = _required_json_token(raw_team, "workspace", "workspace team workspace id")
-    canonical = _canonical_workspace_id(workspace)
-    return canonical, canonical != workspace
-
-
-def _canonical_workspace_id(workspace_id: str) -> str:
-    return LEGACY_WORKSPACE_IDS.get(_required_token(workspace_id, "workspace id"), workspace_id)
+    return workspace, False
 
 
 def _normalize_provider(value: str) -> str:

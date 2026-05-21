@@ -24,7 +24,14 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.events import CaoEvent
-from cli_agent_orchestrator.models.inbox import InboxDelivery, MessageStatus
+from cli_agent_orchestrator.inbox import (
+    any_notification_delivered,
+    delete_notification,
+    get_notification,
+    pending_notification_ids_for_receivers,
+    send as send_inbox_message,
+)
+from cli_agent_orchestrator.models.inbox import InboxNotification, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import AgentRuntimeLaunchContext
 from cli_agent_orchestrator.providers.manager import provider_manager
@@ -101,12 +108,12 @@ class TerminalRuntimeState:
 class AgentRuntimeNotification:
     """Durable notification accepted for a CAO agent runtime."""
 
-    delivery: InboxDelivery
+    notification: InboxNotification
     created: bool
 
     @property
     def receiver_id(self) -> str:
-        return self.delivery.notification.receiver_id
+        return self.notification.receiver_agent_id
 
 
 @dataclass(frozen=True)
@@ -171,9 +178,9 @@ class AgentRuntimeHandle:
         self._last_agent_ready_delivery_error: str | None = None
 
     @property
-    def inbox_receiver_id(self) -> str:
-        """Stable inbox receiver id used before and after terminal startup."""
-        return f"agent:{self.agent.id}:context:{self.workspace_context_id}"
+    def receiver_agent_id(self) -> str:
+        """Stable durable agent id used before and after terminal startup."""
+        return self.agent.id
 
     @property
     def session_name(self) -> str:
@@ -289,7 +296,6 @@ class AgentRuntimeHandle:
 
         status = self._status_for_terminal(terminal)
         if status is AgentRuntimeStatus.UNREACHABLE:
-            self._move_pending_terminal_notifications_to_agent(terminal.id)
             return self._publish_runtime_lifecycle_result(
                 AgentRuntimeFreshnessResult(
                     action=AgentRuntimeFreshnessAction.FAILED,
@@ -303,7 +309,6 @@ class AgentRuntimeHandle:
                 publish_event=publish_lifecycle_event,
             )
         if status is AgentRuntimeStatus.ERROR:
-            self._move_pending_terminal_notifications_to_agent(terminal.id)
             return self._publish_runtime_lifecycle_result(
                 AgentRuntimeFreshnessResult(
                     action=AgentRuntimeFreshnessAction.FAILED,
@@ -355,7 +360,6 @@ class AgentRuntimeHandle:
                     causing_event=causing_event,
                     publish_event=publish_lifecycle_event,
                 )
-            self._move_pending_terminal_notifications_to_agent(terminal.id)
             return self._publish_runtime_lifecycle_result(
                 AgentRuntimeFreshnessResult(
                     action=AgentRuntimeFreshnessAction.DEFERRED,
@@ -369,7 +373,6 @@ class AgentRuntimeHandle:
                 publish_event=publish_lifecycle_event,
             )
 
-        self._move_pending_terminal_notifications_to_agent(terminal.id)
         if status in (AgentRuntimeStatus.BUSY, AgentRuntimeStatus.WAITING_USER):
             return self._publish_runtime_lifecycle_result(
                 AgentRuntimeFreshnessResult(
@@ -463,25 +466,19 @@ class AgentRuntimeHandle:
         message: str,
         *,
         sender_id: str = "workspace-tool-provider",
-        source_kind: Optional[str] = None,
-        source_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
         ensure_started: bool = True,
         attempt_delivery: bool = True,
         causing_event: CaoEvent | None = None,
     ) -> AgentRuntimeNotifyResult:
-        """Durably accept a provider notification and optionally deliver it.
-
-        Acceptance is independent from terminal liveness. ``source_kind`` and
-        ``source_id`` act as an idempotency key when supplied together.
-        """
+        """Durably accept an agent notification and optionally deliver it."""
         notification = self._create_or_get_notification(
             sender_id=sender_id,
-            receiver_id=self.inbox_receiver_id,
+            receiver_id=self.receiver_agent_id,
             message=message,
-            source_kind=source_kind,
-            source_id=source_id,
+            idempotency_key=idempotency_key,
         )
-        original_status = notification.delivery.notification.status
+        original_status = notification.notification.status
         if notification.created:
             self._publish_notification_accepted(
                 notification,
@@ -540,7 +537,7 @@ class AgentRuntimeHandle:
         This method keeps terminal lifecycle and busy/idle delivery behavior
         behind the runtime handle for those already-durable notifications.
         """
-        original_status = notification.delivery.notification.status
+        original_status = notification.notification.status
         if notification.created:
             self._publish_notification_accepted(
                 notification,
@@ -731,7 +728,6 @@ class AgentRuntimeHandle:
                 terminal.id,
                 other_handle._applied_runtime_fingerprint(terminal.id) or "",
             )
-            other_handle._move_pending_terminal_notifications_to_agent(terminal.id)
             terminal_service.delete_terminal(terminal.id, require_window_killed=True)
             db_module.set_context_workspace_active_terminal(
                 agent_id=self.agent.id,
@@ -811,7 +807,6 @@ class AgentRuntimeHandle:
                 fresh=fresh,
             )
         if status in (AgentRuntimeStatus.BUSY, AgentRuntimeStatus.WAITING_USER):
-            self._move_pending_terminal_notifications_to_agent(terminal.id)
             return AgentRuntimeFreshnessResult(
                 action=AgentRuntimeFreshnessAction.DEFERRED,
                 status=status,
@@ -820,7 +815,6 @@ class AgentRuntimeHandle:
                 fresh=fresh,
                 error=f"runtime is {status.value}; delivery deferred",
             )
-        self._move_pending_terminal_notifications_to_agent(terminal.id)
         return AgentRuntimeFreshnessResult(
             action=AgentRuntimeFreshnessAction.FAILED,
             status=status,
@@ -885,8 +879,6 @@ class AgentRuntimeHandle:
         fresh = (
             self._applied_runtime_fingerprint(terminal.id) == self._desired_runtime_fingerprint()
         )
-        if not fresh:
-            self._move_pending_terminal_notifications_to_agent(terminal.id)
         return AgentRuntimeFreshnessResult(
             action=(
                 AgentRuntimeFreshnessAction.REUSED
@@ -905,38 +897,13 @@ class AgentRuntimeHandle:
         return terminal.id if terminal is not None else None
 
     def _runtime_delivery_receiver_ids(self, terminal_id: str | None) -> tuple[str, ...]:
-        if terminal_id is None:
-            return (self.inbox_receiver_id,)
-        return (self.inbox_receiver_id, terminal_id)
+        return (self.receiver_agent_id,)
 
     def _pending_delivery_ids_for_receivers(self, receiver_ids: tuple[str, ...]) -> set[int]:
-        normalized_receiver_ids = tuple(dict.fromkeys(receiver_ids))
-        if not normalized_receiver_ids:
-            return set()
-        with db_module.SessionLocal() as session:
-            rows = (
-                session.query(db_module.InboxNotificationModel.id)
-                .filter(
-                    db_module.InboxNotificationModel.receiver_agent_id.in_(normalized_receiver_ids),
-                    db_module.InboxNotificationModel.status == MessageStatus.PENDING.value,
-                )
-                .all()
-            )
-        return {int(row[0]) for row in rows}
+        return pending_notification_ids_for_receivers(receiver_ids)
 
     def _any_delivery_completed(self, notification_ids: set[int]) -> bool:
-        if not notification_ids:
-            return False
-        with db_module.SessionLocal() as session:
-            return (
-                session.query(db_module.InboxNotificationModel.id)
-                .filter(
-                    db_module.InboxNotificationModel.id.in_(list(notification_ids)),
-                    db_module.InboxNotificationModel.status == MessageStatus.DELIVERED.value,
-                )
-                .first()
-                is not None
-            )
+        return any_notification_delivered(notification_ids)
 
     def _desired_runtime_fingerprint(self) -> str:
         runtime_inputs = terminal_service.resolve_terminal_runtime_inputs(
@@ -1089,55 +1056,46 @@ class AgentRuntimeHandle:
         sender_id: str,
         receiver_id: str,
         message: str,
-        source_kind: Optional[str],
-        source_id: Optional[str],
+        idempotency_key: Optional[str],
     ) -> AgentRuntimeNotification:
         if not message:
             raise ValueError("message is required")
-        if (source_kind is None) != (source_id is None):
-            raise ValueError("source_kind and source_id must be provided together")
 
         with db_module.SessionLocal() as session:
-            if source_kind is not None and source_id is not None:
+            if idempotency_key is not None:
                 existing = self._get_existing_runtime_notification(
                     session,
-                    source_kind=source_kind,
-                    source_id=source_id,
+                    idempotency_key=idempotency_key,
                 )
                 if existing is not None:
                     return AgentRuntimeNotification(
                         created=False,
-                        delivery=existing,
+                        notification=existing,
                     )
 
-            delivery = db_module.create_inbox_delivery(
-                sender_id=sender_id,
-                receiver_id=receiver_id,
-                message=message,
+            notification = send_inbox_message(
+                receiver_id,
+                message,
+                sender_agent_id=sender_id,
                 db=session,
-                source_kind=source_kind,
-                source_id=source_id,
+                attempt_delivery=False,
             )
-            if source_kind is not None and source_id is not None:
+            if idempotency_key is not None:
                 inserted = session.execute(
                     sqlite_insert(db_module.AgentRuntimeNotificationModel)
                     .values(
                         agent_id=self.agent.id,
-                        source_kind=source_kind,
-                        source_id=source_id,
-                        inbox_notification_id=delivery.notification.id,
+                        idempotency_key=idempotency_key,
+                        inbox_notification_id=notification.id,
                         created_at=datetime.now(),
                     )
-                    .on_conflict_do_nothing(index_elements=["agent_id", "source_kind", "source_id"])
+                    .on_conflict_do_nothing(index_elements=["agent_id", "idempotency_key"])
                 )
                 if inserted.rowcount != 1:
-                    session.query(db_module.InboxNotificationModel).filter(
-                        db_module.InboxNotificationModel.id == delivery.notification.id
-                    ).delete()
+                    delete_notification(notification.id, db=session)
                     existing = self._get_existing_runtime_notification(
                         session,
-                        source_kind=source_kind,
-                        source_id=source_id,
+                        idempotency_key=idempotency_key,
                     )
                     if existing is None:
                         raise RuntimeError(
@@ -1146,27 +1104,25 @@ class AgentRuntimeHandle:
                     session.commit()
                     return AgentRuntimeNotification(
                         created=False,
-                        delivery=existing,
+                        notification=existing,
                     )
             session.commit()
             return AgentRuntimeNotification(
                 created=True,
-                delivery=delivery,
+                notification=notification,
             )
 
     def _get_existing_runtime_notification(
         self,
         session,
         *,
-        source_kind: str,
-        source_id: str,
-    ) -> Optional[InboxDelivery]:
+        idempotency_key: str,
+    ) -> Optional[InboxNotification]:
         marker = (
             session.query(db_module.AgentRuntimeNotificationModel)
             .filter(
                 db_module.AgentRuntimeNotificationModel.agent_id == self.agent.id,
-                db_module.AgentRuntimeNotificationModel.source_kind == source_kind,
-                db_module.AgentRuntimeNotificationModel.source_id == source_id,
+                db_module.AgentRuntimeNotificationModel.idempotency_key == idempotency_key,
             )
             .first()
         )
@@ -1175,19 +1131,13 @@ class AgentRuntimeHandle:
 
         if marker.inbox_notification_id is None:
             raise RuntimeError("agent runtime notification marker has no semantic notification id")
-        delivery = db_module.get_inbox_delivery(marker.inbox_notification_id, db=session)
-        if delivery is None:
+        notification = get_notification(marker.inbox_notification_id, db=session)
+        if notification is None:
             raise RuntimeError(
                 "inbox notification "
                 f"{marker.inbox_notification_id} for agent runtime notification not found"
             )
-        return delivery
-
-    def _move_pending_agent_notifications_to_terminal(self, terminal_id: str) -> None:
-        db_module.move_pending_inbox_notifications(self.inbox_receiver_id, terminal_id)
-
-    def _move_pending_terminal_notifications_to_agent(self, terminal_id: str) -> None:
-        db_module.move_pending_inbox_notifications(terminal_id, self.inbox_receiver_id)
+        return notification
 
     def _ensure_context_workspace(self, *, active_terminal_id: str | None = None) -> None:
         runtime_paths = ensure_agent_workspace_context_runtime_paths(
@@ -1210,12 +1160,12 @@ class AgentRuntimeHandle:
         self,
         notification: AgentRuntimeNotification,
     ) -> AgentRuntimeNotification:
-        delivery = db_module.get_inbox_delivery(notification.delivery.notification.id)
-        if delivery is None:
+        refreshed = get_notification(notification.notification.id)
+        if refreshed is None:
             return notification
         return AgentRuntimeNotification(
             created=notification.created,
-            delivery=delivery,
+            notification=refreshed,
         )
 
     def _publish_notification_accepted(
@@ -1224,21 +1174,13 @@ class AgentRuntimeHandle:
         *,
         causing_event: CaoEvent | None,
     ) -> None:
-        delivery = notification.delivery
-        sender_id = (
-            delivery.message.sender_id
-            if delivery.message is not None
-            else delivery.notification.source_kind
-        )
         runtime_events.publish_runtime_event(
             runtime_events.notification_accepted_event(
                 agent_id=self.agent.id,
                 workspace_context_id=self.workspace_context_id,
-                inbox_notification_id=delivery.notification.id,
-                inbox_receiver_id=self.inbox_receiver_id,
-                sender_id=sender_id,
-                source_kind=delivery.notification.source_kind,
-                source_id=delivery.notification.source_id,
+                inbox_notification_id=notification.notification.id,
+                receiver_agent_id=self.receiver_agent_id,
+                sender_agent_id=notification.notification.sender_agent_id,
                 causing_event=causing_event,
             )
         )
@@ -1251,7 +1193,7 @@ class AgentRuntimeHandle:
         original_status: MessageStatus,
         causing_event: CaoEvent | None,
     ) -> None:
-        current_status = notification.delivery.notification.status
+        current_status = notification.notification.status
         if not notification.created and current_status == original_status:
             return
 
@@ -1270,20 +1212,15 @@ class AgentRuntimeHandle:
             runtime_events.notification_delivery_event(
                 agent_id=self.agent.id,
                 workspace_context_id=self.workspace_context_id,
-                inbox_notification_id=notification.delivery.notification.id,
-                inbox_receiver_id=self.inbox_receiver_id,
+                inbox_notification_id=notification.notification.id,
+                receiver_agent_id=self.receiver_agent_id,
                 terminal_id=delivery.terminal_id,
                 runtime_status=delivery.status.value,
                 outcome=outcome,
                 attempted=delivery.attempted,
                 delivered=delivery.delivered,
                 error=delivery.error,
-                source_kind=notification.delivery.notification.source_kind,
-                message_body=(
-                    notification.delivery.message.body
-                    if notification.delivery.message is not None
-                    else None
-                ),
+                message_body=notification.notification.body,
                 causing_event=causing_event,
             )
         )

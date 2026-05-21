@@ -11,12 +11,11 @@ so operators can compare workflow variants.
 ## Model
 
 A **monitoring session** is a recording window over CAO's existing `inbox`
-table, scoped to a single agent (terminal). It records everything involving
-that terminal from `started_at` until `ended_at` (or until now, if
-still active).
+table, scoped to a single durable agent id. It records everything involving
+that agent from `started_at` until `ended_at` (or until now, if still active).
 
 Sessions don't carry peer sets or message filters. They capture all inbox
-activity involving the monitored terminal. If you only want messages with a
+activity involving the monitored agent. If you only want messages with a
 specific peer, or from a specific time sub-window, you ask for that at read
 time — one recording, many possible views.
 
@@ -25,8 +24,8 @@ time — one recording, many possible views.
 - **Not** a chat room or multi-party thread primitive.
 - **Not** an agent-facing feature. Agents cannot create, inspect, or end
   monitoring sessions. The API is operator/procedure-facing only.
-- **Not** multiple concurrent captures per terminal. `create_session` is
-  idempotent on active state — calling it twice on the same terminal returns
+- **Not** multiple concurrent captures per agent. `create_session` is
+  idempotent on active state — calling it twice on the same agent returns
   the same session both times.
 
 ## HTTP API
@@ -49,9 +48,9 @@ The `/messages` and `/log` endpoints accept query-time filters:
 ## CLI
 
 ```bash
-cao monitor start    --terminal T [--label L]            # prints session id
+cao monitor start    --agent A [--label L]               # prints session id
 cao monitor end      <session_id>
-cao monitor list     [--terminal T] [--active] [--ended] [--label L]
+cao monitor list     [--agent A] [--active] [--ended] [--label L]
 cao monitor show     <session_id>
 cao monitor log      <session_id> [--format markdown|json]
                      [--peer P ...] [--since ISO] [--until ISO]
@@ -67,8 +66,8 @@ Session rows live in the CAO SQLite database alongside the `inbox` table
 ## Typical flow
 
 ```bash
-# 1. Start recording an implementer terminal
-session_id=$(cao monitor start --terminal impl-abc123 --label review-v2)
+# 1. Start recording an implementer agent
+session_id=$(cao monitor start --agent implementation_partner --label review-v2)
 
 # 2. (Agents do their work via the usual assign/send_message primitives.)
 
@@ -109,15 +108,15 @@ file can't be mistaken for the unfiltered recording.
 
 ## Idempotent start
 
-Calling `cao monitor start --terminal T` when `T` already has an active
+Calling `cao monitor start --agent A` when `A` already has an active
 session returns the existing session's id — no duplicate is created, and
 no error is raised. The UI uses this directly: clicking "Monitor" when
 already monitoring is a safe no-op.
 
-To check whether a terminal is currently being recorded:
+To check whether an agent is currently being recorded:
 
 ```bash
-cao monitor list --terminal T --active
+cao monitor list --agent A --active
 ```
 
 ## Yards procedure integration
@@ -129,7 +128,7 @@ A procedure can bracket a review step with monitoring:
 - blockId: startMonitor
   handler: shell
   properties:
-    command: cao monitor start --terminal ${implementerTerminal} --label "review-${runId}"
+    command: cao monitor start --agent ${implementerAgent} --label "review-${runId}"
   outputs:
     - { portId: sessionId, schema: string }
 
@@ -141,7 +140,7 @@ A procedure can bracket a review step with monitoring:
   properties:
     command: |
       cao monitor log ${sessionId} --format markdown > ${artifactDir}/review-full.md
-      cao monitor log ${sessionId} --peer ${reviewerTerminal} > ${artifactDir}/review-r1.md
+      cao monitor log ${sessionId} --peer ${reviewerAgent} > ${artifactDir}/review-r1.md
       cao monitor end ${sessionId}
 ```
 
@@ -158,7 +157,7 @@ design record. Load-bearing choices:
    table remains the single source of truth.
 2. **Not exposed to agents.** No new MCP tools. Monitoring is a
    procedure/operator concern.
-3. **One active session per terminal.** `create_session` is idempotent on
+3. **One active session per agent.** `create_session` is idempotent on
    active state; double-starting is a no-op.
 4. **Filtering is query-time.** Peer and time-window filters live on
    `/messages` and `/log`, not on the session record.

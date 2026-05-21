@@ -18,15 +18,15 @@ interface Store {
   connected: boolean
   snackbar: Snackbar | null
   terminalStatuses: Record<string, string>
-  /** Map of terminal_id -> its active monitoring session (if any). Under
-   *  the single-session model at most one session per terminal can be
+  /** Map of agent_id -> its active monitoring session (if any). Under
+   *  the single-session model at most one session per agent can be
    *  active at a time,
    *  so a single-value map is all we need. Replaced wholesale each poll
    *  via setActiveMonitoringSessions. */
-  activeMonitoringByTerminal: Record<string, MonitoringSession>
-  /** Map of terminal_id -> active batons currently held by that terminal.
-   *  Unlike monitoring, a terminal can hold several batons, so each value is
-   *  an array. Replaced wholesale each poll so completed/transferred batons
+  activeMonitoringByAgent: Record<string, MonitoringSession>
+  /** Map of agent_id -> active batons currently held by that agent.
+   *  Unlike monitoring, an agent can hold several batons, so each value is an
+   *  array. Replaced wholesale each poll so completed/transferred batons
    *  disappear promptly. */
   activeBatonsByHolder: Record<string, Baton[]>
 
@@ -49,7 +49,7 @@ export const useStore = create<Store>((set, get) => ({
   connected: false,
   snackbar: null,
   terminalStatuses: {},
-  activeMonitoringByTerminal: {},
+  activeMonitoringByAgent: {},
   activeBatonsByHolder: {},
 
   fetchSessions: async () => {
@@ -113,13 +113,13 @@ export const useStore = create<Store>((set, get) => ({
   setActiveMonitoringSessions: (sessions) =>
     set(state => {
       // Replace, don't merge: a session ending should drop from the map
-      // on the next poll. One session per terminal under the single-session
+      // on the next poll. One session per agent under the single-session
       // model — if the server ever returns multiples (shouldn't happen),
       // last one wins and we accept it rather than special-casing.
       const next: Record<string, MonitoringSession> = {}
-      for (const s of sessions) next[s.terminal_id] = s
-      if (jsonEqual(state.activeMonitoringByTerminal, next)) return state
-      return { activeMonitoringByTerminal: next }
+      for (const s of sessions) next[s.agent_id] = s
+      if (jsonEqual(state.activeMonitoringByAgent, next)) return state
+      return { activeMonitoringByAgent: next }
     }),
   setActiveBatons: (batons) =>
     set(state => {

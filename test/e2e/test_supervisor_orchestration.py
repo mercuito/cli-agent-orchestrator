@@ -54,13 +54,13 @@ def _get_full_output(terminal_id: str) -> str:
     return resp.json().get("output", "")
 
 
-def _get_inbox_messages(terminal_id: str, status_filter: str = None):
-    """Get inbox messages for a terminal."""
+def _get_inbox_messages(agent_id: str, status_filter: str = None):
+    """Get inbox messages for an agent."""
     params = {"limit": 50}
     if status_filter:
         params["status"] = status_filter
     resp = requests.get(
-        f"{API_BASE_URL}/terminals/{terminal_id}/inbox/messages",
+        f"{API_BASE_URL}/agents/{agent_id}/inbox/messages",
         params=params,
     )
     if resp.status_code != 200:
@@ -329,7 +329,7 @@ def _run_supervisor_assign_test(provider: str):
         still_pending = _get_inbox_messages(supervisor_id, status_filter="pending")
         assert not still_pending, (
             f"Inbox messages stuck as PENDING — inbox delivery pipeline broken! "
-            f"Pending messages: {[(m.get('sender_id', '?'), m.get('message', '')[:80]) for m in still_pending]}"
+            f"Pending messages: {[(m.get('sender_agent_id', '?'), m.get('body', '')[:80]) for m in still_pending]}"
         )
 
         # Step 7: Wait for supervisor to re-stabilize after processing inbox
@@ -423,12 +423,16 @@ def _run_supervisor_assign_three_analysts_test(provider: str):
         delivered_messages = []
         for _ in range(36):  # up to 180s
             delivered_messages = _get_inbox_messages(supervisor_id, status_filter="delivered")
-            unique_senders = {m.get("sender_id") for m in delivered_messages if m.get("sender_id")}
+            unique_senders = {
+                m.get("sender_agent_id") for m in delivered_messages if m.get("sender_agent_id")
+            }
             if len(unique_senders) >= 3:
                 break
             time.sleep(5)
 
-        unique_senders = {m.get("sender_id") for m in delivered_messages if m.get("sender_id")}
+        unique_senders = {
+            m.get("sender_agent_id") for m in delivered_messages if m.get("sender_agent_id")
+        }
         assert len(unique_senders) >= 3, (
             "Expected delivered callbacks from at least 3 distinct worker terminals. "
             f"Got {len(unique_senders)} senders: {sorted(unique_senders)}"

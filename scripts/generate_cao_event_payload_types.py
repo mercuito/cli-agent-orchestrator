@@ -15,7 +15,6 @@ from pydantic import Discriminator, TypeAdapter
 
 from cli_agent_orchestrator.events import CaoEvent
 from cli_agent_orchestrator.events.serialization import cao_event_kind
-from cli_agent_orchestrator.linear.workspace_events import LINEAR_CAO_EVENTS
 from cli_agent_orchestrator.runtime.events import RUNTIME_CAO_EVENTS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +22,7 @@ WEB_ROOT = REPO_ROOT / "web"
 OUTPUT_PATH = WEB_ROOT / "src" / "generated" / "caoEventPayloadTypes.ts"
 OPENAPI_TYPESCRIPT = WEB_ROOT / "node_modules" / ".bin" / "openapi-typescript"
 
-CAO_EVENT_TYPES: tuple[type[CaoEvent], ...] = (*LINEAR_CAO_EVENTS, *RUNTIME_CAO_EVENTS)
+CAO_EVENT_TYPES: tuple[type[CaoEvent], ...] = RUNTIME_CAO_EVENTS
 CAO_EVENT_PAYLOAD_SCHEMA_NAME = "CaoEventPayload"
 
 

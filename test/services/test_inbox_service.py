@@ -5,10 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    create_inbox_delivery,
-    create_inbox_notification_event,
-    get_inbox_delivery,
+from cli_agent_orchestrator.inbox import (
+    get_notification,
+    send as send,
 )
 from cli_agent_orchestrator.inbox import readiness as inbox_service
 from cli_agent_orchestrator.inbox.readiness import (
@@ -16,12 +15,7 @@ from cli_agent_orchestrator.inbox.readiness import (
     check_and_send_pending_messages,
     format_message_batch,
 )
-from cli_agent_orchestrator.models.inbox import (
-    InboxDelivery,
-    InboxMessageRecord,
-    InboxNotification,
-    MessageStatus,
-)
+from cli_agent_orchestrator.models.inbox import InboxNotification, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 
 
@@ -30,33 +24,24 @@ def _delivery(
     message: str,
     *,
     sender_id: str = "sender",
-    receiver_id: str = "test-terminal",
-    source_kind: str = "terminal",
-    source_id: str = "sender",
-) -> InboxDelivery:
-    return InboxDelivery(
-        message=InboxMessageRecord(
-            id=notification_id,
-            sender_id=sender_id,
-            body=message,
-            source_kind=source_kind,
-            source_id=source_id,
-            origin=None,
-            route_kind=None,
-            route_id=None,
-            created_at=datetime(2026, 1, 1, 9, notification_id, 0),
-        ),
-        notification=InboxNotification(
-            id=notification_id,
-            receiver_id=receiver_id,
-            body=message,
-            source_kind=source_kind,
-            source_id=source_id,
-            metadata=None,
-            status=MessageStatus.PENDING,
-            created_at=datetime(2026, 1, 1, 9, notification_id, 0),
-        ),
+    receiver_id: str = "test-agent",
+) -> InboxNotification:
+    return InboxNotification(
+        id=notification_id,
+        sender_agent_id=sender_id,
+        receiver_agent_id=receiver_id,
+        body=message,
+        status=MessageStatus.PENDING,
+        created_at=datetime(2026, 1, 1, 9, notification_id, 0),
     )
+
+
+def _create_test_notification(sender_id: str, receiver_id: str, body: str) -> InboxNotification:
+    return send(receiver_id, body, sender_agent_id=sender_id)
+
+
+def _get_test_delivery(notification_id: int) -> InboxNotification | None:
+    return get_notification(notification_id)
 
 
 @pytest.fixture
@@ -73,11 +58,11 @@ def agent_addressed_terminal_compat(monkeypatch):
     """
     monkeypatch.setattr(
         "cli_agent_orchestrator.inbox.readiness._live_terminal_id_for_agent",
-        lambda receiver_agent_id: receiver_agent_id,
+        lambda receiver_agent_id: f"terminal-for-{receiver_agent_id}",
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.inbox.readiness.get_terminal_metadata",
-        lambda terminal_id: {"agent_id": terminal_id},
+        lambda terminal_id: {"agent_id": f"agent-for-{terminal_id}"},
     )
 
 
@@ -88,20 +73,20 @@ def _provider_with_status(terminal_provider_patcher, status: TerminalStatus):
 class TestCheckAndSendPendingMessages:
     """Tests for check_and_send_pending_messages function."""
 
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
     def test_no_pending_messages(self, mock_get_oldest):
         """Test when no pending messages exist."""
         mock_get_oldest.return_value = None
 
-        result = check_and_send_pending_messages("test-terminal")
+        result = check_and_send_pending_messages("test-agent")
 
         assert result is False
 
     @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications_for_sender"
     )
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
     def test_provider_not_found(self, mock_get_oldest, mock_get_batch, mock_provider_manager):
         """Test when provider not found."""
         mock_message = _delivery(1, "test message")
@@ -110,13 +95,13 @@ class TestCheckAndSendPendingMessages:
         mock_provider_manager.get_provider.return_value = None
 
         with pytest.raises(ValueError, match="Provider not found"):
-            check_and_send_pending_messages("test-terminal")
+            check_and_send_pending_messages("test-agent")
 
     @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications_for_sender"
     )
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
     def test_terminal_not_ready(self, mock_get_oldest, mock_get_batch, mock_provider_manager):
         """Test when terminal not ready."""
         mock_message = _delivery(1, "test message")
@@ -126,7 +111,7 @@ class TestCheckAndSendPendingMessages:
         mock_provider.get_status.return_value = TerminalStatus.PROCESSING
         mock_provider_manager.get_provider.return_value = mock_provider
 
-        result = check_and_send_pending_messages("test-terminal")
+        result = check_and_send_pending_messages("test-agent")
 
         assert result is False
 
@@ -134,9 +119,9 @@ class TestCheckAndSendPendingMessages:
     @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
     @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications_for_sender"
     )
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
     def test_message_sent_successfully(
         self,
         mock_get_oldest,
@@ -153,19 +138,21 @@ class TestCheckAndSendPendingMessages:
         mock_provider.get_status.return_value = TerminalStatus.IDLE
         mock_provider_manager.get_provider.return_value = mock_provider
 
-        result = check_and_send_pending_messages("test-terminal")
+        result = check_and_send_pending_messages("test-agent")
 
         assert result is True
-        mock_terminal_service.send_input.assert_called_once_with("test-terminal", "test message")
+        mock_terminal_service.send_input.assert_called_once()
+        assert mock_terminal_service.send_input.call_args.args[0] == "terminal-for-test-agent"
+        assert mock_terminal_service.send_input.call_args.args[1].startswith("test message")
         mock_update_statuses.assert_called_once_with([1], MessageStatus.DELIVERED)
 
     @patch("cli_agent_orchestrator.inbox.readiness.update_inbox_notification_statuses")
     @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
     @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications_for_sender"
     )
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
     def test_message_send_failure(
         self,
         mock_get_oldest,
@@ -184,7 +171,7 @@ class TestCheckAndSendPendingMessages:
         mock_terminal_service.send_input.side_effect = Exception("Send failed")
 
         with pytest.raises(Exception, match="Send failed"):
-            check_and_send_pending_messages("test-terminal")
+            check_and_send_pending_messages("test-agent")
 
         mock_update_statuses.assert_called_once_with(
             [1], MessageStatus.FAILED, error_detail="Send failed"
@@ -194,10 +181,10 @@ class TestCheckAndSendPendingMessages:
     @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
     @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications_for_sender"
     )
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
-    def test_same_source_batch_sent_as_one_payload(
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
+    def test_same_sender_batch_sent_as_one_payload(
         self,
         mock_get_oldest,
         mock_get_batch,
@@ -205,7 +192,7 @@ class TestCheckAndSendPendingMessages:
         mock_terminal_service,
         mock_update_statuses,
     ):
-        """Same-source pending messages are delivered together in selected order."""
+        """Same-sender pending messages are delivered together in selected order."""
         messages = [_delivery(1, "first"), _delivery(2, "correction")]
         mock_get_oldest.return_value = messages[0]
         mock_get_batch.return_value = messages
@@ -213,11 +200,11 @@ class TestCheckAndSendPendingMessages:
         mock_provider.get_status.return_value = TerminalStatus.IDLE
         mock_provider_manager.get_provider.return_value = mock_provider
 
-        result = check_and_send_pending_messages("test-terminal")
+        result = check_and_send_pending_messages("test-agent")
 
         assert result is True
         payload = mock_terminal_service.send_input.call_args.args[1]
-        assert "Queued 2 messages from terminal:sender" in payload
+        assert "Queued 2 messages from sender" in payload
         assert payload.index("[1] first") < payload.index("[2] correction")
         mock_provider.get_status.assert_called_once()
         mock_update_statuses.assert_called_once_with([1, 2], MessageStatus.DELIVERED)
@@ -226,9 +213,9 @@ class TestCheckAndSendPendingMessages:
     @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
     @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications_for_sender"
     )
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
     def test_batch_send_failure_marks_selected_messages_failed(
         self,
         mock_get_oldest,
@@ -247,7 +234,7 @@ class TestCheckAndSendPendingMessages:
         mock_terminal_service.send_input.side_effect = RuntimeError("tmux send failed")
 
         with pytest.raises(RuntimeError, match="tmux send failed"):
-            check_and_send_pending_messages("test-terminal")
+            check_and_send_pending_messages("test-agent")
 
         mock_update_statuses.assert_called_once_with(
             [1, 2], MessageStatus.FAILED, error_detail="tmux send failed"
@@ -259,7 +246,7 @@ class TestCheckAndSendPendingMessages:
 
         payload = format_message_batch(messages, max_body_chars=30, max_total_chars=120)
 
-        assert payload.startswith("Queued 2 messages from terminal:sender:")
+        assert payload.startswith("Queued 2 messages from sender:")
         assert "[1]" in payload
         assert "[message truncated]" in payload
         assert len(payload) <= 120
@@ -282,7 +269,7 @@ class TestLogFileHandler:
 
         handler.on_modified(event)
 
-        mock_check_send.assert_called_once_with("test-terminal")
+        mock_check_send.assert_called_once_with("agent-for-test-terminal")
 
     @patch("cli_agent_orchestrator.inbox.readiness.check_and_send_pending_messages")
     @patch("cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications")
@@ -294,7 +281,7 @@ class TestLogFileHandler:
         handler = LogFileHandler()
         handler._handle_log_change("test-terminal")
 
-        mock_get_messages.assert_called_once_with("test-terminal", limit=1)
+        mock_get_messages.assert_called_once_with("agent-for-test-terminal", limit=1)
         mock_check_send.assert_not_called()
 
     def test_on_modified_non_log_file(self):
@@ -341,9 +328,9 @@ class TestAutoDeliveryRegression:
     @patch("cli_agent_orchestrator.inbox.readiness.terminal_service")
     @patch("cli_agent_orchestrator.inbox.readiness.provider_manager")
     @patch(
-        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_deliveries_for_effective_source"
+        "cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications_for_sender"
     )
-    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_delivery")
+    @patch("cli_agent_orchestrator.inbox.readiness.get_oldest_pending_inbox_notification")
     @patch("cli_agent_orchestrator.inbox.readiness.list_pending_inbox_notifications")
     def test_watchdog_delivers_even_when_log_has_no_idle_marker(
         self,
@@ -378,7 +365,9 @@ class TestAutoDeliveryRegression:
         handler = LogFileHandler()
         handler.on_modified(FileModifiedEvent("/path/to/cao-logs/89ce8e03.log"))
 
-        mock_term_svc.send_input.assert_called_once_with("89ce8e03", "callback from worker")
+        mock_term_svc.send_input.assert_called_once()
+        assert mock_term_svc.send_input.call_args.args[0] == "terminal-for-agent-for-89ce8e03"
+        assert mock_term_svc.send_input.call_args.args[1].startswith("callback from worker")
         mock_update.assert_called_once_with([42], MessageStatus.DELIVERED)
 
 
@@ -387,17 +376,17 @@ def test_busy_terminal_keeps_semantic_notification_pending(
     terminal_provider_patcher,
     terminal_send_patcher,
 ):
-    delivery = create_inbox_delivery("worker-a", "terminal-1", "Wait until idle.")
+    delivery = _create_test_notification("worker-a", "agent-1", "Wait until idle.")
     _provider_with_status(terminal_provider_patcher, TerminalStatus.PROCESSING)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
 
-    result = check_and_send_pending_messages("terminal-1")
+    result = check_and_send_pending_messages("agent-1")
 
     assert result is False
     send_input.assert_not_called()
-    persisted = get_inbox_delivery(delivery.notification.id)
-    assert persisted.notification.status == MessageStatus.PENDING
-    assert persisted.message.body == "Wait until idle."
+    persisted = _get_test_delivery(delivery.id)
+    assert persisted.status == MessageStatus.PENDING
+    assert persisted.body == "Wait until idle."
 
 
 @pytest.mark.parametrize("status", [TerminalStatus.IDLE, TerminalStatus.COMPLETED])
@@ -407,17 +396,19 @@ def test_idle_or_completed_terminal_delivers_semantic_notification(
     terminal_provider_patcher,
     terminal_send_patcher,
 ):
-    delivery = create_inbox_delivery("worker-a", "terminal-1", "Ready now.")
+    delivery = _create_test_notification("worker-a", "agent-1", "Ready now.")
     _provider_with_status(terminal_provider_patcher, status)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
 
-    result = check_and_send_pending_messages("terminal-1")
+    result = check_and_send_pending_messages("agent-1")
 
     assert result is True
-    send_input.assert_called_once_with("terminal-1", "Ready now.")
-    persisted = get_inbox_delivery(delivery.notification.id)
-    assert persisted.notification.status == MessageStatus.DELIVERED
-    assert persisted.notification.delivered_at is not None
+    send_input.assert_called_once()
+    assert send_input.call_args.args[0] == "terminal-for-agent-1"
+    assert send_input.call_args.args[1].startswith("Ready now.")
+    persisted = _get_test_delivery(delivery.id)
+    assert persisted.status == MessageStatus.DELIVERED
+    assert persisted.delivered_at is not None
 
 
 def test_idle_terminal_delivers_non_message_backed_notification_body(
@@ -425,24 +416,23 @@ def test_idle_terminal_delivers_non_message_backed_notification_body(
     terminal_provider_patcher,
     terminal_send_patcher,
 ):
-    notification = create_inbox_notification_event(
-        "terminal-1",
+    notification = send(
+        "agent-1",
         "CAO-123 has new comments.",
-        source_kind="linear_issue",
-        source_id="CAO-123",
+        sender_agent_id="runtime",
     )
     _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
 
-    result = check_and_send_pending_messages("terminal-1")
+    result = check_and_send_pending_messages("agent-1")
 
     assert result is True
-    send_input.assert_called_once_with("terminal-1", "CAO-123 has new comments.")
-    persisted = get_inbox_delivery(notification.id)
-    assert persisted.message is not None
-    assert persisted.message.body == "CAO-123 has new comments."
-    assert persisted.targets == []
-    assert persisted.notification.status == MessageStatus.DELIVERED
+    send_input.assert_called_once()
+    assert send_input.call_args.args[0] == "terminal-for-agent-1"
+    assert send_input.call_args.args[1].startswith("CAO-123 has new comments.")
+    persisted = _get_test_delivery(notification.id)
+    assert persisted.body == "CAO-123 has new comments."
+    assert persisted.status == MessageStatus.DELIVERED
 
 
 def test_plain_notification_preview_includes_notification_id_footer(
@@ -451,22 +441,21 @@ def test_plain_notification_preview_includes_notification_id_footer(
     terminal_send_patcher,
 ):
     # Given
-    notification = create_inbox_notification_event(
-        "terminal-1",
+    notification = send(
+        "agent-1",
         "Plain message body.",
-        source_kind="plain",
-        source_id="worker-a",
+        sender_agent_id="worker-a",
     )
     _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
 
     # When
-    result = check_and_send_pending_messages("terminal-1")
+    result = check_and_send_pending_messages("agent-1")
 
     # Then
     assert result is True
     send_input.assert_called_once_with(
-        "terminal-1",
+        "terminal-for-agent-1",
         f"Plain message body.\n\nnotification_id={notification.id}",
     )
 
@@ -476,12 +465,10 @@ def test_delivery_failure_marks_notification_failed_without_mutating_durable_mes
     monkeypatch,
     terminal_provider_patcher,
 ):
-    delivery = create_inbox_delivery(
-        "linear",
-        "terminal-1",
+    delivery = _create_test_notification(
+        "runtime",
+        "agent-1",
         "Durable provider body.",
-        source_kind="provider_conversation_thread",
-        source_id="thread-1",
     )
     _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
     monkeypatch.setattr(
@@ -490,39 +477,37 @@ def test_delivery_failure_marks_notification_failed_without_mutating_durable_mes
     )
 
     with pytest.raises(RuntimeError, match="tmux send failed"):
-        check_and_send_pending_messages("terminal-1")
+        check_and_send_pending_messages("agent-1")
 
-    persisted = get_inbox_delivery(delivery.notification.id)
-    assert persisted.notification.status == MessageStatus.FAILED
-    assert persisted.notification.failed_at is not None
-    assert persisted.notification.error_detail == "tmux send failed"
-    assert persisted.message.body == "Durable provider body."
-    assert persisted.message.source_kind == "provider_conversation_thread"
-    assert persisted.message.source_id == "thread-1"
+    persisted = _get_test_delivery(delivery.id)
+    assert persisted.status == MessageStatus.FAILED
+    assert persisted.failed_at is not None
+    assert persisted.error_detail == "tmux send failed"
+    assert persisted.body == "Durable provider body."
 
 
-def test_same_source_notifications_batch_without_merging_different_sources(
+def test_same_sender_notifications_batch_without_merging_different_senders(
     live_inbox_db,
     terminal_provider_patcher,
     terminal_send_patcher,
 ):
-    first = create_inbox_delivery("worker-a", "terminal-1", "first")
-    other = create_inbox_delivery("worker-b", "terminal-1", "other source")
-    third = create_inbox_delivery("worker-a", "terminal-1", "third")
+    first = _create_test_notification("worker-a", "agent-1", "first")
+    other = _create_test_notification("worker-b", "agent-1", "other sender")
+    third = _create_test_notification("worker-a", "agent-1", "third")
     _provider_with_status(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
 
-    result = check_and_send_pending_messages("terminal-1")
+    result = check_and_send_pending_messages("agent-1")
 
     assert result is True
     payload = send_input.call_args.args[1]
     assert "[1] first" in payload
     assert "[2] third" in payload
-    assert "other source" not in payload
-    assert get_inbox_delivery(first.notification.id).notification.status == (
+    assert "other sender" not in payload
+    assert _get_test_delivery(first.id).status == (
         MessageStatus.DELIVERED
     )
-    assert get_inbox_delivery(third.notification.id).notification.status == (
+    assert _get_test_delivery(third.id).status == (
         MessageStatus.DELIVERED
     )
-    assert get_inbox_delivery(other.notification.id).notification.status == MessageStatus.PENDING
+    assert _get_test_delivery(other.id).status == MessageStatus.PENDING

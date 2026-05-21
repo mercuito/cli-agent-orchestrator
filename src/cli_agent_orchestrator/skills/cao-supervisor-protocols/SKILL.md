@@ -85,7 +85,7 @@ In a review loop, expect this shape:
 
 ```text
 supervisor:  create_baton(holder=implementer)
-implementer: pass_baton(receiver_id=reviewer_terminal)
+implementer: pass_baton(receiver_id=reviewer_agent)
 reviewer:    return_baton()
 implementer: complete_baton()
 ```
@@ -136,13 +136,13 @@ not transfer baton ownership.
 
 ## Direct Supervisor Communication
 
-Use `send_message`, when available, to contact an existing same-team terminal
+Use `send_message`, when available, to contact an existing same-team agent
 directly rather than spawning a new worker.
 
 Examples:
 
 - Relay follow-up instructions to a worker you already created.
-- Forward a worker result to another coordinator terminal.
+- Forward a worker result to another coordinator agent.
 - Send a concise status update to a collaborating supervisor.
 
 When sending direct messages, include enough context that the receiver can act without re-reading the full original task.

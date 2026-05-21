@@ -80,32 +80,6 @@ function renderAgentToml(config: AgentConfig, exclude: Set<string>): string {
     Object.entries(config.codex_config).forEach(([key, value]) => appendValue(lines, key, value))
   }
 
-  if (config.linear) {
-    lines.push('', '[linear]')
-    appendValue(lines, 'app_key', config.linear.app_key)
-    appendValue(lines, 'client_id', config.linear.client_id)
-    appendValue(lines, 'client_secret_configured', config.linear.client_secret_configured)
-    appendValue(lines, 'webhook_secret_configured', config.linear.webhook_secret_configured)
-    appendValue(lines, 'oauth_redirect_uri', config.linear.oauth_redirect_uri)
-    appendValue(lines, 'access_token_configured', config.linear.access_token_configured)
-    appendValue(lines, 'refresh_token_configured', config.linear.refresh_token_configured)
-    appendValue(lines, 'token_expires_at', config.linear.token_expires_at)
-    appendValue(lines, 'app_user_id', config.linear.app_user_id)
-    appendValue(lines, 'app_user_name', config.linear.app_user_name)
-    appendValue(lines, 'oauth_state_configured', config.linear.oauth_state_configured)
-    config.linear.tool_access.forEach(access => {
-      lines.push('', `[linear.tool_access.${formatTomlKey(access.access_id)}]`)
-      appendValue(lines, 'tools', access.tools)
-      appendValue(lines, 'issues', access.issues)
-      appendValue(lines, 'create_team_ids', access.create_team_ids)
-      appendValue(lines, 'create_project_ids', access.create_project_ids)
-      appendValue(lines, 'create_parent_issues', access.create_parent_issues)
-      appendValue(lines, 'allow_top_level_create', access.allow_top_level_create)
-      appendValue(lines, 'update_fields', access.update_fields)
-      appendValue(lines, 'reason', access.reason)
-    })
-  }
-
   return lines.join('\n') + '\n'
 }
 
@@ -184,7 +158,6 @@ export function parseAgentTomlDraft(text: string): AgentWriteRequest {
   const nullableStringFields = new Set(['description', 'model', 'reasoning_effort'])
   const listFields = new Set(['tools', 'skills', 'tags', 'resources', 'runtime_capabilities', 'cao_tools'])
   const tableFields = new Set(['tool_aliases', 'tools_settings', 'hooks', 'codex_config'])
-  const ignoredLinearPresenceFields = new Set(['client_secret_configured', 'webhook_secret_configured', 'access_token_configured', 'refresh_token_configured', 'oauth_state_configured'])
   let section = ''
 
   text.split(/\r?\n/).forEach(rawLine => {
@@ -218,22 +191,6 @@ export function parseAgentTomlDraft(text: string): AgentWriteRequest {
       }
       return
     }
-    if (section === 'linear') {
-      if (ignoredLinearPresenceFields.has(key)) return
-      body.linear = { ...(body.linear || {}), [key]: value } as AgentWriteRequest['linear']
-      return
-    }
-    if (section.startsWith('linear.tool_access.')) {
-      const accessId = unquoteTomlKey(section.slice('linear.tool_access.'.length))
-      const current = body.linear?.tool_access || []
-      const existing = current.find(access => access.access_id === accessId)
-      const nextAccess = { ...(existing || { access_id: accessId }), [key]: value }
-      body.linear = {
-        ...(body.linear || {}),
-        tool_access: [...current.filter(access => access.access_id !== accessId), nextAccess],
-      }
-      return
-    }
     if (section) return
     if (stringFields.has(key) && typeof value === 'string') {
       ;(body as Record<string, unknown>)[key] = value
@@ -249,9 +206,4 @@ export function parseAgentTomlDraft(text: string): AgentWriteRequest {
   })
 
   return body
-}
-
-export function linearFieldStatus(configured: boolean, revealed: boolean): string {
-  if (!configured) return 'Not configured'
-  return revealed ? 'Configured on server' : '••••••••'
 }

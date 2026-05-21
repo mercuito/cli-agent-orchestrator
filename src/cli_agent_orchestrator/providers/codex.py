@@ -163,7 +163,7 @@ class ProviderError(Exception):
 
 
 def _bounded_startup_diagnostics(output: str) -> str:
-    """Return short terminal diagnostics suitable for logs and Linear errors."""
+    """Return short terminal diagnostics suitable for logs and API errors."""
     clean_output = re.sub(ANSI_CODE_PATTERN, "", output or "").strip()
     if not clean_output:
         return "<no terminal output captured>"
@@ -507,7 +507,7 @@ class CodexProvider(BaseProvider):
         """Run Codex's own updater before launching the interactive runtime.
 
         CAO launches Codex inside managed tmux windows where interactive update
-        prompts can block Linear message delivery. Running `codex update` outside
+        prompts can block inbox delivery. Running `codex update` outside
         the managed terminal makes routine update prompts happen before the agent
         runtime starts. This depends on the Codex CLI's documented `update`
         subcommand; if that contract changes, fail before creating a misleading

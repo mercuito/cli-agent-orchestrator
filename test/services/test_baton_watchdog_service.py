@@ -14,6 +14,10 @@ from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceCon
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base, BatonEventModel, BatonModel
 from cli_agent_orchestrator.inbox import readiness as inbox_service
+from cli_agent_orchestrator.inbox import (
+    get_notification,
+    list_pending_notifications,
+)
 from cli_agent_orchestrator.models.baton import BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services import baton_service, baton_watchdog_service
@@ -59,7 +63,7 @@ def patched_db(monkeypatch):
 def allow_baton_collaboration(monkeypatch):
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_same_team_collaboration",
+        "require_agent_same_team_collaboration",
         lambda sender_id, receiver_id, **kwargs: None,
     )
     monkeypatch.setattr(
@@ -106,9 +110,9 @@ def _collaboration_manager() -> WorkspaceCollaborationManager:
         ),
         agent_registry=AgentRegistry(
             {
-                "originator_agent": _agent("originator_agent"),
-                "impl_agent": _agent("impl_agent"),
-                "detached_agent": _agent("detached_agent", None),
+                "originator": _agent("originator"),
+                "impl": _agent("impl"),
+                "detached": _agent("detached", None),
             }
         ),
         provider_adapters={},
@@ -124,8 +128,7 @@ def _config(*, grace_seconds=1, rate_limit_seconds=60):
 
 
 def _create_terminal(terminal_id: str):
-    agent_id = f"{terminal_id}_agent"
-    _create_terminal_for_agent(terminal_id, agent_id)
+    _create_terminal_for_agent(terminal_id, terminal_id)
 
 
 def _create_terminal_for_agent(terminal_id: str, agent_id: str):
@@ -158,7 +161,7 @@ def _provider(status: TerminalStatus):
 
 
 def _messages(receiver_id: str):
-    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
+    return list_pending_notifications(receiver_id, limit=50)
 
 
 def _events(baton_id: str):
@@ -196,17 +199,17 @@ def test_idle_or_completed_holder_receives_nudge_after_grace(patched_db, monkeyp
     assert [event.event_type for event in _events("baton-1")] == ["create", "nudge"]
     queued = _messages("impl")
     assert len(queued) == 2
-    assert queued[-1].message.sender_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
-    assert "Baton id: baton-1" in queued[-1].message.body
-    assert "Title: T05" in queued[-1].message.body
-    assert "Expected next action: run the review loop" in queued[-1].message.body
-    assert "If you are waiting on another agent to make the next move" in queued[-1].message.body
-    assert "pass the baton to that agent with pass_baton" in queued[-1].message.body
-    assert "Idle detection is advisory" in queued[-1].message.body
-    assert "pass_baton" in queued[-1].message.body
-    assert "return_baton" in queued[-1].message.body
-    assert "complete_baton" in queued[-1].message.body
-    assert "block_baton" in queued[-1].message.body
+    assert queued[-1].sender_agent_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
+    assert "Baton id: baton-1" in queued[-1].body
+    assert "Title: T05" in queued[-1].body
+    assert "Expected next action: run the review loop" in queued[-1].body
+    assert "If you are waiting on another agent to make the next move" in queued[-1].body
+    assert "pass the baton to that agent with pass_baton" in queued[-1].body
+    assert "Idle detection is advisory" in queued[-1].body
+    assert "pass_baton" in queued[-1].body
+    assert "return_baton" in queued[-1].body
+    assert "complete_baton" in queued[-1].body
+    assert "block_baton" in queued[-1].body
 
 
 def test_idle_holder_without_baton_tools_gets_no_lifecycle_tool_guidance(
@@ -242,7 +245,7 @@ def test_idle_holder_without_baton_tools_gets_no_lifecycle_tool_guidance(
     )
 
     assert result.nudged == 1
-    body = _messages("impl")[-1].message.body
+    body = _messages("impl")[-1].body
     assert "no baton lifecycle tools available" in body
     assert "pass_baton" not in body
     assert "return_baton" not in body
@@ -307,9 +310,9 @@ def test_nudges_are_rate_limited_by_last_nudged_at(patched_db, monkeypatch):
     assert len(_messages("impl")) == 2
 
 
-def test_teamless_holder_is_orphaned_before_watchdog_inbox_delivery(patched_db, monkeypatch):
+def test_teamless_holder_is_orphaned_before_watchdog_inbox_notification(patched_db, monkeypatch):
     _create_terminal("originator")
-    _create_terminal_for_agent("detached", "detached_agent")
+    _create_terminal("detached")
     provider = _provider(TerminalStatus.IDLE)
     monkeypatch.setattr(
         baton_watchdog_service.provider_manager,
@@ -334,7 +337,7 @@ def test_teamless_holder_is_orphaned_before_watchdog_inbox_delivery(patched_db, 
     assert baton.status == BatonStatus.ORPHANED.value
     assert [event.event_type for event in _events("baton-1")] == ["create", "orphan"]
     assert len(_messages("detached")) == 1
-    assert _messages("detached")[0].message.sender_id == "originator"
+    assert _messages("detached")[0].sender_agent_id == "originator"
     assert len(_messages("originator")) == 1
 
 
@@ -369,9 +372,9 @@ def test_watchdog_nudge_notification_delivers_through_semantic_inbox(
     assert inbox_service.check_and_send_pending_messages("impl") is True
     assert inbox_service.check_and_send_pending_messages("impl") is True
 
-    delivered = db_module.get_inbox_delivery(queued[-1].notification.id)
+    delivered = get_notification(queued[-1].id)
     assert delivered is not None
-    assert delivered.notification.status.value == "delivered"
+    assert delivered.status.value == "delivered"
     assert "Gentle reminder" in sent[-1][1]
 
 
@@ -405,10 +408,10 @@ def test_missing_holder_metadata_marks_baton_orphaned_and_notifies_originator(
     assert [event.event_type for event in _events("baton-1")] == ["create", "orphan"]
     queued = _messages("originator")
     assert len(queued) == 1
-    assert queued[0].message.sender_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
-    assert "Baton id: baton-1" in queued[0].message.body
-    assert "Previous holder: missing" in queued[0].message.body
-    assert "marked orphaned" in queued[0].message.body
+    assert queued[0].sender_agent_id == baton_watchdog_service.WATCHDOG_ACTOR_ID
+    assert "Baton id: baton-1" in queued[0].body
+    assert "Previous holder: missing" in queued[0].body
+    assert "marked orphaned" in queued[0].body
 
 
 def test_missing_holder_provider_marks_baton_orphaned_and_notifies_originator(

@@ -48,7 +48,7 @@ class TestSchemaRegistration:
 
     def test_sessions_table_columns(self):
         cols = {c.name for c in Base.metadata.tables["monitoring_sessions"].columns}
-        assert cols == {"id", "terminal_id", "label", "started_at", "ended_at"}
+        assert cols == {"id", "agent_id", "label", "started_at", "ended_at"}
 
 
 class TestSessionInsert:
@@ -57,7 +57,7 @@ class TestSessionInsert:
         ended = datetime(2026, 4, 18, 11, 0, 0)
         s = MonitoringSessionModel(
             id="sess-1",
-            terminal_id="term-A",
+            agent_id="agent-A",
             label="review-v2",
             started_at=started,
             ended_at=ended,
@@ -66,7 +66,7 @@ class TestSessionInsert:
         db_session.commit()
 
         fetched = db_session.query(MonitoringSessionModel).filter_by(id="sess-1").one()
-        assert fetched.terminal_id == "term-A"
+        assert fetched.agent_id == "agent-A"
         assert fetched.label == "review-v2"
         assert fetched.started_at == started
         assert fetched.ended_at == ended
@@ -74,7 +74,7 @@ class TestSessionInsert:
     def test_insert_session_with_nullable_fields_unset(self, db_session):
         s = MonitoringSessionModel(
             id="sess-2",
-            terminal_id="term-B",
+            agent_id="agent-B",
             started_at=datetime.now(),
         )
         db_session.add(s)
@@ -86,10 +86,10 @@ class TestSessionInsert:
 
     def test_session_id_is_primary_key(self, db_session):
         now = datetime.now()
-        db_session.add(MonitoringSessionModel(id="dup", terminal_id="T", started_at=now))
+        db_session.add(MonitoringSessionModel(id="dup", agent_id="T", started_at=now))
         db_session.commit()
 
-        db_session.add(MonitoringSessionModel(id="dup", terminal_id="T2", started_at=now))
+        db_session.add(MonitoringSessionModel(id="dup", agent_id="T2", started_at=now))
         with pytest.raises(IntegrityError):
             db_session.commit()
         db_session.rollback()
@@ -123,8 +123,8 @@ class TestMigrationDropsObsoletePeerTable:
         conn.execute(
             "CREATE TABLE monitoring_session_peers ("
             "session_id TEXT NOT NULL, "
-            "peer_terminal_id TEXT NOT NULL, "
-            "PRIMARY KEY (session_id, peer_terminal_id))"
+            "peer_agent_id TEXT NOT NULL, "
+            "PRIMARY KEY (session_id, peer_agent_id))"
         )
         conn.commit()
         conn.close()
@@ -153,3 +153,66 @@ class TestMigrationDropsObsoletePeerTable:
         monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
         # Should not raise
         db_module._migrate_drop_monitoring_session_peers()
+
+
+class TestMigrationRekeysSessionsByAgent:
+    def test_migration_maps_legacy_terminal_sessions_to_agents(self, tmp_path, monkeypatch):
+        import sqlite3
+
+        from cli_agent_orchestrator.clients import database as db_module
+        from cli_agent_orchestrator.clients import database_migrations
+
+        db_path = tmp_path / "legacy-monitoring.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE terminals ("
+            "id TEXT PRIMARY KEY, "
+            "agent_id TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE monitoring_sessions ("
+            "id TEXT PRIMARY KEY, "
+            "terminal_id TEXT NOT NULL, "
+            "label TEXT, "
+            "started_at DATETIME NOT NULL, "
+            "ended_at DATETIME)"
+        )
+        conn.execute(
+            "INSERT INTO terminals (id, agent_id) VALUES ('term-1', 'agent-1')"
+        )
+        conn.execute(
+            "INSERT INTO terminals (id, agent_id) VALUES ('term-empty', '')"
+        )
+        conn.execute(
+            "INSERT INTO monitoring_sessions "
+            "(id, terminal_id, label, started_at, ended_at) VALUES "
+            "('mapped', 'term-1', 'review', '2026-05-21 10:00:00', NULL)"
+        )
+        conn.execute(
+            "INSERT INTO monitoring_sessions "
+            "(id, terminal_id, label, started_at, ended_at) VALUES "
+            "('unmapped', 'missing', 'drop', '2026-05-21 10:00:00', NULL)"
+        )
+        conn.execute(
+            "INSERT INTO monitoring_sessions "
+            "(id, terminal_id, label, started_at, ended_at) VALUES "
+            "('blank-agent', 'term-empty', 'drop', '2026-05-21 10:00:00', NULL)"
+        )
+        conn.commit()
+        conn.close()
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path)
+        monkeypatch.setattr(db_module, "engine", engine)
+
+        database_migrations._migrate_monitoring_sessions_agent_ids()
+
+        conn = sqlite3.connect(str(db_path))
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(monitoring_sessions)")]
+        rows = conn.execute(
+            "SELECT id, agent_id, label FROM monitoring_sessions ORDER BY id"
+        ).fetchall()
+        conn.close()
+
+        assert columns == ["id", "agent_id", "label", "started_at", "ended_at"]
+        assert rows == [("mapped", "agent-1", "review")]

@@ -82,30 +82,6 @@ export interface AgentConfig {
   runtime_capabilities: string[] | null
   codex_config: Record<string, unknown>
   workspace: { team: string | null; derived_workspace: string | null; diagnostics: string[] }
-  linear: {
-    app_key: string | null
-    client_id: string | null
-    client_secret_configured: boolean
-    webhook_secret_configured: boolean
-    oauth_redirect_uri: string | null
-    access_token_configured: boolean
-    refresh_token_configured: boolean
-    token_expires_at: string | null
-    app_user_id: string | null
-    app_user_name: string | null
-    oauth_state_configured: boolean
-    tool_access: Array<{
-      access_id: string
-      tools: string[]
-      issues: string[]
-      create_team_ids: string[]
-      create_project_ids: string[]
-      create_parent_issues: string[]
-      allow_top_level_create: boolean
-      update_fields: string[]
-      reason: string | null
-    }>
-  } | null
 }
 
 export interface McpToolSurface {
@@ -130,11 +106,6 @@ export interface EffectiveToolAccess {
   runtime_capabilities: string[]
   source_markers: Record<string, string>
   inactive_local_grants: Record<string, unknown>
-  provider_conversation_requirements: Array<{
-    provider: string
-    operation: string
-    required_identity: string
-  }>
   diagnostics: Array<{ code: string; message: string; source: string }>
 }
 
@@ -203,12 +174,6 @@ export interface ToolDescriptor {
   description: string
 }
 
-export interface ProviderRoleAccessSchema {
-  provider: string
-  tools: ToolDescriptor[]
-  fields: Record<string, unknown>
-}
-
 export interface AgentWriteRequest {
   id?: string
   display_name?: string
@@ -232,30 +197,6 @@ export interface AgentWriteRequest {
   runtime_capabilities?: string[] | null
   codex_config?: Record<string, unknown>
   workspace?: { team?: string | null }
-  linear?: {
-    app_key?: string | null
-    client_id?: string | null
-    client_secret?: string | null
-    webhook_secret?: string | null
-    oauth_redirect_uri?: string | null
-    access_token?: string | null
-    refresh_token?: string | null
-    token_expires_at?: string | null
-    app_user_id?: string | null
-    app_user_name?: string | null
-    oauth_state?: string | null
-    tool_access?: Array<{
-      access_id: string
-      tools?: string[]
-      issues?: string[]
-      create_team_ids?: string[]
-      create_project_ids?: string[]
-      create_parent_issues?: string[]
-      allow_top_level_create?: boolean
-      update_fields?: string[]
-      reason?: string | null
-    }>
-  } | null
 }
 
 export interface AgentTimelineEvent {
@@ -288,12 +229,10 @@ export interface AgentRelatedEvents {
 }
 
 export interface InboxMessage {
-  id: string
-  sender_id: string
-  receiver_id: string
-  message: string
-  source_kind: string | null
-  source_id: string | null
+  notification_id: number
+  sender_agent_id: string
+  receiver_agent_id: string
+  body: string
   status: 'pending' | 'delivered' | 'failed'
   created_at: string | null
 }
@@ -313,7 +252,7 @@ export interface Flow {
 
 export interface MonitoringSession {
   id: string
-  terminal_id: string
+  agent_id: string
   label: string | null
   started_at: string
   ended_at: string | null
@@ -405,10 +344,6 @@ export const api = {
   listWorkspaces: () => fetchJSON<Workspace[]>('/workspaces'),
   listWorkspaceTeams: () => fetchJSON<WorkspaceTeam[]>('/workspace-teams'),
   listCaoToolDescriptors: () => fetchJSON<ToolDescriptor[]>('/cao-tools/descriptors'),
-  getWorkspaceToolProviderRoleAccessSchema: (provider: string) =>
-    fetchJSON<ProviderRoleAccessSchema>(
-      `/workspace-tool-providers/${encodeURIComponent(provider)}/role-access-schema`,
-    ),
   createWorkspaceTeam: (team: { id: string; display_name: string; workspace: string }) =>
     fetchJSON<WorkspaceTeam>('/workspace-teams', {
       method: 'POST',
@@ -490,20 +425,20 @@ export const api = {
     fetchJSON<{ working_directory: string | null }>(`/terminals/${id}/working-directory`),
 
   // Inbox
-  getInboxMessages: (terminalId: string, limit?: number, status?: string) =>
-    fetchJSON<InboxMessage[]>(`/terminals/${terminalId}/inbox/messages?limit=${limit || 50}${status ? `&status=${status}` : ''}`),
-  sendInboxMessage: (receiverId: string, senderId: string, message: string) =>
-    fetchJSON<{ success: boolean }>(`/terminals/${receiverId}/inbox/messages?sender_id=${senderId}&message=${encodeURIComponent(message)}`, { method: 'POST' }),
+  getInboxMessages: (agentId: string, limit?: number, status?: string) =>
+    fetchJSON<InboxMessage[]>(`/agents/${encodeURIComponent(agentId)}/inbox/messages?limit=${limit || 50}${status ? `&status=${status}` : ''}`),
+  sendInboxMessage: (receiverAgentId: string, senderAgentId: string, message: string) =>
+    fetchJSON<{ success: boolean }>(`/agents/${encodeURIComponent(receiverAgentId)}/inbox/messages?sender_agent_id=${encodeURIComponent(senderAgentId)}&body=${encodeURIComponent(message)}`, { method: 'POST' }),
 
   // Monitoring
   listActiveMonitoringSessions: () =>
     fetchJSON<MonitoringSession[]>('/monitoring/sessions?status=active'),
-  startMonitoring: (terminalId: string, label?: string) =>
+  startMonitoring: (agentId: string, label?: string) =>
     fetchJSON<MonitoringSession>('/monitoring/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        terminal_id: terminalId,
+        agent_id: agentId,
         label: label ?? null,
       }),
     }),

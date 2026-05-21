@@ -8,8 +8,8 @@ separate when writing agents or provider integrations.
 | Surface | Agent config field | Meaning |
 |---------|----------------------|---------|
 | Runtime capabilities | `runtime_capabilities` | Coarse provider-native actions such as reading files, writing files, listing files, and executing shell commands. |
-| CAO MCP tools | `cao_tools` | Named tools exposed by `cao-mcp-server`, such as `assign`, `send_message`, `read_inbox_message`, and `reply_to_inbox_message`. |
-| Provider-mediated MCP tools | Provider config, such as Linear tool access config | Named tools supplied by a workspace tool provider and mediated through CAO. |
+| CAO MCP tools | `cao_tools` | Named tools exposed by `cao-mcp-server`, such as `assign`, `send_message`, and `read_inbox_message`. |
+| Provider-mediated MCP tools | Provider-specific access config | Named tools supplied by a workspace tool provider and mediated through CAO when a provider registers them. |
 | External provider schema fields | Provider-specific config | Fields CAO writes for an external CLI provider. These names are not CAO agent vocabulary. |
 
 `role` is not an agent access-control field. Agents should express their
@@ -52,16 +52,16 @@ Use `cao_tools` to allow named tools from `cao-mcp-server`:
 id = "discovery_partner"
 display_name = "Discovery Partner"
 runtime_capabilities = ["@builtin", "fs_read", "fs_list"]
-cao_tools = ["read_inbox_message", "reply_to_inbox_message"]
+cao_tools = ["read_inbox_message"]
 ```
 
 `cao_tools = []` explicitly denies all CAO MCP tools. `cao_tools` omitted means no
 agent-specific CAO MCP allowlist is configured. Prefer explicit `cao_tools` on
 new agents.
 
-Provider-mediated MCP tools, such as Linear tools, are not listed in `cao_tools`.
-They are configured through the owning provider's access policy because the
-provider owns that tool vocabulary.
+Provider-mediated MCP tools are not listed in `cao_tools`. They are configured
+through the owning provider's access policy because the provider owns that tool
+vocabulary.
 
 ## Launch Overrides
 
@@ -123,7 +123,7 @@ appropriate agent.
 |--------------|---------|
 | Limit native filesystem/shell access | Set `runtime_capabilities`. |
 | Allow or deny CAO orchestration/inbox tools | Set `cao_tools`. |
-| Configure Linear or another workspace tool provider's MCP tools | Use that provider's access config. |
+| Configure a workspace tool provider's MCP tools | Use that provider's access config. |
 | Change runtime access | Edit `runtime_capabilities` in `agent.toml`. |
 | Skip provider-specific confirmations | Configure the provider-specific approval setting. |
 | Remove native runtime restrictions | Set unrestricted runtime capabilities in `agent.toml`. |

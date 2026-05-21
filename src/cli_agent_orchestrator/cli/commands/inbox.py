@@ -45,11 +45,11 @@ def _get_json(path: str, *, params: Optional[Dict[str, Any]] = None) -> Any:
 
 @click.group()
 def inbox() -> None:
-    """Read inbox messages for CAO terminals via cao-server."""
+    """Read inbox messages for CAO agents via cao-server."""
 
 
 @inbox.command("list")
-@click.argument("terminal_id")
+@click.argument("agent_id")
 @click.option(
     "--status",
     "status_filter",
@@ -60,21 +60,21 @@ def inbox() -> None:
 @click.option("--limit", type=int, default=10, show_default=True, help="Maximum messages to fetch")
 @click.option("--json", "json_output", is_flag=True, help="Output structured JSON")
 def list_inbox_messages(
-    terminal_id: str, status_filter: Optional[str], limit: int, json_output: bool
+    agent_id: str, status_filter: Optional[str], limit: int, json_output: bool
 ) -> None:
-    """List inbox messages for a terminal."""
+    """List inbox messages for an agent."""
     params: Dict[str, Any] = {"limit": limit}
     if status_filter:
         params["status"] = status_filter.lower()
 
     messages: List[Dict[str, Any]] = _get_json(
-        f"/terminals/{terminal_id}/inbox/messages", params=params
+        f"/agents/{agent_id}/inbox/messages", params=params
     )
 
     if json_output:
         click.echo(
             json.dumps(
-                {"terminal_id": terminal_id, "messages": messages},
+                {"agent_id": agent_id, "messages": messages},
                 indent=2,
                 sort_keys=True,
             )
@@ -84,6 +84,6 @@ def list_inbox_messages(
     for msg in messages:
         created_at = msg.get("created_at") or ""
         status = msg.get("status") or ""
-        sender = msg.get("sender_id") or ""
-        body = msg.get("message") or ""
+        sender = msg.get("sender_agent_id") or ""
+        body = msg.get("body") or ""
         click.echo(f"{created_at} [{status}] from={sender} {body}")

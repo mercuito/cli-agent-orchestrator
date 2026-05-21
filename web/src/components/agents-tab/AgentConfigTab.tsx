@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Edit3, Eye, EyeOff, RotateCcw, Save } from 'lucide-react'
+import { Edit3, RotateCcw, Save } from 'lucide-react'
 import { api, AgentStatus, WorkspaceTeam } from '../../api'
 import { useProviderCatalog } from '../../hooks/useProviderCatalog'
 import { useProviderSchema } from '../../hooks/useProviderSchema'
-import {
-  formatAgentTomlExcluding,
-  linearFieldStatus,
-  parseAgentTomlDraft,
-} from './agentTomlSerialization'
+import { formatAgentTomlExcluding, parseAgentTomlDraft } from './agentTomlSerialization'
 import {
   AgentStructuredForm,
   STRUCTURED_FIELD_KEYS,
@@ -49,7 +45,6 @@ export function AgentConfigTab({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [teams, setTeams] = useState<WorkspaceTeam[]>([])
   const [workspaceTeamDraft, setWorkspaceTeamDraft] = useState<string>(() => agent.config.workspace.team ?? '')
-  const [revealedLinearFields, setRevealedLinearFields] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const isFirstRenderRef = useRef(true)
   const visibleStructuredFields = editing ? structuredDraft : readStructuredFields(agent)
@@ -68,7 +63,6 @@ export function AgentConfigTab({
     }
     setEditing(false)
     setSaveError(null)
-    setRevealedLinearFields({})
     setStructuredDraft(readStructuredFields(agent))
     setWorkspaceTeamDraft(agent.config.workspace.team ?? '')
   }, [agent.agent_id])
@@ -312,67 +306,6 @@ export function AgentConfigTab({
             <pre className="max-h-[260px] overflow-auto rounded-lg border border-gray-700/50 bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-200 whitespace-pre-wrap">
               {agent.config.prompt}
             </pre>
-          </div>
-        </div>
-      )}
-      {agent.config.linear && (
-        <div className="rounded-lg border border-gray-700/50 bg-gray-950 p-3">
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-            Linear secrets
-          </h4>
-          {[
-            {
-              field: 'client_secret',
-              label: 'Client secret',
-              configured: agent.config.linear.client_secret_configured,
-            },
-            {
-              field: 'webhook_secret',
-              label: 'Webhook secret',
-              configured: agent.config.linear.webhook_secret_configured,
-            },
-          ].map(({ field, label, configured }) => {
-            const key = `${agent.agent_id}:${field}`
-            const revealed = !!revealedLinearFields[key]
-            return (
-              <div
-                key={field}
-                className="flex items-center justify-between gap-3 py-1 text-xs text-gray-300"
-              >
-                <span>{label}</span>
-                <span className="ml-auto font-mono text-gray-400">
-                  {linearFieldStatus(configured, revealed)}
-                </span>
-                {configured && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRevealedLinearFields(previous => ({ ...previous, [key]: !previous[key] }))
-                    }
-                    className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-gray-300 hover:bg-gray-800"
-                    aria-label={`${revealed ? 'Hide' : 'Reveal'} ${label}`}
-                  >
-                    {revealed ? <EyeOff size={12} /> : <Eye size={12} />}
-                    {revealed ? 'Hide' : 'Reveal'}
-                  </button>
-                )}
-              </div>
-            )
-          })}
-          <div className="mt-2 space-y-1 border-t border-gray-800 pt-2 text-xs text-gray-400">
-            <div>
-              Access token:{' '}
-              {agent.config.linear.access_token_configured
-                ? 'Managed by OAuth callback'
-                : 'Not configured'}
-            </div>
-            <div>
-              Refresh token:{' '}
-              {agent.config.linear.refresh_token_configured
-                ? 'Managed by OAuth callback'
-                : 'Not configured'}
-            </div>
-            <div>Token expiry: {agent.config.linear.token_expires_at || 'Not configured'}</div>
           </div>
         </div>
       )}

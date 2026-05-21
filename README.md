@@ -22,7 +22,7 @@ CLI Agent Orchestrator (CAO) implements a hierarchical multi-agent system that e
 * **Flow - Scheduled runs** – Automated execution of workflows at specified intervals using cron-like scheduling, enabling routine tasks and monitoring workflows to run unattended.
 * **Context preservation** – The supervisor agent provides only necessary context to each worker agent, avoiding context pollution while maintaining workflow coherence.
 * **Direct worker interaction and steering** – Users can interact directly with worker agents to provide additional steering, distinguishing from sub-agents features by allowing real-time guidance and course correction.
-* **Tool restrictions** – Control what each durable agent can do through `runtime_capabilities`, `cao_tools`, provider-native `tools`, and provider access sections such as `[linear.tool_access.*]`. CAO translates restrictions to each provider's native enforcement mechanism. See [Tool Restrictions](#tool-restrictions).
+* **Tool restrictions** – Control what each durable agent can do through `runtime_capabilities`, `cao_tools`, and provider-native `tools`. CAO translates restrictions to each provider's native enforcement mechanism where available. See [Tool Restrictions](#tool-restrictions).
 * **Advanced CLI integration** – CAO agents have full access to advanced features of the developer CLI, such as the [sub-agents](https://docs.claude.com/en/docs/claude-code/sub-agents) feature of Claude Code, [Custom Agent](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line-custom-agents.html) of Amazon Q Developer for CLI and so on.
 
 For detailed project structure and architecture, see [CODEBASE.md](CODEBASE.md).
@@ -128,9 +128,9 @@ cao agent create reviewer --provider codex --workdir "$PWD"
 cp examples/agents/reviewer.md ~/.aws/cli-agent-orchestrator/agents/reviewer/prompt.md
 ```
 
-Use `cao agent edit <id>` to change provider, model, MCP servers, tools, Linear
-access, or workspace settings in `agent.toml`. You can also copy any markdown
-file into a new agent directory's `prompt.md` after `cao agent create`.
+Use `cao agent edit <id>` to change provider, model, MCP servers, tools, or
+workspace settings in `agent.toml`. You can also copy any markdown file into a
+new agent directory's `prompt.md` after `cao agent create`.
 
 ```bash
 cao agent edit code_supervisor
@@ -282,7 +282,7 @@ Each agent terminal is assigned a unique `CAO_AGENT_ID` environment variable. Th
 
 - Route messages between agents
 - Track terminal status (IDLE, PROCESSING, COMPLETED, ERROR)
-- Manage terminal-to-terminal communication via inbox
+- Manage agent-to-agent communication via inbox
 - Coordinate orchestration operations
 
 When an agent calls an MCP tool, the server identifies the caller by their `CAO_AGENT_ID` and orchestrates accordingly.
@@ -331,8 +331,8 @@ See [examples/assign](examples/assign) for the complete working example.
 
 **3. Send Message** - Communicate with an existing agent
 
-- Sends a message to a specific terminal's inbox
-- Messages are queued and delivered when the terminal is idle
+- Sends a message to a specific agent's inbox
+- Messages are queued and delivered when the receiver agent is idle
 - Enables ongoing collaboration between agents
 - Common for **swarm** operations where multiple agents coordinate dynamically
 - Use for iterative feedback or multi-turn conversations
@@ -496,9 +496,8 @@ For ready-to-use examples, see [`examples/cross-provider/`](examples/cross-provi
 CAO controls what tools each durable agent can use through explicit config in
 `agent.toml`. Use `runtime_capabilities` for broad provider-native access,
 `cao_tools` for named CAO MCP tools, provider-native `tools` for external CLI
-tool settings, and provider sections such as `[linear.tool_access.<id>]` for
-mediated provider tools. CAO translates restrictions to each provider's native
-enforcement mechanism where available.
+tool settings. CAO translates restrictions to each provider's native enforcement
+mechanism where available.
 
 ```toml
 id = "reviewer"

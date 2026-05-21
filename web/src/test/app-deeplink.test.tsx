@@ -20,7 +20,7 @@ vi.mock('../components/AgentPanel', () => ({
 vi.mock('../store', () => ({
   useStore: vi.fn((selector?: (state: any) => any) => {
     const state = {
-      sessions: [{ id: 'cao-linear-discovery-partner', name: 'cao-linear-discovery-partner', status: 'active' }],
+      sessions: [{ id: 'cao-discovery-partner', name: 'cao-discovery-partner', status: 'active' }],
       connected: true,
       fetchSessions: vi.fn(),
       snackbar: null,

@@ -1,5 +1,6 @@
-import { Bell, GitCompareArrows, Inbox, LifeBuoy, Monitor, Radio } from 'lucide-react'
+import { Bell, GitCompareArrows, Inbox, LifeBuoy, Monitor, Radio, UserCheck } from 'lucide-react'
 import {
+  AGENT_READY,
   AGENT_RUNTIME_LIFECYCLE_EVENT,
   AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT,
   AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
@@ -24,6 +25,22 @@ import {
   stringFact,
 } from './shared'
 
+const AgentReadyTimelineEventView: KnownTimelineEventView<typeof AGENT_READY> = ({
+  event,
+}: KnownTimelineEventViewProps<typeof AGENT_READY>) => {
+  const data = event.event_data
+  const agentId = stringFact(data.agent_id) ?? 'Unknown agent'
+
+  return (
+    <ViewShell
+      icon={<UserCheck size={15} />}
+      title={`Agent ${agentId} ready`}
+    >
+      <DetailPill label="Agent" value={agentId} tone="emerald" />
+    </ViewShell>
+  )
+}
+
 const RuntimeAcceptedTimelineEventView: KnownTimelineEventView<
   typeof AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT
 > = ({
@@ -31,10 +48,8 @@ const RuntimeAcceptedTimelineEventView: KnownTimelineEventView<
 }: KnownTimelineEventViewProps<typeof AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT>) => {
   const data = event.event_data
   const notificationId = primitiveFact(data.inbox_notification_id) ?? 'Unknown notification'
-  const receiver = firstFact(data.inbox_receiver_id, data.agent_id) ?? 'Unknown receiver'
-  const sender = firstFact(data.sender_id) ?? 'Unknown sender'
-  const sourceKind = labelize(stringFact(data.source_kind), 'Unknown source')
-  const sourceId = firstFact(data.source_id) ?? 'No source id'
+  const receiver = firstFact(data.receiver_agent_id, data.agent_id) ?? 'Unknown receiver'
+  const sender = firstFact(data.sender_agent_id) ?? 'Unknown sender'
   const workspace = firstFact(data.workspace_context_id) ?? 'Unknown workspace'
 
   return (
@@ -44,8 +59,6 @@ const RuntimeAcceptedTimelineEventView: KnownTimelineEventView<
     >
       <DetailPill label="Receiver" value={receiver} tone="emerald" />
       <DetailPill label="Sender" value={sender} tone="blue" />
-      <DetailPill label="Source" value={sourceKind} />
-      <DetailPill label="Source ID" value={sourceId} />
       <DetailPill label="Workspace" value={workspace} tone="purple" />
     </ViewShell>
   )
@@ -58,7 +71,6 @@ const RuntimeDeliveryTimelineEventView: KnownTimelineEventView<
   onFocusTerminal,
 }: KnownTimelineEventViewProps<typeof AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT>) => {
   const data = event.event_data
-  const sourceKind = stringFact(data.source_kind)
   const message =
     stringFact(data.message_body) ?? 'No message text recorded'
   const terminalTarget = stringFact(data.terminal_id)
@@ -70,7 +82,6 @@ const RuntimeDeliveryTimelineEventView: KnownTimelineEventView<
       icon={<Bell size={15} />}
       title={`Mention delivered to terminal ${terminalId}`}
     >
-      <DetailPill label="Source" value={labelize(sourceKind, 'Unknown source')} tone="blue" />
       <DetailPill label="Terminal" value={terminalId} tone="emerald" />
       <DetailPill label="Outcome" value={outcome} />
       {terminalTarget && onFocusTerminal && (
@@ -162,6 +173,7 @@ const RuntimeWorkspaceTimelineEventView: KnownTimelineEventView<typeof RUNTIME_W
 }
 
 export const timelineEventViewRegistrations: TimelineEventViewRegistration[] = [
+  timelineEventViewRegistration(AGENT_READY, AgentReadyTimelineEventView),
   timelineEventViewRegistration(
     AGENT_RUNTIME_NOTIFICATION_ACCEPTED_EVENT,
     RuntimeAcceptedTimelineEventView,

@@ -57,49 +57,12 @@ The old profile prompt fields are flattened into the two-file agent shape:
 - `team`: named CAO workspace team membership, such as `"cao_delivery"`.
 
 Agents without a workspace team are still valid and start in their default
-runtime workspace context. Provider event routing and team-aware collaboration
-only apply to agents that share the same non-empty team. The team's selected
-workspace is derived from the persisted team definition, not from the agent
-config.
+runtime workspace context. Team-aware collaboration applies to agents that share
+the same non-empty team. The team's selected workspace is derived from the
+persisted team definition, not from the agent config.
 
-## Linear
+## Removed Provider Config
 
-`[linear]` is optional. When present, it owns the Linear OAuth binding for the
-agent. Every scalar field in `[linear]` is optional because an agent may be
-configured before OAuth is completed:
-
-- `app_key`: Linear app/presence key.
-- `client_id`: OAuth client id.
-- `client_secret`: OAuth client secret.
-- `webhook_secret`: webhook verification secret.
-- `oauth_redirect_uri`: callback URI registered with Linear.
-- `access_token`: OAuth access token, managed by the callback writer.
-- `refresh_token`: OAuth refresh token, managed by the callback writer.
-- `token_expires_at`: OAuth expiration timestamp, managed by the callback
-  writer.
-- `app_user_id`: Linear app user id discovered through OAuth.
-- `app_user_name`: Linear app user name discovered through OAuth.
-- `oauth_state`: active OAuth state token.
-
-Tool access policies live below `[linear.tool_access.<access_id>]`.
-
-Required tool-access fields:
-
-- `tools`: list of `cao_linear.*` tools.
-
-Optional tool-access fields:
-
-- `issues`: list of allowed issue identifiers or `"*"`. Required when any
-  configured tool targets an existing issue, such as `cao_linear.get_issue`,
-  `cao_linear.create_comment`, `cao_linear.open_agent_session_on_issue`, or
-  `cao_linear.update_issue`; create-only access can omit it when the create
-  policy fields below authorize the target.
-- `create_team_ids`: Linear team ids allowed for issue creation.
-- `create_project_ids`: Linear project ids allowed for issue creation.
-- `create_parent_issues`: parent issue identifiers allowed for issue creation.
-- `allow_top_level_create`: boolean, default false.
-- `update_fields`: Linear issue fields allowed for `cao_linear.update_issue`.
-- `reason`: explanation shown when access is denied.
-
-Linear tool names and update fields are validated against the Linear provider's
-authoritative tool catalogs.
+`[linear]` and `[linear.tool_access.*]` are not part of the durable agent file
+format. Agent TOML files that still contain those sections should be edited to
+remove them before startup.

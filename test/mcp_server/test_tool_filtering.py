@@ -68,7 +68,6 @@ class TestDeferredToolRegistry:
             "assign",
             "send_message",
             "read_inbox_message",
-            "reply_to_inbox_message",
             "terminate",
         }
         assert expected <= names
@@ -152,18 +151,18 @@ class TestRegisterTools:
 
         assert registered == ["a"]
 
-    def test_tool_service_registration_includes_provider_inbox_tools(self):
+    def test_tool_service_registration_includes_read_inbox_tool(self):
         mcp_instance = self._mock_mcp()
 
         registered = server._register_tools(
             server._PENDING_TOOLS,
             mcp_instance,
             terminal_id="terminal-1",
-            tool_service=_ToolService(("read_inbox_message", "reply_to_inbox_message")),
+            tool_service=_ToolService(("read_inbox_message",)),
         )
 
         assert "read_inbox_message" in registered
-        assert "reply_to_inbox_message" in registered
+        assert "reply_to_inbox_message" not in registered
 
     def test_tool_kwargs_are_forwarded_to_mcp_tool_decorator(self):
         """Tools with decorator kwargs pass them through; tools without kwargs

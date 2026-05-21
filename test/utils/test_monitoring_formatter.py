@@ -10,7 +10,7 @@ from datetime import datetime
 def _session(**overrides):
     base = {
         "id": "sess-1",
-        "terminal_id": "term-A",
+        "agent_id": "term-A",
         "label": None,
         "started_at": datetime(2026, 4, 18, 10, 0, 0),
         "ended_at": None,
@@ -23,9 +23,9 @@ def _session(**overrides):
 def _msg(**overrides):
     base = {
         "id": 1,
-        "sender_id": "A",
-        "receiver_id": "B",
-        "message": "hello",
+        "sender_agent_id": "A",
+        "receiver_agent_id": "B",
+        "body": "hello",
         "status": "DELIVERED",
         "created_at": datetime(2026, 4, 18, 10, 0, 5),
     }
@@ -51,10 +51,10 @@ class TestMarkdownHeader:
         out = format_markdown(_session(label=None), [])
         assert out.startswith("# Monitoring session: sess-1")
 
-    def test_header_includes_monitored_terminal(self):
+    def test_header_includes_monitored_agent(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        out = format_markdown(_session(terminal_id="term-A"), [])
+        out = format_markdown(_session(agent_id="term-A"), [])
         assert "**Monitored:** term-A" in out
 
     def test_header_omits_peers_line_entirely(self):
@@ -155,9 +155,9 @@ class TestMarkdownMessages:
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
         msg = _msg(
-            sender_id="A",
-            receiver_id="B",
-            message="hi",
+            sender_agent_id="A",
+            receiver_agent_id="B",
+            body="hi",
             created_at=datetime(2026, 4, 18, 10, 0, 5),
         )
         out = format_markdown(_session(), [msg])
@@ -167,23 +167,23 @@ class TestMarkdownMessages:
     def test_multiline_message_each_line_blockquoted(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        msg = _msg(message="line one\nline two\nline three")
+        msg = _msg(body="line one\nline two\nline three")
         out = format_markdown(_session(), [msg])
         assert "> line one\n> line two\n> line three" in out
 
     def test_messages_separated_by_blank_line(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        m1 = _msg(id=1, message="first")
-        m2 = _msg(id=2, message="second")
+        m1 = _msg(id=1, body="first")
+        m2 = _msg(id=2, body="second")
         out = format_markdown(_session(), [m1, m2])
         assert "> first\n\n**" in out
 
     def test_messages_emitted_in_order_received(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        m_early = _msg(id=1, message="early", created_at=datetime(2026, 4, 18, 10, 0, 1))
-        m_late = _msg(id=2, message="late", created_at=datetime(2026, 4, 18, 10, 0, 9))
+        m_early = _msg(id=1, body="early", created_at=datetime(2026, 4, 18, 10, 0, 1))
+        m_late = _msg(id=2, body="late", created_at=datetime(2026, 4, 18, 10, 0, 9))
         out = format_markdown(_session(), [m_late, m_early])
         assert out.index("late") < out.index("early")
 
@@ -194,7 +194,7 @@ class TestMarkdownGolden:
 
         session = _session(
             label="review-doc-v2",
-            terminal_id="IMP",
+            agent_id="IMP",
             started_at=datetime(2026, 4, 18, 10, 0, 0),
             ended_at=datetime(2026, 4, 18, 10, 5, 0),
             status="ended",
@@ -202,16 +202,16 @@ class TestMarkdownGolden:
         messages = [
             _msg(
                 id=1,
-                sender_id="IMP",
-                receiver_id="R1",
-                message="Please review section 3.",
+                sender_agent_id="IMP",
+                receiver_agent_id="R1",
+                body="Please review section 3.",
                 created_at=datetime(2026, 4, 18, 10, 0, 30),
             ),
             _msg(
                 id=2,
-                sender_id="R1",
-                receiver_id="IMP",
-                message="Looks good,\nbut check the edge case on line 42.",
+                sender_agent_id="R1",
+                receiver_agent_id="IMP",
+                body="Looks good,\nbut check the edge case on line 42.",
                 created_at=datetime(2026, 4, 18, 10, 2, 15),
             ),
         ]
@@ -236,8 +236,8 @@ class TestMarkdownGolden:
     def test_full_layout_with_filter(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        session = _session(label="review", terminal_id="IMP", ended_at=None)
-        messages = [_msg(sender_id="IMP", receiver_id="R1", message="hi")]
+        session = _session(label="review", agent_id="IMP", ended_at=None)
+        messages = [_msg(sender_agent_id="IMP", receiver_agent_id="R1", body="hi")]
         out = format_markdown(session, messages, applied_filter={"peers": ["R1"]})
         assert "**Filter:** peers = R1" in out
         assert "> hi" in out
@@ -247,21 +247,21 @@ class TestMarkdownRobustness:
     def test_crlf_normalized_to_lf(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        out = format_markdown(_session(), [_msg(message="line one\r\nline two")])
+        out = format_markdown(_session(), [_msg(body="line one\r\nline two")])
         assert "\r" not in out
         assert "> line one\n> line two" in out
 
     def test_lone_cr_normalized_to_lf(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        out = format_markdown(_session(), [_msg(message="a\rb")])
+        out = format_markdown(_session(), [_msg(body="a\rb")])
         assert "\r" not in out
         assert "> a\n> b" in out
 
     def test_empty_message_body(self):
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
-        out = format_markdown(_session(), [_msg(message="")])
+        out = format_markdown(_session(), [_msg(body="")])
         assert "> " in out
 
     def test_label_containing_markdown_syntax_preserved_verbatim(self):
@@ -274,7 +274,7 @@ class TestMarkdownRobustness:
         from cli_agent_orchestrator.utils.monitoring_formatter import format_markdown
 
         long_body = "x" * 10_000
-        out = format_markdown(_session(), [_msg(message=long_body)])
+        out = format_markdown(_session(), [_msg(body=long_body)])
         assert f"> {long_body}" in out
 
 

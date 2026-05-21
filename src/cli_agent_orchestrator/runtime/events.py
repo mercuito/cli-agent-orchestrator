@@ -93,10 +93,8 @@ class AgentRuntimeNotificationAcceptedEvent(_AgentRuntimeEventMetadata):
     agent_id: str
     workspace_context_id: str
     inbox_notification_id: int
-    inbox_receiver_id: str
-    sender_id: str
-    source_kind: str | None
-    source_id: str | None
+    receiver_agent_id: str
+    sender_agent_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -111,14 +109,13 @@ class AgentRuntimeNotificationDeliveryEvent(_AgentRuntimeEventMetadata):
     agent_id: str
     workspace_context_id: str
     inbox_notification_id: int
-    inbox_receiver_id: str
+    receiver_agent_id: str
     terminal_id: str | None
     runtime_status: str
     outcome: str
     attempted: bool
     delivered: bool
     error: str | None
-    source_kind: str | None = None
     message_body: str | None = None
 
 
@@ -211,10 +208,8 @@ def notification_accepted_event(
     agent_id: str,
     workspace_context_id: str,
     inbox_notification_id: int,
-    inbox_receiver_id: str,
-    sender_id: str,
-    source_kind: str | None,
-    source_id: str | None,
+    receiver_agent_id: str,
+    sender_agent_id: str,
     causing_event: CaoEvent | None = None,
 ) -> AgentRuntimeNotificationAcceptedEvent:
     """Build a runtime notification acceptance event."""
@@ -232,10 +227,8 @@ def notification_accepted_event(
         agent_id=agent_id,
         workspace_context_id=workspace_context_id,
         inbox_notification_id=inbox_notification_id,
-        inbox_receiver_id=inbox_receiver_id,
-        sender_id=sender_id,
-        source_kind=source_kind,
-        source_id=source_id,
+        receiver_agent_id=receiver_agent_id,
+        sender_agent_id=sender_agent_id,
         agent_participants=_agent_participants(
             agent_id,
             RUNTIME_AGENT_PARTICIPANT_ROLE_NOTIFICATION_RECEIVER,
@@ -274,14 +267,13 @@ def notification_delivery_event(
     agent_id: str,
     workspace_context_id: str,
     inbox_notification_id: int,
-    inbox_receiver_id: str,
+    receiver_agent_id: str,
     terminal_id: str | None,
     runtime_status: str,
     outcome: str,
     attempted: bool,
     delivered: bool,
     error: str | None,
-    source_kind: str | None = None,
     message_body: str | None = None,
     causing_event: CaoEvent | None = None,
 ) -> AgentRuntimeNotificationDeliveryEvent:
@@ -301,14 +293,13 @@ def notification_delivery_event(
         agent_id=agent_id,
         workspace_context_id=workspace_context_id,
         inbox_notification_id=inbox_notification_id,
-        inbox_receiver_id=inbox_receiver_id,
+        receiver_agent_id=receiver_agent_id,
         terminal_id=terminal_id,
         runtime_status=runtime_status,
         outcome=outcome,
         attempted=attempted,
         delivered=delivered,
         error=error,
-        source_kind=source_kind,
         message_body=message_body,
         agent_participants=_agent_participants(
             agent_id,

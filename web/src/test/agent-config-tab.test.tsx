@@ -79,7 +79,7 @@ function ariaStatus(overrides: Partial<AgentStatus['config']> = {}): AgentStatus
       workdir: '/repo',
       session_name: 'aria-session',
       prompt: '# Agent\n',
-      description: 'Works Linear issues',
+      description: 'Works agent handoffs',
       model: 'claude-opus-4-7',
       reasoning_effort: 'medium',
       mcp_servers: { cao: { command: 'cao-mcp-server' } },
@@ -95,32 +95,6 @@ function ariaStatus(overrides: Partial<AgentStatus['config']> = {}): AgentStatus
       runtime_capabilities: null,
       codex_config: {},
       workspace: { team: null, derived_workspace: null, diagnostics: [] },
-      linear: {
-        app_key: 'aria',
-        client_id: 'linear-client',
-        client_secret_configured: true,
-        webhook_secret_configured: false,
-        oauth_redirect_uri: 'https://cao.test/linear/oauth/callback',
-        access_token_configured: true,
-        refresh_token_configured: true,
-        token_expires_at: null,
-        app_user_id: 'linear-user',
-        app_user_name: 'Linear Bot',
-        oauth_state_configured: true,
-        tool_access: [
-          {
-            access_id: 'workflow',
-            tools: ['cao_linear.get_issue'],
-            issues: ['CAO-1'],
-            create_team_ids: ['TEAM'],
-            create_project_ids: [],
-            create_parent_issues: [],
-            allow_top_level_create: false,
-            update_fields: ['title'],
-            reason: 'assigned work',
-          },
-        ],
-      },
       ...overrides,
     },
     active: false,
@@ -152,7 +126,7 @@ beforeEach(() => {
     {
       id: 'cao_delivery',
       display_name: 'CAO Delivery',
-      workspace: 'linear_delivery',
+      workspace: 'cao_default',
       members: ['aria'],
       diagnostics: [],
     },
@@ -192,7 +166,7 @@ describe('AgentConfigTab', () => {
     )
   })
 
-  it('renders structured field values, raw TOML, prompt, and Linear secrets in read mode', async () => {
+  it('renders structured field values, raw TOML, and prompt in read mode', async () => {
     const { AgentConfigTab } = await loadConfigTab()
 
     render(<AgentConfigTab agent={ariaStatus()} onAgentUpdated={vi.fn()} />)
@@ -211,11 +185,8 @@ describe('AgentConfigTab', () => {
     expect(screen.getByText(/session_name = "aria-session"/)).toBeInTheDocument()
     expect(screen.getByText(/\[mcp_servers.cao\]/)).toBeInTheDocument()
 
-    // Prompt and Linear secrets summary still render.
+    // Prompt still renders alongside the structured config.
     expect(screen.getByText('# Agent')).toBeInTheDocument()
-    expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
-    expect(screen.getAllByText('••••••••').length).toBeGreaterThan(0)
-    expect(screen.getByText(/Access token: Managed by OAuth callback/)).toBeInTheDocument()
   })
 
   it('updates the read-only derived workspace field from the selected team while editing', async () => {
@@ -223,7 +194,7 @@ describe('AgentConfigTab', () => {
 
     render(
       <AgentConfigTab
-        agent={ariaStatus({ workspace: { team: 'cao_delivery', derived_workspace: 'linear_delivery', diagnostics: [] } })}
+        agent={ariaStatus({ workspace: { team: 'cao_delivery', derived_workspace: 'cao_default', diagnostics: [] } })}
         onAgentUpdated={vi.fn()}
       />,
     )
@@ -231,7 +202,7 @@ describe('AgentConfigTab', () => {
     fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
     const workspaceInput = screen.getByLabelText('aria derived workspace') as HTMLInputElement
 
-    expect(workspaceInput.value).toBe('linear_delivery')
+    expect(workspaceInput.value).toBe('cao_default')
     expect(workspaceInput.disabled).toBe(true)
 
     fireEvent.change(screen.getByLabelText('aria workspace team'), {
@@ -250,7 +221,7 @@ describe('AgentConfigTab', () => {
     fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
 
     expect(screen.getByLabelText('aria display_name')).toHaveValue('Aria')
-    expect(screen.getByLabelText('aria description')).toHaveValue('Works Linear issues')
+    expect(screen.getByLabelText('aria description')).toHaveValue('Works agent handoffs')
     const providerSelect = screen.getByLabelText('aria cli_provider') as HTMLSelectElement
     expect(providerSelect.value).toBe('claude_code')
     expect(Array.from(providerSelect.options).map(option => option.value)).toEqual([
@@ -623,7 +594,7 @@ describe('AgentConfigTab raw TOML disclosure', () => {
 
     const textarea = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
     fireEvent.change(textarea, {
-      target: { value: `${textarea.value}\n[workspace]\nsetup = "linear_delivery"\n` },
+      target: { value: `${textarea.value}\n[workspace]\nsetup = "legacy_setup"\n` },
     })
     fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
 
@@ -637,11 +608,10 @@ describe('AgentConfigTab raw TOML disclosure', () => {
   it('labels raw local access edits as standalone fallback for teamed agents without existing local grants', async () => {
     const { AgentConfigTab } = await loadConfigTab()
     const teamedAgent = ariaStatus({
-      workspace: { team: 'cao_delivery', derived_workspace: 'linear_delivery', diagnostics: [] },
+      workspace: { team: 'cao_delivery', derived_workspace: 'cao_default', diagnostics: [] },
       cao_tools: null,
       mcp_servers: {},
       codex_config: {},
-      linear: null,
     })
 
     render(<AgentConfigTab agent={teamedAgent} onAgentUpdated={vi.fn()} />)

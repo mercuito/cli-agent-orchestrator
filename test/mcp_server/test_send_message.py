@@ -8,7 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
-from cli_agent_orchestrator.clients.database import create_terminal, get_inbox_delivery
+from cli_agent_orchestrator.clients.database import create_terminal
+from cli_agent_orchestrator.inbox import get_notification
 from cli_agent_orchestrator.constants import API_BASE_URL
 from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -245,6 +246,6 @@ async def test_send_message_addresses_agent_and_delivers_to_live_idle_terminal(
         "terminal-b",
         f"hello\n\nnotification_id={result['notification_id']}",
     )
-    persisted = get_inbox_delivery(result["notification_id"])
-    assert persisted.notification.receiver_id == "agent-b"
-    assert persisted.notification.status == MessageStatus.DELIVERED
+    persisted = get_notification(result["notification_id"])
+    assert persisted.receiver_agent_id == "agent-b"
+    assert persisted.status == MessageStatus.DELIVERED

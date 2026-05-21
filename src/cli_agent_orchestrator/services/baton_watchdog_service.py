@@ -13,11 +13,12 @@ from sqlalchemy import func
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import BatonEventModel, BatonModel, TerminalModel
+from cli_agent_orchestrator.inbox import send as send_inbox_message
 from cli_agent_orchestrator.models.baton import BatonEventType, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import baton_service
-from cli_agent_orchestrator.services.collaboration_policy import require_terminal_workspace_team
+from cli_agent_orchestrator.services.collaboration_policy import require_agent_workspace_team
 from cli_agent_orchestrator.workspaces import WorkspaceConfigError
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ def _nudge_message(db, row: BatonModel) -> str:
     tools = _available_baton_holder_tools(db, row.current_holder_id)
     if not tools:
         action_text = (
-            "This terminal currently has no baton lifecycle tools available. "
+            "This agent currently has no baton lifecycle tools available. "
             "Continue the work if possible and ask the originator or operator to "
             "move, complete, or block the baton."
         )
@@ -171,12 +172,13 @@ def _orphan_message(db, row: BatonModel, previous_holder_id: str) -> str:
 
 
 def _queue_watchdog_message(db, *, receiver_id: str, message: str) -> None:
-    require_terminal_workspace_team(receiver_id, db=db, role="Watchdog receiver")
-    db_module.create_inbox_delivery(
-        WATCHDOG_ACTOR_ID,
+    require_agent_workspace_team(receiver_id, db=db, role="Watchdog receiver")
+    send_inbox_message(
         receiver_id,
         message,
+        sender_agent_id=WATCHDOG_ACTOR_ID,
         db=db,
+        attempt_delivery=False,
     )
 
 
@@ -259,15 +261,16 @@ def scan_active_batons(
             if holder_id is None:
                 continue
 
-            metadata = db.query(TerminalModel).filter(TerminalModel.id == holder_id).first()
+            metadata = db.query(TerminalModel).filter(TerminalModel.agent_id == holder_id).first()
             provider = None
             if metadata is not None:
                 try:
-                    provider = provider_manager.get_provider(holder_id)
+                    provider = provider_manager.get_provider(str(metadata.id))
                 except Exception as exc:
                     logger.warning(
-                        "Could not find provider for baton holder %s: %s",
+                        "Could not find provider for baton holder %s terminal %s: %s",
                         holder_id,
+                        metadata.id,
                         exc,
                     )
             if metadata is None or provider is None:
@@ -276,7 +279,7 @@ def scan_active_batons(
                 orphaned += 1
                 continue
             try:
-                require_terminal_workspace_team(holder_id, db=db, role="Baton holder")
+                require_agent_workspace_team(holder_id, db=db, role="Baton holder")
             except WorkspaceConfigError as exc:
                 logger.warning(
                     "Marking baton %s orphaned because holder %s is outside workspace team policy: %s",

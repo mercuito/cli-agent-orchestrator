@@ -2,15 +2,10 @@
 
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 
-from cli_agent_orchestrator.clients.database import (
-    InboxNotificationModel,
-    SessionLocal,
-    TerminalModel,
-)
+from cli_agent_orchestrator.clients.database import SessionLocal, TerminalModel
 from cli_agent_orchestrator.constants import LOG_DIR, RETENTION_DAYS, TERMINAL_LOG_DIR
-from cli_agent_orchestrator.models.inbox import MessageStatus
+from cli_agent_orchestrator.inbox import delete_completed_notifications_before
 
 logger = logging.getLogger(__name__)
 
@@ -31,23 +26,14 @@ def cleanup_old_data():
             db.commit()
             logger.info(f"Deleted {deleted_terminals} old terminals from database")
 
-        # Delivery notifications own inbox retention state.
-        with SessionLocal() as db:
-            deleted_notifications = (
-                db.query(InboxNotificationModel)
-                .filter(
-                    InboxNotificationModel.created_at < cutoff_date,
-                    InboxNotificationModel.status.in_(
-                        [MessageStatus.DELIVERED.value, MessageStatus.FAILED.value]
-                    ),
-                )
-                .delete(synchronize_session=False)
-            )
-            db.commit()
-            logger.info(
-                "Deleted %s old inbox notifications from database",
-                deleted_notifications,
-            )
+        deleted_notifications = delete_completed_notifications_before(
+            cutoff_date,
+            session_factory=SessionLocal,
+        )
+        logger.info(
+            "Deleted %s old inbox notifications from database",
+            deleted_notifications,
+        )
 
         # Clean up old terminal log files
         terminal_logs_deleted = 0

@@ -11,10 +11,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import (
-    Base,
-    InboxNotificationModel,
-)
+from cli_agent_orchestrator.clients.database import Base
+from cli_agent_orchestrator.inbox.store import InboxNotificationModel
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
 
@@ -39,10 +37,9 @@ def _seed_inbox(
 ):
     with session_maker() as s:
         notification_row = InboxNotificationModel(
+            sender_agent_id=sender_id,
             receiver_agent_id=receiver_id,
             body=message,
-            source_kind="terminal",
-            source_id=sender_id,
             status=status.value,
             created_at=created_at,
         )
@@ -59,21 +56,21 @@ class TestCreateSession:
     def test_create_with_minimum_args(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import create_session
 
-        result = create_session(terminal_id="term-A")
+        result = create_session(agent_id="agent-A")
 
         assert isinstance(result["id"], str) and result["id"]
-        assert result["terminal_id"] == "term-A"
+        assert result["agent_id"] == "agent-A"
         assert result["label"] is None
         assert result["status"] == "active"
         assert result["ended_at"] is None
         assert isinstance(result["started_at"], datetime)
-        # Confirm the simplified shape — no peer_terminal_ids key
-        assert "peer_terminal_ids" not in result
+        # Confirm the simplified shape — no peer_agent_ids key
+        assert "peer_agent_ids" not in result
 
     def test_create_with_label(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import create_session
 
-        result = create_session(terminal_id="term-A", label="review-v2")
+        result = create_session(agent_id="agent-A", label="review-v2")
         assert result["label"] == "review-v2"
 
     def test_create_is_idempotent_when_active_session_exists(self, patched_db):
@@ -81,30 +78,30 @@ class TestCreateSession:
         duplicate. Return the existing session unchanged."""
         from cli_agent_orchestrator.services.monitoring_service import create_session
 
-        first = create_session(terminal_id="term-A", label="original")
-        second = create_session(terminal_id="term-A", label="ignored")
+        first = create_session(agent_id="agent-A", label="original")
+        second = create_session(agent_id="agent-A", label="ignored")
 
         assert first["id"] == second["id"]
         assert second["label"] == "original"  # not overwritten
 
     def test_create_after_ending_makes_a_new_session(self, patched_db):
-        """Ending the previous session releases the terminal for a new one."""
+        """Ending the previous session releases the agent for a new one."""
         from cli_agent_orchestrator.services.monitoring_service import (
             create_session,
             end_session,
         )
 
-        first = create_session(terminal_id="term-A")
+        first = create_session(agent_id="agent-A")
         end_session(first["id"])
-        second = create_session(terminal_id="term-A")
+        second = create_session(agent_id="agent-A")
 
         assert first["id"] != second["id"]
 
-    def test_create_on_different_terminals_always_independent(self, patched_db):
+    def test_create_on_different_agents_always_independent(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import create_session
 
-        a = create_session(terminal_id="term-A")
-        b = create_session(terminal_id="term-B")
+        a = create_session(agent_id="agent-A")
+        b = create_session(agent_id="agent-B")
         assert a["id"] != b["id"]
 
 
@@ -115,12 +112,12 @@ class TestGetSession:
             get_session,
         )
 
-        created = create_session(terminal_id="term-A", label="x")
+        created = create_session(agent_id="agent-A", label="x")
         fetched = get_session(created["id"])
 
         assert fetched is not None
         assert fetched["id"] == created["id"]
-        assert fetched["terminal_id"] == "term-A"
+        assert fetched["agent_id"] == "agent-A"
         assert fetched["label"] == "x"
         assert fetched["status"] == "active"
 
@@ -138,7 +135,7 @@ class TestEndSession:
             get_session,
         )
 
-        created = create_session(terminal_id="term-A")
+        created = create_session(agent_id="agent-A")
         result = end_session(created["id"])
 
         assert result["ended_at"] is not None
@@ -152,7 +149,7 @@ class TestEndSession:
             end_session,
         )
 
-        created = create_session(terminal_id="term-A")
+        created = create_session(agent_id="agent-A")
         end_session(created["id"])
 
         with pytest.raises(SessionAlreadyEnded):
@@ -176,7 +173,7 @@ class TestDeleteSession:
             get_session,
         )
 
-        created = create_session(terminal_id="term-A")
+        created = create_session(agent_id="agent-A")
         delete_session(created["id"])
         assert get_session(created["id"]) is None
 
@@ -202,20 +199,20 @@ class TestListSessions:
             list_sessions,
         )
 
-        create_session(terminal_id="A")
-        create_session(terminal_id="B")
+        create_session(agent_id="A")
+        create_session(agent_id="B")
         assert len(list_sessions()) == 2
 
-    def test_filter_by_terminal_id(self, patched_db):
+    def test_filter_by_agent_id(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import (
             create_session,
             list_sessions,
         )
 
-        create_session(terminal_id="A")
-        create_session(terminal_id="B")
-        result = list_sessions(terminal_id="A")
-        assert [r["terminal_id"] for r in result] == ["A"]
+        create_session(agent_id="A")
+        create_session(agent_id="B")
+        result = list_sessions(agent_id="A")
+        assert [r["agent_id"] for r in result] == ["A"]
 
     def test_filter_status_active(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import (
@@ -224,8 +221,8 @@ class TestListSessions:
             list_sessions,
         )
 
-        active = create_session(terminal_id="A")
-        ended = create_session(terminal_id="B")
+        active = create_session(agent_id="A")
+        ended = create_session(agent_id="B")
         end_session(ended["id"])
         assert [s["id"] for s in list_sessions(status="active")] == [active["id"]]
 
@@ -236,8 +233,8 @@ class TestListSessions:
             list_sessions,
         )
 
-        create_session(terminal_id="A")
-        ended = create_session(terminal_id="B")
+        create_session(agent_id="A")
+        ended = create_session(agent_id="B")
         end_session(ended["id"])
         assert [s["id"] for s in list_sessions(status="ended")] == [ended["id"]]
 
@@ -247,13 +244,13 @@ class TestListSessions:
             list_sessions,
         )
 
-        a = create_session(terminal_id="A", label="hit")
-        create_session(terminal_id="B", label="miss")
+        a = create_session(agent_id="A", label="hit")
+        create_session(agent_id="B", label="miss")
         assert [s["id"] for s in list_sessions(label="hit")] == [a["id"]]
 
     def test_multiple_filters_combined_are_ANDed(self, patched_db):
         """Each filter must narrow the result independently. Using distinct
-        terminals per case so idempotency doesn't interfere — we want to
+        agents per case so idempotency doesn't interfere — we want to
         prove AND semantics, not side-effect arithmetic."""
         from cli_agent_orchestrator.services.monitoring_service import (
             create_session,
@@ -262,19 +259,19 @@ class TestListSessions:
         )
 
         # Only `target` matches all three filters simultaneously.
-        target = create_session(terminal_id="A", label="t")
-        create_session(terminal_id="B", label="t")  # wrong terminal
-        create_session(terminal_id="C", label="other")  # wrong label
-        ended = create_session(terminal_id="D", label="t")  # wrong status
+        target = create_session(agent_id="A", label="t")
+        create_session(agent_id="B", label="t")  # wrong agent
+        create_session(agent_id="C", label="other")  # wrong label
+        ended = create_session(agent_id="D", label="t")  # wrong status
         end_session(ended["id"])
 
-        result = list_sessions(terminal_id="A", label="t", status="active")
+        result = list_sessions(agent_id="A", label="t", status="active")
         assert [s["id"] for s in result] == [target["id"]]
 
         # Sanity: flipping any single filter picks up a different row and
         # never collapses to the same one-row result by accident.
         assert len(list_sessions(label="t", status="active")) == 2  # A + B
-        assert len(list_sessions(terminal_id="A")) == 1  # just A
+        assert len(list_sessions(agent_id="A")) == 1  # just A
         assert len(list_sessions(status="ended")) == 1  # just D
 
     def test_filter_time_range(self, patched_db):
@@ -284,8 +281,8 @@ class TestListSessions:
             list_sessions,
         )
 
-        old = create_session(terminal_id="A")
-        new = create_session(terminal_id="B")
+        old = create_session(agent_id="A")
+        new = create_session(agent_id="B")
 
         with patched_db() as s:
             s.query(MonitoringSessionModel).filter_by(id=old["id"]).update(
@@ -306,9 +303,9 @@ class TestListSessions:
             list_sessions,
         )
 
-        # Distinct terminals since idempotent create collapses same-terminal calls
+        # Distinct agents since idempotent create collapses same-agent calls
         for i in range(5):
-            create_session(terminal_id=f"t-{i}")
+            create_session(agent_id=f"t-{i}")
 
         page1 = list_sessions(limit=2, offset=0)
         page2 = list_sessions(limit=2, offset=2)
@@ -324,8 +321,8 @@ class TestListSessions:
 
 
 class TestGetSessionMessages:
-    def test_captures_all_io_of_monitored_terminal_by_default(self, patched_db):
-        """No peer filter = record everything touching the terminal.
+    def test_captures_all_io_of_monitored_agent_by_default(self, patched_db):
+        """No peer filter = record everything touching the agent.
         Under the new model this is ALWAYS the default at capture time;
         narrowing happens at read time."""
         from cli_agent_orchestrator.services.monitoring_service import (
@@ -333,11 +330,11 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         base = datetime.now()
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R1",
             message="to-r1",
             created_at=base + timedelta(seconds=1),
@@ -345,7 +342,7 @@ class TestGetSessionMessages:
         _seed_inbox(
             patched_db,
             sender_id="R2",
-            receiver_id="IMP",
+            receiver_id="implementation_partner",
             message="from-r2",
             created_at=base + timedelta(seconds=2),
         )
@@ -359,7 +356,7 @@ class TestGetSessionMessages:
         )
 
         result = get_session_messages(session["id"])
-        assert [m["message"] for m in result] == ["to-r1", "from-r2"]
+        assert [m["body"] for m in result] == ["to-r1", "from-r2"]
 
     def test_peer_filter_at_query_time_or_semantics_either_side(self, patched_db):
         """``peers`` matches against sender OR receiver. Covers both
@@ -369,11 +366,11 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         base = datetime.now()
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R1",
             message="peer-recv",
             created_at=base + timedelta(seconds=1),
@@ -381,20 +378,20 @@ class TestGetSessionMessages:
         _seed_inbox(
             patched_db,
             sender_id="R1",
-            receiver_id="IMP",
+            receiver_id="implementation_partner",
             message="peer-sent",
             created_at=base + timedelta(seconds=2),
         )
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R2",
             message="other-recv",
             created_at=base + timedelta(seconds=3),
         )
 
         result = get_session_messages(session["id"], peers=["R1"])
-        assert [m["message"] for m in result] == ["peer-recv", "peer-sent"]
+        assert [m["body"] for m in result] == ["peer-recv", "peer-sent"]
 
     def test_peer_filter_accepts_multiple_peers(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import (
@@ -402,32 +399,32 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         base = datetime.now()
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R1",
             message="r1",
             created_at=base + timedelta(seconds=1),
         )
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R2",
             message="r2",
             created_at=base + timedelta(seconds=2),
         )
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R3",
             message="r3",
             created_at=base + timedelta(seconds=3),
         )
 
         result = get_session_messages(session["id"], peers=["R1", "R3"])
-        assert [m["message"] for m in result] == ["r1", "r3"]
+        assert [m["body"] for m in result] == ["r1", "r3"]
 
     def test_empty_peer_list_is_treated_as_no_filter(self, patched_db):
         """Callers might pass ``peers=[]`` from a UI where the selection is
@@ -439,9 +436,13 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         _seed_inbox(
-            patched_db, sender_id="IMP", receiver_id="R1", message="a", created_at=datetime.now()
+            patched_db,
+            sender_id="implementation_partner",
+            receiver_id="R1",
+            message="a",
+            created_at=datetime.now(),
         )
 
         result = get_session_messages(session["id"], peers=[])
@@ -453,32 +454,32 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         base = datetime.now()
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="third",
             created_at=base + timedelta(seconds=3),
         )
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="first",
             created_at=base + timedelta(seconds=1),
         )
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="second",
             created_at=base + timedelta(seconds=2),
         )
 
         result = get_session_messages(session["id"])
-        assert [m["message"] for m in result] == ["first", "second", "third"]
+        assert [m["body"] for m in result] == ["first", "second", "third"]
 
     def test_bounded_by_session_started_at(self, patched_db):
         from cli_agent_orchestrator.clients.database import MonitoringSessionModel
@@ -487,7 +488,7 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         start = datetime(2026, 4, 18, 10, 0, 0)
         with patched_db() as s:
             s.query(MonitoringSessionModel).filter_by(id=session["id"]).update(
@@ -497,20 +498,20 @@ class TestGetSessionMessages:
 
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="before",
             created_at=start - timedelta(minutes=5),
         )
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="after",
             created_at=start + timedelta(minutes=5),
         )
 
-        assert [m["message"] for m in get_session_messages(session["id"])] == ["after"]
+        assert [m["body"] for m in get_session_messages(session["id"])] == ["after"]
 
     def test_bounded_by_session_ended_at(self, patched_db):
         from cli_agent_orchestrator.clients.database import MonitoringSessionModel
@@ -519,7 +520,7 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         start = datetime(2026, 4, 18, 10, 0, 0)
         end = datetime(2026, 4, 18, 11, 0, 0)
         with patched_db() as s:
@@ -530,20 +531,20 @@ class TestGetSessionMessages:
 
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="in",
             created_at=start + timedelta(minutes=30),
         )
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="after",
             created_at=end + timedelta(minutes=5),
         )
 
-        assert [m["message"] for m in get_session_messages(session["id"])] == ["in"]
+        assert [m["body"] for m in get_session_messages(session["id"])] == ["in"]
 
     def test_ongoing_session_upper_bound_is_now(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import (
@@ -551,16 +552,16 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         _seed_inbox(
             patched_db,
-            sender_id="IMP",
+            sender_id="implementation_partner",
             receiver_id="R",
             message="live",
             created_at=datetime.now() + timedelta(seconds=1),
         )
 
-        assert [m["message"] for m in get_session_messages(session["id"])] == ["live"]
+        assert [m["body"] for m in get_session_messages(session["id"])] == ["live"]
 
     def test_query_time_sub_window_narrows_within_session(self, patched_db):
         """Callers can slice out a sub-window of a longer recording — e.g.
@@ -571,7 +572,7 @@ class TestGetSessionMessages:
             get_session_messages,
         )
 
-        session = create_session(terminal_id="IMP")
+        session = create_session(agent_id="implementation_partner")
         start = datetime(2026, 4, 18, 10, 0, 0)
         with patched_db() as s:
             s.query(MonitoringSessionModel).filter_by(id=session["id"]).update(
@@ -582,7 +583,7 @@ class TestGetSessionMessages:
         for i in range(5):
             _seed_inbox(
                 patched_db,
-                sender_id="IMP",
+                sender_id="implementation_partner",
                 receiver_id="R",
                 message=f"m{i}",
                 created_at=start + timedelta(minutes=i),
@@ -594,7 +595,7 @@ class TestGetSessionMessages:
             started_after=start + timedelta(minutes=2),
             started_before=start + timedelta(minutes=3),
         )
-        assert [m["message"] for m in result] == ["m2", "m3"]
+        assert [m["body"] for m in result] == ["m2", "m3"]
 
     def test_get_messages_on_missing_session_raises(self, patched_db):
         from cli_agent_orchestrator.services.monitoring_service import (

@@ -18,14 +18,14 @@ from cli_agent_orchestrator.services import monitoring_service
 
 def _session_dict(
     session_id="sess-1",
-    terminal_id="term-A",
+    agent_id="term-A",
     label=None,
     started_at=None,
     ended_at=None,
 ):
     return {
         "id": session_id,
-        "terminal_id": terminal_id,
+        "agent_id": agent_id,
         "label": label,
         "started_at": started_at or datetime(2026, 4, 18, 10, 0, 0),
         "ended_at": ended_at,
@@ -43,15 +43,15 @@ class TestCreateSession:
         with patch.object(
             monitoring_service, "create_session", return_value=_session_dict()
         ) as mock_fn:
-            resp = client.post("/monitoring/sessions", json={"terminal_id": "term-A"})
+            resp = client.post("/monitoring/sessions", json={"agent_id": "term-A"})
 
         assert resp.status_code == 201
         body = resp.json()
         assert body["id"] == "sess-1"
         assert body["status"] == "active"
-        # Response no longer carries peer_terminal_ids
-        assert "peer_terminal_ids" not in body
-        mock_fn.assert_called_once_with(terminal_id="term-A", label=None)
+        # Response no longer carries peer_agent_ids
+        assert "peer_agent_ids" not in body
+        mock_fn.assert_called_once_with(agent_id="term-A", label=None)
 
     def test_body_with_label_forwarded(self, client):
         with patch.object(
@@ -61,29 +61,25 @@ class TestCreateSession:
         ) as mock_fn:
             resp = client.post(
                 "/monitoring/sessions",
-                json={"terminal_id": "term-A", "label": "review-v2"},
+                json={"agent_id": "term-A", "label": "review-v2"},
             )
 
         assert resp.status_code == 201
-        mock_fn.assert_called_once_with(terminal_id="term-A", label="review-v2")
+        mock_fn.assert_called_once_with(agent_id="term-A", label="review-v2")
 
-    def test_legacy_peer_field_silently_ignored(self, client):
-        """Clients on the old shape still work: Pydantic v2 default is to
-        ignore extra fields. Pin this so a future switch to
-        ``extra='forbid'`` on the request model has to be a conscious
-        breaking-change decision, not a silent one."""
+    def test_legacy_peer_field_rejected(self, client):
+        """The removed peer set is not accepted as a compatibility field."""
         with patch.object(
             monitoring_service, "create_session", return_value=_session_dict()
         ) as mock_fn:
             resp = client.post(
                 "/monitoring/sessions",
-                json={"terminal_id": "term-A", "peer_terminal_ids": ["legacy"]},
+                json={"agent_id": "term-A", "peer_agent_ids": ["legacy"]},
             )
-        assert resp.status_code == 201
-        # The service call must not receive the legacy field
-        assert "peer_terminal_ids" not in mock_fn.call_args.kwargs
+        assert resp.status_code == 422
+        mock_fn.assert_not_called()
 
-    def test_missing_terminal_id_returns_422(self, client):
+    def test_missing_agent_id_returns_422(self, client):
         resp = client.post("/monitoring/sessions", json={})
         assert resp.status_code == 422
 
@@ -127,7 +123,7 @@ class TestListSessions:
         assert resp.status_code == 200
         assert [s["id"] for s in resp.json()] == ["a", "b"]
         mock_fn.assert_called_once_with(
-            terminal_id=None,
+            agent_id=None,
             status=None,
             label=None,
             started_after=None,
@@ -141,7 +137,7 @@ class TestListSessions:
             resp = client.get(
                 "/monitoring/sessions",
                 params={
-                    "terminal_id": "T",
+                    "agent_id": "T",
                     "status": "active",
                     "label": "rev",
                     "started_after": "2026-01-01T00:00:00",
@@ -153,7 +149,7 @@ class TestListSessions:
 
         assert resp.status_code == 200
         kwargs = mock_fn.call_args.kwargs
-        assert kwargs["terminal_id"] == "T"
+        assert kwargs["agent_id"] == "T"
         assert kwargs["status"] == "active"
         assert kwargs["label"] == "rev"
         assert kwargs["started_after"] == datetime(2026, 1, 1)
@@ -168,11 +164,11 @@ class TestListSessions:
         with patch.object(monitoring_service, "list_sessions", return_value=[]) as mock_fn:
             client.get(
                 "/monitoring/sessions",
-                params={"peer_terminal_id": "P", "involves": "X"},
+                params={"peer_agent_id": "P", "involves": "X"},
             )
 
         kwargs = mock_fn.call_args.kwargs
-        assert "peer_terminal_id" not in kwargs
+        assert "peer_agent_id" not in kwargs
         assert "involves" not in kwargs
 
     def test_invalid_status_returns_422(self, client):
@@ -233,7 +229,7 @@ class TestPeerEndpointsRemoved:
     def test_add_peer_endpoint_gone(self, client):
         resp = client.post(
             "/monitoring/sessions/sess-1/peers",
-            json={"peer_terminal_ids": ["P1"]},
+            json={"peer_agent_ids": ["P1"]},
         )
         assert resp.status_code in (404, 405)
 
@@ -251,9 +247,10 @@ class TestGetMessages:
     def _msg(self, **overrides):
         base = {
             "id": 1,
-            "sender_id": "A",
-            "receiver_id": "B",
-            "message": "hi",
+            "notification_id": 1,
+            "sender_agent_id": "A",
+            "receiver_agent_id": "B",
+            "body": "hi",
             "status": "DELIVERED",
             "created_at": datetime(2026, 4, 18, 10, 0, 0),
         }
@@ -261,12 +258,12 @@ class TestGetMessages:
         return base
 
     def test_returns_ordered_list(self, client):
-        msgs = [self._msg(id=1, message="hi"), self._msg(id=2, message="back")]
+        msgs = [self._msg(id=1, body="hi"), self._msg(id=2, body="back")]
         with patch.object(monitoring_service, "get_session_messages", return_value=msgs) as mock_fn:
             resp = client.get("/monitoring/sessions/sess-1/messages")
 
         assert resp.status_code == 200
-        assert [m["message"] for m in resp.json()] == ["hi", "back"]
+        assert [m["body"] for m in resp.json()] == ["hi", "back"]
         mock_fn.assert_called_once_with("sess-1", peers=[], started_after=None, started_before=None)
 
     def test_peer_filter_forwarded_as_list(self, client):
@@ -323,9 +320,9 @@ class TestGetLog:
         return [
             {
                 "id": 1,
-                "sender_id": "A",
-                "receiver_id": "B",
-                "message": "hi",
+                "sender_agent_id": "A",
+                "receiver_agent_id": "B",
+                "body": "hi",
                 "status": "DELIVERED",
                 "created_at": datetime(2026, 4, 18, 10, 0, 5),
             }

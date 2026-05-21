@@ -21,9 +21,9 @@ describe('API wrapper', () => {
     })
   }
 
-  it('startMonitoring POSTs terminal_id + label', async () => {
+  it('startMonitoring POSTs agent_id + label', async () => {
     const session = {
-      id: 's1', terminal_id: 't1', label: 'dashboard-123456',
+      id: 's1', agent_id: 't1', label: 'dashboard-123456',
       started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active',
     }
     mockResponse(session, 201)
@@ -33,7 +33,7 @@ describe('API wrapper', () => {
     expect(url).toBe('/monitoring/sessions')
     expect(opts.method).toBe('POST')
     expect(JSON.parse(opts.body)).toEqual({
-      terminal_id: 't1',
+      agent_id: 't1',
       label: 'dashboard-123456',
     })
   })
@@ -43,7 +43,7 @@ describe('API wrapper', () => {
     await api.startMonitoring('t1')
     const [, opts] = mockFetch.mock.calls[0]
     const body = JSON.parse(opts.body)
-    expect(body).toEqual({ terminal_id: 't1', label: null })
+    expect(body).toEqual({ agent_id: 't1', label: null })
   })
 
   it('endMonitoring POSTs to /end endpoint', async () => {
@@ -58,7 +58,7 @@ describe('API wrapper', () => {
 
   it('listActiveMonitoringSessions fetches active-scoped endpoint', async () => {
     const sessions = [
-      { id: 's1', terminal_id: 't1', label: null, started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active' },
+      { id: 's1', agent_id: 't1', label: null, started_at: '2026-04-18T10:00:00', ended_at: null, status: 'active' },
     ]
     mockResponse(sessions)
     const result = await api.listActiveMonitoringSessions()
@@ -141,7 +141,7 @@ describe('API wrapper', () => {
         },
         active: false,
         agent_dashboard_token: 'aria-dashboard-token',
-        active_terminal_id: null,
+        active_agent_id: null,
         active_workspace_context_id: null,
         last_active_at: null,
       },
@@ -158,7 +158,7 @@ describe('API wrapper', () => {
     const team = {
       id: 'review',
       display_name: 'Review',
-      workspace: 'linear_delivery',
+      workspace: 'cao_default',
       roles: {},
       role_assignments: {},
       members: [],
@@ -170,7 +170,7 @@ describe('API wrapper', () => {
     const result = await api.createWorkspaceTeam({
       id: 'review',
       display_name: 'Review',
-      workspace: 'linear_delivery',
+      workspace: 'cao_default',
     })
 
     expect(result).toEqual(team)
@@ -180,7 +180,7 @@ describe('API wrapper', () => {
     expect(JSON.parse(opts.body)).toEqual({
       id: 'review',
       display_name: 'Review',
-      workspace: 'linear_delivery',
+      workspace: 'cao_default',
     })
   })
 
@@ -189,7 +189,7 @@ describe('API wrapper', () => {
 
     await api.updateWorkspaceTeamMetadata('review/team', {
       display_name: 'Review Team',
-      workspace: 'linear_delivery',
+      workspace: 'cao_default',
     })
 
     const [url, opts] = mockFetch.mock.calls[0]
@@ -197,7 +197,7 @@ describe('API wrapper', () => {
     expect(opts.method).toBe('PUT')
     expect(JSON.parse(opts.body)).toEqual({
       display_name: 'Review Team',
-      workspace: 'linear_delivery',
+      workspace: 'cao_default',
     })
   })
 
@@ -207,7 +207,7 @@ describe('API wrapper', () => {
       display_name: 'Lead',
       cao_tools: ['send_message'],
       mcp_servers: { shell: { command: 'shell' } },
-      providers: { linear: { default: { tools: ['cao_linear.get_issue'] } } },
+      providers: { example: { default: { tools: ['cao_example.get_item'] } } },
       deletable: true,
     })
 
@@ -223,7 +223,7 @@ describe('API wrapper', () => {
       display_name: 'Lead',
       cao_tools: ['send_message'],
       mcp_servers: { shell: { command: 'shell' } },
-      providers: { linear: { default: { tools: ['cao_linear.get_issue'] } } },
+      providers: { example: { default: { tools: ['cao_example.get_item'] } } },
       deletable: true,
     })
     expect(mockFetch.mock.calls[1][0]).toBe('/workspace-teams/review/members/aria')
@@ -243,7 +243,7 @@ describe('API wrapper', () => {
       config: {},
       active: false,
       agent_dashboard_token: 'new-agent-dashboard-token',
-      active_terminal_id: null,
+      active_agent_id: null,
       active_workspace_context_id: null,
       last_active_at: null,
     }
@@ -270,30 +270,30 @@ describe('API wrapper', () => {
 
   it('updateAgent PUTs durable agent config to an encoded agent endpoint', async () => {
     const agent = {
-      agent_id: 'linear/ops',
-      display_name: 'Linear Ops',
+      agent_id: 'example/ops',
+      display_name: 'Example Ops',
       cli_provider: 'codex',
       workdir: '/repo',
-      session_name: 'linear-ops',
+      session_name: 'example-ops',
       config: {},
       active: false,
-      active_terminal_id: null,
+      active_agent_id: null,
       active_workspace_context_id: null,
       last_active_at: null,
     }
     mockResponse(agent)
 
-    const result = await api.updateAgent('linear/ops', {
-      display_name: 'Linear Ops',
+    const result = await api.updateAgent('example/ops', {
+      display_name: 'Example Ops',
       model: 'gpt-5.4',
     })
 
     expect(result).toEqual(agent)
     const [url, opts] = mockFetch.mock.calls[0]
-    expect(url).toBe('/agents/linear%2Fops')
+    expect(url).toBe('/agents/example%2Fops')
     expect(opts.method).toBe('PUT')
     expect(JSON.parse(opts.body)).toEqual({
-      display_name: 'Linear Ops',
+      display_name: 'Example Ops',
       model: 'gpt-5.4',
     })
   })
@@ -309,20 +309,20 @@ describe('API wrapper', () => {
   it('getAgentTimeline URL-encodes the selected agent id', async () => {
     const timeline = {
       agent: {
-        agent_id: 'aria/linear',
+        agent_id: 'aria/example',
         display_name: 'Aria',
         cli_provider: 'codex',
         workdir: '/repo',
         session_name: 'aria-session',
         config: {
-          id: 'aria/linear',
+          id: 'aria/example',
           display_name: 'Aria',
           cli_provider: 'codex',
           workdir: '/repo',
           session_name: 'aria-session',
         },
         active: true,
-        active_terminal_id: 'term-1',
+        active_agent_id: 'term-1',
         active_workspace_context_id: 'wctx-1',
         last_active_at: '2026-05-13T12:00:00',
       },
@@ -330,11 +330,11 @@ describe('API wrapper', () => {
     }
     mockResponse(timeline)
 
-    const result = await api.getAgentTimeline('aria/linear')
+    const result = await api.getAgentTimeline('aria/example')
 
     expect(result).toEqual(timeline)
     expect(mockFetch).toHaveBeenCalledWith(
-      '/agents/aria%2Flinear/timeline',
+      '/agents/aria%2Fexample/timeline',
       expect.any(Object),
     )
   })
@@ -342,16 +342,16 @@ describe('API wrapper', () => {
   it('getAgentRelatedEvents URL-encodes agent and event ids', async () => {
     const related = {
       event: {
-        event_id: 'linear:agent_mentioned:event/1',
-        event_name: 'agent_mentioned',
-        event_type_key: 'LinearAgentMentionedEvent',
-        source_type: 'linear',
-        source_id: 'msg-1',
+        event_id: 'runtime:notification_delivery:event/1',
+        event_name: 'agent_runtime_notification_delivery',
+        event_type_key: 'AgentRuntimeNotificationDeliveryEvent',
+        source_type: 'runtime',
+        source_id: 'notification:1',
         occurred_at: '2026-05-13T12:00:00',
         correlation_id: 'thread-1',
         causation_id: null,
         event_data: {
-          issue_identifier: 'CAO-96',
+          agent_id: 'term-1',
           message_body: 'Please implement CAO-96.',
         },
         participant_role: null,
@@ -365,13 +365,13 @@ describe('API wrapper', () => {
     mockResponse(related)
 
     const result = await api.getAgentRelatedEvents(
-      'aria/linear',
-      'linear:agent_mentioned:event/1',
+      'aria/example',
+      'runtime:notification_delivery:event/1',
     )
 
     expect(result).toEqual(related)
     expect(mockFetch).toHaveBeenCalledWith(
-      '/agents/aria%2Flinear/events/linear%3Aagent_mentioned%3Aevent%2F1/related',
+      '/agents/aria%2Fexample/events/runtime%3Anotification_delivery%3Aevent%2F1/related',
       expect.any(Object),
     )
   })
@@ -392,7 +392,7 @@ describe('API wrapper', () => {
           session_name: 'aria-session',
         },
         active: true,
-        active_terminal_id: 'term-1',
+        active_agent_id: 'term-1',
         active_workspace_context_id: 'wctx-1',
         last_active_at: '2026-05-13T12:00:00',
       },
@@ -429,7 +429,7 @@ describe('API wrapper', () => {
       id: 't1',
       name: 't1',
       provider: 'codex',
-      session_name: 'cao-linear-discovery-partner',
+      session_name: 'cao-discovery-partner',
       agent_id: 'discovery_partner',
     }
     mockResponse(terminal)

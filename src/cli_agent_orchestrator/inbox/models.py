@@ -3,43 +3,20 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
 
-class PlainSource(BaseModel):
-    """Agent-authored inbox source."""
-
-    sender_agent_id: str = Field(..., description="Durable CAO agent that sent the message")
-
-    def __init__(self, sender_agent_id: str | None = None, **data: Any) -> None:
-        if sender_agent_id is not None:
-            data["sender_agent_id"] = sender_agent_id
-        super().__init__(**data)
-
-
-class ProviderSource(BaseModel):
-    """Provider-owned inbox source used by migrated provider paths."""
-
-    source_kind: str = Field(..., description="Provider-neutral source kind")
-    source_id: str = Field(..., description="Provider-neutral source ID")
-    metadata: Optional[Dict[str, Any]] = Field(
-        None, description="Provider/system-owned notification metadata"
-    )
-
-
 class Notification(BaseModel):
-    """Source-agnostic inbox notification."""
+    """Agent-to-agent inbox notification."""
 
     id: int
+    sender_agent_id: str
     receiver_agent_id: str
     body: str
-    source_kind: str
-    source_id: str
-    metadata: Optional[Dict[str, Any]] = None
     status: MessageStatus
     created_at: datetime
     delivered_at: Optional[datetime] = None
@@ -52,13 +29,3 @@ class ReadResult(BaseModel):
 
     notification: Notification
     body: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    can_reply: bool = False
-
-
-class Reply(BaseModel):
-    """Reply recorded through an inbox source route."""
-
-    notification_id: int
-    body: str
-    created_at: datetime

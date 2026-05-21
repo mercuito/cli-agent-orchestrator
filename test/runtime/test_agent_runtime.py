@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
 
 from cli_agent_orchestrator.agent import write_agent
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import create_inbox_delivery
 from cli_agent_orchestrator.events import (
     AgentReady,
     CaoCorrelationId,
@@ -17,8 +17,12 @@ from cli_agent_orchestrator.events import (
     CaoEventId,
 )
 from cli_agent_orchestrator.inbox import readiness as inbox_service
-from cli_agent_orchestrator.linear.workspace_events import LinearAgentMentionedEvent
-from cli_agent_orchestrator.models.inbox import MessageStatus
+from cli_agent_orchestrator.inbox import (
+    list_pending_notifications,
+    send as send,
+)
+from cli_agent_orchestrator.inbox.store import InboxNotificationModel
+from cli_agent_orchestrator.models.inbox import InboxNotification, MessageStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import ProviderRuntimeDescriptor, ProviderRuntimeState
 from cli_agent_orchestrator.runtime import agent as runtime_agent
@@ -129,21 +133,29 @@ def _provider(terminal_provider_patcher, status: TerminalStatus | Exception | No
 
 
 def _pending_deliveries(receiver_id: str):
-    return db_module.list_pending_inbox_notifications(receiver_id, limit=10)
+    return list_pending_notifications(receiver_id, limit=10)
 
 
 def _all_delivery_statuses(receiver_id: str) -> list[MessageStatus]:
     with db_module.SessionLocal() as session:
         rows = (
-            session.query(db_module.InboxNotificationModel)
-            .filter(db_module.InboxNotificationModel.receiver_agent_id == receiver_id)
+            session.query(InboxNotificationModel)
+            .filter(InboxNotificationModel.receiver_agent_id == receiver_id)
             .order_by(
-                db_module.InboxNotificationModel.created_at.asc(),
-                db_module.InboxNotificationModel.id.asc(),
+                InboxNotificationModel.created_at.asc(),
+                InboxNotificationModel.id.asc(),
             )
             .all()
         )
     return [MessageStatus(row.status) for row in rows]
+
+
+def _assert_terminal_send(send_input, terminal_id: str, body: str) -> None:
+    send_input.assert_called_once()
+    assert send_input.call_args.args[0] == terminal_id
+    sent_body = send_input.call_args.args[1]
+    assert sent_body.startswith(body)
+    assert "\n\nnotification_id=" in sent_body
 
 
 def _provider_runtime_payload(thread_id: str) -> dict[str, str]:
@@ -153,14 +165,28 @@ def _provider_runtime_payload(thread_id: str) -> dict[str, str]:
     }
 
 
-def _linear_causing_event() -> LinearAgentMentionedEvent:
-    return LinearAgentMentionedEvent(
-        event_id=CaoEventId("linear:event:mention-1"),
-        correlation_id=CaoCorrelationId("linear-session-1"),
-        agent_id="implementation_partner",
-        message_id="message-1",
-        thread_id="linear-session-1",
-        message_body="Please handle this.",
+def _create_test_notification(
+    sender_agent_id: str,
+    receiver_agent_id: str,
+    body: str,
+) -> InboxNotification:
+    notification = send(
+        receiver_agent_id,
+        body,
+        sender_agent_id=sender_agent_id,
+    )
+    return notification
+
+
+def _runtime_causing_event() -> runtime_events.RuntimeWorkspaceEvent:
+    return replace(
+        runtime_events.workspace_runtime_event(
+            workspace_context_id="wctx-1",
+            action="notify",
+            runtime_status="idle",
+            correlation_id=CaoCorrelationId("runtime-session-1"),
+        ),
+        event_id=CaoEventId("runtime:event:mention-1"),
     )
 
 
@@ -229,7 +255,7 @@ def test_agent_runtime_handle_uses_stable_default_workspace_context(test_session
     expected_context_id = db_module.default_workspace_context_id("implementation_partner")
 
     assert handle.workspace_context_id == expected_context_id
-    assert handle.inbox_receiver_id == f"agent:implementation_partner:context:{expected_context_id}"
+    assert handle.receiver_agent_id == "implementation_partner"
     assert (
         db_module.get_workspace_context_for_object(
             provider_id="cao",
@@ -406,8 +432,8 @@ def test_context_runtime_uses_agent_and_workspace_context_route(
     terminal_send_patcher,
 ):
     context = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
@@ -426,26 +452,25 @@ def test_context_runtime_uses_agent_and_workspace_context_route(
 
     result = handle.notify(
         "Context-routed delivery.",
-        source_kind="linear_event",
-        source_id="event-context-a",
+        idempotency_key="runtime_event:event-context-a",
     )
 
-    assert handle.inbox_receiver_id == f"agent:implementation_partner:context:{context.id}"
+    assert handle.receiver_agent_id == "implementation_partner"
     assert result.terminal_id == "terminal-1"
     assert result.delivery.delivered is True
-    send_input.assert_called_once_with("terminal-1", "Context-routed delivery.")
+    _assert_terminal_send(send_input, "terminal-1", "Context-routed delivery.")
 
 
 def test_context_runtime_ignores_terminals_for_other_contexts(test_session, agent):
     context_a = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
     context_b = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-80",
     )
@@ -470,14 +495,14 @@ def test_context_runtime_switches_by_stopping_other_agent_terminal(
     recorded_runtime_events,
 ):
     context_a = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
     context_b = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-80",
     )
@@ -527,8 +552,7 @@ def test_context_runtime_switches_by_stopping_other_agent_terminal(
 
     result = handle_b.notify(
         "Deliver in context B.",
-        source_kind="linear_event",
-        source_id="event-context-b",
+        idempotency_key="runtime_event:event-context-b",
     )
 
     assert result.freshness is not None
@@ -542,7 +566,7 @@ def test_context_runtime_switches_by_stopping_other_agent_terminal(
     assert db_module.get_terminal_metadata("terminal-2") is not None
     create_terminal.assert_called_once()
     assert create_terminal.call_args.args[0].current_workspace_context_id == context_b.id
-    send_input.assert_called_once_with("terminal-2", "Deliver in context B.")
+    _assert_terminal_send(send_input, "terminal-2", "Deliver in context B.")
     switch_event = next(
         event
         for event in recorded_runtime_events
@@ -569,14 +593,14 @@ def test_context_runtime_defers_switch_when_other_agent_terminal_is_busy(
     recorded_runtime_events,
 ):
     context_a = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
     context_b = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-80",
     )
@@ -599,8 +623,7 @@ def test_context_runtime_defers_switch_when_other_agent_terminal_is_busy(
 
     result = AgentRuntimeHandle(agent, workspace_context_id=context_b.id).notify(
         "Deliver later in context B.",
-        source_kind="linear_event",
-        source_id="event-context-b-busy",
+        idempotency_key="runtime_event:event-context-b-busy",
     )
 
     assert result.freshness is not None
@@ -665,18 +688,17 @@ def test_notify_accepts_durable_inbox_state_when_startup_fails(
     )
 
     result = handle.notify(
-        "Please inspect Linear session CAO-31.",
-        source_kind="linear_event",
-        source_id="event-1",
+        "Please inspect runtime session CAO-31.",
+        idempotency_key="runtime_event:event-1",
     )
 
     assert result.notification.created is True
     assert result.status == AgentRuntimeStatus.NOT_STARTED
     assert result.terminal_id is None
     assert "cannot start" in result.error
-    deliveries = _pending_deliveries(handle.inbox_receiver_id)
-    assert [(delivery.message.body, delivery.notification.status) for delivery in deliveries] == [
-        ("Please inspect Linear session CAO-31.", MessageStatus.PENDING)
+    deliveries = _pending_deliveries(handle.receiver_agent_id)
+    assert [(delivery.body, delivery.status) for delivery in deliveries] == [
+        ("Please inspect runtime session CAO-31.", MessageStatus.PENDING)
     ]
     assert [type(event) for event in recorded_runtime_events] == [
         AgentRuntimeNotificationAcceptedEvent,
@@ -710,10 +732,9 @@ def test_offline_notification_delivers_from_context_inbox_when_runtime_later_sta
     )
     handle.notify(
         "Persist me while the agent is offline.",
-        source_kind="linear_event",
-        source_id="event-offline",
+        idempotency_key="runtime_event:event-offline",
     )
-    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+    assert _pending_deliveries(handle.receiver_agent_id)[0].status == (
         MessageStatus.PENDING
     )
 
@@ -725,9 +746,9 @@ def test_offline_notification_delivers_from_context_inbox_when_runtime_later_sta
     result = handle.try_deliver_pending()
 
     assert result.delivered is True
-    assert _pending_deliveries(handle.inbox_receiver_id) == []
-    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
-    send_input.assert_called_once_with("terminal-1", "Persist me while the agent is offline.")
+    assert _pending_deliveries(handle.receiver_agent_id) == []
+    assert _all_delivery_statuses(handle.receiver_agent_id) == [MessageStatus.DELIVERED]
+    _assert_terminal_send(send_input, "terminal-1", "Persist me while the agent is offline.")
 
 
 def test_ready_event_delivers_context_pending_notification_when_runtime_starts(
@@ -749,9 +770,9 @@ def test_ready_event_delivers_context_pending_notification_when_runtime_starts(
     )
     inbox_service.subscribe_to_agent_ready(dispatcher)
     monkeypatch.setattr(runtime_events, "default_cao_event_dispatcher", lambda: dispatcher)
-    create_inbox_delivery(
-        "provider_conversation",
-        handle.inbox_receiver_id,
+    _create_test_notification(
+        "runtime_notification",
+        handle.receiver_agent_id,
         "Deliver after ready event.",
     )
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
@@ -780,15 +801,15 @@ def test_ready_event_delivers_context_pending_notification_when_runtime_starts(
     # Then
     assert result.ready is True
     assert seen_ready_agent_ids == ["implementation_partner"]
-    send_input.assert_called_once_with("terminal-1", "Deliver after ready event.")
-    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
+    _assert_terminal_send(send_input, "terminal-1", "Deliver after ready event.")
+    assert _all_delivery_statuses(handle.receiver_agent_id) == [MessageStatus.DELIVERED]
     assert any(
         isinstance(record.event, AgentReady)
         for record in db_module.list_cao_events_by_agent("implementation_partner")
     )
 
 
-def test_ready_event_delivers_terminal_scoped_pending_notification_for_ready_terminal(
+def test_ready_event_delivers_agent_pending_notification_for_ready_terminal(
     test_session,
     monkeypatch,
     handle,
@@ -802,10 +823,10 @@ def test_ready_event_delivers_terminal_scoped_pending_notification_for_ready_ter
     monkeypatch.setattr(runtime_events, "default_cao_event_dispatcher", lambda: dispatcher)
     _create_terminal()
     _mark_terminal_fresh(handle)
-    create_inbox_delivery(
-        "provider_conversation",
-        "terminal-1",
-        "Deliver terminal-scoped pending.",
+    _create_test_notification(
+        "runtime_notification",
+        handle.receiver_agent_id,
+        "Deliver agent pending.",
     )
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
@@ -815,8 +836,8 @@ def test_ready_event_delivers_terminal_scoped_pending_notification_for_ready_ter
 
     # Then
     assert result.ready is True
-    send_input.assert_called_once_with("terminal-1", "Deliver terminal-scoped pending.")
-    assert _all_delivery_statuses("terminal-1") == [MessageStatus.DELIVERED]
+    _assert_terminal_send(send_input, "terminal-1", "Deliver agent pending.")
+    assert _all_delivery_statuses(handle.receiver_agent_id) == [MessageStatus.DELIVERED]
 
 
 def test_ready_event_delivery_result_reports_partial_batch_delivery(
@@ -833,8 +854,8 @@ def test_ready_event_delivery_result_reports_partial_batch_delivery(
     monkeypatch.setattr(runtime_events, "default_cao_event_dispatcher", lambda: dispatcher)
     _create_terminal()
     _mark_terminal_fresh(handle)
-    create_inbox_delivery("worker-a", handle.inbox_receiver_id, "first source")
-    create_inbox_delivery("worker-b", handle.inbox_receiver_id, "other source")
+    _create_test_notification("worker-a", handle.receiver_agent_id, "first sender")
+    _create_test_notification("worker-b", handle.receiver_agent_id, "other sender")
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(inbox_service.terminal_service)
 
@@ -844,8 +865,8 @@ def test_ready_event_delivery_result_reports_partial_batch_delivery(
     # Then
     assert result.attempted is True
     assert result.delivered is True
-    send_input.assert_called_once_with("terminal-1", "first source")
-    assert _all_delivery_statuses(handle.inbox_receiver_id) == [
+    _assert_terminal_send(send_input, "terminal-1", "first sender")
+    assert _all_delivery_statuses(handle.receiver_agent_id) == [
         MessageStatus.DELIVERED,
         MessageStatus.PENDING,
     ]
@@ -864,14 +885,13 @@ def test_fresh_idle_runtime_is_reused_for_delivery(
 
     result = handle.notify(
         "Deliver through a fresh terminal.",
-        source_kind="linear_event",
-        source_id="event-fresh",
+        idempotency_key="runtime_event:event-fresh",
     )
 
     assert result.freshness is not None
     assert result.freshness.action == AgentRuntimeFreshnessAction.REUSED
     assert result.delivery.delivered is True
-    send_input.assert_called_once_with("terminal-1", "Deliver through a fresh terminal.")
+    _assert_terminal_send(send_input, "terminal-1", "Deliver through a fresh terminal.")
 
 
 def test_notify_publishes_typed_runtime_events_with_provider_causation(
@@ -885,12 +905,11 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     _mark_terminal_fresh(handle)
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     terminal_send_patcher(runtime_agent.terminal_service)
-    causing_event = _linear_causing_event()
+    causing_event = _runtime_causing_event()
 
     result = handle.notify(
         "Deliver provider-caused notification.",
-        source_kind="linear_event",
-        source_id="event-runtime-causation",
+        idempotency_key="runtime_event:event-runtime-causation",
         causing_event=causing_event,
     )
 
@@ -905,15 +924,13 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
     assert isinstance(accepted, AgentRuntimeNotificationAcceptedEvent)
     assert accepted.agent_id == "implementation_partner"
     assert accepted.workspace_context_id == handle.workspace_context_id
-    assert accepted.inbox_notification_id == result.notification.delivery.notification.id
-    assert accepted.source_kind == "linear_event"
-    assert accepted.source_id == "event-runtime-causation"
+    assert accepted.inbox_notification_id == result.notification.notification.id
     assert accepted.agent_participants[0].agent_id == "implementation_partner"
     assert accepted.agent_participants[0].role == (
         runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_NOTIFICATION_RECEIVER
     )
-    assert accepted.correlation_id == CaoCorrelationId("linear-session-1")
-    assert accepted.causation_id == "linear:event:mention-1"
+    assert accepted.correlation_id == CaoCorrelationId("runtime-session-1")
+    assert accepted.causation_id == "runtime:event:mention-1"
 
     lifecycle = recorded_runtime_events[1]
     assert isinstance(lifecycle, AgentRuntimeLifecycleEvent)
@@ -926,8 +943,8 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
         runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_LIFECYCLE_AGENT
     )
     assert lifecycle.agent_participants[0].agent_id == "implementation_partner"
-    assert lifecycle.correlation_id == CaoCorrelationId("linear-session-1")
-    assert lifecycle.causation_id == "linear:event:mention-1"
+    assert lifecycle.correlation_id == CaoCorrelationId("runtime-session-1")
+    assert lifecycle.causation_id == "runtime:event:mention-1"
 
     ready = recorded_runtime_events[2]
     assert isinstance(ready, AgentReady)
@@ -936,13 +953,12 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
         ready.agent_participants[0].role
         == runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_READY_AGENT
     )
-    assert ready.correlation_id == CaoCorrelationId("linear-session-1")
-    assert ready.causation_id == "linear:event:mention-1"
+    assert ready.correlation_id == CaoCorrelationId("runtime-session-1")
+    assert ready.causation_id == "runtime:event:mention-1"
 
     delivery = recorded_runtime_events[3]
     assert isinstance(delivery, AgentRuntimeNotificationDeliveryEvent)
-    assert delivery.inbox_notification_id == result.notification.delivery.notification.id
-    assert delivery.source_kind == "linear_event"
+    assert delivery.inbox_notification_id == result.notification.notification.id
     assert delivery.message_body == "Deliver provider-caused notification."
     assert delivery.runtime_status == AgentRuntimeStatus.IDLE.value
     assert delivery.outcome == "delivered"
@@ -953,8 +969,8 @@ def test_notify_publishes_typed_runtime_events_with_provider_causation(
         runtime_events.RUNTIME_AGENT_PARTICIPANT_ROLE_DELIVERY_TARGET
     )
     assert delivery.agent_participants[0].agent_id == "implementation_partner"
-    assert delivery.correlation_id == CaoCorrelationId("linear-session-1")
-    assert delivery.causation_id == "linear:event:mention-1"
+    assert delivery.correlation_id == CaoCorrelationId("runtime-session-1")
+    assert delivery.causation_id == "runtime:event:mention-1"
 
 
 def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
@@ -1016,8 +1032,7 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
 
     result = handle.notify(
         "Deliver after profile refresh.",
-        source_kind="linear_event",
-        source_id="event-profile-refresh",
+        idempotency_key="runtime_event:event-profile-refresh",
     )
 
     assert result.freshness is not None
@@ -1025,7 +1040,7 @@ def test_changed_runtime_inputs_restart_idle_terminal_before_delivery(
     assert result.terminal_id == "terminal-2"
     assert result.delivery.delivered is True
     delete_terminal.assert_called_once_with("terminal-1", require_window_killed=True)
-    send_input.assert_called_once_with("terminal-2", "Deliver after profile refresh.")
+    _assert_terminal_send(send_input, "terminal-2", "Deliver after profile refresh.")
 
 
 @pytest.mark.parametrize(
@@ -1084,8 +1099,7 @@ def test_changed_mcp_freshness_restarts_idle_terminal_before_delivery(
 
     result = handle.notify(
         message,
-        source_kind="linear_event",
-        source_id=f"event-{message}",
+        idempotency_key=f"runtime_event:event-{message}",
     )
 
     assert result.freshness is not None
@@ -1093,7 +1107,7 @@ def test_changed_mcp_freshness_restarts_idle_terminal_before_delivery(
     assert result.terminal_id == "terminal-2"
     assert result.delivery.delivered is True
     delete_terminal.assert_called_once_with("terminal-1", require_window_killed=True)
-    send_input.assert_called_once_with("terminal-2", message)
+    _assert_terminal_send(send_input, "terminal-2", message)
 
 
 def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(
@@ -1143,8 +1157,7 @@ def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(
 
     result = handle.notify(
         "Deliver after provider runtime refresh.",
-        source_kind="linear_event",
-        source_id="event-provider-runtime-refresh",
+        idempotency_key="runtime_event:event-provider-runtime-refresh",
     )
 
     assert result.freshness is not None
@@ -1159,10 +1172,7 @@ def test_stale_refresh_discovers_serializes_and_resumes_provider_runtime(
         == handle.workspace_context_id
     )
     assert result.delivery.delivered is True
-    send_input.assert_called_once_with(
-        "terminal-2",
-        "Deliver after provider runtime refresh.",
-    )
+    _assert_terminal_send(send_input, "terminal-2", "Deliver after provider runtime refresh.")
     state = json.loads(handle._runtime_state_path().read_text())
     assert state["terminal_id"] == "terminal-2"
     assert "provider_runtime" not in state
@@ -1213,8 +1223,7 @@ def test_stale_refresh_with_no_current_session_restarts_without_resume_payload(
 
     result = handle.notify(
         "Deliver without provider resume.",
-        source_kind="linear_event",
-        source_id="event-no-current-session",
+        idempotency_key="runtime_event:event-no-current-session",
     )
 
     assert result.freshness is not None
@@ -1225,7 +1234,7 @@ def test_stale_refresh_with_no_current_session_restarts_without_resume_payload(
     )
     assert capability.deserialized_payloads == []
     assert result.delivery.delivered is True
-    send_input.assert_called_once_with("terminal-2", "Deliver without provider resume.")
+    _assert_terminal_send(send_input, "terminal-2", "Deliver without provider resume.")
     state = json.loads(handle._runtime_state_path().read_text())
     assert "provider_runtime" not in state
     assert capability.cleared_provider_data_dirs
@@ -1256,8 +1265,7 @@ def test_stale_refresh_surfaces_provider_discovery_failure_without_restarting(
 
     result = handle.notify(
         "Do not deliver after provider failure.",
-        source_kind="linear_event",
-        source_id="event-provider-failure",
+        idempotency_key="runtime_event:event-provider-failure",
     )
 
     assert result.freshness is not None
@@ -1288,13 +1296,12 @@ def test_fresh_runtime_updates_agent_provider_runtime_cache(
 
     result = handle.notify(
         "Deliver after provider state changed.",
-        source_kind="linear_event",
-        source_id="event-provider-cache-update",
+        idempotency_key="runtime_event:event-provider-cache-update",
     )
 
     assert result.freshness is not None
     assert result.freshness.action == AgentRuntimeFreshnessAction.REUSED
-    send_input.assert_called_once_with("terminal-1", "Deliver after provider state changed.")
+    _assert_terminal_send(send_input, "terminal-1", "Deliver after provider state changed.")
     state = json.loads(handle._runtime_state_path().read_text())
     assert state["terminal_id"] == "terminal-1"
     assert "provider_runtime" not in state
@@ -1321,13 +1328,13 @@ def test_supported_provider_no_current_session_clears_stale_provider_runtime_cac
 
     result = handle.notify(
         "Deliver after provider reports no current session.",
-        source_kind="linear_event",
-        source_id="event-clear-stale-provider-cache",
+        idempotency_key="runtime_event:event-clear-stale-provider-cache",
     )
 
     assert result.freshness is not None
     assert result.freshness.action == AgentRuntimeFreshnessAction.REUSED
-    send_input.assert_called_once_with(
+    _assert_terminal_send(
+        send_input,
         "terminal-1",
         "Deliver after provider reports no current session.",
     )
@@ -1336,7 +1343,7 @@ def test_supported_provider_no_current_session_clears_stale_provider_runtime_cac
     assert capability.cleared_provider_data_dirs
 
 
-def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
+def test_stale_idle_runtime_restarts_before_delivery_and_keeps_agent_pending(
     test_session,
     monkeypatch,
     handle,
@@ -1344,7 +1351,7 @@ def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("provider_conversation", "terminal-1", "Old terminal pending")
+    _create_test_notification("runtime_notification", handle.receiver_agent_id, "Agent pending")
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
@@ -1377,13 +1384,12 @@ def test_stale_idle_runtime_restarts_before_delivery_and_rehomes_old_pending(
     assert result.delivered is True
     assert handle._last_freshness_result is not None
     assert handle._last_freshness_result.action == AgentRuntimeFreshnessAction.RESTARTED
-    assert _pending_deliveries("terminal-1") == []
-    assert _pending_deliveries(handle.inbox_receiver_id) == []
-    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
-    send_input.assert_called_once_with("terminal-2", "Old terminal pending")
+    assert _pending_deliveries(handle.receiver_agent_id) == []
+    assert _all_delivery_statuses(handle.receiver_agent_id) == [MessageStatus.DELIVERED]
+    _assert_terminal_send(send_input, "terminal-2", "Agent pending")
 
 
-def test_stale_busy_runtime_defers_and_rehomes_terminal_pending_without_delete(
+def test_stale_busy_runtime_defers_agent_pending_without_delete(
     test_session,
     monkeypatch,
     handle,
@@ -1391,7 +1397,7 @@ def test_stale_busy_runtime_defers_and_rehomes_terminal_pending_without_delete(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("provider_conversation", "terminal-1", "Do not strand me")
+    _create_test_notification("runtime_notification", handle.receiver_agent_id, "Do not strand me")
     _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
     capability = RecordingRuntimeStateCapability(RuntimeError("must not probe busy terminal"))
     monkeypatch.setattr(
@@ -1413,8 +1419,7 @@ def test_stale_busy_runtime_defers_and_rehomes_terminal_pending_without_delete(
     assert capability.discovered_terminal_ids == []
     delete_terminal.assert_not_called()
     send_input.assert_not_called()
-    assert _pending_deliveries("terminal-1") == []
-    assert _pending_deliveries(handle.inbox_receiver_id)[0].message.body == "Do not strand me"
+    assert _pending_deliveries(handle.receiver_agent_id)[0].body == "Do not strand me"
 
 
 def test_refresh_failure_keeps_notifications_on_agent_receiver(
@@ -1425,7 +1430,7 @@ def test_refresh_failure_keeps_notifications_on_agent_receiver(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("provider_conversation", "terminal-1", "Keep this durable")
+    _create_test_notification("runtime_notification", handle.receiver_agent_id, "Keep this durable")
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     monkeypatch.setattr(runtime_agent.tmux_client, "session_exists", lambda session: True)
@@ -1441,8 +1446,7 @@ def test_refresh_failure_keeps_notifications_on_agent_receiver(
     assert result.attempted is False
     assert result.error == "restart failed"
     send_input.assert_not_called()
-    assert _pending_deliveries("terminal-1") == []
-    assert _pending_deliveries(handle.inbox_receiver_id)[0].message.body == "Keep this durable"
+    assert _pending_deliveries(handle.receiver_agent_id)[0].body == "Keep this durable"
 
 
 def test_stale_idle_runtime_does_not_restart_when_old_terminal_stop_fails(
@@ -1453,7 +1457,11 @@ def test_stale_idle_runtime_does_not_restart_when_old_terminal_stop_fails(
     terminal_send_patcher,
 ):
     _create_terminal()
-    create_inbox_delivery("provider_conversation", "terminal-1", "Keep on agent while stop fails")
+    _create_test_notification(
+        "runtime_notification",
+        handle.receiver_agent_id,
+        "Keep on agent while stop fails",
+    )
     _provider(terminal_provider_patcher, TerminalStatus.IDLE)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
     create_terminal = Mock()
@@ -1472,9 +1480,8 @@ def test_stale_idle_runtime_does_not_restart_when_old_terminal_stop_fails(
     assert result.error == "failed to stop old terminal"
     create_terminal.assert_not_called()
     send_input.assert_not_called()
-    assert _pending_deliveries("terminal-1") == []
     assert (
-        _pending_deliveries(handle.inbox_receiver_id)[0].message.body
+        _pending_deliveries(handle.receiver_agent_id)[0].body
         == "Keep on agent while stop fails"
     )
 
@@ -1491,14 +1498,13 @@ def test_notify_queues_without_terminal_input_while_agent_is_busy(
 
     result = handle.notify(
         "A follow-up arrived while you were working.",
-        source_kind="linear_event",
-        source_id="event-busy",
+        idempotency_key="runtime_event:event-busy",
     )
 
     assert result.status == AgentRuntimeStatus.BUSY
     assert result.delivery.attempted is False
     send_input.assert_not_called()
-    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+    assert _pending_deliveries(handle.receiver_agent_id)[0].status == (
         MessageStatus.PENDING
     )
 
@@ -1512,26 +1518,24 @@ def test_accept_notification_preserves_existing_inbox_pointer_while_agent_is_bus
     _create_terminal()
     _provider(terminal_provider_patcher, TerminalStatus.PROCESSING)
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
-    delivery = create_inbox_delivery(
-        "provider_conversation",
-        "terminal-1",
+    delivery = _create_test_notification(
+        "runtime_notification",
+        handle.receiver_agent_id,
         "[CAO inbox notification]\nID: 1",
-        source_kind="provider_conversation_thread",
-        source_id="1",
     )
 
-    result = handle.accept_notification(AgentRuntimeNotification(delivery=delivery, created=True))
+    result = handle.accept_notification(AgentRuntimeNotification(notification=delivery, created=True))
 
     assert result.status == AgentRuntimeStatus.BUSY
     assert result.delivery.attempted is False
-    assert result.notification.delivery.notification.id == delivery.notification.id
+    assert result.notification.notification.id == delivery.id
     send_input.assert_not_called()
-    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+    assert _pending_deliveries(handle.receiver_agent_id)[0].status == (
         MessageStatus.PENDING
     )
 
 
-def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
+def test_busy_notification_uses_agent_inbox_for_later_owner_delivery(
     test_session,
     handle,
     terminal_provider_patcher,
@@ -1546,15 +1550,14 @@ def test_busy_notification_uses_terminal_inbox_for_later_owner_delivery(
 
     handle.notify(
         "Deliver this after the agent becomes idle.",
-        source_kind="linear_event",
-        source_id="event-later",
+        idempotency_key="runtime_event:event-later",
     )
     provider.status = TerminalStatus.IDLE
     _mark_terminal_fresh(handle)
 
     assert handle.try_deliver_pending().delivered is True
-    send_input.assert_called_once_with("terminal-1", "Deliver this after the agent becomes idle.")
-    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
+    _assert_terminal_send(send_input, "terminal-1", "Deliver this after the agent becomes idle.")
+    assert _all_delivery_statuses(handle.receiver_agent_id) == [MessageStatus.DELIVERED]
 
 
 @pytest.mark.parametrize(
@@ -1578,14 +1581,13 @@ def test_notify_keeps_notifications_pending_when_agent_is_error_or_unreachable(
 
     result = handle.notify(
         "This should remain durable.",
-        source_kind="linear_event",
-        source_id=f"event-{runtime_status.value}",
+        idempotency_key=f"runtime_event:event-{runtime_status.value}",
     )
 
     assert result.status == runtime_status
     assert result.delivery.attempted is False
     send_input.assert_not_called()
-    assert _pending_deliveries(handle.inbox_receiver_id)[0].notification.status == (
+    assert _pending_deliveries(handle.receiver_agent_id)[0].status == (
         MessageStatus.PENDING
     )
 
@@ -1602,19 +1604,18 @@ def test_notify_delivers_pending_notification_when_agent_is_idle(
     send_input = terminal_send_patcher(runtime_agent.terminal_service)
 
     result = handle.notify(
-        "A Linear mention is ready.",
-        source_kind="linear_event",
-        source_id="event-ready",
+        "A runtime notification is ready.",
+        idempotency_key="runtime_event:event-ready",
     )
 
     assert result.status == AgentRuntimeStatus.IDLE
     assert result.delivery.attempted is True
     assert result.delivery.delivered is True
-    send_input.assert_called_once_with("terminal-1", "A Linear mention is ready.")
-    assert _all_delivery_statuses(handle.inbox_receiver_id) == [MessageStatus.DELIVERED]
+    _assert_terminal_send(send_input, "terminal-1", "A runtime notification is ready.")
+    assert _all_delivery_statuses(handle.receiver_agent_id) == [MessageStatus.DELIVERED]
 
 
-def test_duplicate_notification_source_reuses_existing_inbox_message(
+def test_duplicate_notification_sender_reuses_existing_inbox_message(
     test_session,
     handle,
     terminal_provider_patcher,
@@ -1624,27 +1625,25 @@ def test_duplicate_notification_source_reuses_existing_inbox_message(
 
     first = handle.notify(
         "Only one notification should be queued.",
-        source_kind="linear_event",
-        source_id="event-duplicate",
+        idempotency_key="runtime_event:event-duplicate",
     )
     second = handle.notify(
         "Duplicate webhook body should not create another row.",
-        source_kind="linear_event",
-        source_id="event-duplicate",
+        idempotency_key="runtime_event:event-duplicate",
     )
 
     assert first.notification.created is True
     assert second.notification.created is False
     assert (
-        second.notification.delivery.notification.id == first.notification.delivery.notification.id
+        second.notification.notification.id == first.notification.notification.id
     )
-    deliveries = _pending_deliveries(handle.inbox_receiver_id)
-    assert [delivery.message.body for delivery in deliveries] == [
+    deliveries = _pending_deliveries(handle.receiver_agent_id)
+    assert [delivery.body for delivery in deliveries] == [
         "Only one notification should be queued."
     ]
 
 
-def test_duplicate_notification_source_does_not_republish_unchanged_runtime_events(
+def test_duplicate_notification_sender_does_not_republish_unchanged_runtime_events(
     test_session,
     handle,
     terminal_provider_patcher,
@@ -1655,14 +1654,12 @@ def test_duplicate_notification_source_does_not_republish_unchanged_runtime_even
 
     first = handle.notify(
         "Only one runtime notification event should be emitted.",
-        source_kind="linear_event",
-        source_id="event-runtime-duplicate",
+        idempotency_key="runtime_event:event-runtime-duplicate",
     )
     event_count_after_first = len(recorded_runtime_events)
     second = handle.notify(
         "Duplicate webhook should not emit unchanged runtime events.",
-        source_kind="linear_event",
-        source_id="event-runtime-duplicate",
+        idempotency_key="runtime_event:event-runtime-duplicate",
     )
 
     assert first.notification.created is True

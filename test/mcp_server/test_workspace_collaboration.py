@@ -150,7 +150,7 @@ def test_baton_create_rejects_different_team_before_service_call(monkeypatch):
         lambda **kwargs: service_calls.append(kwargs),
     )
 
-    result = server._create_baton_impl("T01", "terminal-receiver", "please help")
+    result = server._create_baton_impl("T01", "receiver", "please help")
 
     assert result["success"] is False
     assert "sender sender team cao_delivery" in result["error"]
@@ -190,7 +190,7 @@ def test_baton_pass_rejects_missing_team_before_service_call(monkeypatch):
         lambda **kwargs: service_calls.append(kwargs),
     )
 
-    result = server._pass_baton_impl("baton-1", "terminal-receiver", "please help")
+    result = server._pass_baton_impl("baton-1", "receiver", "please help")
 
     assert result["success"] is False
     assert "receiver receiver team none" in result["error"]

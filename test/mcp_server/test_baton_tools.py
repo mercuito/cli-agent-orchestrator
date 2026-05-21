@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
+from cli_agent_orchestrator.inbox import list_pending_notifications
 from cli_agent_orchestrator.mcp_server import server
 from cli_agent_orchestrator.services import baton_service
 
@@ -33,13 +34,23 @@ def patched_db(monkeypatch):
 def allow_baton_service_collaboration(monkeypatch):
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_same_team_collaboration",
+        "require_agent_same_team_collaboration",
         lambda sender_id, receiver_id, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        baton_service,
+        "available_baton_holder_tools",
+        lambda db, agent_id: (
+            "pass_baton",
+            "return_baton",
+            "complete_baton",
+            "block_baton",
+        ),
     )
 
 
 def _pending(receiver_id):
-    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
+    return list_pending_notifications(receiver_id, limit=50)
 
 
 def _team_agent(agent_id: str) -> Agent:
@@ -90,10 +101,10 @@ def test_create_baton_infers_originator_from_cao_terminal_id(patched_db, monkeyp
     assert result["status"] == "active"
     queued = _pending("impl")
     assert len(queued) == 1
-    assert queued[0].message.sender_id == "originator"
-    assert "Baton id:" in queued[0].message.body
-    assert "Implement the delivery slice" in queued[0].message.body
-    assert "/tmp/task.md" in queued[0].message.body
+    assert queued[0].sender_agent_id == "originator"
+    assert "Baton id:" in queued[0].body
+    assert "Implement the delivery slice" in queued[0].body
+    assert "/tmp/task.md" in queued[0].body
 
 
 def test_baton_tool_requires_cao_terminal_id(patched_db, monkeypatch):

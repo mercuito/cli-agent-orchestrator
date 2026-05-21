@@ -12,20 +12,20 @@ function defaultLabel(): string {
 }
 
 /**
- * Single-click Monitor / Stop button for a terminal row.
+ * Single-click Monitor / Stop button for an agent row.
  *
- * The button reflects the store's ``activeMonitoringByTerminal`` state: if
- * no session is active on this terminal, shows ``Monitor`` and starts one
+ * The button reflects the store's ``activeMonitoringByAgent`` state: if
+ * no session is active on this agent, shows ``Monitor`` and starts one
  * on click. If a session is active, shows ``Stop`` and ends it on click.
  * A ~3s poll flips the state automatically after each action, so we don't
  * mutate the store optimistically.
  *
  * Matches the model in docs/plans/monitoring-sessions.md: one active
- * session per terminal, idempotent start, query-time filtering (so no
+ * session per agent, idempotent start, query-time filtering (so no
  * options to configure at start time).
  */
-export function MonitoringButton({ terminalId }: { terminalId: string }) {
-  const session = useStore(s => s.activeMonitoringByTerminal[terminalId])
+export function MonitoringButton({ agentId }: { agentId: string }) {
+  const session = useStore(s => s.activeMonitoringByAgent[agentId])
   const showSnackbar = useStore(s => s.showSnackbar)
   const setActiveMonitoringSessions = useStore(s => s.setActiveMonitoringSessions)
   const [inFlight, setInFlight] = useState(false)
@@ -49,7 +49,7 @@ export function MonitoringButton({ terminalId }: { terminalId: string }) {
   async function handleStart() {
     setInFlight(true)
     try {
-      await api.startMonitoring(terminalId, defaultLabel())
+      await api.startMonitoring(agentId, defaultLabel())
       await refreshStore()
     } catch (e: any) {
       showSnackbar({

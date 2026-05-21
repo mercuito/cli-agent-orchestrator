@@ -19,7 +19,6 @@ from cli_agent_orchestrator.workspace_tool_providers.events import (
     default_workspace_tool_provider_event_dispatcher,
 )
 from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
-    ProviderConversationAccessRequirement,
     ProviderRoleToolAccessGrant,
     ProviderToolAccessPolicy,
 )
@@ -88,14 +87,6 @@ class ProviderRoleToolAccessWorkspaceToolProvider(WorkspaceToolProvider, Protoco
         self, grants: tuple[ProviderRoleToolAccessGrant, ...]
     ) -> ProviderToolAccessPolicy:
         """Return provider-mediated access converted from role-owned grants."""
-
-
-@runtime_checkable
-class ProviderConversationAccessWorkspaceToolProvider(WorkspaceToolProvider, Protocol):
-    """Optional provider surface for provider-conversation access descriptors."""
-
-    def provider_conversation_access(self) -> tuple[ProviderConversationAccessRequirement, ...]:
-        """Return provider-owned provider-conversation access requirements."""
 
 
 @runtime_checkable

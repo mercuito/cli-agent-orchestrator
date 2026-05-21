@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import tempfile
@@ -19,6 +20,8 @@ except ModuleNotFoundError:  # pragma: no cover
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.models.provider import ProviderType
 
+logger = logging.getLogger(__name__)
+
 CAO_AGENTS_DIR_ENV = "CAO_AGENTS_DIR"
 DEFAULT_AGENTS_ROOT = CAO_HOME_DIR / "agents"
 AGENTS_ROOT = Path(os.environ.get(CAO_AGENTS_DIR_ENV, str(DEFAULT_AGENTS_ROOT))).expanduser()
@@ -28,6 +31,7 @@ AGENT_CONFIG_MODE = 0o600
 AGENT_PROMPT_MODE = 0o644
 
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_REMOVED_CONFIG_SECTIONS = frozenset({"linear"})
 
 
 class FrozenConfigDict(dict[str, Any]):
@@ -340,7 +344,11 @@ def load_all_agents(*, agents_root: Optional[Path] = None) -> AgentRegistry:
         return AgentRegistry({})
     agents: dict[str, Agent] = {}
     for agent_dir in sorted(path for path in root.iterdir() if path.is_dir()):
-        agent = load_agent(agent_dir.name, agents_root=root)
+        try:
+            agent = load_agent(agent_dir.name, agents_root=root)
+        except (AgentConfigError, AgentPathError) as exc:
+            logger.warning("Ignoring invalid CAO agent directory %s: %s", agent_dir, exc)
+            continue
         if agent.id in agents:
             raise AgentConfigError(f"Duplicate CAO agent: {agent.id}")
         agents[agent.id] = agent
@@ -511,6 +519,7 @@ def _agent_from_config(
     prompt: str,
     config_path: Path,
 ) -> Agent:
+    _reject_removed_config_sections(data, agent_id=agent_id, path=config_path)
     raw_id = data.get("id")
     if not isinstance(raw_id, str) or not raw_id.strip():
         raise AgentConfigError(f"Agent {agent_id!r} missing required field 'id': {config_path}")
@@ -548,6 +557,20 @@ def _agent_from_config(
         codex_config=_mapping(data.get("codex_config"), "codex_config", config_path),
         workspace=_workspace_config(data, agent_id=agent_id, path=config_path),
     )
+
+
+def _reject_removed_config_sections(
+    data: Mapping[str, object],
+    *,
+    agent_id: str,
+    path: Path,
+) -> None:
+    removed_sections = sorted(key for key in _REMOVED_CONFIG_SECTIONS if key in data)
+    if removed_sections:
+        section_list = ", ".join(f"[{section}]" for section in removed_sections)
+        raise AgentConfigError(
+            f"Agent {agent_id!r} uses removed config section {section_list}: {path}"
+        )
 
 
 def _workspace_config(

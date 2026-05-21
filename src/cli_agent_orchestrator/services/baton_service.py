@@ -15,10 +15,11 @@ from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import BatonEventModel, BatonModel
+from cli_agent_orchestrator.inbox import send as send_inbox_message
 from cli_agent_orchestrator.models.baton import Baton, BatonEventType, BatonStatus
 from cli_agent_orchestrator.services.collaboration_policy import (
-    require_terminal_same_team_collaboration,
-    require_terminal_workspace_team,
+    require_agent_same_team_collaboration,
+    require_agent_workspace_team,
 )
 from cli_agent_orchestrator.services.tool_service import default_tool_service
 from cli_agent_orchestrator.workspaces import WorkspaceConfigError
@@ -69,19 +70,19 @@ def _require_current_holder(row: BatonModel, actor_id: str) -> None:
 
 
 def _require_operator_reassign_receiver(db: Session, row: BatonModel, receiver_id: str) -> None:
-    require_terminal_workspace_team(receiver_id, db=db, role="Baton recovery receiver")
-    require_terminal_workspace_team(row.originator_id, db=db, role="Baton originator")
-    require_terminal_same_team_collaboration(row.originator_id, receiver_id, db=db)
+    require_agent_workspace_team(receiver_id, db=db, role="Baton recovery receiver")
+    require_agent_workspace_team(row.originator_id, db=db, role="Baton originator")
+    require_agent_same_team_collaboration(row.originator_id, receiver_id, db=db)
     for waiting_holder_id in _decode_stack(row):
-        require_terminal_workspace_team(waiting_holder_id, db=db, role="Baton return-stack holder")
-        require_terminal_same_team_collaboration(waiting_holder_id, receiver_id, db=db)
+        require_agent_workspace_team(waiting_holder_id, db=db, role="Baton return-stack holder")
+        require_agent_same_team_collaboration(waiting_holder_id, receiver_id, db=db)
     if not row.current_holder_id:
         return
     try:
-        require_terminal_workspace_team(row.current_holder_id, db=db, role="Current baton holder")
+        require_agent_workspace_team(row.current_holder_id, db=db, role="Current baton holder")
     except WorkspaceConfigError:
         return
-    require_terminal_same_team_collaboration(row.current_holder_id, receiver_id, db=db)
+    require_agent_same_team_collaboration(row.current_holder_id, receiver_id, db=db)
 
 
 def _require_valid_pass_receiver(row: BatonModel, actor_id: str, receiver_id: str) -> None:
@@ -143,9 +144,13 @@ def _format_artifacts(artifact_paths: Optional[Sequence[str]]) -> str:
     return "\n\nArtifacts:\n" + "\n".join(f"- {path}" for path in artifact_paths)
 
 
-def _expectation_text(expected_next_action: Optional[str], *, guidance_tools: Sequence[str] = _BATON_HOLDER_TOOLS) -> str:
+def _expectation_text(
+    expected_next_action: Optional[str],
+    *,
+    guidance_tools: Sequence[str] = _BATON_HOLDER_TOOLS,
+) -> str:
     if not guidance_tools and expected_next_action is None:
-        return "No baton lifecycle tools are currently available in this terminal."
+        return "No baton lifecycle tools are currently available to this agent."
     return expected_next_action or (
         f"Use available baton tools ({', '.join(guidance_tools)}) when ready."
     )
@@ -155,7 +160,7 @@ def _holder_guidance(db: Session, *, baton_id: str, holder_id: str) -> str:
     available_tools = _available_baton_holder_tools(db, holder_id)
     if not available_tools:
         return (
-            "Next tool guidance: this terminal currently has no baton lifecycle "
+            "Next tool guidance: this agent currently has no baton lifecycle "
             "tools available. Continue the work if possible and ask the originator "
             "or operator to move, complete, or block the baton."
         )
@@ -199,22 +204,19 @@ def _baton_message(
     )
 
 
-def available_baton_holder_tools(db: Session, terminal_id: str | None) -> tuple[str, ...]:
-    """Return baton lifecycle tools currently granted to a terminal's agent."""
-    if not terminal_id:
-        return ()
-    terminal = db.query(db_module.TerminalModel).filter(db_module.TerminalModel.id == terminal_id).first()
-    if terminal is None:
+def available_baton_holder_tools(db: Session, agent_id: str | None) -> tuple[str, ...]:
+    """Return baton lifecycle tools currently granted to an agent."""
+    if not agent_id:
         return ()
     access = default_tool_service().tools_for_agent(
-        str(terminal.agent_id),
+        str(agent_id),
         built_in_tool_names=_BATON_HOLDER_TOOLS,
     )
     return tuple(tool for tool in _BATON_HOLDER_TOOLS if tool in access.built_in_cao_tools)
 
 
-def _available_baton_holder_tools(db: Session, terminal_id: str) -> tuple[str, ...]:
-    return available_baton_holder_tools(db, terminal_id)
+def _available_baton_holder_tools(db: Session, agent_id: str) -> tuple[str, ...]:
+    return available_baton_holder_tools(db, agent_id)
 
 
 def _tools_from_holder_guidance(guidance: str) -> tuple[str, ...]:
@@ -234,9 +236,8 @@ def _queue_baton_message(
     guidance: str,
     artifact_paths: Optional[Sequence[str]] = None,
 ) -> None:
-    require_terminal_same_team_collaboration(sender_id, receiver_id, db=db)
-    db_module.create_inbox_delivery(
-        sender_id,
+    require_agent_same_team_collaboration(sender_id, receiver_id, db=db)
+    send_inbox_message(
         receiver_id,
         _baton_message(
             action=action,
@@ -247,7 +248,9 @@ def _queue_baton_message(
             guidance=guidance,
             artifact_paths=artifact_paths,
         ),
+        sender_agent_id=sender_id,
         db=db,
+        attempt_delivery=False,
     )
 
 
@@ -556,7 +559,7 @@ def reassign_baton(
         _require_not_final(row)
         if not operator_recovery:
             _require_current_holder(row, actor_id)
-            require_terminal_same_team_collaboration(actor_id, receiver_id, db=db)
+            require_agent_same_team_collaboration(actor_id, receiver_id, db=db)
         else:
             _require_operator_reassign_receiver(db, row, receiver_id)
 

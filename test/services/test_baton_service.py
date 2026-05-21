@@ -12,12 +12,16 @@ from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceCon
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.inbox import readiness as inbox_service
+from cli_agent_orchestrator.inbox import (
+    get_notification,
+    list_pending_notifications,
+)
 from cli_agent_orchestrator.models.baton import BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.collaboration_policy import (
-    require_terminal_same_team_collaboration,
-    require_terminal_workspace_team,
+    require_agent_same_team_collaboration,
+    require_agent_workspace_team,
 )
 from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_ID,
@@ -62,13 +66,13 @@ def patched_db(monkeypatch):
 def allow_baton_collaboration(monkeypatch):
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_same_team_collaboration",
+        "require_agent_same_team_collaboration",
         lambda sender_id, receiver_id, **kwargs: None,
     )
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_workspace_team",
-        lambda terminal_id, **kwargs: None,
+        "require_agent_workspace_team",
+        lambda agent_id, **kwargs: None,
     )
     monkeypatch.setattr(
         baton_service,
@@ -138,10 +142,10 @@ def _collaboration_manager() -> WorkspaceCollaborationManager:
         ),
         agent_registry=AgentRegistry(
             {
-                "originator_agent": _agent("originator_agent", "delivery"),
-                "impl_agent": _agent("impl_agent", "delivery"),
-                "reviewer_agent": _agent("reviewer_agent", "delivery"),
-                "outsider_agent": _agent("outsider_agent", "research"),
+                "originator": _agent("originator", "delivery"),
+                "impl": _agent("impl", "delivery"),
+                "reviewer": _agent("reviewer", "delivery"),
+                "outsider": _agent("outsider", "research"),
             }
         ),
         provider_adapters={},
@@ -153,25 +157,25 @@ def _event_types(baton_id):
 
 
 def _messages(receiver_id):
-    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
+    return list_pending_notifications(receiver_id, limit=50)
 
 
-def test_baton_inbox_delivery_requires_same_workspace_team_before_queue(
+def test_baton_inbox_notification_requires_same_workspace_team_before_queue(
     patched_db,
     monkeypatch,
 ):
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_same_team_collaboration",
-        require_terminal_same_team_collaboration,
+        "require_agent_same_team_collaboration",
+        require_agent_same_team_collaboration,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
         _collaboration_manager,
     )
-    _create_terminal("originator", "originator_agent")
-    _create_terminal("impl", "impl_agent")
-    _create_terminal("outsider", "outsider_agent")
+    _create_terminal("originator", "originator")
+    _create_terminal("impl", "impl")
+    _create_terminal("outsider", "outsider")
     baton_service.create_baton(
         baton_id="baton-1",
         title="T01",
@@ -200,8 +204,8 @@ def test_baton_reassign_requires_same_workspace_team_before_state_change(
 ):
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_same_team_collaboration",
-        require_terminal_same_team_collaboration,
+        "require_agent_same_team_collaboration",
+        require_agent_same_team_collaboration,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
@@ -209,12 +213,12 @@ def test_baton_reassign_requires_same_workspace_team_before_state_change(
     )
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_workspace_team",
-        require_terminal_workspace_team,
+        "require_agent_workspace_team",
+        require_agent_workspace_team,
     )
-    _create_terminal("originator", "originator_agent")
-    _create_terminal("impl", "impl_agent")
-    _create_terminal("outsider", "outsider_agent")
+    _create_terminal("originator", "originator")
+    _create_terminal("impl", "impl")
+    _create_terminal("outsider", "outsider")
     baton_service.create_baton(
         baton_id="baton-1",
         title="T01",
@@ -243,21 +247,21 @@ def test_operator_reassign_rejects_out_of_team_durable_holder(
 ):
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_same_team_collaboration",
-        require_terminal_same_team_collaboration,
+        "require_agent_same_team_collaboration",
+        require_agent_same_team_collaboration,
     )
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_workspace_team",
-        require_terminal_workspace_team,
+        "require_agent_workspace_team",
+        require_agent_workspace_team,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
         _collaboration_manager,
     )
-    _create_terminal("originator", "originator_agent")
-    _create_terminal("impl", "impl_agent")
-    _create_terminal("outsider", "outsider_agent")
+    _create_terminal("originator", "originator")
+    _create_terminal("impl", "impl")
+    _create_terminal("outsider", "outsider")
     baton_service.create_baton(
         baton_id="baton-1",
         title="T01",
@@ -284,22 +288,22 @@ def test_operator_reassign_rejects_out_of_team_return_stack_participant(
 ):
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_same_team_collaboration",
-        require_terminal_same_team_collaboration,
+        "require_agent_same_team_collaboration",
+        require_agent_same_team_collaboration,
     )
     monkeypatch.setattr(
         baton_service,
-        "require_terminal_workspace_team",
-        require_terminal_workspace_team,
+        "require_agent_workspace_team",
+        require_agent_workspace_team,
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.collaboration_policy.default_workspace_collaboration_manager",
         _collaboration_manager,
     )
-    _create_terminal("originator", "originator_agent")
-    _create_terminal("impl", "impl_agent")
-    _create_terminal("reviewer", "reviewer_agent")
-    _create_terminal("outsider", "outsider_agent")
+    _create_terminal("originator", "originator")
+    _create_terminal("impl", "impl")
+    _create_terminal("reviewer", "reviewer")
+    _create_terminal("outsider", "outsider")
     baton_service.create_baton(
         baton_id="baton-1",
         title="T01",
@@ -343,15 +347,15 @@ def test_create_baton_persists_active_holder_and_event(patched_db):
     assert _event_types("baton-1") == ["create"]
     queued = _messages("impl")
     assert len(queued) == 1
-    assert queued[0].message.sender_id == "originator"
-    assert "Baton id: baton-1" in queued[0].message.body
-    assert "Title: T01" in queued[0].message.body
-    assert "Current expectation: implement" in queued[0].message.body
-    assert "complete_baton" in queued[0].message.body
+    assert queued[0].sender_agent_id == "originator"
+    assert "Baton id: baton-1" in queued[0].body
+    assert "Title: T01" in queued[0].body
+    assert "Current expectation: implement" in queued[0].body
+    assert "complete_baton" in queued[0].body
 
 
 def test_create_baton_guidance_uses_tool_service_baton_access(patched_db, monkeypatch):
-    _create_terminal("impl", "impl_agent")
+    _create_terminal("impl", "impl")
     monkeypatch.setattr(
         baton_service,
         "available_baton_holder_tools",
@@ -370,7 +374,7 @@ def test_create_baton_guidance_uses_tool_service_baton_access(patched_db, monkey
         holder_id="impl",
     )
 
-    body = _messages("impl")[0].message.body
+    body = _messages("impl")[0].body
     assert "complete_baton" in body
     assert "pass_baton" not in body
     assert "return_baton" not in body
@@ -399,11 +403,11 @@ def test_pass_baton_pushes_previous_holder_and_sets_receiver(patched_db):
     assert _event_types("baton-1") == ["create", "pass"]
     queued = _messages("reviewer")
     assert len(queued) == 1
-    assert queued[0].message.sender_id == "impl"
-    assert "please review" in queued[0].message.body
-    assert "Current expectation: review" in queued[0].message.body
-    assert "pass_baton" in queued[0].message.body
-    assert "Do not use send_message to transfer baton ownership" in queued[0].message.body
+    assert queued[0].sender_agent_id == "impl"
+    assert "please review" in queued[0].body
+    assert "Current expectation: review" in queued[0].body
+    assert "pass_baton" in queued[0].body
+    assert "Do not use send_message to transfer baton ownership" in queued[0].body
 
 
 def test_pass_baton_notification_delivers_through_semantic_inbox(patched_db, monkeypatch):
@@ -434,9 +438,9 @@ def test_pass_baton_notification_delivers_through_semantic_inbox(patched_db, mon
 
     assert inbox_service.check_and_send_pending_messages("reviewer") is True
 
-    delivered = db_module.get_inbox_delivery(queued[0].notification.id)
+    delivered = get_notification(queued[0].id)
     assert delivered is not None
-    assert delivered.notification.status.value == "delivered"
+    assert delivered.status.value == "delivered"
     assert sent[0][0] == "reviewer"
     assert "please review" in sent[0][1]
 
@@ -548,8 +552,8 @@ def test_return_baton_pops_previous_holder(patched_db):
     assert _event_types("baton-1") == ["create", "pass", "return"]
     queued = _messages("impl")
     assert len(queued) == 2
-    assert "changes requested" in queued[-1].message.body
-    assert "return_baton" in queued[-1].message.body
+    assert "changes requested" in queued[-1].body
+    assert "return_baton" in queued[-1].body
 
 
 def test_return_baton_with_empty_stack_returns_to_originator(patched_db):
@@ -590,9 +594,9 @@ def test_complete_baton_resolves_and_clears_current_holder(patched_db):
     assert _event_types("baton-1") == ["create", "complete"]
     queued = _messages("originator")
     assert len(queued) == 1
-    assert queued[0].message.sender_id == "impl"
-    assert "A baton has been completed" in queued[0].message.body
-    assert "get_baton" in queued[0].message.body
+    assert queued[0].sender_agent_id == "impl"
+    assert "A baton has been completed" in queued[0].body
+    assert "get_baton" in queued[0].body
 
 
 def test_block_baton_marks_blocked_and_keeps_holder_visible(patched_db):
@@ -614,8 +618,8 @@ def test_block_baton_marks_blocked_and_keeps_holder_visible(patched_db):
     assert _event_types("baton-1") == ["create", "block"]
     queued = _messages("originator")
     assert len(queued) == 1
-    assert "contract mismatch" in queued[0].message.body
-    assert "A baton is blocked" in queued[0].message.body
+    assert "contract mismatch" in queued[0].body
+    assert "A baton is blocked" in queued[0].body
 
 
 def test_non_holder_agent_transition_fails(patched_db):
@@ -721,7 +725,7 @@ def test_create_baton_rolls_back_if_initial_message_enqueue_fails(patched_db, mo
     def fail_enqueue(*args, **kwargs):
         raise RuntimeError("inbox unavailable")
 
-    monkeypatch.setattr(db_module, "create_inbox_delivery", fail_enqueue)
+    monkeypatch.setattr(baton_service, "send_inbox_message", fail_enqueue)
 
     with pytest.raises(RuntimeError, match="inbox unavailable"):
         baton_service.create_baton(
@@ -747,7 +751,7 @@ def test_pass_baton_rolls_back_state_if_transfer_message_enqueue_fails(patched_d
     def fail_enqueue(*args, **kwargs):
         raise RuntimeError("inbox unavailable")
 
-    monkeypatch.setattr(db_module, "create_inbox_delivery", fail_enqueue)
+    monkeypatch.setattr(baton_service, "send_inbox_message", fail_enqueue)
 
     with pytest.raises(RuntimeError, match="inbox unavailable"):
         baton_service.pass_baton(

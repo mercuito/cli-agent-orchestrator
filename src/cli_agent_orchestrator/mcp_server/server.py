@@ -554,9 +554,6 @@ def _terminal_id_for_agent(agent_id: str) -> str:
     return terminal_id.strip()
 
 
-def _current_terminal_id() -> str:
-    return _terminal_id_for_agent(_require_cao_agent_id())
-
 
 def _extract_error_detail(response: requests.Response, fallback: str) -> str:
     """Extract a human-readable error detail from an API response."""
@@ -992,9 +989,6 @@ def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:
 def _inbox_read_result_to_dict(result: ReadResult) -> Dict[str, Any]:
     return {
         "success": True,
-        "notification_id": result.notification.id,
-        "message_id": result.notification.id,
-        "from": _display_from_token(result.notification.source_id),
         "body": result.body,
     }
 
@@ -1084,8 +1078,8 @@ def _create_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _current_terminal_id()
-        _require_workspace_team_terminal_collaboration(holder_id)
+        actor_id = _require_cao_agent_id()
+        _require_workspace_team_collaboration(holder_id)
         baton = baton_service.create_baton(
             title=title,
             originator_id=actor_id,
@@ -1107,8 +1101,8 @@ def _pass_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _current_terminal_id()
-        _require_workspace_team_terminal_collaboration(receiver_id)
+        actor_id = _require_cao_agent_id()
+        _require_workspace_team_collaboration(receiver_id)
         baton = baton_service.pass_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -1129,12 +1123,12 @@ def _return_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _current_terminal_id()
+        actor_id = _require_cao_agent_id()
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
         receiver_id = existing.return_stack[-1] if existing.return_stack else existing.originator_id
-        _require_workspace_team_terminal_collaboration(receiver_id)
+        _require_workspace_team_collaboration(receiver_id)
         baton = baton_service.return_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -1153,11 +1147,11 @@ def _complete_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _current_terminal_id()
+        actor_id = _require_cao_agent_id()
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
-        _require_workspace_team_terminal_collaboration(existing.originator_id)
+        _require_workspace_team_collaboration(existing.originator_id)
         baton = baton_service.complete_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -1175,11 +1169,11 @@ def _block_baton_impl(
     artifact_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
-        actor_id = _current_terminal_id()
+        actor_id = _require_cao_agent_id()
         existing = db_module.get_baton_record(baton_id)
         if existing is None:
             raise baton_service.BatonNotFound(baton_id)
-        _require_workspace_team_terminal_collaboration(existing.originator_id)
+        _require_workspace_team_collaboration(existing.originator_id)
         baton = baton_service.block_baton(
             baton_id=baton_id,
             actor_id=actor_id,
@@ -1193,12 +1187,12 @@ def _block_baton_impl(
 
 def _get_my_batons_impl(status: Optional[str] = None) -> Dict[str, Any]:
     try:
-        actor_id = _current_terminal_id()
+        actor_id = _require_cao_agent_id()
         status_filter = _parse_baton_status(status)
         batons = db_module.list_batons_held_by(actor_id, status=status_filter)
         return {
             "success": True,
-            "terminal_id": actor_id,
+            "agent_id": actor_id,
             "batons": [_baton_to_dict(baton) for baton in batons],
             "count": len(batons),
         }
@@ -1208,7 +1202,7 @@ def _get_my_batons_impl(status: Optional[str] = None) -> Dict[str, Any]:
 
 def _get_baton_impl(baton_id: str) -> Dict[str, Any]:
     try:
-        actor_id = _current_terminal_id()
+        actor_id = _require_cao_agent_id()
         baton = db_module.get_baton_record(baton_id)
         if baton is None:
             raise baton_service.BatonNotFound(baton_id)
@@ -1229,7 +1223,7 @@ def _get_baton_impl(baton_id: str) -> Dict[str, Any]:
 @_deferred_tool()
 async def create_baton(
     title: str = Field(description="Human-readable baton title"),
-    holder_id: str = Field(description="Terminal ID that should hold the new baton"),
+    holder_id: str = Field(description="Agent ID that should hold the new baton"),
     message: str = Field(description="Self-contained message to queue for the initial holder"),
     expected_next_action: Optional[str] = Field(
         default=None, description="What the holder is expected to do next"
@@ -1245,7 +1239,7 @@ async def create_baton(
 @_deferred_tool()
 async def pass_baton(
     baton_id: str = Field(description="Baton ID to pass"),
-    receiver_id: str = Field(description="Terminal ID that should receive the baton"),
+    receiver_id: str = Field(description="Agent ID that should receive the baton"),
     message: str = Field(description="Self-contained message to queue for the receiver"),
     expected_next_action: Optional[str] = Field(
         default=None, description="What the receiver is expected to do next"
@@ -1254,7 +1248,7 @@ async def pass_baton(
         default=None, description="Absolute artifact paths relevant to this transfer"
     ),
 ) -> Dict[str, Any]:
-    """Pass a baton to another terminal and queue the transfer message."""
+    """Pass a baton to another agent and queue the transfer message."""
     return _pass_baton_impl(baton_id, receiver_id, message, expected_next_action, artifact_paths)
 
 

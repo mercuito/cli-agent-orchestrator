@@ -14,8 +14,6 @@ from cli_agent_orchestrator.agent import (
     AgentConfigError,
     AgentRegistry,
     AgentWorkspaceConfig,
-    LinearConfig,
-    LinearToolAccessConfig,
     load_agent,
     load_agent_registry,
     write_agent,
@@ -33,7 +31,6 @@ from cli_agent_orchestrator.events import (
     CaoEventSourceRef,
     CaoEventSourceType,
 )
-from cli_agent_orchestrator.linear.workspace_events import LinearAgentMentionedEvent
 from cli_agent_orchestrator.runtime.events import (
     AgentRuntimeNotificationDeliveryEvent,
     RuntimeWorkspaceEvent,
@@ -120,7 +117,6 @@ def _tool_view(agent_id: str, *, built_ins: tuple[str, ...] = ("send_message",))
             runtime_capabilities=(),
             source_markers={name: "test" for name in built_ins},
             inactive_local_grants={},
-            provider_conversation_requirements=(),
             diagnostics=(),
         ),
     )
@@ -169,21 +165,6 @@ def _agent(agent_id: str = "implementation_partner") -> Agent:
         use_legacy_mcp_json=False,
         runtime_capabilities=("@builtin",),
         codex_config={"model": "gpt-5.2"},
-        linear=LinearConfig(
-            app_key=agent_id,
-            client_id="client-1",
-            client_secret="secret-1",
-            oauth_redirect_uri="https://example.test/linear/oauth/callback",
-            access_token="access-1",
-            tool_access=(
-                LinearToolAccessConfig(
-                    access_id="workflow",
-                    tools=("cao_linear.get_issue",),
-                    issues=("CAO-1",),
-                    update_fields=("title",),
-                ),
-            ),
-        ),
     )
 
 
@@ -220,27 +201,21 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
                         "name": "send_message",
                         "description": "Send a message to another CAO agent.",
                     },
-                    {
-                        "source": {"kind": "provider", "name": "linear"},
-                        "name": "cao_linear.get_issue",
-                        "description": "Read a Linear issue.",
-                    },
                 ],
             },
             effective_access=SimpleNamespace(
                 agent_id=agent_id,
                 team_id=None,
                 role_id=None,
-                registered_tools=("send_message", "cao_linear.get_issue"),
-                allowed_tools=("send_message", "cao_linear.get_issue"),
+                registered_tools=("send_message",),
+                allowed_tools=("send_message",),
                 blocked_tools=(),
                 built_in_cao_tools=("send_message",),
-                provider_mediated_tools={"linear": ("cao_linear.get_issue",)},
+                provider_mediated_tools={},
                 materialized_mcp_servers={},
                 runtime_capabilities=(),
                 source_markers={"send_message": "test"},
                 inactive_local_grants={},
-                provider_conversation_requirements=(),
                 diagnostics=(),
             ),
         )
@@ -266,10 +241,7 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
     assert body[0]["config"]["cao_tools"] == ["send_message"]
     assert body[0]["config"]["runtime_capabilities"] == ["@builtin"]
     assert body[0]["config"]["codex_config"] == {"model": "gpt-5.2"}
-    assert body[0]["config"]["linear"]["app_key"] == "implementation_partner"
-    assert body[0]["config"]["linear"]["client_secret_configured"] is True
-    assert body[0]["config"]["linear"]["access_token_configured"] is True
-    assert body[0]["config"]["linear"]["tool_access"][0]["tools"] == ["cao_linear.get_issue"]
+    assert "linear" not in body[0]["config"]
     assert body[0]["mcp_tool_surface"] == {
         "schema_version": "cao-agent-mcp-surface.v1",
         "tools": [
@@ -277,11 +249,6 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
                 "source": {"kind": "cao_builtin", "name": "cao"},
                 "name": "send_message",
                 "description": "Send a message to another CAO agent.",
-            },
-            {
-                "source": {"kind": "provider", "name": "linear"},
-                "name": "cao_linear.get_issue",
-                "description": "Read a Linear issue.",
             },
         ],
     }
@@ -293,7 +260,7 @@ def test_list_agents_returns_stable_status_shape(client, monkeypatch):
 def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monkeypatch):
     agent = replace(_agent(), cao_tools=("send_message",))
     policy = ProviderToolAccessPolicy(
-        provider_name="linear",
+        provider_name="example",
         tools={
             "assign": ProviderMediatedToolDefinition(
                 name="assign",
@@ -305,12 +272,12 @@ def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monk
         hooks={},
         access=(
             ProviderToolAccess(
-                provider_name="linear",
+                provider_name="example",
                 tool_name="assign",
                 agent_id=agent.id,
                 pre_hooks=(),
                 post_hooks=(),
-                source_location="agents.implementation_partner.linear.tool_access.conflict",
+                source_location="test.example.tool_access.conflict",
             ),
         ),
     )
@@ -325,7 +292,7 @@ def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monk
             assert agent_manager is manager
             self._service = ToolService(
                 agent_manager=AgentManager(configured_agents=AgentRegistry({agent.id: agent})),
-                provider_policy_loader=lambda _registry: {"linear": policy},
+                provider_policy_loader=lambda _registry: {"example": policy},
             )
 
         def agent_tool_view(
@@ -366,7 +333,7 @@ def test_list_agents_effective_access_reserves_hidden_builtin_names(client, monk
     assert response.status_code == 200
     effective_access = response.json()[0]["effective_tool_access"]
     assert effective_access["built_in_cao_tools"] == ["send_message"]
-    assert effective_access["provider_mediated_tools"] == {"linear": []}
+    assert effective_access["provider_mediated_tools"] == {"example": []}
     assert effective_access["allowed_tools"] == ["send_message"]
 
 
@@ -413,7 +380,6 @@ def test_list_agents_reads_tool_metadata_from_tool_service_owner(client, monkeyp
                     runtime_capabilities=(),
                     source_markers={"send_message": "test"},
                     inactive_local_grants={},
-                    provider_conversation_requirements=(),
                     diagnostics=(),
                 ),
             )
@@ -511,7 +477,7 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
     team = WorkspaceTeam(
         id="cao_delivery",
         display_name="CAO Delivery",
-        workspace="linear_delivery",
+        workspace="example_workspace",
     )
 
     class _TeamService:
@@ -556,9 +522,9 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
         lambda: SimpleNamespace(
             all=lambda: (
                 Workspace(
-                    id="linear_delivery",
-                    display_name="Linear Delivery",
-                    providers=("linear",),
+                    id="example_workspace",
+                    display_name="Example Workspace",
+                    providers=("example",),
                     resolver=lambda event: None,
                 ),
             )
@@ -572,16 +538,16 @@ def test_workspace_team_endpoints_use_team_service_and_render_members(client, mo
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace": "linear_delivery",
+            "workspace": "example_workspace",
         },
     )
 
     assert list_response.status_code == 200
     assert list_response.json()[0]["members"] == ["implementation_partner"]
     assert workspaces_response.status_code == 200
-    assert workspaces_response.json()[0]["id"] == "linear_delivery"
+    assert workspaces_response.json()[0]["id"] == "example_workspace"
     assert save_response.status_code == 200
-    assert saved == [("research", "Research", "linear_delivery")]
+    assert saved == [("research", "Research", "example_workspace")]
 
 
 @pytest.mark.parametrize(
@@ -604,7 +570,7 @@ def test_workspace_team_write_rejects_legacy_workspace_setup_field(client, metho
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace_setup": "linear_delivery",
+            "workspace_setup": "example_workspace",
         },
     )
 
@@ -617,9 +583,9 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
     workspace_registry = WorkspaceRegistry(
         (
             Workspace(
-                id="linear_delivery",
-                display_name="Linear Delivery",
-                providers=("linear",),
+                id="example_workspace",
+                display_name="Example Workspace",
+                providers=("example",),
                 resolver=lambda event: None,
             ),
         )
@@ -629,7 +595,7 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
         workspace_registry=workspace_registry,
         team_store=team_store,
         agent_registry=AgentRegistry({}),
-        available_providers=("linear",),
+        available_providers=("example",),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_workspace_team_service",
@@ -649,7 +615,7 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace": "linear_delivery",
+            "workspace": "example_workspace",
         },
     )
     role_response = client.put(
@@ -659,9 +625,9 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
             "cao_tools": ["read_inbox_message"],
             "mcp_servers": {"custom": {"command": "custom-mcp"}},
             "providers": {
-                "linear": {
+                "example": {
                     "reads": {
-                        "tools": ["cao_linear.get_issue"],
+                        "tools": ["example.get_work_item"],
                         "issues": ["*"],
                     }
                 }
@@ -673,7 +639,7 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
 
     assert create_response.status_code == 201
     assert role_response.status_code == 200
-    assert role_response.json()["roles"]["reviewer"]["providers"]["linear"]["reads"]["issues"] == [
+    assert role_response.json()["roles"]["reviewer"]["providers"]["example"]["reads"]["issues"] == [
         "*"
     ]
     assert list_response.status_code == 200
@@ -683,9 +649,9 @@ def test_workspace_team_role_api_round_trips_single_role_policy_through_store(
         cao_tools=("read_inbox_message",),
         mcp_servers={"custom": {"command": "custom-mcp"}},
         providers={
-            "linear": {
+            "example": {
                 "reads": {
-                    "tools": ["cao_linear.get_issue"],
+                    "tools": ["example.get_work_item"],
                     "issues": ["*"],
                 }
             }
@@ -697,9 +663,9 @@ def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch
     workspace_registry = WorkspaceRegistry(
         (
             Workspace(
-                id="linear_delivery",
-                display_name="Linear Delivery",
-                providers=("linear",),
+                id="example_workspace",
+                display_name="Example Workspace",
+                providers=("example",),
                 resolver=lambda event: None,
             ),
         )
@@ -708,7 +674,7 @@ def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch
         workspace_registry=workspace_registry,
         team_store=WorkspaceTeamStore(tmp_path / "workspace-teams.json", bootstrap_teams=()),
         agent_registry=AgentRegistry({}),
-        available_providers=("linear",),
+        available_providers=("example",),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_workspace_team_service",
@@ -728,7 +694,7 @@ def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace": "linear_delivery",
+            "workspace": "example_workspace",
         },
     )
     fetched = client.get("/workspace-teams/research")
@@ -737,7 +703,7 @@ def test_workspace_team_api_crud_lifecycle_uses_team_service(client, monkeypatch
         json={
             "id": "research",
             "display_name": "Research Renamed",
-            "workspace": "linear_delivery",
+            "workspace": "example_workspace",
         },
     )
     deleted = client.delete("/workspace-teams/research")
@@ -759,9 +725,9 @@ def test_workspace_team_role_delete_api_falls_assignments_back_to_member(
     workspace_registry = WorkspaceRegistry(
         (
             Workspace(
-                id="linear_delivery",
-                display_name="Linear Delivery",
-                providers=("linear",),
+                id="example_workspace",
+                display_name="Example Workspace",
+                providers=("example",),
                 resolver=lambda event: None,
             ),
         )
@@ -774,14 +740,14 @@ def test_workspace_team_role_delete_api_falls_assignments_back_to_member(
                 WorkspaceTeam(
                     id="research",
                     display_name="Research",
-                    workspace="linear_delivery",
+                    workspace="example_workspace",
                     roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                     role_assignments={"aria": "reviewer"},
                 ),
             ),
         ),
         agent_registry=AgentRegistry({}),
-        available_providers=("linear",),
+        available_providers=("example",),
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_workspace_team_service",
@@ -814,9 +780,9 @@ def test_workspace_team_api_rejects_member_role_and_member_team_deletion(
     workspace_registry = WorkspaceRegistry(
         (
             Workspace(
-                id="linear_delivery",
-                display_name="Linear Delivery",
-                providers=("linear",),
+                id="example_workspace",
+                display_name="Example Workspace",
+                providers=("example",),
                 resolver=lambda event: None,
             ),
         )
@@ -829,12 +795,12 @@ def test_workspace_team_api_rejects_member_role_and_member_team_deletion(
                 WorkspaceTeam(
                     id="research",
                     display_name="Research",
-                    workspace="linear_delivery",
+                    workspace="example_workspace",
                 ),
             ),
         ),
         agent_registry=load_agent_registry(agents_root=agents_root),
-        available_providers=("linear",),
+        available_providers=("example",),
         agents_root=agents_root,
     )
     monkeypatch.setattr(
@@ -865,7 +831,7 @@ def test_workspace_team_metadata_put_rejects_legacy_role_policy_payload(client, 
     team = WorkspaceTeam(
         id="research",
         display_name="Research",
-        workspace="linear_delivery",
+        workspace="example_workspace",
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_workspace_team_service",
@@ -877,7 +843,7 @@ def test_workspace_team_metadata_put_rejects_legacy_role_policy_payload(client, 
         json={
             "id": "research",
             "display_name": "Research",
-            "workspace": "linear_delivery",
+            "workspace": "example_workspace",
             "roles": {"reviewer": {"display_name": "Reviewer"}},
         },
     )
@@ -897,9 +863,9 @@ def test_workspace_team_member_api_moves_agent_and_returns_member_detail(
     workspace_registry = WorkspaceRegistry(
         (
             Workspace(
-                id="linear_delivery",
-                display_name="Linear Delivery",
-                providers=("linear",),
+                id="example_workspace",
+                display_name="Example Workspace",
+                providers=("example",),
                 resolver=lambda event: None,
             ),
         )
@@ -910,14 +876,14 @@ def test_workspace_team_member_api_moves_agent_and_returns_member_detail(
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace="linear_delivery",
+                workspace="example_workspace",
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                 role_assignments={"aria": "reviewer"},
             ),
             WorkspaceTeam(
                 id="research",
                 display_name="Research",
-                workspace="linear_delivery",
+                workspace="example_workspace",
             ),
         ),
     )
@@ -925,7 +891,7 @@ def test_workspace_team_member_api_moves_agent_and_returns_member_detail(
         workspace_registry=workspace_registry,
         team_store=team_store,
         agent_registry=load_agent_registry(agents_root=agents_root),
-        available_providers=("linear",),
+        available_providers=("example",),
         agents_root=agents_root,
     )
     monkeypatch.setattr(
@@ -975,9 +941,9 @@ def test_workspace_team_member_remove_api_clears_membership_and_assignment(
     workspace_registry = WorkspaceRegistry(
         (
             Workspace(
-                id="linear_delivery",
-                display_name="Linear Delivery",
-                providers=("linear",),
+                id="example_workspace",
+                display_name="Example Workspace",
+                providers=("example",),
                 resolver=lambda event: None,
             ),
         )
@@ -988,7 +954,7 @@ def test_workspace_team_member_remove_api_clears_membership_and_assignment(
             WorkspaceTeam(
                 id="delivery",
                 display_name="Delivery",
-                workspace="linear_delivery",
+                workspace="example_workspace",
                 roles={"reviewer": WorkspaceTeamRole(display_name="Reviewer")},
                 role_assignments={"aria": "reviewer"},
             ),
@@ -998,7 +964,7 @@ def test_workspace_team_member_remove_api_clears_membership_and_assignment(
         workspace_registry=workspace_registry,
         team_store=team_store,
         agent_registry=load_agent_registry(agents_root=agents_root),
-        available_providers=("linear",),
+        available_providers=("example",),
         agents_root=agents_root,
     )
     monkeypatch.setattr(
@@ -1030,7 +996,7 @@ def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monk
     team = WorkspaceTeam(
         id="cao_delivery",
         display_name="CAO Delivery",
-        workspace="linear_delivery",
+        workspace="example_workspace",
     )
     monkeypatch.setattr(
         "cli_agent_orchestrator.api.main.default_workspace_team_service",
@@ -1046,21 +1012,21 @@ def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monk
             diagnostics=lambda: (
                 WorkspaceDiagnostic(
                     code="pruned_provider_identity",
-                    message="Workspace team cao_delivery pruned linear tool access for discovery",
+                    message="Workspace team cao_delivery pruned example tool access for discovery",
                     team_id="cao_delivery",
-                    workspace_id="linear_delivery",
+                    workspace_id="example_workspace",
                     agent_id="discovery",
-                    provider_name="linear",
+                    provider_name="example",
                 ),
                 WorkspaceDiagnostic(
                     code="unavailable_provider",
                     message=(
-                        "Workspace team cao_delivery workspace linear_delivery "
-                        "requires unavailable provider linear"
+                        "Workspace team cao_delivery workspace example_workspace "
+                        "requires unavailable provider example"
                     ),
                     team_id="cao_delivery",
-                    workspace_id="linear_delivery",
-                    provider_name="linear",
+                    workspace_id="example_workspace",
+                    provider_name="example",
                 ),
             )
         ),
@@ -1070,7 +1036,7 @@ def test_workspace_team_response_hides_provider_pruning_diagnostics(client, monk
 
     assert response.status_code == 200
     assert response.json()[0]["diagnostics"] == [
-        "Workspace team cao_delivery workspace linear_delivery requires unavailable provider linear"
+        "Workspace team cao_delivery workspace example_workspace requires unavailable provider example"
     ]
 
 
@@ -1563,7 +1529,7 @@ def test_update_agent_rejects_legacy_workspace(client, monkeypatch):
 
     response = client.put(
         "/agents/implementation_partner",
-        json={"workspace": {"setup": "linear_delivery"}},
+        json={"workspace": {"setup": "example_workspace"}},
     )
 
     assert response.status_code == 400
@@ -1640,50 +1606,26 @@ def test_runtime_terminal_endpoint_accepts_agent_dashboard_token(client, monkeyp
     assert response.json()["terminal_token"] == "token-abcd1234"
 
 
-def _linear_mentioned_event(
+def _audit_timeline_event(
     *,
-    event_id: str = "linear:agent_mentioned:event-1",
+    event_id: str = "experimental:audit:event-1",
     occurred_at: CaoEventOccurredAt = OCCURRED_AT,
-    source_id: str = "msg-1",
+    source_id: str = "audit-1",
     correlation_id: str | None = "thread-1",
     causation_id: str | None = None,
     participants: tuple[AgentParticipant, ...] | None = None,
-) -> LinearAgentMentionedEvent:
-    return LinearAgentMentionedEvent(
+) -> _ExperimentalAuditEvent:
+    return _ExperimentalAuditEvent(
         event_id=CaoEventId(event_id),
         source=CaoEventSourceRef(
-            source_type=CaoEventSourceType("linear"),
+            source_type=CaoEventSourceType("audit"),
             source_id=CaoEventSourceId(source_id),
         ),
         occurred_at=occurred_at,
         correlation_id=CaoCorrelationId(correlation_id) if correlation_id is not None else None,
         causation_id=CaoCausationId(causation_id) if causation_id is not None else None,
-        event_type="AgentSession",
-        app_key="linear-app",
-        agent_id="implementation_partner",
-        app_user_id="user-1",
-        app_user_name="RJ Wilson",
-        issue_id="issue-id-1",
-        issue_identifier="CAO-96",
-        issue_url="https://linear.app/yards-framework/issue/CAO-96/example",
-        issue_title="Persist events",
-        issue_state="Backlog",
-        parent_issue_id="parent-id-1",
-        parent_issue_identifier="CAO-89",
-        agent_session_id="session-1",
-        thread_id="thread-1",
-        thread_url="https://linear.app/session/1",
-        prompt_context="Please implement this.",
-        message_id=source_id,
-        message_body="Please implement CAO-96.",
-        message_kind="comment",
-        message_metadata={"visibility": "public"},
-        action="create",
-        should_notify_agent=True,
-        suppression_reason=None,
-        raw_payload={"typed_contract_field": True},
-        delivery_id="delivery-1",
-        metadata={"classification": "human_mention_or_prompt"},
+        audit_kind="workspace_scan",
+        confidence=0.92,
         agent_participants=(
             participants
             if participants is not None
@@ -1725,13 +1667,13 @@ def _publish_agent_timeline_scenario(
     broadcast_reviewer_role: str,
     workspace_correlation_id: str,
 ) -> tuple[
-    LinearAgentMentionedEvent,
+    _ExperimentalAuditEvent,
     AgentRuntimeNotificationDeliveryEvent,
-    LinearAgentMentionedEvent,
+    _ExperimentalAuditEvent,
     RuntimeWorkspaceEvent,
 ]:
-    mention = _linear_mentioned_event(
-        event_id="linear:agent_mentioned:mention",
+    mention = _audit_timeline_event(
+        event_id="experimental:audit:mention",
         occurred_at=OCCURRED_AT,
         correlation_id=mention_correlation_id,
     )
@@ -1739,25 +1681,24 @@ def _publish_agent_timeline_scenario(
         agent_id="implementation_partner",
         workspace_context_id="wctx-1",
         inbox_notification_id=42,
-        inbox_receiver_id="implementation_partner",
+        receiver_agent_id="implementation_partner",
         terminal_id="terminal-1",
         runtime_status="ready",
         outcome="delivered",
         attempted=True,
         delivered=True,
         error=None,
-        source_kind="linear_event",
-        message_body="Please implement CAO-96.",
+        message_body="Please review audit findings.",
         causing_event=mention,
     )
     delivery = replace(
         delivery,
         occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=1)),
     )
-    broadcast = _linear_mentioned_event(
-        event_id="linear:agent_mentioned:broadcast",
+    broadcast = _audit_timeline_event(
+        event_id="experimental:audit:broadcast",
         occurred_at=CaoEventOccurredAt(OCCURRED_AT + timedelta(minutes=2)),
-        source_id="msg-broadcast",
+        source_id="audit-broadcast",
         correlation_id=broadcast_correlation_id,
         participants=(
             AgentParticipant(
@@ -1779,7 +1720,7 @@ def _publish_agent_timeline_scenario(
     )
     dispatcher = CaoEventDispatcher(
         (
-            LinearAgentMentionedEvent,
+            _ExperimentalAuditEvent,
             AgentRuntimeNotificationDeliveryEvent,
             RuntimeWorkspaceEvent,
         ),
@@ -1863,17 +1804,15 @@ def test_agent_timeline_route_returns_participant_index_rows(
     assert str(workspace.event_id) not in _event_ids(body["events"])
     assert db_module.get_cao_event(str(workspace.event_id)) is not None
     assert [(event["event_name"], event["participant_role"]) for event in body["events"]] == [
-        ("agent_mentioned", "mentioned"),
+        ("experimental_audit_event", "mentioned"),
         ("agent_runtime_notification_delivery", "delivery_target"),
-        ("agent_mentioned", "mentioned"),
+        ("experimental_audit_event", "mentioned"),
     ]
     assert body["events"][0]["correlation_id"] == "thread-1"
-    assert body["events"][0]["event_data"]["issue_title"] == "Persist events"
-    assert body["events"][0]["event_data"]["message_body"] == "Please implement CAO-96."
-    assert body["events"][0]["event_data"]["raw_payload"] == {"typed_contract_field": True}
+    assert body["events"][0]["event_data"]["audit_kind"] == "workspace_scan"
+    assert body["events"][0]["event_data"]["confidence"] == 0.92
     assert body["events"][1]["event_data"]["terminal_id"] == "terminal-1"
-    assert body["events"][1]["event_data"]["source_kind"] == "linear_event"
-    assert body["events"][1]["event_data"]["message_body"] == "Please implement CAO-96."
+    assert body["events"][1]["event_data"]["message_body"] == "Please review audit findings."
     assert body["events"][1]["causation_id"] == str(mention.event_id)
 
 
@@ -1908,18 +1847,17 @@ def test_agent_timeline_route_preserves_broadcast_viewpoint(
     reviewer_event = reviewer_events[0]
     assert {key: value for key, value in reviewer_event.items() if key != "event_data"} == {
         "event_id": str(broadcast.event_id),
-        "event_name": "agent_mentioned",
-        "event_type_key": (
-            "cli_agent_orchestrator.linear.workspace_events.LinearAgentMentionedEvent"
-        ),
-        "source_type": "linear",
-        "source_id": "msg-broadcast",
+        "event_name": "experimental_audit_event",
+        "event_type_key": f"{_ExperimentalAuditEvent.__module__}."
+        f"{_ExperimentalAuditEvent.__qualname__}",
+        "source_type": "audit",
+        "source_id": "audit-broadcast",
         "occurred_at": "2026-05-13T12:02:00",
         "correlation_id": "thread-broadcast",
         "causation_id": None,
         "participant_role": "observer",
     }
-    assert reviewer_event["event_data"]["message_id"] == "msg-broadcast"
+    assert reviewer_event["event_data"]["audit_kind"] == "workspace_scan"
     assert reviewer_event["event_data"]["agent_participants"] == [
         {"agent_id": "implementation_partner", "role": "mentioned"},
         {"agent_id": "reviewer", "role": "observer"},
@@ -1966,10 +1904,8 @@ def test_agent_related_events_route_uses_envelope_threads(
         str(mention.event_id),
         str(delivery.event_id),
     ]
-    assert mention_response.json()["event"]["event_data"]["issue_identifier"] == "CAO-96"
-    assert mention_response.json()["correlation_events"][0]["event_data"]["message_body"] == (
-        "Please implement CAO-96."
-    )
+    assert mention_response.json()["event"]["event_data"]["audit_kind"] == "workspace_scan"
+    assert mention_response.json()["correlation_events"][0]["event_data"]["confidence"] == 0.92
     assert mention_response.json()["correlation_events"][1]["event_data"]["terminal_id"] == (
         "terminal-1"
     )
@@ -1986,8 +1922,8 @@ def test_agent_related_events_route_uses_envelope_threads(
         mention.event_id
     )
     assert (
-        delivery_response.json()["causation_events"]["direct_cause"]["event_data"]["message_body"]
-        == "Please implement CAO-96."
+        delivery_response.json()["causation_events"]["direct_cause"]["event_data"]["audit_kind"]
+        == "workspace_scan"
     )
 
 
@@ -2057,12 +1993,12 @@ def test_agent_related_events_route_handles_missing_relatedness_and_unknown_even
 ):
     manager = _FakeAgentManager((_status(),))
     _patch_default_agent_manager(monkeypatch, manager)
-    isolated = _linear_mentioned_event(
-        event_id="linear:agent_mentioned:isolated",
+    isolated = _audit_timeline_event(
+        event_id="experimental:audit:isolated",
         correlation_id=None,
         causation_id=None,
     )
-    dispatcher = CaoEventDispatcher((LinearAgentMentionedEvent,), persist_events=True)
+    dispatcher = CaoEventDispatcher((_ExperimentalAuditEvent,), persist_events=True)
     dispatcher.publish(isolated)
 
     response = client.get(f"/agents/implementation_partner/events/{isolated.event_id}/related")

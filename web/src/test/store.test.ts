@@ -5,7 +5,7 @@ import { Baton, MonitoringSession } from '../api'
 function mockSession(overrides: Partial<MonitoringSession> = {}): MonitoringSession {
   return {
     id: overrides.id || 'sess-1',
-    terminal_id: overrides.terminal_id || 'term-a',
+    agent_id: overrides.agent_id || 'term-a',
     label: overrides.label !== undefined ? overrides.label : null,
     started_at: overrides.started_at || '2026-04-18T10:00:00',
     ended_at: overrides.ended_at !== undefined ? overrides.ended_at : null,
@@ -18,8 +18,8 @@ function mockBaton(overrides: Partial<Baton> = {}): Baton {
     id: overrides.id || 'baton-1',
     title: overrides.title || 'Review implementation',
     status: overrides.status || 'active',
-    originator_id: overrides.originator_id || 'term-origin',
-    current_holder_id: overrides.current_holder_id !== undefined ? overrides.current_holder_id : 'term-a',
+    originator_id: overrides.originator_id || 'agent-origin',
+    current_holder_id: overrides.current_holder_id !== undefined ? overrides.current_holder_id : 'agent-a',
     return_stack: overrides.return_stack || [],
     expected_next_action: overrides.expected_next_action !== undefined ? overrides.expected_next_action : 'review the patch',
     created_at: overrides.created_at || '2026-05-04T10:00:00',
@@ -37,7 +37,7 @@ describe('Store', () => {
       activeSession: null,
       activeSessionDetail: null,
       terminalStatuses: {},
-      activeMonitoringByTerminal: {},
+      activeMonitoringByAgent: {},
       activeBatonsByHolder: {},
       snackbar: null,
     })
@@ -49,7 +49,7 @@ describe('Store', () => {
     expect(state.activeSession).toBeNull()
     expect(state.activeSessionDetail).toBeNull()
     expect(state.terminalStatuses).toEqual({})
-    expect(state.activeMonitoringByTerminal).toEqual({})
+    expect(state.activeMonitoringByAgent).toEqual({})
     expect(state.activeBatonsByHolder).toEqual({})
     expect(state.snackbar).toBeNull()
   })
@@ -78,12 +78,12 @@ describe('Store', () => {
     expect(useStore.getState().snackbar).toBeNull()
   })
 
-  it('maps active monitoring sessions by terminal_id', () => {
+  it('maps active monitoring sessions by agent_id', () => {
     const { setActiveMonitoringSessions } = useStore.getState()
-    const a = mockSession({ id: 's-a', terminal_id: 'term-a', label: 'x' })
-    const b = mockSession({ id: 's-b', terminal_id: 'term-b' })
+    const a = mockSession({ id: 's-a', agent_id: 'term-a', label: 'x' })
+    const b = mockSession({ id: 's-b', agent_id: 'term-b' })
     setActiveMonitoringSessions([a, b])
-    const map = useStore.getState().activeMonitoringByTerminal
+    const map = useStore.getState().activeMonitoringByAgent
     expect(map['term-a']).toEqual(a)
     expect(map['term-b']).toEqual(b)
   })
@@ -91,56 +91,56 @@ describe('Store', () => {
   it('replaces the monitoring map rather than merging', () => {
     const { setActiveMonitoringSessions } = useStore.getState()
     setActiveMonitoringSessions([
-      mockSession({ id: 's-a', terminal_id: 'a' }),
-      mockSession({ id: 's-b', terminal_id: 'b' }),
+      mockSession({ id: 's-a', agent_id: 'a' }),
+      mockSession({ id: 's-b', agent_id: 'b' }),
     ])
-    setActiveMonitoringSessions([mockSession({ id: 's-c', terminal_id: 'c' })])
+    setActiveMonitoringSessions([mockSession({ id: 's-c', agent_id: 'c' })])
     // A session ending must cause its terminal to stop appearing — merge
     // semantics would leak ended sessions into the display forever.
-    expect(Object.keys(useStore.getState().activeMonitoringByTerminal)).toEqual(['c'])
+    expect(Object.keys(useStore.getState().activeMonitoringByAgent)).toEqual(['c'])
   })
 
   it('empty list clears all entries', () => {
     const { setActiveMonitoringSessions } = useStore.getState()
     setActiveMonitoringSessions([mockSession()])
     setActiveMonitoringSessions([])
-    expect(useStore.getState().activeMonitoringByTerminal).toEqual({})
+    expect(useStore.getState().activeMonitoringByAgent).toEqual({})
   })
 
   it('groups active batons by current_holder_id', () => {
     const { setActiveBatons } = useStore.getState()
-    const a1 = mockBaton({ id: 'baton-a1', current_holder_id: 'term-a' })
-    const a2 = mockBaton({ id: 'baton-a2', current_holder_id: 'term-a' })
-    const b1 = mockBaton({ id: 'baton-b1', current_holder_id: 'term-b' })
+    const a1 = mockBaton({ id: 'baton-a1', current_holder_id: 'agent-a' })
+    const a2 = mockBaton({ id: 'baton-a2', current_holder_id: 'agent-a' })
+    const b1 = mockBaton({ id: 'baton-b1', current_holder_id: 'agent-b' })
 
     setActiveBatons([a1, a2, b1])
 
     expect(useStore.getState().activeBatonsByHolder).toEqual({
-      'term-a': [a1, a2],
-      'term-b': [b1],
+      'agent-a': [a1, a2],
+      'agent-b': [b1],
     })
   })
 
   it('replaces the baton holder map rather than merging', () => {
     const { setActiveBatons } = useStore.getState()
     setActiveBatons([
-      mockBaton({ id: 'baton-a', current_holder_id: 'term-a' }),
-      mockBaton({ id: 'baton-b', current_holder_id: 'term-b' }),
+      mockBaton({ id: 'baton-a', current_holder_id: 'agent-a' }),
+      mockBaton({ id: 'baton-b', current_holder_id: 'agent-b' }),
     ])
-    setActiveBatons([mockBaton({ id: 'baton-c', current_holder_id: 'term-c' })])
+    setActiveBatons([mockBaton({ id: 'baton-c', current_holder_id: 'agent-c' })])
 
-    expect(Object.keys(useStore.getState().activeBatonsByHolder)).toEqual(['term-c'])
+    expect(Object.keys(useStore.getState().activeBatonsByHolder)).toEqual(['agent-c'])
   })
 
   it('skips batons without a current holder', () => {
     const { setActiveBatons } = useStore.getState()
     setActiveBatons([
       mockBaton({ id: 'orphanish', current_holder_id: null }),
-      mockBaton({ id: 'held', current_holder_id: 'term-a' }),
+      mockBaton({ id: 'held', current_holder_id: 'agent-a' }),
     ])
 
     expect(useStore.getState().activeBatonsByHolder).toEqual({
-      'term-a': [mockBaton({ id: 'held', current_holder_id: 'term-a' })],
+      'agent-a': [mockBaton({ id: 'held', current_holder_id: 'agent-a' })],
     })
   })
 

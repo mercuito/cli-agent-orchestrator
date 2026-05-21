@@ -62,7 +62,7 @@ def show_agent(agent_id: str) -> None:
     click.echo(f"allowed_tools: {json.dumps(list(tool_access.allowed_tools))}")
     click.echo(
         "runtime_capabilities: "
-        f"{json.dumps(list(tool_access.runtime_capabilities))}"
+        f"{json.dumps(list(tool_access.runtime_capabilities or ()))}"
     )
     click.echo(
         "materialized_mcp_servers: "

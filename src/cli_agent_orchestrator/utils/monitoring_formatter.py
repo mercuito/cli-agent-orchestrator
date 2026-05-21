@@ -4,7 +4,7 @@ Pure-function transforms from the shapes produced by ``monitoring_service``
 (session dict + messages list) into a human-readable Markdown artifact or a
 structured JSON payload. See ``docs/plans/monitoring-sessions.md`` for layout.
 
-Sessions under the current model record everything involving a terminal;
+Sessions under the current model record everything involving an agent;
 filtering (by peer, by time sub-window) happens at read time. When a filter
 was applied, the artifact records that in its header so a reader knows they
 are looking at a slice of a larger recording, not the whole thing.
@@ -68,7 +68,7 @@ def format_markdown(
 
     header_lines = [
         f"# Monitoring session: {title}",
-        f"**Monitored:** {session['terminal_id']}",
+        f"**Monitored:** {session['agent_id']}",
         f"**Window:** {_iso(session['started_at'])} → {ended_display}",
     ]
     filter_str = _filter_description(applied_filter)
@@ -79,8 +79,10 @@ def format_markdown(
 
     message_blocks = []
     for m in messages:
-        block_header = f"**{_iso(m['created_at'])} — {m['sender_id']} → {m['receiver_id']}**"
-        message_blocks.append(block_header + "\n" + _quote(m["message"]))
+        block_header = (
+            f"**{_iso(m['created_at'])} — {m['sender_agent_id']} → {m['receiver_agent_id']}**"
+        )
+        message_blocks.append(block_header + "\n" + _quote(m["body"]))
 
     if message_blocks:
         return header + "\n\n" + "\n\n".join(message_blocks) + "\n"

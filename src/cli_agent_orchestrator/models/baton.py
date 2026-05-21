@@ -41,8 +41,8 @@ class Baton(BaseModel):
     id: str = Field(..., description="Unique baton identifier")
     title: str = Field(..., description="Human-readable baton title")
     status: BatonStatus = Field(..., description="Current baton status")
-    originator_id: str = Field(..., description="Terminal that created the baton")
-    current_holder_id: Optional[str] = Field(None, description="Terminal that owes the next move")
+    originator_id: str = Field(..., description="Agent that created the baton")
+    current_holder_id: Optional[str] = Field(None, description="Agent that owes the next move")
     return_stack: List[str] = Field(default_factory=list, description="LIFO return chain")
     expected_next_action: Optional[str] = Field(None, description="Hint for the current holder")
     created_at: datetime = Field(..., description="Creation timestamp")
@@ -59,7 +59,7 @@ class BatonEvent(BaseModel):
     id: int = Field(..., description="Event identifier")
     baton_id: str = Field(..., description="Baton identifier")
     event_type: BatonEventType = Field(..., description="Event type")
-    actor_id: str = Field(..., description="Terminal or operator that performed the action")
+    actor_id: str = Field(..., description="Agent or operator that performed the action")
     from_holder_id: Optional[str] = Field(None, description="Previous holder, if any")
     to_holder_id: Optional[str] = Field(
         None, description="New holder or notification target, if any"

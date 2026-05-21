@@ -24,7 +24,7 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     workdir: '/repo',
     session_name: `${agentId}-session`,
     prompt: '# Agent\n',
-    description: 'Works Linear issues',
+    description: 'Works agent handoffs',
     model: 'gpt-5.2',
     reasoning_effort: 'medium',
     mcp_servers: { cao: { command: 'cao-mcp-server' } },
@@ -40,32 +40,6 @@ const agentStatus = vi.hoisted(() => (agentId: string, displayName: string) => (
     runtime_capabilities: null,
     codex_config: {},
     workspace: { team: null, derived_workspace: null, diagnostics: [] },
-    linear: {
-      app_key: agentId,
-      client_id: 'linear-client',
-      client_secret_configured: true,
-      webhook_secret_configured: false,
-      oauth_redirect_uri: 'https://cao.test/linear/oauth/callback',
-      access_token_configured: true,
-      refresh_token_configured: true,
-      token_expires_at: null,
-      app_user_id: 'linear-user',
-      app_user_name: 'Linear Bot',
-      oauth_state_configured: true,
-      tool_access: [
-        {
-          access_id: 'workflow',
-          tools: ['cao_linear.get_issue'],
-          issues: ['CAO-1'],
-          create_team_ids: ['TEAM'],
-          create_project_ids: [],
-          create_parent_issues: [],
-          allow_top_level_create: false,
-          update_fields: ['title'],
-          reason: 'assigned work',
-        },
-      ],
-    },
   },
   active: false,
   agent_dashboard_token: `${agentId}-dashboard-token`,
@@ -79,7 +53,7 @@ const getTerminal = vi.hoisted(() =>
       id: 'term-1',
       name: 'developer-1234',
       provider: 'codex',
-      session_name: 'cao-linear-discovery-partner',
+      session_name: 'cao-discovery-partner',
       agent_id: 'developer',
       status: 'idle',
       last_active: null,
@@ -93,7 +67,7 @@ const getAgentRuntimeTerminal = vi.hoisted(() =>
         id: 'term-2',
         name: 'developer-5678',
         provider: 'codex',
-        session_name: 'cao-linear-discovery-partner',
+        session_name: 'cao-discovery-partner',
         agent_id: 'developer',
         status: 'idle',
         last_active: null,
@@ -146,11 +120,11 @@ const getAgentTimeline = vi.hoisted(() =>
       agent: agentStatus('aria', 'Aria'),
       events: [
         {
-          event_id: 'linear:agent_mentioned:mention',
-          event_name: 'agent_mentioned',
-          event_type_key: 'LinearAgentMentionedEvent',
-          source_type: 'linear',
-          source_id: 'msg-1',
+          event_id: 'runtime:notification_accepted:mention',
+          event_name: 'agent_runtime_notification_accepted',
+          event_type_key: 'agent_runtime_notification_accepted',
+          source_type: 'runtime',
+          source_id: 'notification:1',
           occurred_at: '2026-05-13T12:00:00',
           correlation_id: null,
           causation_id: null,
@@ -204,7 +178,7 @@ vi.mock('../api', () => ({
       {
         id: 'cao_delivery',
         display_name: 'CAO Delivery',
-        workspace: 'linear_delivery',
+        workspace: 'cao_default',
         members: ['aria'],
         diagnostics: [],
       },
@@ -239,7 +213,7 @@ vi.mock('../store', () => ({
       createSession: vi.fn(),
       deleteSession: vi.fn(),
       terminalStatuses: {},
-      activeMonitoringByTerminal: {},
+      activeMonitoringByAgent: {},
       activeBatonsByHolder: {},
       setTerminalStatus: vi.fn(),
       setActiveMonitoringSessions: vi.fn(),
@@ -282,7 +256,7 @@ describe('AgentPanel', () => {
       fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
 
       expect(await screen.findByTestId('agent-timeline')).toBeInTheDocument()
-      expect(screen.getByText('linear:agent_mentioned:mention')).toBeInTheDocument()
+      expect(screen.getByText('runtime:notification_accepted:mention')).toBeInTheDocument()
       expect(listAgents).toHaveBeenCalled()
       expect(getAgentTimeline).toHaveBeenCalledWith('aria')
     })
@@ -472,7 +446,7 @@ describe('AgentPanel', () => {
   })
 
   describe('durable agent configuration', () => {
-    it('renders the selected agent status, structured fields, raw TOML, and Linear summary', async () => {
+    it('renders the selected agent status, structured fields, raw TOML, and prompt', async () => {
       render(<AgentPanel />)
 
       // Wait for the structured form to mount (Edit button signals the
@@ -490,22 +464,22 @@ describe('AgentPanel', () => {
       // Raw TOML still owns everything outside the structured form.
       expect(screen.getByText(/\[mcp_servers.cao\]/)).toBeInTheDocument()
       expect(screen.getByText(/tools = \["bash"\]/)).toBeInTheDocument()
-      expect(screen.getByText(/\[linear\]/)).toBeInTheDocument()
-      expect(screen.getByText(/\[linear.tool_access.workflow\]/)).toBeInTheDocument()
+      expect(screen.queryByText(/\[removed_provider\]/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/\[removed_provider.tool_access.workflow\]/)).not.toBeInTheDocument()
 
-      // Prompt and Linear secret summary still render.
+      // Prompt still renders and removed provider secrets stay absent.
       expect(screen.getByText('# Agent')).toBeInTheDocument()
-      expect(screen.getAllByText('••••••••').length).toBeGreaterThan(0)
-      expect(screen.getByText(/Access token: Managed by OAuth callback/)).toBeInTheDocument()
+      expect(screen.queryByText('••••••••')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Access token:/)).not.toBeInTheDocument()
     })
 
-    it('reveals configured Linear secret status without exposing token values', async () => {
+    it('does not render removed provider secret reveal controls', async () => {
       render(<AgentPanel />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /reveal client secret/i }))
+      await screen.findByRole('button', { name: /edit aria/i })
 
-      expect(screen.getByText('Configured on server')).toBeInTheDocument()
-      expect(screen.getByText(/Refresh token: Managed by OAuth callback/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /reveal client secret/i })).not.toBeInTheDocument()
+      expect(screen.queryByText(/Refresh token:/)).not.toBeInTheDocument()
     })
 
     it('saves prompt, MCP, and tools edits through the durable agent update API', async () => {
@@ -552,48 +526,45 @@ describe('AgentPanel', () => {
       expect(screen.getByText(/# Updated Agent/)).toBeInTheDocument()
     })
 
-    it('saves Linear binding and tool-access edits through the durable agent update API', async () => {
+    it('ignores removed provider TOML sections during durable agent updates', async () => {
       render(<AgentPanel />)
 
       fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
       const editor = screen.getByLabelText('aria agent.toml') as HTMLTextAreaElement
       fireEvent.change(editor, {
         target: {
-          value: editor.value
-            .replace('app_key = "aria"', 'app_key = "aria-prod"')
-            .replace('issues = ["CAO-1"]', 'issues = ["CAO-2"]')
-            .replace('reason = "assigned work"', 'reason = "reviewed access"'),
+          value: `${editor.value}
+[removed_provider]
+app_key = "aria-prod"
+
+[removed_provider.tool_access.workflow]
+tools = ["cao_removed.get_item"]
+issues = ["CAO-2"]
+reason = "reviewed access"
+`,
         },
       })
       fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
 
       await waitFor(() => {
-        expect(updateAgent).toHaveBeenCalledWith('aria', expect.objectContaining({
-          linear: expect.objectContaining({
-            app_key: 'aria-prod',
-            tool_access: [
-              expect.objectContaining({
-                access_id: 'workflow',
-                issues: ['CAO-2'],
-                reason: 'reviewed access',
-              }),
-            ],
-          }),
-        }))
+        expect(updateAgent).toHaveBeenCalled()
       })
+      const [, body] = updateAgent.mock.calls[0]
+      expect(body.removed_provider).toBeUndefined()
     })
 
     it('surfaces save failures inline against the editor', async () => {
-      updateAgent.mockRejectedValueOnce(new Error('400 Bad Request: linear.tool_access.workflow.tools is required'))
+      updateAgent.mockRejectedValueOnce(new Error('400 Bad Request: reasoning_effort is invalid'))
       render(<AgentPanel />)
 
       fireEvent.click(await screen.findByRole('button', { name: /edit aria/i }))
       fireEvent.click(screen.getByRole('button', { name: /save aria/i }))
 
-      expect(await screen.findByRole('alert')).toHaveTextContent('linear.tool_access.workflow.tools is required')
+      const alerts = await screen.findAllByRole('alert')
+      expect(alerts.some(alert => alert.textContent?.includes('reasoning_effort is invalid'))).toBe(true)
       expect(showSnackbar).toHaveBeenCalledWith(expect.objectContaining({
         type: 'error',
-        message: expect.stringContaining('linear.tool_access.workflow.tools is required'),
+        message: expect.stringContaining('reasoning_effort is invalid'),
       }))
     })
 
@@ -661,7 +632,7 @@ describe('AgentPanel', () => {
       })
 
       expect(getTerminal).toHaveBeenCalledWith('term-1')
-      expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
+      expect(selectSession).toHaveBeenCalledWith('cao-discovery-partner')
     })
 
     it('resolves a durable agent deep link to the current terminal', async () => {
@@ -680,7 +651,7 @@ describe('AgentPanel', () => {
       })
 
       expect(getAgentRuntimeTerminal).toHaveBeenCalledWith('discovery_partner', 'agent-token')
-      expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
+      expect(selectSession).toHaveBeenCalledWith('cao-discovery-partner')
     })
 
     it('reports a consumed terminal deep link so parent tab remounts do not replay it', async () => {
@@ -714,7 +685,6 @@ describe('AgentPanel', () => {
             correlation_id: null,
             causation_id: null,
             event_data: {
-              source_kind: 'linear_mention',
               message_body: 'Aria, can you trace the stuck inbox delivery?',
               terminal_id: 'term-aria-main',
               outcome: 'delivered',
@@ -727,7 +697,7 @@ describe('AgentPanel', () => {
         id: 'term-aria-main',
         name: 'developer-aria',
         provider: 'codex',
-        session_name: 'cao-linear-discovery-partner',
+        session_name: 'cao-discovery-partner',
         agent_id: 'developer',
         status: 'idle',
         last_active: null,
@@ -749,7 +719,7 @@ describe('AgentPanel', () => {
         )
       })
       expect(getTerminal).toHaveBeenCalledWith('term-aria-main')
-      expect(selectSession).toHaveBeenCalledWith('cao-linear-discovery-partner')
+      expect(selectSession).toHaveBeenCalledWith('cao-discovery-partner')
     })
   })
 })

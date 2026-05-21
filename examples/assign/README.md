@@ -119,7 +119,7 @@ Use assign for parallel tasks:
 **When to use:** Send results back to another agent
 
 **How it works:**
-- Sends message to another terminal's inbox
+- Sends message to another agent's inbox
 - Message queued if receiver is busy
 - Delivered when receiver is IDLE
 

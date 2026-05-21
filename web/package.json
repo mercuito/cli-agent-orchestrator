@@ -7,11 +7,13 @@
     "generate:event-types": "cd .. && uv run python scripts/generate_cao_event_payload_types.py",
     "check:event-types": "cd .. && uv run python scripts/generate_cao_event_payload_types.py --check",
     "pretest": "npm run check:event-types && tsc --noEmit",
+    "pretest:run": "npm run check:event-types && tsc --noEmit",
     "dev": "vite",
     "prebuild": "npm run generate:event-types",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:run": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

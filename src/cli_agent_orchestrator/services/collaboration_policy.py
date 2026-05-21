@@ -1,4 +1,4 @@
-"""Shared collaboration policy checks for terminal-owned service writes."""
+"""Shared collaboration policy checks for service writes."""
 
 from __future__ import annotations
 
@@ -41,6 +41,22 @@ def require_terminal_same_team_collaboration(
     )
 
 
+def require_agent_same_team_collaboration(
+    sender_agent_id: str,
+    receiver_agent_id: str,
+    *,
+    db: Session | None = None,
+) -> None:
+    """Require two durable agent ids to belong to the same workspace team."""
+
+    del db
+    manager = default_workspace_collaboration_manager()
+    manager.require_same_team_collaboration(
+        sender=manager.agent_registry.get(sender_agent_id),
+        receiver=manager.agent_registry.get(receiver_agent_id),
+    )
+
+
 def require_terminal_workspace_team(
     terminal_id: str,
     *,
@@ -59,6 +75,22 @@ def require_terminal_workspace_team(
         raise WorkspaceConfigError(
             f"{role} terminal {terminal_id} agent {agent.id} has no workspace team"
         )
+    manager.workspace_for_agent(agent)
+
+
+def require_agent_workspace_team(
+    agent_id: str,
+    *,
+    db: Session | None = None,
+    role: str = "Agent",
+) -> None:
+    """Require one durable agent id to belong to a valid workspace team."""
+
+    del db
+    manager = default_workspace_collaboration_manager()
+    agent = manager.agent_registry.get(agent_id)
+    if manager.team_for_agent(agent) is None:
+        raise WorkspaceConfigError(f"{role} {agent_id} has no workspace team")
     manager.workspace_for_agent(agent)
 
 

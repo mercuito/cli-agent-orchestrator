@@ -17,6 +17,22 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services.agent_manager import AgentManager
+from cli_agent_orchestrator.workspace_tool_providers import registry as workspace_provider_registry
+
+
+@pytest.fixture(autouse=True)
+def isolated_workspace_tool_provider_config(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Keep tests independent of user-home enabled provider config."""
+    monkeypatch.setattr(
+        workspace_provider_registry,
+        "WORKSPACE_TOOL_PROVIDERS_CONFIG_PATH",
+        tmp_path / "workspace-tool-providers.toml",
+    )
+    monkeypatch.setattr(
+        workspace_provider_registry,
+        "_OLD_WORKSPACE_PROVIDERS_CONFIG_PATH",
+        tmp_path / "workspace-providers.toml",
+    )
 
 
 @pytest.fixture

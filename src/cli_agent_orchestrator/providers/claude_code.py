@@ -92,7 +92,7 @@ CLAUDE_STARTUP_DIAGNOSTIC_MAX_CHARS = 800
 
 
 def _bounded_startup_diagnostics(output: str) -> str:
-    """Return short terminal diagnostics suitable for logs and Linear errors."""
+    """Return short terminal diagnostics suitable for logs and API errors."""
     clean_output = re.sub(ANSI_CODE_PATTERN, "", output or "").strip()
     if not clean_output:
         return "<no terminal output captured>"

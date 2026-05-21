@@ -39,6 +39,7 @@ from cli_agent_orchestrator.agent import (
     Agent,
     AgentConfigError,
     AgentPathError,
+    AgentRegistry,
     AgentWorkspaceConfig,
     configure_agents_root,
     load_agent,
@@ -53,7 +54,6 @@ from cli_agent_orchestrator.clients.database import (
     init_db,
     list_baton_events,
     list_batons,
-    list_inbox_deliveries,
 )
 from cli_agent_orchestrator.constants import (
     ALLOWED_HOSTS,
@@ -65,8 +65,11 @@ from cli_agent_orchestrator.constants import (
     SERVER_VERSION,
     TERMINAL_LOG_DIR,
 )
-from cli_agent_orchestrator.inbox import PlainSource, send as send_inbox_message
-from cli_agent_orchestrator.inbox.readiness import LogFileHandler
+from cli_agent_orchestrator.inbox import (
+    list_notifications,
+    schedule_log_delivery_watcher,
+    send as send_inbox_message,
+)
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import MessageStatus
@@ -83,6 +86,7 @@ from cli_agent_orchestrator.services import (
     terminal_service,
 )
 from cli_agent_orchestrator.services.agent_manager import (
+    AgentManager,
     AgentStatus,
     default_agent_manager,
 )
@@ -348,7 +352,6 @@ class EffectiveToolAccessResponse(BaseModel):
     runtime_capabilities: List[str]
     source_markers: Dict[str, str]
     inactive_local_grants: Dict[str, Any]
-    provider_conversation_requirements: List[Dict[str, str]]
     diagnostics: List[ToolAccessDiagnosticResponse]
 
     @classmethod
@@ -365,17 +368,9 @@ class EffectiveToolAccessResponse(BaseModel):
                 provider: list(tools) for provider, tools in access.provider_mediated_tools.items()
             },
             materialized_mcp_servers=dict(access.materialized_mcp_servers),
-            runtime_capabilities=list(access.runtime_capabilities),
+            runtime_capabilities=list(access.runtime_capabilities or ()),
             source_markers=dict(access.source_markers),
             inactive_local_grants=dict(access.inactive_local_grants),
-            provider_conversation_requirements=[
-                {
-                    "provider": item.provider_name,
-                    "operation": item.operation,
-                    "required_identity": item.required_identity,
-                }
-                for item in access.provider_conversation_requirements
-            ],
             diagnostics=[
                 ToolAccessDiagnosticResponse(
                     code=item.code,
@@ -531,12 +526,6 @@ class WorkspaceResponse(BaseModel):
 class ToolDescriptorResponse(BaseModel):
     name: str
     description: str
-
-
-class ProviderRoleAccessSchemaResponse(BaseModel):
-    provider: str
-    tools: List[ToolDescriptorResponse]
-    fields: Dict[str, Any]
 
 
 class WorkspaceTeamRoleResponse(BaseModel):
@@ -930,7 +919,9 @@ class WorkingDirectoryResponse(BaseModel):
 class CreateMonitoringSessionRequest(BaseModel):
     """Request body for creating a monitoring session."""
 
-    terminal_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str
     label: Optional[str] = None
 
 
@@ -938,9 +929,10 @@ class MonitoringMessageEntry(BaseModel):
     """A single message in a monitoring session's window."""
 
     id: int
-    sender_id: str
-    receiver_id: str
-    message: str
+    notification_id: int
+    sender_agent_id: str
+    receiver_agent_id: str
+    body: str
     status: str
     created_at: datetime
 
@@ -949,7 +941,7 @@ class MonitoringSessionResponse(BaseModel):
     """Response shape for monitoring session endpoints."""
 
     id: str
-    terminal_id: str
+    agent_id: str
     label: Optional[str]
     started_at: datetime
     ended_at: Optional[datetime]
@@ -1029,7 +1021,7 @@ async def lifespan(app: FastAPI):
         app.state.workspace_tool_providers = initialize_enabled_workspace_tool_providers()
     except WorkspaceToolProviderConfigError as exc:
         logger.error("Workspace tool providers disabled after startup failure: %s", exc)
-        app.state.workspace_tool_providers = []
+        raise
 
     # Run cleanup in background
     asyncio.create_task(asyncio.to_thread(cleanup_old_data))
@@ -1045,7 +1037,7 @@ async def lifespan(app: FastAPI):
 
     # Start inbox watcher
     inbox_observer = PollingObserver(timeout=INBOX_POLLING_INTERVAL)
-    inbox_observer.schedule(LogFileHandler(), str(TERMINAL_LOG_DIR), recursive=False)
+    schedule_log_delivery_watcher(inbox_observer, TERMINAL_LOG_DIR)
     inbox_observer.start()
     logger.info("Inbox watcher started (PollingObserver)")
 
@@ -1478,7 +1470,10 @@ async def update_agent_endpoint(agent_id: str, body: AgentWriteRequest) -> Agent
         existing = load_agent(agent_id)
         updated = body.to_agent(agent_id, existing)
         patch_agent_config(updated, changed_fields=set(body.model_fields_set))
-        return AgentStatusResponse.from_status(default_agent_manager().status_for_agent(agent_id))
+        agents = dict(load_agent_registry().all())
+        agents[updated.id] = updated
+        manager = AgentManager(configured_agents=AgentRegistry(agents))
+        return AgentStatusResponse.from_status(manager.status_for_agent(agent_id))
     except (AgentConfigError, AgentPathError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -1838,11 +1833,7 @@ async def create_inbox_message_endpoint(
     """Create inbox message and attempt immediate delivery."""
     _require_inbox_message_policy(sender_agent_id, agent_id)
     try:
-        notification = send_inbox_message(
-            agent_id,
-            body,
-            source=PlainSource(sender_agent_id),
-        )
+        notification = send_inbox_message(agent_id, body, sender_agent_id=sender_agent_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -1854,32 +1845,31 @@ async def create_inbox_message_endpoint(
     return {
         "success": True,
         "notification_id": notification.id,
-        "message_id": notification.id,
-        "sender_id": sender_agent_id,
-        "receiver_id": notification.receiver_agent_id,
-        "source_kind": notification.source_kind,
-        "source_id": notification.source_id,
+        "sender_agent_id": sender_agent_id,
+        "receiver_agent_id": notification.receiver_agent_id,
+        "body": notification.body,
+        "status": notification.status.value,
         "created_at": notification.created_at.isoformat(),
     }
 
 
-@app.get("/terminals/{terminal_id}/inbox/messages")
+@app.get("/agents/{agent_id}/inbox/messages")
 async def get_inbox_messages_endpoint(
-    terminal_id: TerminalId,
+    agent_id: str,
     limit: int = Query(default=10, le=100, description="Maximum number of messages to retrieve"),
     status_param: Optional[str] = Query(
         default=None, alias="status", description="Filter by message status"
     ),
 ) -> List[Dict]:
-    """Get inbox messages for a terminal.
+    """Get inbox messages for an agent.
 
     Args:
-        terminal_id: Terminal ID to get messages for
+        agent_id: Agent ID to get messages for
         limit: Maximum number of messages to return (default: 10, max: 100)
         status_param: Optional filter by message status ('pending', 'delivered', 'failed')
 
     Returns:
-        List of inbox messages with sender_id, message, created_at, status
+        List of inbox messages with sender_agent_id, body, created_at, status
     """
     try:
         # Convert status filter if provided
@@ -1893,25 +1883,20 @@ async def get_inbox_messages_endpoint(
                     detail=f"Invalid status: {status_param}. Valid values: pending, delivered, failed",
                 )
 
-        deliveries = list_inbox_deliveries(terminal_id, limit=limit, status=status_filter)
+        notifications = list_notifications(agent_id, limit=limit, status=status_filter)
 
         result = []
-        for delivery in deliveries:
+        for notification in notifications:
             result.append(
                 {
-                    "notification_id": delivery.notification.id,
-                    "message_id": delivery.message.id if delivery.message is not None else None,
-                    "sender_id": (
-                        delivery.message.sender_id if delivery.message is not None else None
-                    ),
-                    "receiver_id": delivery.notification.receiver_id,
-                    "message": delivery.notification.body,
-                    "source_kind": delivery.notification.source_kind,
-                    "source_id": delivery.notification.source_id,
-                    "status": delivery.notification.status.value,
+                    "notification_id": notification.id,
+                    "sender_agent_id": notification.sender_agent_id,
+                    "receiver_agent_id": notification.receiver_agent_id,
+                    "body": notification.body,
+                    "status": notification.status.value,
                     "created_at": (
-                        delivery.notification.created_at.isoformat()
-                        if delivery.notification.created_at
+                        notification.created_at.isoformat()
+                        if notification.created_at
                         else None
                     ),
                 }
@@ -2377,7 +2362,7 @@ async def run_flow(name: str) -> Dict:
 # Monitoring session routes (single-session, query-time filtering)
 #
 # Thin adapter over ``monitoring_service``. Sessions record everything
-# involving a terminal; filtering (by peer, by time sub-window) is a
+# involving an agent; filtering (by peer, by time sub-window) is a
 # query-time concern on ``/messages`` and ``/log``. Intentionally NOT exposed
 # as MCP tools — monitoring is operator / procedure concern, not agent.
 # See docs/plans/monitoring-sessions.md.
@@ -2392,15 +2377,15 @@ async def run_flow(name: str) -> Dict:
 async def create_monitoring_session(
     body: CreateMonitoringSessionRequest,
 ) -> MonitoringSessionResponse:
-    """Start monitoring a terminal, or return the existing active session.
+    """Start monitoring an agent, or return the existing active session.
 
-    Idempotent on active state: calling this for a terminal that already
+    Idempotent on active state: calling this for an agent that already
     has an active session returns that session unchanged — the label
     argument is ignored in that case. Clients that want to check state
-    first can call ``GET /monitoring/sessions?terminal_id=X&status=active``.
+    first can call ``GET /monitoring/sessions?agent_id=X&status=active``.
     """
     result = monitoring_service.create_session(
-        terminal_id=body.terminal_id,
+        agent_id=body.agent_id,
         label=body.label,
     )
     return MonitoringSessionResponse(**result)
@@ -2408,7 +2393,7 @@ async def create_monitoring_session(
 
 @app.get("/monitoring/sessions", response_model=List[MonitoringSessionResponse])
 async def list_monitoring_sessions(
-    terminal_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
     status: Optional[Literal["active", "ended"]] = None,
     label: Optional[str] = None,
     started_after: Optional[datetime] = None,
@@ -2417,7 +2402,7 @@ async def list_monitoring_sessions(
     offset: int = Query(default=0, ge=0),
 ) -> List[MonitoringSessionResponse]:
     rows = monitoring_service.list_sessions(
-        terminal_id=terminal_id,
+        agent_id=agent_id,
         status=status,
         label=label,
         started_after=started_after,

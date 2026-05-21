@@ -54,8 +54,8 @@ function BatonSummary({ baton }: { baton: Baton }) {
   )
 }
 
-export function BatonIndicator({ terminalId }: { terminalId: string }) {
-  const batons = useStore(s => s.activeBatonsByHolder[terminalId] || [])
+export function BatonIndicator({ agentId }: { agentId: string }) {
+  const batons = useStore(s => s.activeBatonsByHolder[agentId] || [])
   const triggerRef = useRef<HTMLSpanElement>(null)
   const [pos, setPos] = useState<TooltipPos | null>(null)
 

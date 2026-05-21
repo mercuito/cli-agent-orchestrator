@@ -20,24 +20,24 @@ def test_db(runtime_inbox_db_session):
 
 def test_boundary_context_creation_is_idempotent_and_queryable(test_db):
     first = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
     second = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
 
     assert second.id == first.id
-    assert second.boundary_provider_id == "linear"
+    assert second.boundary_provider_id == "example"
     assert second.boundary_object_type == "issue"
     assert (
         db_module.get_workspace_context_for_object(
-            provider_id="linear",
+            provider_id="example",
             object_type="issue",
             object_id="CAO-79",
         )
@@ -52,20 +52,20 @@ def test_boundary_context_creation_is_idempotent_and_queryable(test_db):
 
 def test_attached_object_cannot_be_remapped_to_another_context(test_db):
     context_a = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
     context_b = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-80",
     )
     db_module.attach_workspace_context_object(
         workspace_context_id=context_a.id,
-        provider_id="linear",
+        provider_id="example",
         object_type="agent_session",
         object_id="session-42",
         role=WORKSPACE_CONTEXT_ROLE_INTERACTION,
@@ -74,7 +74,7 @@ def test_attached_object_cannot_be_remapped_to_another_context(test_db):
     with pytest.raises(WorkspaceContextConflictError, match="already maps"):
         db_module.attach_workspace_context_object(
             workspace_context_id=context_b.id,
-            provider_id="linear",
+            provider_id="example",
             object_type="agent_session",
             object_id="session-42",
             role=WORKSPACE_CONTEXT_ROLE_INTERACTION,
@@ -83,8 +83,8 @@ def test_attached_object_cannot_be_remapped_to_another_context(test_db):
 
 def test_context_workspace_is_unique_per_agent_and_context(test_db, tmp_path):
     context = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
@@ -118,8 +118,8 @@ def test_context_workspace_is_unique_per_agent_and_context(test_db, tmp_path):
 
 def test_context_workspace_rejects_root_path_conflicts(test_db, tmp_path):
     context = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
@@ -139,8 +139,8 @@ def test_context_workspace_rejects_root_path_conflicts(test_db, tmp_path):
 
 def test_non_boundary_roles_can_repeat_inside_one_context(test_db):
     context = db_module.ensure_workspace_context_for_boundary(
-        resolver_id="linear_planning",
-        provider_id="linear",
+        resolver_id="example_planning",
+        provider_id="example",
         object_type="issue",
         object_id="CAO-79",
     )
@@ -148,7 +148,7 @@ def test_non_boundary_roles_can_repeat_inside_one_context(test_db):
     for object_id in ("activity-1", "activity-2"):
         db_module.attach_workspace_context_object(
             workspace_context_id=context.id,
-            provider_id="linear",
+            provider_id="example",
             object_type="agent_activity",
             object_id=object_id,
             role=WORKSPACE_CONTEXT_ROLE_ATTACHED,

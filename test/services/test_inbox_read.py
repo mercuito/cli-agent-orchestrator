@@ -1,17 +1,15 @@
-"""Tests for the source-agnostic inbox read API."""
+"""Tests for the agent-to-agent inbox read API."""
 
 from __future__ import annotations
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import create_inbox_notification_event
-from cli_agent_orchestrator.inbox import NotReplyable, PlainSource, read, reply, send
+from cli_agent_orchestrator.inbox import InboxReadError, read, send
 
 
-def test_plain_notification_read_returns_body_metadata_and_replyability(
+def test_notification_read_returns_body_for_receiver_agent(
     runtime_inbox_db_session, monkeypatch
-):
-    # Given
+) -> None:
     monkeypatch.setattr(
         "cli_agent_orchestrator.inbox.readiness.check_and_send_pending_messages",
         lambda _receiver_agent_id: False,
@@ -19,28 +17,46 @@ def test_plain_notification_read_returns_body_metadata_and_replyability(
     notification = send(
         "receiver-agent",
         "Can you review this?",
-        source=PlainSource("sender-agent"),
+        sender_agent_id="sender-agent",
     )
 
-    # When
     result = read(notification.id, caller_agent_id="receiver-agent")
 
-    # Then
     assert result.notification.id == notification.id
+    assert result.notification.sender_agent_id == "sender-agent"
+    assert result.notification.receiver_agent_id == "receiver-agent"
     assert result.body == "Can you review this?"
-    assert result.metadata == {}
-    assert result.can_reply is True
 
 
-def test_unregistered_source_kind_reply_raises_not_replyable(runtime_inbox_db_session):
-    # Given
-    notification = create_inbox_notification_event(
-        "agent:receiver-agent",
-        "Baton event payload.",
-        source_kind="baton",
-        source_id="baton-1",
+def test_notification_read_rejects_non_receiver_agent(
+    runtime_inbox_db_session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.inbox.readiness.check_and_send_pending_messages",
+        lambda _receiver_agent_id: False,
+    )
+    notification = send(
+        "receiver-agent",
+        "Can you review this?",
+        sender_agent_id="sender-agent",
     )
 
-    # When / Then
-    with pytest.raises(NotReplyable, match="source_kind 'baton' is not replyable"):
-        reply(notification.id, "Reply body", caller_agent_id="receiver-agent")
+    with pytest.raises(InboxReadError, match="not authorized"):
+        read(notification.id, caller_agent_id="other-agent")
+
+
+def test_notification_read_rejects_legacy_agent_alias_receiver(
+    runtime_inbox_db_session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.inbox.readiness.check_and_send_pending_messages",
+        lambda _receiver_agent_id: False,
+    )
+    notification = send(
+        "agent:receiver-agent:context:old",
+        "Legacy alias should not authorize reads.",
+        sender_agent_id="sender-agent",
+    )
+
+    with pytest.raises(InboxReadError, match="not authorized"):
+        read(notification.id, caller_agent_id="receiver-agent")

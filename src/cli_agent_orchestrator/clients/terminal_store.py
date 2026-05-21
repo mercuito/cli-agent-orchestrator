@@ -134,23 +134,6 @@ def list_terminals_by_agent(agent_id: str) -> List[Dict[str, Any]]:
         return [_terminal_model_to_metadata(t) for t in terminals]
 
 
-def list_terminals_by_agent_and_context(
-    agent_id: str,
-    workspace_context_id: str,
-) -> List[Dict[str, Any]]:
-    """List terminal manifestations mapped to one agent/context pair."""
-    with _session_local()() as db:
-        terminals = (
-            db.query(TerminalModel)
-            .filter(
-                TerminalModel.agent_id == agent_id,
-                TerminalModel.workspace_context_id == workspace_context_id,
-            )
-            .all()
-        )
-        return [_terminal_model_to_metadata(t) for t in terminals]
-
-
 def update_last_active(terminal_id: str) -> bool:
     """Update last active timestamp."""
     with _session_local()() as db:

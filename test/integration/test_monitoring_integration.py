@@ -21,10 +21,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import (
-    Base,
-    InboxNotificationModel,
-)
+from cli_agent_orchestrator.clients.database import Base
+from cli_agent_orchestrator.inbox.store import InboxNotificationModel
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
 pytestmark = pytest.mark.integration
@@ -64,10 +62,9 @@ def _seed_inbox(
 ):
     with session_maker() as s:
         notification_row = InboxNotificationModel(
+            sender_agent_id=sender_id,
             receiver_agent_id=receiver_id,
             body=message,
-            source_kind="terminal",
-            source_id=sender_id,
             status=status.value,
             created_at=created_at,
         )
@@ -83,31 +80,48 @@ class TestFullLifecycle:
         filtered view from the same recording, then end the session."""
         resp = client.post(
             "/monitoring/sessions",
-            json={"terminal_id": "IMP", "label": "review-v1"},
+            json={"agent_id": "implementation_partner", "label": "review-v1"},
         )
         assert resp.status_code == 201
-        assert "peer_terminal_ids" not in resp.json()
+        assert "peer_agent_ids" not in resp.json()
         session_id = resp.json()["id"]
         started_at = datetime.fromisoformat(resp.json()["started_at"])
-
         # Seed three in-window messages — two with R1, one with R2
         t1 = started_at + timedelta(microseconds=100)
         t2 = started_at + timedelta(microseconds=200)
         t3 = started_at + timedelta(microseconds=300)
-        _seed_inbox(live_db, sender_id="IMP", receiver_id="R1", message="hi R1", created_at=t1)
-        _seed_inbox(live_db, sender_id="R1", receiver_id="IMP", message="hi IMP", created_at=t2)
-        _seed_inbox(live_db, sender_id="IMP", receiver_id="R2", message="hi R2", created_at=t3)
+        _seed_inbox(
+            live_db,
+            sender_id="implementation_partner",
+            receiver_id="R1",
+            message="hi R1",
+            created_at=t1,
+        )
+        _seed_inbox(
+            live_db,
+            sender_id="R1",
+            receiver_id="implementation_partner",
+            message="hi IMP",
+            created_at=t2,
+        )
+        _seed_inbox(
+            live_db,
+            sender_id="implementation_partner",
+            receiver_id="R2",
+            message="hi R2",
+            created_at=t3,
+        )
 
         # Unfiltered messages — all three captured
         unfiltered = client.get(f"/monitoring/sessions/{session_id}/messages").json()
-        assert [m["message"] for m in unfiltered] == ["hi R1", "hi IMP", "hi R2"]
+        assert [m["body"] for m in unfiltered] == ["hi R1", "hi IMP", "hi R2"]
 
         # Filtered to R1 — only the two R1 messages
         filtered = client.get(
             f"/monitoring/sessions/{session_id}/messages",
             params=[("peer", "R1")],
         ).json()
-        assert [m["message"] for m in filtered] == ["hi R1", "hi IMP"]
+        assert [m["body"] for m in filtered] == ["hi R1", "hi IMP"]
 
         # Unfiltered markdown log — header omits Filter line
         log = client.get(f"/monitoring/sessions/{session_id}/log")
@@ -135,22 +149,22 @@ class TestFullLifecycle:
 
 
 class TestIdempotentCreate:
-    def test_create_on_monitored_terminal_returns_existing(self, client, live_db):
+    def test_create_on_monitored_agent_returns_existing(self, client, live_db):
         a = client.post(
             "/monitoring/sessions",
-            json={"terminal_id": "T", "label": "first"},
+            json={"agent_id": "T", "label": "first"},
         ).json()
         b = client.post(
             "/monitoring/sessions",
-            json={"terminal_id": "T", "label": "second-ignored"},
+            json={"agent_id": "T", "label": "second-ignored"},
         ).json()
         assert a["id"] == b["id"]
         assert b["label"] == "first"
 
     def test_create_after_ending_yields_new_session(self, client, live_db):
-        first_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
+        first_id = client.post("/monitoring/sessions", json={"agent_id": "T"}).json()["id"]
         client.post(f"/monitoring/sessions/{first_id}/end").raise_for_status()
-        second_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
+        second_id = client.post("/monitoring/sessions", json={"agent_id": "T"}).json()["id"]
         assert first_id != second_id
 
 
@@ -159,9 +173,8 @@ class TestTimeWindowFilter:
         """Extract a sub-window (e.g. 'step 3' of a long recording)."""
         from cli_agent_orchestrator.clients.database import MonitoringSessionModel
 
-        resp = client.post("/monitoring/sessions", json={"terminal_id": "IMP"})
+        resp = client.post("/monitoring/sessions", json={"agent_id": "implementation_partner"})
         session_id = resp.json()["id"]
-
         # Pin the session start to a known timestamp so we can seed deterministically
         start = datetime(2026, 4, 18, 10, 0, 0)
         with live_db() as s:
@@ -171,7 +184,7 @@ class TestTimeWindowFilter:
         for i in range(5):
             _seed_inbox(
                 live_db,
-                sender_id="IMP",
+                sender_id="implementation_partner",
                 receiver_id="R",
                 message=f"m{i}",
                 created_at=start + timedelta(minutes=i),
@@ -185,7 +198,7 @@ class TestTimeWindowFilter:
             },
         )
         assert resp.status_code == 200
-        assert [m["message"] for m in resp.json()] == ["m2", "m3"]
+        assert [m["body"] for m in resp.json()] == ["m2", "m3"]
 
 
 class TestResponseModelShapes:
@@ -193,12 +206,12 @@ class TestResponseModelShapes:
     until HTTP→service→DB run together. Catches Pydantic shape drift."""
 
     def test_create_and_get_shapes_pydantic_accepts(self, client, live_db):
-        body = client.post("/monitoring/sessions", json={"terminal_id": "T", "label": "hi"})
+        body = client.post("/monitoring/sessions", json={"agent_id": "T", "label": "hi"})
         assert body.status_code == 201
         payload = body.json()
         assert set(payload.keys()) == {
             "id",
-            "terminal_id",
+            "agent_id",
             "label",
             "started_at",
             "ended_at",
@@ -210,46 +223,46 @@ class TestResponseModelShapes:
         assert fetched.json()["id"] == payload["id"]
 
     def test_list_shape_pydantic_accepts(self, client, live_db):
-        client.post("/monitoring/sessions", json={"terminal_id": "T1"}).raise_for_status()
-        client.post("/monitoring/sessions", json={"terminal_id": "T2"}).raise_for_status()
+        client.post("/monitoring/sessions", json={"agent_id": "T1"}).raise_for_status()
+        client.post("/monitoring/sessions", json={"agent_id": "T2"}).raise_for_status()
         resp = client.get("/monitoring/sessions")
         assert resp.status_code == 200
         assert len(resp.json()) == 2
         for item in resp.json():
-            assert "peer_terminal_ids" not in item
+            assert "peer_agent_ids" not in item
             assert item["status"] in {"active", "ended"}
 
 
 class TestPeerEndpointsGone:
     def test_add_peer_endpoint_removed(self, client, live_db):
-        session_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
+        session_id = client.post("/monitoring/sessions", json={"agent_id": "T"}).json()["id"]
         resp = client.post(
             f"/monitoring/sessions/{session_id}/peers",
-            json={"peer_terminal_ids": ["P"]},
+            json={"peer_agent_ids": ["P"]},
         )
         assert resp.status_code in (404, 405)
 
     def test_remove_peer_endpoint_removed(self, client, live_db):
-        session_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
+        session_id = client.post("/monitoring/sessions", json={"agent_id": "T"}).json()["id"]
         resp = client.delete(f"/monitoring/sessions/{session_id}/peers/P")
         assert resp.status_code in (404, 405)
 
 
 class TestEndedSessionImmutability:
     def test_end_twice_returns_409(self, client, live_db):
-        session_id = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
+        session_id = client.post("/monitoring/sessions", json={"agent_id": "T"}).json()["id"]
         client.post(f"/monitoring/sessions/{session_id}/end").raise_for_status()
 
         resp = client.post(f"/monitoring/sessions/{session_id}/end")
         assert resp.status_code == 409
 
-    def test_create_after_ending_on_same_terminal_is_fine(self, client, live_db):
+    def test_create_after_ending_on_same_agent_is_fine(self, client, live_db):
         """Ending doesn't block future sessions — the idempotency contract
         is 'while active' not 'ever'."""
-        sid = client.post("/monitoring/sessions", json={"terminal_id": "T"}).json()["id"]
+        sid = client.post("/monitoring/sessions", json={"agent_id": "T"}).json()["id"]
         client.post(f"/monitoring/sessions/{sid}/end").raise_for_status()
 
-        resp = client.post("/monitoring/sessions", json={"terminal_id": "T"})
+        resp = client.post("/monitoring/sessions", json={"agent_id": "T"})
         assert resp.status_code == 201
         assert resp.json()["id"] != sid
         assert resp.json()["status"] == "active"

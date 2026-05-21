@@ -75,11 +75,11 @@ the next baton action.
 
 Use baton tools this way when they are available:
 
-- `pass_baton`: send control to another terminal holder for its next move.
+- `pass_baton`: send control to another agent holder for its next move.
 - `return_baton`: send control back to the previous holder on the return stack.
 - `complete_baton`: mark the tracked obligation done and notify the originator.
 - `block_baton`: mark the tracked obligation blocked when you cannot continue.
-- `get_my_batons`: inspect batons currently assigned to your terminal.
+- `get_my_batons`: inspect batons currently assigned to your agent.
 - `get_baton`: inspect the baton state, holder, return stack, or recent context.
 
 Do not transfer baton ownership with a standalone `send_message`. Baton transfer
@@ -89,14 +89,14 @@ makes the workflow harder to recover and can trigger misleading nudges.
 
 ### Pass, Return, Complete, or Block
 
-Pass the baton when another terminal holder owes the next move. Include a self-contained
+Pass the baton when another agent holder owes the next move. Include a self-contained
 message with the baton id, task context, artifacts to inspect, and the expected
 next action.
 
 ```text
 pass_baton(
   baton_id="...",
-  receiver_id="<reviewer-terminal>",
+  receiver_id="<reviewer-agent-id>",
   message="Review the docs/protocol update and return findings or approval.",
   expected_next_action="Review artifacts and return this baton to the implementer."
 )

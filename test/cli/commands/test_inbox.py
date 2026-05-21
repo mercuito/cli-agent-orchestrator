@@ -30,10 +30,10 @@ def test_inbox_list_human_output():
 
     messages_payload: List[Dict[str, Any]] = [
         {
-            "id": 1,
-            "sender_id": "aaaa1111",
-            "receiver_id": "bbbb2222",
-            "message": "Hello",
+            "notification_id": 1,
+            "sender_agent_id": "aaaa1111",
+            "receiver_agent_id": "bbbb2222",
+            "body": "Hello",
             "status": "delivered",
             "created_at": "2026-02-06T00:00:00",
         }
@@ -66,10 +66,10 @@ def test_inbox_list_json_output():
 
     messages_payload: List[Dict[str, Any]] = [
         {
-            "id": 1,
-            "sender_id": "aaaa1111",
-            "receiver_id": "bbbb2222",
-            "message": "Hello",
+            "notification_id": 1,
+            "sender_agent_id": "aaaa1111",
+            "receiver_agent_id": "bbbb2222",
+            "body": "Hello",
             "status": "delivered",
             "created_at": "2026-02-06T00:00:00",
         }
@@ -80,7 +80,7 @@ def test_inbox_list_json_output():
         result = runner.invoke(inbox, ["list", "bbbb2222", "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.output) == {"terminal_id": "bbbb2222", "messages": messages_payload}
+    assert json.loads(result.output) == {"agent_id": "bbbb2222", "messages": messages_payload}
 
 
 def test_inbox_connection_error_is_click_exception():

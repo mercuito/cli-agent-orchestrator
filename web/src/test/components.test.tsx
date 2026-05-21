@@ -98,7 +98,7 @@ describe('MonitoringIndicator', () => {
   function mockSession(overrides: Partial<import('../api').MonitoringSession> = {}): import('../api').MonitoringSession {
     return {
       id: 'sess-1',
-      terminal_id: 'term-x',
+      agent_id: 'term-x',
       label: null,
       started_at: new Date().toISOString(),
       ended_at: null,
@@ -114,27 +114,27 @@ describe('MonitoringIndicator', () => {
   }
 
   beforeEach(() => {
-    useStore.setState({ activeMonitoringByTerminal: {} })
+    useStore.setState({ activeMonitoringByAgent: {} })
   })
 
   it('renders nothing when the terminal is not monitored', () => {
-    const { container } = render(<MonitoringIndicator terminalId="term-x" />)
+    const { container } = render(<MonitoringIndicator agentId="term-x" />)
     expect(container).toBeEmptyDOMElement()
   })
 
   it('renders an indicator when the terminal is monitored', () => {
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-x': mockSession() },
+      activeMonitoringByAgent: { 'term-x': mockSession() },
     })
-    render(<MonitoringIndicator terminalId="term-x" />)
+    render(<MonitoringIndicator agentId="term-x" />)
     expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
   })
 
   it('tooltip only renders when hovered or focused', () => {
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-x': mockSession() },
+      activeMonitoringByAgent: { 'term-x': mockSession() },
     })
-    render(<MonitoringIndicator terminalId="term-x" />)
+    render(<MonitoringIndicator agentId="term-x" />)
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
 
     fireEvent.mouseEnter(screen.getByLabelText(/being monitored/i))
@@ -145,39 +145,39 @@ describe('MonitoringIndicator', () => {
   })
 
   it('reacts to store changes without remounting', () => {
-    render(<MonitoringIndicator terminalId="term-x" />)
+    render(<MonitoringIndicator agentId="term-x" />)
     expect(screen.queryByLabelText(/being monitored/i)).not.toBeInTheDocument()
 
     act(() => {
       useStore.setState({
-        activeMonitoringByTerminal: { 'term-x': mockSession() },
+        activeMonitoringByAgent: { 'term-x': mockSession() },
       })
     })
     expect(screen.getByLabelText(/being monitored/i)).toBeInTheDocument()
 
     act(() => {
-      useStore.setState({ activeMonitoringByTerminal: {} })
+      useStore.setState({ activeMonitoringByAgent: {} })
     })
     expect(screen.queryByLabelText(/being monitored/i)).not.toBeInTheDocument()
   })
 
   it('shows indicator for the right terminal only', () => {
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-a': mockSession({ terminal_id: 'term-a' }) },
+      activeMonitoringByAgent: { 'term-a': mockSession({ agent_id: 'term-a' }) },
     })
-    const { container: aEl } = render(<MonitoringIndicator terminalId="term-a" />)
-    const { container: bEl } = render(<MonitoringIndicator terminalId="term-b" />)
+    const { container: aEl } = render(<MonitoringIndicator agentId="term-a" />)
+    const { container: bEl } = render(<MonitoringIndicator agentId="term-b" />)
     expect(aEl).not.toBeEmptyDOMElement()
     expect(bEl).toBeEmptyDOMElement()
   })
 
   it('tooltip shows the session label', () => {
     useStore.setState({
-      activeMonitoringByTerminal: {
+      activeMonitoringByAgent: {
         'term-x': mockSession({ label: 'review-v2' }),
       },
     })
-    render(<MonitoringIndicator terminalId="term-x" />)
+    render(<MonitoringIndicator agentId="term-x" />)
     const tooltip = hoverAndGetTooltip()
     expect(tooltip).toHaveTextContent('Label:')
     expect(tooltip).toHaveTextContent('review-v2')
@@ -185,11 +185,11 @@ describe('MonitoringIndicator', () => {
 
   it('tooltip falls back to short session id when label is null', () => {
     useStore.setState({
-      activeMonitoringByTerminal: {
+      activeMonitoringByAgent: {
         'term-x': mockSession({ id: '068d4299-0f97-4b34-b29c-05555995be21', label: null }),
       },
     })
-    render(<MonitoringIndicator terminalId="term-x" />)
+    render(<MonitoringIndicator agentId="term-x" />)
     const tooltip = hoverAndGetTooltip()
     expect(tooltip).toHaveTextContent('068d4299')
   })
@@ -197,11 +197,11 @@ describe('MonitoringIndicator', () => {
   it('tooltip shows relative start time', () => {
     const started = new Date(Date.now() - 5 * 60 * 1000).toISOString()
     useStore.setState({
-      activeMonitoringByTerminal: {
+      activeMonitoringByAgent: {
         'term-x': mockSession({ started_at: started }),
       },
     })
-    render(<MonitoringIndicator terminalId="term-x" />)
+    render(<MonitoringIndicator agentId="term-x" />)
     expect(hoverAndGetTooltip()).toHaveTextContent(/5m ago/)
   })
 
@@ -209,9 +209,9 @@ describe('MonitoringIndicator', () => {
     // Peer scoping moved to query time on /log — the session itself
     // has no peer set to display, so the "Peers:" line is gone.
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-x': mockSession() },
+      activeMonitoringByAgent: { 'term-x': mockSession() },
     })
-    render(<MonitoringIndicator terminalId="term-x" />)
+    render(<MonitoringIndicator agentId="term-x" />)
     const tooltip = hoverAndGetTooltip()
     expect(tooltip.textContent).not.toMatch(/peers:/i)
   })
@@ -223,8 +223,8 @@ describe('BatonIndicator', () => {
       id: overrides.id || 'baton-1',
       title: overrides.title || 'Review implementation',
       status: overrides.status || 'active',
-      originator_id: overrides.originator_id || 'term-origin',
-      current_holder_id: overrides.current_holder_id !== undefined ? overrides.current_holder_id : 'term-x',
+      originator_id: overrides.originator_id || 'agent-origin',
+      current_holder_id: overrides.current_holder_id !== undefined ? overrides.current_holder_id : 'agent-x',
       return_stack: overrides.return_stack || ['term-author'],
       expected_next_action: overrides.expected_next_action !== undefined ? overrides.expected_next_action : 'review the patch',
       created_at: overrides.created_at || new Date(Date.now() - 10 * 60 * 1000).toISOString(),
@@ -244,57 +244,57 @@ describe('BatonIndicator', () => {
     useStore.setState({ activeBatonsByHolder: {} })
   })
 
-  it('renders nothing when the terminal holds no batons', () => {
-    const { container } = render(<BatonIndicator terminalId="term-x" />)
+  it('renders nothing when the agent holds no batons', () => {
+    const { container } = render(<BatonIndicator agentId="agent-x" />)
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('renders an indicator when the terminal holds a baton', () => {
+  it('renders an indicator when the agent holds a baton', () => {
     useStore.setState({
-      activeBatonsByHolder: { 'term-x': [mockBaton()] },
+      activeBatonsByHolder: { 'agent-x': [mockBaton()] },
     })
-    render(<BatonIndicator terminalId="term-x" />)
+    render(<BatonIndicator agentId="agent-x" />)
     expect(screen.getByLabelText(/holding 1 baton/i)).toBeInTheDocument()
   })
 
   it('shows baton holder details in the tooltip', () => {
     useStore.setState({
       activeBatonsByHolder: {
-        'term-x': [
+        'agent-x': [
           mockBaton({
             title: 'T07 dashboard visibility',
-            originator_id: 'term-origin',
-            current_holder_id: 'term-x',
+            originator_id: 'agent-origin',
+            current_holder_id: 'agent-x',
             expected_next_action: 'render a baton indicator',
-            return_stack: ['term-author', 'term-origin'],
+            return_stack: ['agent-author', 'agent-origin'],
           }),
         ],
       },
     })
-    render(<BatonIndicator terminalId="term-x" />)
+    render(<BatonIndicator agentId="agent-x" />)
 
     const tooltip = hoverAndGetTooltip()
     expect(tooltip).toHaveTextContent('T07 dashboard visibility')
     expect(tooltip).toHaveTextContent('Holder:')
-    expect(tooltip).toHaveTextContent('term-x')
+    expect(tooltip).toHaveTextContent('agent-x')
     expect(tooltip).toHaveTextContent('Originator:')
-    expect(tooltip).toHaveTextContent('term-origin')
+    expect(tooltip).toHaveTextContent('agent-origin')
     expect(tooltip).toHaveTextContent('Expected:')
     expect(tooltip).toHaveTextContent('render a baton indicator')
     expect(tooltip).toHaveTextContent('Return:')
-    expect(tooltip).toHaveTextContent('term-author -> term-origin')
+    expect(tooltip).toHaveTextContent('agent-author -> agent-origin')
   })
 
   it('shows a count and multiple baton titles when several are held', () => {
     useStore.setState({
       activeBatonsByHolder: {
-        'term-x': [
+        'agent-x': [
           mockBaton({ id: 'baton-1', title: 'First review' }),
           mockBaton({ id: 'baton-2', title: 'Second review' }),
         ],
       },
     })
-    render(<BatonIndicator terminalId="term-x" />)
+    render(<BatonIndicator agentId="agent-x" />)
 
     const tooltip = hoverAndGetTooltip(/holding 2 batons/i)
     expect(screen.getByLabelText(/holding 2 batons/i)).toHaveTextContent('2')
@@ -303,12 +303,12 @@ describe('BatonIndicator', () => {
   })
 
   it('reacts to store changes without remounting', () => {
-    render(<BatonIndicator terminalId="term-x" />)
+    render(<BatonIndicator agentId="agent-x" />)
     expect(screen.queryByLabelText(/holding 1 baton/i)).not.toBeInTheDocument()
 
     act(() => {
       useStore.setState({
-        activeBatonsByHolder: { 'term-x': [mockBaton()] },
+        activeBatonsByHolder: { 'agent-x': [mockBaton()] },
       })
     })
     expect(screen.getByLabelText(/holding 1 baton/i)).toBeInTheDocument()
@@ -324,7 +324,7 @@ describe('MonitoringButton', () => {
   function mockSession(overrides: Partial<import('../api').MonitoringSession> = {}): import('../api').MonitoringSession {
     return {
       id: 'sess-1',
-      terminal_id: 'term-x',
+      agent_id: 'term-x',
       label: null,
       started_at: new Date().toISOString(),
       ended_at: null,
@@ -335,44 +335,44 @@ describe('MonitoringButton', () => {
 
   beforeEach(() => {
     useStore.setState({
-      activeMonitoringByTerminal: {},
+      activeMonitoringByAgent: {},
       snackbar: null,
     })
     vi.restoreAllMocks()
   })
 
   it('renders a Monitor button when the terminal has no active session', () => {
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     expect(screen.getByRole('button', { name: /^monitor$/i })).toBeInTheDocument()
   })
 
   it('renders a Stop button when the terminal has an active session', () => {
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-x': mockSession() },
+      activeMonitoringByAgent: { 'term-x': mockSession() },
     })
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument()
   })
 
-  it('clicking Monitor calls startMonitoring with terminal_id and a dashboard-HHmmss label', async () => {
+  it('clicking Monitor calls startMonitoring with agent_id and a dashboard-HHmmss label', async () => {
     const spy = vi.spyOn(api, 'startMonitoring').mockResolvedValue(mockSession())
     vi.spyOn(api, 'listActiveMonitoringSessions').mockResolvedValue([])
 
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
 
     // Allow both the action and the post-action store refresh to resolve
     await new Promise(r => setTimeout(r, 0))
 
     expect(spy).toHaveBeenCalledTimes(1)
-    const [terminalId, label] = spy.mock.calls[0]
-    expect(terminalId).toBe('term-x')
+    const [agentId, label] = spy.mock.calls[0]
+    expect(agentId).toBe('term-x')
     expect(label).toMatch(/^dashboard-\d{6}$/)
   })
 
   it('clicking Stop calls endMonitoring with the active session id', async () => {
     useStore.setState({
-      activeMonitoringByTerminal: {
+      activeMonitoringByAgent: {
         'term-x': mockSession({ id: 'sess-to-end' }),
       },
     })
@@ -383,7 +383,7 @@ describe('MonitoringButton', () => {
     })
     vi.spyOn(api, 'listActiveMonitoringSessions').mockResolvedValue([])
 
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
     await new Promise(r => setTimeout(r, 0))
 
@@ -402,18 +402,18 @@ describe('MonitoringButton', () => {
       .spyOn(api, 'listActiveMonitoringSessions')
       .mockResolvedValue([newSession])
 
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
     await new Promise(r => setTimeout(r, 0))
 
     expect(listSpy).toHaveBeenCalled()
     // And the store reflects the new state
-    expect(useStore.getState().activeMonitoringByTerminal['term-x']).toEqual(newSession)
+    expect(useStore.getState().activeMonitoringByAgent['term-x']).toEqual(newSession)
   })
 
   it('refreshes the store immediately after a successful stop', async () => {
     useStore.setState({
-      activeMonitoringByTerminal: {
+      activeMonitoringByAgent: {
         'term-x': mockSession({ id: 'sess-to-end' }),
       },
     })
@@ -424,12 +424,12 @@ describe('MonitoringButton', () => {
     })
     vi.spyOn(api, 'listActiveMonitoringSessions').mockResolvedValue([])
 
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
     await new Promise(r => setTimeout(r, 0))
 
     // Session dropped from the map
-    expect(useStore.getState().activeMonitoringByTerminal['term-x']).toBeUndefined()
+    expect(useStore.getState().activeMonitoringByAgent['term-x']).toBeUndefined()
   })
 
   it('silent-fails the store refresh if it errors after a successful action', async () => {
@@ -441,7 +441,7 @@ describe('MonitoringButton', () => {
       new Error('refresh network blip')
     )
 
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
     await new Promise(r => setTimeout(r, 0))
 
@@ -451,7 +451,7 @@ describe('MonitoringButton', () => {
 
   it('start error surfaces as a snackbar', async () => {
     vi.spyOn(api, 'startMonitoring').mockRejectedValue(new Error('500 server broke'))
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^monitor$/i }))
     await new Promise(r => setTimeout(r, 0))
 
@@ -462,10 +462,10 @@ describe('MonitoringButton', () => {
 
   it('stop error surfaces as a snackbar', async () => {
     useStore.setState({
-      activeMonitoringByTerminal: { 'term-x': mockSession() },
+      activeMonitoringByAgent: { 'term-x': mockSession() },
     })
     vi.spyOn(api, 'endMonitoring').mockRejectedValue(new Error('404 missing'))
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
     await new Promise(r => setTimeout(r, 0))
 
@@ -481,7 +481,7 @@ describe('MonitoringButton', () => {
       () => new Promise(r => { _resolve = r }) as Promise<any>
     )
 
-    render(<MonitoringButton terminalId="term-x" />)
+    render(<MonitoringButton agentId="term-x" />)
     const btn = screen.getByRole('button', { name: /^monitor$/i })
     fireEvent.click(btn)
     // After click, button must be disabled (prevents double-submit)

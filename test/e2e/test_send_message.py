@@ -58,23 +58,23 @@ def _create_terminal_in_session(session_name: str, provider: str, agent_id: str)
     return data["id"]
 
 
-def _send_inbox_message(sender_id: str, receiver_id: str, message: str):
-    """Send a message to a terminal's inbox via the API."""
+def _send_inbox_message(sender_agent_id: str, receiver_agent_id: str, message: str):
+    """Send a message to an agent's inbox via the API."""
     resp = requests.post(
-        f"{API_BASE_URL}/terminals/{receiver_id}/inbox/messages",
-        params={"sender_id": sender_id, "message": message},
+        f"{API_BASE_URL}/agents/{receiver_agent_id}/inbox/messages",
+        params={"sender_agent_id": sender_agent_id, "body": message},
     )
     assert resp.status_code == 200, f"Inbox message send failed: {resp.status_code} {resp.text}"
     return resp.json()
 
 
-def _get_inbox_messages(terminal_id: str, status_filter: str = None):
-    """Get inbox messages for a terminal."""
+def _get_inbox_messages(agent_id: str, status_filter: str = None):
+    """Get inbox messages for an agent."""
     params = {"limit": 50}
     if status_filter:
         params["status"] = status_filter
     resp = requests.get(
-        f"{API_BASE_URL}/terminals/{terminal_id}/inbox/messages",
+        f"{API_BASE_URL}/agents/{agent_id}/inbox/messages",
         params=params,
     )
     assert resp.status_code == 200, f"Get inbox messages failed: {resp.status_code} {resp.text}"
@@ -86,7 +86,7 @@ def _run_send_message_test(provider: str, agent_id: str):
 
     Tests:
     - Message is created in receiver's inbox
-    - Message has correct sender_id
+    - Message has correct sender_agent_id
     - Message content is preserved
     """
     session_suffix = uuid.uuid4().hex[:6]
@@ -135,9 +135,9 @@ def _run_send_message_test(provider: str, agent_id: str):
         # Step 5: Send message from sender to receiver's inbox
         test_message = f"E2E test message from {sender_id} at {time.time()}"
         result = _send_inbox_message(sender_id, receiver_id, test_message)
-        assert result.get("message_id"), "Message should have an ID"
-        assert result.get("sender_id") == sender_id, "Sender ID should match"
-        assert result.get("receiver_id") == receiver_id, "Receiver ID should match"
+        assert result.get("notification_id"), "Message should have an ID"
+        assert result.get("sender_agent_id") == sender_id, "Sender ID should match"
+        assert result.get("receiver_agent_id") == receiver_id, "Receiver ID should match"
 
         # Step 6: Verify message appears in receiver's inbox
         # Give the inbox service a moment to process
@@ -148,12 +148,12 @@ def _run_send_message_test(provider: str, agent_id: str):
         # Find our message
         found = False
         for msg in messages:
-            if msg.get("sender_id") == sender_id and test_message in msg.get("message", ""):
+            if msg.get("sender_agent_id") == sender_id and test_message in msg.get("body", ""):
                 found = True
                 break
         assert found, (
             f"Test message not found in receiver's inbox. "
-            f"Messages: {[m.get('message', '')[:50] for m in messages]}"
+            f"Messages: {[m.get('body', '')[:50] for m in messages]}"
         )
 
         # Step 7: Verify message was DELIVERED (not stuck as PENDING).
@@ -164,7 +164,7 @@ def _run_send_message_test(provider: str, agent_id: str):
             time.sleep(5)
             messages = _get_inbox_messages(receiver_id, status_filter="delivered")
             if any(
-                m.get("sender_id") == sender_id and test_message in m.get("message", "")
+                m.get("sender_agent_id") == sender_id and test_message in m.get("body", "")
                 for m in messages
             ):
                 delivered = True
@@ -211,7 +211,7 @@ class TestCodexSendMessage:
     """E2E send_message tests for the Codex provider."""
 
     def test_send_message_to_inbox(self, require_codex):
-        """Send a message to another Codex terminal's inbox and verify delivery."""
+        """Send a message to another Codex agent's inbox and verify delivery."""
         _run_send_message_test(provider="codex", agent_id="developer")
 
 
@@ -225,7 +225,7 @@ class TestClaudeCodeSendMessage:
     """E2E send_message tests for the Claude Code provider."""
 
     def test_send_message_to_inbox(self, require_claude):
-        """Send a message to another Claude Code terminal's inbox and verify delivery."""
+        """Send a message to another Claude Code agent's inbox and verify delivery."""
         _run_send_message_test(provider="claude_code", agent_id="developer")
 
 
@@ -239,7 +239,7 @@ class TestKiroCliSendMessage:
     """E2E send_message tests for the Kiro CLI provider."""
 
     def test_send_message_to_inbox(self, require_kiro):
-        """Send a message to another Kiro CLI terminal's inbox and verify delivery."""
+        """Send a message to another Kiro CLI agent's inbox and verify delivery."""
         _run_send_message_test(provider="kiro_cli", agent_id="developer")
 
 
@@ -253,7 +253,7 @@ class TestKimiCliSendMessage:
     """E2E send_message tests for the Kimi CLI provider."""
 
     def test_send_message_to_inbox(self, require_kimi):
-        """Send a message to another Kimi CLI terminal's inbox and verify delivery."""
+        """Send a message to another Kimi CLI agent's inbox and verify delivery."""
         _run_send_message_test(provider="kimi_cli", agent_id="developer")
 
 
@@ -267,7 +267,7 @@ class TestGeminiCliSendMessage:
     """E2E send_message tests for the Gemini CLI provider."""
 
     def test_send_message_to_inbox(self, require_gemini):
-        """Send a message to another Gemini CLI terminal's inbox and verify delivery."""
+        """Send a message to another Gemini CLI agent's inbox and verify delivery."""
         _run_send_message_test(provider="gemini_cli", agent_id="developer")
 
 
@@ -281,5 +281,5 @@ class TestCopilotCliSendMessage:
     """E2E send_message tests for the Copilot CLI provider."""
 
     def test_send_message_to_inbox(self, require_copilot):
-        """Send a message to another Copilot CLI terminal's inbox and verify delivery."""
+        """Send a message to another Copilot CLI agent's inbox and verify delivery."""
         _run_send_message_test(provider="copilot_cli", agent_id="developer")

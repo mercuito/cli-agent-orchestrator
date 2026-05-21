@@ -107,9 +107,9 @@ def baton() -> None:
 
 @baton.command("list")
 @click.option("--status", "status_filter", type=click.Choice(_status_choices()), default=None)
-@click.option("--holder", "holder_id", default=None, help="Filter by current holder terminal id")
+@click.option("--holder", "holder_id", default=None, help="Filter by current holder agent id")
 @click.option(
-    "--originator", "originator_id", default=None, help="Filter by originator terminal id"
+    "--originator", "originator_id", default=None, help="Filter by originator agent id"
 )
 @click.option("--limit", type=int, default=50, show_default=True)
 @click.option("--offset", type=int, default=0, show_default=True)
@@ -181,7 +181,7 @@ def cancel_cmd(baton_id: str, message: Optional[str], json_output: bool) -> None
 
 @baton.command("reassign")
 @click.argument("baton_id")
-@click.option("--holder", "holder_id", required=True, help="New holder terminal id")
+@click.option("--holder", "holder_id", required=True, help="New holder agent id")
 @click.option("--message", default=None, help="Recovery note for the audit event")
 @click.option("--expected-next-action", default=None, help="Expectation for the new holder")
 @click.option("--json", "json_output", is_flag=True, help="Output structured JSON")

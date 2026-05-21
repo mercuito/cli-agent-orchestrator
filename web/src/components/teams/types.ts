@@ -1,6 +1,5 @@
 import type {
   AgentStatus,
-  ProviderRoleAccessSchema,
   ToolDescriptor,
   Workspace,
   WorkspaceTeam,
@@ -23,7 +22,6 @@ export interface TeamsDataProps {
   workspaces: Workspace[]
   agents: AgentStatus[]
   caoTools: ToolDescriptor[]
-  providerSchemas: Record<string, ProviderRoleAccessSchema>
 }
 
 export type TeamMutator = (team: WorkspaceTeam) => void

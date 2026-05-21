@@ -1,19 +1,16 @@
-"""Tests for terminal inbox HTTP endpoints."""
+"""Tests for agent inbox HTTP endpoints."""
 
-from datetime import datetime
 from unittest.mock import patch
 
 import pytest
 
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
-from cli_agent_orchestrator.inbox import PlainSource
-from cli_agent_orchestrator.inbox.models import Notification
-from cli_agent_orchestrator.models.inbox import (
-    InboxDelivery,
-    InboxMessageRecord,
-    InboxNotification,
-    MessageStatus,
+from cli_agent_orchestrator.inbox import (
+    list_notifications,
+    send as create_inbox_notification,
+    update_notification_statuses,
 )
+from cli_agent_orchestrator.models.inbox import MessageStatus
 from cli_agent_orchestrator.workspace_contexts import WorkspaceContextResolution
 from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_ID,
@@ -26,127 +23,80 @@ from cli_agent_orchestrator.workspaces import (
 )
 
 
-@pytest.fixture
-def sample_inbox_deliveries():
-    """Create sample notification-backed inbox deliveries for endpoint tests."""
-    return [
-        InboxDelivery(
-            message=InboxMessageRecord(
-                id=11,
-                sender_id="sender1",
-                body="Hello world",
-                source_kind="terminal",
-                source_id="sender1",
-                origin=None,
-                route_kind=None,
-                route_id=None,
-                created_at=datetime(2026, 5, 7, 12, 0, 0),
-            ),
-            notification=InboxNotification(
-                id=1,
-                receiver_id="abcdef12",
-                body="Hello world",
-                source_kind="terminal",
-                source_id="sender1",
-                metadata=None,
-                status=MessageStatus.PENDING,
-                created_at=datetime(2026, 5, 7, 12, 0, 0),
-            ),
-        ),
-        InboxDelivery(
-            message=InboxMessageRecord(
-                id=12,
-                sender_id="sender2",
-                body="Another message",
-                source_kind="terminal",
-                source_id="sender2",
-                origin=None,
-                route_kind=None,
-                route_id=None,
-                created_at=datetime(2026, 5, 7, 12, 5, 0),
-            ),
-            notification=InboxNotification(
-                id=2,
-                receiver_id="abcdef12",
-                body="Another message",
-                source_kind="terminal",
-                source_id="sender2",
-                metadata=None,
-                status=MessageStatus.DELIVERED,
-                created_at=datetime(2026, 5, 7, 12, 5, 0),
-            ),
-        ),
-    ]
-
-
 class TestGetInboxMessagesEndpoint:
-    """GET /terminals/{terminal_id}/inbox/messages."""
+    """GET /agents/{agent_id}/inbox/messages."""
 
-    def test_get_all_messages_uses_semantic_deliveries(self, client, sample_inbox_deliveries):
-        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
-            mock_list.return_value = sample_inbox_deliveries
+    def test_get_all_messages_uses_semantic_deliveries(self, client, runtime_inbox_db_session):
+        create_inbox_notification("abcdef12", "Hello world", sender_agent_id="sender1")
+        create_inbox_notification("abcdef12", "Another message", sender_agent_id="sender2")
 
-            response = client.get("/terminals/abcdef12/inbox/messages")
+        response = client.get("/agents/abcdef12/inbox/messages")
 
         assert response.status_code == 200
         data = response.json()
         assert data[0] == {
             "notification_id": 1,
-            "message_id": 11,
-            "sender_id": "sender1",
-            "receiver_id": "abcdef12",
-            "message": "Hello world",
-            "source_kind": "terminal",
-            "source_id": "sender1",
+            "sender_agent_id": "sender1",
+            "receiver_agent_id": "abcdef12",
+            "body": "Hello world",
             "status": "pending",
-            "created_at": "2026-05-07T12:00:00",
+            "created_at": data[0]["created_at"],
         }
-        mock_list.assert_called_once_with("abcdef12", limit=10, status=None)
+        assert data[1]["sender_agent_id"] == "sender2"
+        assert data[1]["body"] == "Another message"
 
-    def test_get_messages_with_status_and_limit(self, client, sample_inbox_deliveries):
-        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
-            mock_list.return_value = sample_inbox_deliveries[:1]
+    def test_get_messages_with_status_and_limit(self, client, runtime_inbox_db_session):
+        pending = create_inbox_notification(
+            "abcdef12",
+            "Pending message",
+            sender_agent_id="sender1",
+        )
+        delivered = create_inbox_notification(
+            "abcdef12",
+            "Delivered message",
+            sender_agent_id="sender2",
+        )
+        update_notification_statuses([delivered.id], MessageStatus.DELIVERED)
 
-            response = client.get("/terminals/abcdef12/inbox/messages?status=pending&limit=5")
+        response = client.get("/agents/abcdef12/inbox/messages?status=pending&limit=5")
 
         assert response.status_code == 200
-        assert len(response.json()) == 1
-        mock_list.assert_called_once_with("abcdef12", limit=5, status=MessageStatus.PENDING)
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["notification_id"] == pending.id
+        assert data[0]["status"] == "pending"
 
     def test_invalid_status_parameter(self, client):
-        response = client.get("/terminals/abcdef12/inbox/messages?status=invalid_status")
+        response = client.get("/agents/abcdef12/inbox/messages?status=invalid_status")
 
         assert response.status_code == 400
         assert "Invalid status" in response.json()["detail"]
 
     def test_limit_exceeds_maximum(self, client):
-        response = client.get("/terminals/abcdef12/inbox/messages?limit=150")
+        response = client.get("/agents/abcdef12/inbox/messages?limit=150")
 
         assert response.status_code == 422
 
     def test_database_error_handling(self, client):
-        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
+        with patch("cli_agent_orchestrator.api.main.list_notifications") as mock_list:
             mock_list.side_effect = Exception("Database connection failed")
 
-            response = client.get("/terminals/abcdef12/inbox/messages")
+            response = client.get("/agents/abcdef12/inbox/messages")
 
         assert response.status_code == 500
         assert "Failed to retrieve inbox messages" in response.json()["detail"]
 
-    def test_terminal_not_found_error(self, client):
-        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
-            mock_list.side_effect = ValueError("Terminal not found")
+    def test_agent_not_found_error(self, client):
+        with patch("cli_agent_orchestrator.api.main.list_notifications") as mock_list:
+            mock_list.side_effect = ValueError("Agent not found")
 
-            response = client.get("/terminals/deadbeef/inbox/messages")
+            response = client.get("/agents/deadbeef/inbox/messages")
 
         assert response.status_code == 404
-        assert "Terminal not found" in response.json()["detail"]
+        assert "Agent not found" in response.json()["detail"]
 
-    def test_empty_message_list(self, client):
-        with patch("cli_agent_orchestrator.api.main.list_inbox_deliveries") as mock_list:
-            mock_list.return_value = []
-
-            response = client.get("/terminals/abcdef12/inbox/messages")
+    def test_empty_message_list(self, client, runtime_inbox_db_session):
+        response = client.get("/agents/abcdef12/inbox/messages")
 
         assert response.status_code == 200
         assert response.json() == []
@@ -155,23 +105,12 @@ class TestGetInboxMessagesEndpoint:
 class TestCreateInboxMessageEndpoint:
     """POST /agents/{agent_id}/inbox/messages."""
 
-    def test_create_message_returns_notification_and_durable_message_ids(self, client):
-        notification = Notification(
-            id=7,
-            receiver_agent_id="abcdef12",
-            body="Hello world",
-            source_kind="plain",
-            source_id="sender1",
-            metadata=None,
-            status=MessageStatus.PENDING,
-            created_at=datetime(2026, 5, 7, 12, 0, 0),
-        )
-        with (
-            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
-            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
-        ):
-            mock_send.return_value = notification
-
+    def test_create_message_returns_notification_and_durable_message_ids(
+        self,
+        client,
+        runtime_inbox_db_session,
+    ):
+        with patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"):
             response = client.post(
                 "/agents/abcdef12/inbox/messages",
                 params={"sender_agent_id": "sender1", "body": "Hello world"},
@@ -179,27 +118,28 @@ class TestCreateInboxMessageEndpoint:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["notification_id"] == 7
-        assert body["message_id"] == 7
+        assert body["notification_id"] == 1
+        assert body["sender_agent_id"] == "sender1"
+        assert body["receiver_agent_id"] == "abcdef12"
+        assert body["body"] == "Hello world"
         assert "id" not in body
-        mock_send.assert_called_once_with(
-            "abcdef12",
-            "Hello world",
-            source=PlainSource("sender1"),
-        )
+        persisted = list_notifications("abcdef12")
+        assert len(persisted) == 1
+        assert persisted[0].body == "Hello world"
 
-    def test_rejects_cross_team_message_before_inbox_persistence(self, client):
+    def test_rejects_cross_team_message_before_inbox_persistence(
+        self,
+        client,
+        runtime_inbox_db_session,
+    ):
         from fastapi import HTTPException
 
-        with (
-            patch(
-                "cli_agent_orchestrator.api.main._require_inbox_message_policy",
-                side_effect=HTTPException(
-                    status_code=403,
-                    detail="Workspace team collaboration rejected",
-                ),
+        with patch(
+            "cli_agent_orchestrator.api.main._require_inbox_message_policy",
+            side_effect=HTTPException(
+                status_code=403,
+                detail="Workspace team collaboration rejected",
             ),
-            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
         ):
             response = client.post(
                 "/agents/receiver/inbox/messages",
@@ -208,36 +148,21 @@ class TestCreateInboxMessageEndpoint:
 
         assert response.status_code == 403
         assert "Workspace team collaboration rejected" in response.json()["detail"]
-        mock_send.assert_not_called()
+        assert list_notifications("receiver") == []
 
-    def test_allows_same_team_message_before_inbox_persistence(self, client):
-        notification = Notification(
-            id=8,
-            receiver_agent_id="receiver",
-            body="Hello world",
-            source_kind="plain",
-            source_id="sender",
-            metadata=None,
-            status=MessageStatus.PENDING,
-            created_at=datetime(2026, 5, 7, 12, 0, 0),
-        )
-        with (
-            patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"),
-            patch("cli_agent_orchestrator.api.main.send_inbox_message") as mock_send,
-        ):
-            mock_send.return_value = notification
-
+    def test_allows_same_team_message_before_inbox_persistence(
+        self,
+        client,
+        runtime_inbox_db_session,
+    ):
+        with patch("cli_agent_orchestrator.api.main._require_inbox_message_policy"):
             response = client.post(
                 "/agents/receiver/inbox/messages",
                 params={"sender_agent_id": "sender", "body": "Hello world"},
             )
 
         assert response.status_code == 200
-        mock_send.assert_called_once_with(
-            "receiver",
-            "Hello world",
-            source=PlainSource("sender"),
-        )
+        assert list_notifications("receiver")[0].sender_agent_id == "sender"
 
 
 def _agent(agent_id: str, team: str) -> Agent:
@@ -269,8 +194,8 @@ def _patch_inbox_policy(monkeypatch, tmp_path, *, sender_team: str, receiver_tea
         (
             Workspace(
                 id=DEFAULT_WORKSPACE_ID,
-                display_name="Linear Delivery",
-                providers=("linear",),
+                display_name="CAO Default",
+                providers=("example",),
                 resolver=_resolver,
             ),
         )

@@ -94,7 +94,7 @@ class TestAgentRuntimeTerminalEndpoint:
                 "id": terminal_id,
                 "name": "developer-1234",
                 "provider": "codex",
-                "session_name": "cao-linear-discovery-partner",
+                "session_name": "cao-discovery-partner",
                 "agent_id": "discovery_partner",
                 "workspace_context_id": "default",
                 "allowed_tools": None,
@@ -178,7 +178,7 @@ class TestAgentRuntimeTerminalEndpoint:
                 "id": terminal_id,
                 "name": "developer-1234",
                 "provider": "codex",
-                "session_name": "cao-linear-discovery-partner",
+                "session_name": "cao-discovery-partner",
                 "agent_id": "discovery_partner",
                 "workspace_context_id": "default",
                 "allowed_tools": None,
@@ -456,10 +456,9 @@ class TestCreateInboxMessageEndpoint:
         """POST creates an inbox message and returns success."""
         notification = Notification(
             id=1,
+            sender_agent_id="sender",
             receiver_agent_id="receiver",
             body="hello",
-            source_kind="plain",
-            source_id="sender",
             status=MessageStatus.PENDING,
             created_at="2026-03-13T12:00:00",
         )
@@ -479,19 +478,20 @@ class TestCreateInboxMessageEndpoint:
             data = response.json()
             assert data["success"] is True
             assert data["notification_id"] == 1
-            assert data["message_id"] == 1
-            assert data["sender_id"] == "sender"
-            assert data["source_kind"] == "plain"
-            assert data["source_id"] == "sender"
+            assert data["notification_id"] == 1
+            assert data["sender_agent_id"] == "sender"
+            assert data["receiver_agent_id"] == "receiver"
+            assert data["body"] == "hello"
+            assert "source_kind" not in data
+            assert "source_id" not in data
 
     def test_create_inbox_message_delivery_failure_still_succeeds(self, client):
         """send() owns immediate delivery; API returns persisted notification."""
         notification = Notification(
             id=2,
+            sender_agent_id="sender",
             receiver_agent_id="receiver",
             body="hello",
-            source_kind="plain",
-            source_id="sender",
             status=MessageStatus.PENDING,
             created_at="2026-03-13T12:00:00",
         )

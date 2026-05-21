@@ -25,7 +25,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
   const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentId?: string | null; terminalToken?: string | null } | null>(null)
   const [pendingClose, setPendingClose] = useState<TerminalMeta | null>(null)
   const [closingTerminal, setClosingTerminal] = useState<string | null>(null)
-  const [inboxTerminalId, setInboxTerminalId] = useState<string | null>(null)
+  const [inboxAgentId, setInboxAgentId] = useState<string | null>(null)
   const [outputTerminalId, setOutputTerminalId] = useState<string | null>(null)
   const [pendingExit, setPendingExit] = useState<TerminalMeta | null>(null)
   const [exitingTerminal, setExitingTerminal] = useState<string | null>(null)
@@ -244,14 +244,14 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
                           <span className="text-sm font-medium text-gray-200 truncate">{t.agent_id}</span>
                           <span className="text-xs font-mono text-gray-500">{t.id}</span>
                           <StatusBadge status={terminalStatuses[t.id] || null} />
-                          <MonitoringIndicator terminalId={t.id} />
-                          <BatonIndicator terminalId={t.id} />
+                          <MonitoringIndicator agentId={t.agent_id} />
+                          <BatonIndicator agentId={t.agent_id} />
                           <span className="text-[10px] text-gray-600">{t.provider}</span>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <MonitoringButton terminalId={t.id} />
+                          <MonitoringButton agentId={t.agent_id} />
                           <button
-                            onClick={() => setInboxTerminalId(t.id)}
+                            onClick={() => setInboxAgentId(t.agent_id)}
                             className="p-1.5 text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
                             title="Inbox"
                           >
@@ -327,7 +327,7 @@ export function DashboardHome({ onNavigate }: { onNavigate: (tab: string) => voi
       )}
 
       {/* Modals */}
-      {inboxTerminalId && <InboxPanel terminalId={inboxTerminalId} onClose={() => setInboxTerminalId(null)} />}
+      {inboxAgentId && <InboxPanel agentId={inboxAgentId} onClose={() => setInboxAgentId(null)} />}
       {liveTerminal && (
         <TerminalView terminalId={liveTerminal.id} provider={liveTerminal.provider} agentId={liveTerminal.agentId} terminalToken={liveTerminal.terminalToken} onClose={() => setLiveTerminal(null)} />
       )}

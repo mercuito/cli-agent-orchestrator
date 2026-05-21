@@ -5,7 +5,6 @@ import { AgentDetailPanel } from '../components/agents-tab/AgentDetailPanel'
 import { api, AgentRelatedEvents, AgentStatus, AgentTimeline } from '../api'
 import {
   AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
-  LINEAR_AGENT_MENTIONED_EVENT,
 } from '../generated/caoEventPayloadTypes'
 
 function agent(
@@ -43,7 +42,6 @@ function agent(
       runtime_capabilities: null,
       codex_config: {},
       workspace: { team: null, derived_workspace: null, diagnostics: [] },
-      linear: null,
     },
     active: false,
     active_terminal_id: null,
@@ -64,7 +62,7 @@ function event(
     event_id,
     event_name,
     event_type_key: event_name,
-    source_type: 'linear',
+    source_type: 'runtime',
     source_id: event_id,
     occurred_at,
     correlation_id: null,
@@ -82,8 +80,8 @@ const aria = agent('aria', 'Aria', {
 const cael = agent('cael', 'Cael')
 
 const mention = event(
-  'linear:agent_mentioned:mention',
-  'agent_mentioned',
+  'runtime:notification_accepted:mention',
+  'agent_runtime_notification_accepted',
   '2026-05-13T12:00:00',
   'mentioned',
   { correlation_id: 'thread-1' },
@@ -95,36 +93,18 @@ const delivery = event(
   'delivery_target',
   {
     correlation_id: 'thread-1',
-    causation_id: 'linear:agent_mentioned:mention',
+    causation_id: 'runtime:notification_accepted:mention',
     source_type: 'runtime',
   },
 )
 const liveMention = event(
-  'linear:agent_mentioned:live',
-  'agent_mentioned',
+  'runtime:notification_accepted:live',
+  'agent_runtime_notification_accepted',
   '2026-05-13T12:04:00',
   'mentioned',
   { correlation_id: 'thread-live' },
 )
 
-const knownLinearMention = event(
-  'linear:event:mention-ops-417',
-  'agent_mentioned',
-  '2026-05-13T12:00:00',
-  'mentioned',
-  {
-    event_type_key: LINEAR_AGENT_MENTIONED_EVENT,
-    source_type: 'linear',
-    source_id: 'msg-ops-417',
-    event_data: {
-      issue_identifier: 'OPS-417',
-      issue_title: 'Restore dashboard event detail',
-      issue_url: 'https://linear.app/yards/issue/OPS-417/restore-dashboard-event-detail',
-      app_user_name: 'Nia',
-      message_body: 'Aria, can you trace the stuck inbox delivery?',
-    },
-  },
-)
 const knownRuntimeDelivery = event(
   'runtime:event:delivery-ops-417',
   'agent_runtime_notification_delivery',
@@ -134,9 +114,8 @@ const knownRuntimeDelivery = event(
     event_type_key: AGENT_RUNTIME_NOTIFICATION_DELIVERY_EVENT,
     source_type: 'cao_runtime',
     source_id: 'notification:42',
-    causation_id: knownLinearMention.event_id,
+    causation_id: mention.event_id,
     event_data: {
-      source_kind: 'linear_mention',
       message_body: 'Aria, can you trace the stuck inbox delivery?',
       terminal_id: 'term-aria-main',
       outcome: 'delivered',
@@ -184,7 +163,7 @@ describe('AgentTimelineTab', () => {
     expect(api.getAgentTimeline).toHaveBeenCalledWith('aria')
     expect(screen.getAllByTestId('timeline-event-id').map(node => node.textContent)).toEqual([
       'runtime:notification_delivery:delivery',
-      'linear:agent_mentioned:mention',
+      'runtime:notification_accepted:mention',
     ])
   })
 
@@ -226,9 +205,9 @@ describe('AgentTimelineTab', () => {
 
     // Then
     expect(screen.getAllByTestId('timeline-event-id').map(node => node.textContent)).toEqual([
-      'linear:agent_mentioned:live',
+      'runtime:notification_accepted:live',
       'runtime:notification_delivery:delivery',
-      'linear:agent_mentioned:mention',
+      'runtime:notification_accepted:mention',
     ])
   })
 
@@ -247,24 +226,6 @@ describe('AgentTimelineTab', () => {
     expect(screen.getByText('Shared Correlation Thread')).toBeInTheDocument()
     const relatedGrid = screen.getByTestId('related-events-grid')
     expect(relatedGrid).toHaveClass('lg:grid-cols-2')
-  })
-
-  it('opens external Linear issue references via the registered timeline event view', async () => {
-    // Given
-    vi.mocked(api.getAgentTimeline).mockResolvedValue({
-      agent: aria,
-      events: [knownLinearMention],
-    })
-    const openExternalReference = vi.fn()
-    render(<AgentTimelineTab agentId="aria" onOpenExternalReference={openExternalReference} />)
-
-    // When
-    fireEvent.click(await screen.findByRole('button', { name: /open linear issue ops-417/i }))
-
-    // Then
-    expect(openExternalReference).toHaveBeenCalledWith(
-      'https://linear.app/yards/issue/OPS-417/restore-dashboard-event-detail',
-    )
   })
 
   it('focuses a runtime terminal reference via the onFocusTerminal seam', async () => {
@@ -332,7 +293,7 @@ describe('AgentTimelineTab', () => {
 
     // Then
     const timeline = await screen.findByTestId('agent-timeline')
-    expect(within(timeline).getAllByText('Agent Mentioned').length).toBeGreaterThan(0)
+    expect(within(timeline).getAllByText('Agent Runtime Notification Accepted').length).toBeGreaterThan(0)
     expect(api.getAgentTimeline).toHaveBeenCalledWith('aria')
   })
 })

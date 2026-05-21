@@ -25,8 +25,8 @@ interface TooltipPos {
 }
 
 /**
- * Visual indicator rendered next to a terminal's status badge when a
- * monitoring session is currently recording that terminal.
+ * Visual indicator rendered next to an agent's status badge when a
+ * monitoring session is currently recording that agent.
  *
  * Visual: eye icon + pulsing red dot — the recording-LED metaphor. On
  * hover, a styled tooltip shows the session's label and age.
@@ -35,8 +35,8 @@ interface TooltipPos {
  * dashboard's ``overflow-hidden`` session card. See
  * docs/plans/monitoring-sessions.md.
  */
-export function MonitoringIndicator({ terminalId }: { terminalId: string }) {
-  const session = useStore(s => s.activeMonitoringByTerminal[terminalId])
+export function MonitoringIndicator({ agentId }: { agentId: string }) {
+  const session = useStore(s => s.activeMonitoringByAgent[agentId])
   const triggerRef = useRef<HTMLSpanElement>(null)
   const [pos, setPos] = useState<TooltipPos | null>(null)
 

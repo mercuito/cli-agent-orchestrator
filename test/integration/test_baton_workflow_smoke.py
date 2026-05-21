@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from cli_agent_orchestrator.agent import Agent, AgentRegistry, AgentWorkspaceConfig
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
+from cli_agent_orchestrator.inbox import list_pending_notifications
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.workspaces import (
     DEFAULT_WORKSPACE_ID,
@@ -87,9 +88,9 @@ def _collaboration_manager() -> WorkspaceCollaborationManager:
         ),
         agent_registry=AgentRegistry(
             {
-                "originator_agent": _agent("originator_agent"),
-                "implementer_agent": _agent("implementer_agent"),
-                "reviewer_agent": _agent("reviewer_agent"),
+                "originator": _agent("originator"),
+                "implementer": _agent("implementer"),
+                "reviewer": _agent("reviewer"),
             }
         ),
         provider_adapters={},
@@ -128,7 +129,7 @@ def client(live_db, monkeypatch):
 
 
 def _pending_messages(receiver_id: str):
-    return db_module.list_pending_inbox_notifications(receiver_id, limit=50)
+    return list_pending_notifications(receiver_id, limit=50)
 
 
 def _get_baton(client, baton_id: str):
@@ -154,9 +155,9 @@ def _active_baton_ids(client, *, holder_id: str | None = None):
 
 def test_baton_review_loop_is_observable_over_http(client, live_db):
     baton_id = "smoke-baton-1"
-    _create_terminal("originator", "originator_agent")
-    _create_terminal("implementer", "implementer_agent")
-    _create_terminal("reviewer", "reviewer_agent")
+    _create_terminal("originator", "originator")
+    _create_terminal("implementer", "implementer")
+    _create_terminal("reviewer", "reviewer")
 
     baton_service.create_baton(
         baton_id=baton_id,
@@ -176,8 +177,8 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     implementer_messages = _pending_messages("implementer")
     assert len(implementer_messages) == 1
-    assert implementer_messages[0].message.sender_id == "originator"
-    assert "Implement the task and pass to review." in implementer_messages[0].message.body
+    assert implementer_messages[0].sender_agent_id == "originator"
+    assert "Implement the task and pass to review." in implementer_messages[0].body
 
     baton_service.pass_baton(
         baton_id=baton_id,
@@ -197,8 +198,8 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     reviewer_messages = _pending_messages("reviewer")
     assert len(reviewer_messages) == 1
-    assert reviewer_messages[0].message.sender_id == "implementer"
-    assert "Please review the implementation artifacts." in reviewer_messages[0].message.body
+    assert reviewer_messages[0].sender_agent_id == "implementer"
+    assert "Please review the implementation artifacts." in reviewer_messages[0].body
 
     baton_service.return_baton(
         baton_id=baton_id,
@@ -217,8 +218,8 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     implementer_messages = _pending_messages("implementer")
     assert len(implementer_messages) == 2
-    assert implementer_messages[-1].message.sender_id == "reviewer"
-    assert "Changes requested before approval." in implementer_messages[-1].message.body
+    assert implementer_messages[-1].sender_agent_id == "reviewer"
+    assert "Changes requested before approval." in implementer_messages[-1].body
 
     baton_service.complete_baton(
         baton_id=baton_id,
@@ -236,5 +237,5 @@ def test_baton_review_loop_is_observable_over_http(client, live_db):
 
     originator_messages = _pending_messages("originator")
     assert len(originator_messages) == 1
-    assert originator_messages[0].message.sender_id == "implementer"
-    assert "Implemented, reviewed, and complete." in originator_messages[0].message.body
+    assert originator_messages[0].sender_agent_id == "implementer"
+    assert "Implemented, reviewed, and complete." in originator_messages[0].body

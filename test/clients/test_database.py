@@ -14,36 +14,35 @@ from cli_agent_orchestrator.clients import database_migrations
 from cli_agent_orchestrator.clients.database import (
     Base,
     FlowModel,
-    InboxNotificationModel,
-    ProviderConversationMessageModel,
-    ProviderConversationThreadModel,
     TerminalAgentAlreadyRunningError,
     TerminalModel,
     create_flow,
-    create_inbox_delivery,
-    create_inbox_notification_event,
     create_terminal,
     delete_flow,
     delete_terminal,
     delete_terminals_by_session,
     get_flow,
-    get_inbox_delivery,
     get_terminal_metadata,
     init_db,
     list_flows,
-    list_inbox_deliveries,
-    list_pending_inbox_notifications,
     list_terminals_by_agent,
     list_terminals_by_session,
     update_flow_enabled,
     update_flow_run_times,
-    update_inbox_notification_status,
     update_last_active,
 )
-from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.linear.inbox_bridge import (
-    create_notification_for_message,
+from cli_agent_orchestrator.inbox import (
+    get_notification,
+    oldest_pending_notification,
+    list_notifications,
+    list_pending_notifications,
+    list_pending_notifications_for_sender,
+    send as create_inbox_notification,
+    update_notification_status,
+    update_notification_statuses,
 )
+from cli_agent_orchestrator.inbox.store import InboxNotificationModel
+from cli_agent_orchestrator.models.inbox import MessageStatus
 
 
 def _notification_fk_targets(connection, table_name: str) -> list[str]:
@@ -290,352 +289,167 @@ class TestInboxOperations:
     """Tests for inbox database operations."""
 
     def test_semantic_inbox_tables_are_declared(self):
-        """The schema has one source-agnostic notification table."""
+        """The schema has one agent-to-agent notification table."""
         notification_columns = {
             column.name for column in Base.metadata.tables["inbox_notifications"].columns
         }
 
         assert {
+            "sender_agent_id",
             "receiver_agent_id",
             "body",
-            "source_kind",
-            "source_id",
-            "metadata_json",
             "status",
         } <= notification_columns
         assert "inbox_messages" not in Base.metadata.tables
         assert "inbox_notification_targets" not in Base.metadata.tables
+        assert "sender_kind" not in notification_columns
+        assert "sender_id" not in notification_columns
+        assert "metadata_json" not in notification_columns
         assert "message_id" not in notification_columns
         assert "legacy_inbox_id" not in notification_columns
         assert "inbox" not in Base.metadata.tables
 
-    def test_create_inbox_delivery_creates_one_notification(self, live_inbox_db):
-        """New owner creation persists body and source on the notification row."""
-        delivery = create_inbox_delivery(
-            "sender-123",
+    def test_create_inbox_notification_persists_agent_to_agent_row(self, live_inbox_db):
+        notification = create_inbox_notification(
             "receiver-456",
             "Hello",
-            source_kind="linear_thread",
-            source_id="thread-9",
-            origin={"identifier": "CAO-37"},
+            sender_agent_id="sender-123",
         )
 
-        assert delivery.message.body == "Hello"
-        assert delivery.message.source_kind == "linear_thread"
-        assert delivery.message.origin == {"identifier": "CAO-37"}
-        assert delivery.notification.body == "Hello"
-        assert delivery.notification.source_kind == "linear_thread"
-        assert delivery.notification.source_id == "thread-9"
-        assert delivery.notification.receiver_id == "receiver-456"
-        assert delivery.notification.status == MessageStatus.PENDING
-        assert delivery.targets == []
+        assert notification.body == "Hello"
+        assert notification.sender_agent_id == "sender-123"
+        assert notification.receiver_agent_id == "receiver-456"
+        assert notification.status == MessageStatus.PENDING
 
         with live_inbox_db() as session:
-            assert session.query(InboxNotificationModel).count() == 1
+            row = session.query(InboxNotificationModel).one()
+        assert row.sender_agent_id == "sender-123"
+        assert row.receiver_agent_id == "receiver-456"
 
-    def test_notification_event_can_exist_without_durable_message(self, live_inbox_db):
-        """Notification-only events are first-class attention records."""
-        notification = create_inbox_notification_event(
-            "agent:implementation_partner",
-            "CAO-123 has new comments.",
-            source_kind="linear_issue",
-            source_id="CAO-123",
-            metadata={"workspace": "Linear"},
-        )
-
-        deliveries = list_pending_inbox_notifications("agent:implementation_partner")
-        read = get_inbox_delivery(notification.id)
-
-        assert notification.body == "CAO-123 has new comments."
-        assert notification.metadata == {"workspace": "Linear"}
-        assert deliveries == [read]
-        assert read.message.body == notification.body
-        assert read.notification == notification
-        assert read.targets == []
-
-    def test_plain_notification_read_shape_reports_sender_agent(self, live_inbox_db):
-        """Plain agent notifications keep the sender agent in legacy read rows."""
-        notification = create_inbox_notification_event(
-            "receiver-agent",
-            "hello",
-            source_kind="plain",
-            source_id="sender-agent",
-        )
-
-        read = get_inbox_delivery(notification.id)
-
-        assert read.message.sender_id == "sender-agent"
-        assert read.message.source_kind == "plain"
-        assert read.message.source_id == "sender-agent"
-
-    def test_message_backed_notification_metadata_is_bounded(self, live_inbox_db):
-        """Provider/system metadata must stay bounded on message-backed notifications."""
-        with pytest.raises(ValueError, match="notification metadata exceeds"):
-            create_inbox_delivery(
-                "sender-123",
-                "receiver-456",
-                "Hello",
-                notification_metadata={"oversized": "x" * 5000},
-            )
-
-    def test_notification_only_metadata_is_bounded(self, live_inbox_db):
-        """Provider/system metadata must stay bounded without a backing message."""
-        with pytest.raises(ValueError, match="notification metadata exceeds"):
-            create_inbox_notification_event(
-                "receiver-456",
-                "CAO-123 has new comments.",
-                source_kind="linear_issue",
-                source_id="CAO-123",
-                metadata={"oversized": "x" * 5000},
-            )
-
-    def test_list_inbox_deliveries_reads_semantic_notifications(self, live_inbox_db):
-        """Receiver listing returns notification-backed durable messages."""
-        delivery = create_inbox_delivery(
-            "agent:linear",
+    def testlist_notifications_reads_semantic_notifications(self, live_inbox_db):
+        notification = create_inbox_notification(
             "agent:implementation_partner",
             "Please inspect the failing job.",
-            source_kind="provider_message",
-            source_id="linear:comment-1",
-            origin={"breadcrumb": "Linear / CAO-37"},
-            route_kind="linear_comment",
-            route_id="comment-1",
+            sender_agent_id="agent:reviewer",
         )
 
-        listed = list_inbox_deliveries("agent:implementation_partner")
-        pending = list_pending_inbox_notifications("agent:implementation_partner")
-        read = get_inbox_delivery(delivery.notification.id)
+        listed = list_notifications("agent:implementation_partner")
+        pending = list_pending_notifications("agent:implementation_partner")
+        read = get_notification(notification.id)
 
-        assert listed == [delivery]
-        assert pending[0].message.body == "Please inspect the failing job."
-        assert pending[0].notification.body == "Please inspect the failing job."
-        assert "comment-1" not in pending[0].message.body
-        assert pending == [delivery]
-        assert read == delivery
+        assert listed[0] == notification
+        assert pending[0].body == "Please inspect the failing job."
+        assert read == notification
 
-    def test_create_inbox_delivery_defaults_source_to_sender_terminal(self, live_inbox_db):
-        """New agent-to-agent messages default to terminal:<sender_id>."""
-        delivery = create_inbox_delivery("sender-123", "receiver-456", "Hello")
-
-        assert delivery.message.source_kind == "terminal"
-        assert delivery.message.source_id == "sender-123"
-        assert delivery.notification.source_kind == "terminal"
-        assert delivery.notification.source_id == "sender-123"
-
-        persisted = list_inbox_deliveries("receiver-456")[0]
-        assert persisted.message.source_kind == "terminal"
-        assert persisted.message.source_id == "sender-123"
-
-    def test_get_inbox_delivery_reads_one_notification_by_id(self, live_inbox_db):
-        delivery = create_inbox_delivery("sender-123", "receiver-456", "Hello")
-
-        persisted = get_inbox_delivery(delivery.notification.id)
-
-        assert persisted == delivery
-        assert get_inbox_delivery(999) is None
-
-    def test_create_inbox_delivery_persists_explicit_source(self, live_inbox_db):
-        """Callers can provide a non-terminal provider-neutral source."""
-        delivery = create_inbox_delivery(
-            "sender-123",
+    def testget_notification_reads_one_notification_by_id(self, live_inbox_db):
+        notification = create_inbox_notification(
             "receiver-456",
             "Hello",
-            source_kind="external",
-            source_id="thread-9",
+            sender_agent_id="sender-123",
         )
 
-        assert delivery.message.source_kind == "external"
-        assert delivery.message.source_id == "thread-9"
-
-    def test_create_inbox_delivery_rejects_partial_source(self, live_inbox_db):
-        """Source identity must be complete so incomplete rows do not masquerade as legacy."""
-        with pytest.raises(ValueError, match="source_kind and source_id"):
-            create_inbox_delivery(
-                "sender-123",
-                "receiver-456",
-                "Hello",
-                source_kind="external",
-            )
-
-        with pytest.raises(ValueError, match="source_kind and source_id"):
-            create_inbox_delivery(
-                "sender-123",
-                "receiver-456",
-                "Hello",
-                source_id="thread-9",
-            )
-
-    def test_semantic_create_rejects_partial_source_or_route(self, live_inbox_db):
-        """Semantic input boundaries fail clearly for incomplete identities."""
-        with pytest.raises(ValueError, match="source_kind and source_id"):
-            create_inbox_delivery(
-                "sender-123",
-                "receiver-456",
-                "Hello",
-                source_kind="external",
-            )
-
-        with pytest.raises(ValueError, match="route_kind and route_id"):
-            create_inbox_delivery(
-                "sender-123",
-                "receiver-456",
-                "Hello",
-                route_kind="provider_conversation_thread",
-            )
+        assert get_notification(notification.id) == notification
+        assert get_notification(999) is None
 
     def test_status_updates_mutate_notification_not_durable_message(self, live_inbox_db):
-        """Delivery status changes stay on notification rows."""
-        delivery = create_inbox_delivery(
-            "sender-123",
+        notification = create_inbox_notification(
             "receiver-456",
             "Original body",
-            source_kind="external",
-            source_id="thread-9",
+            sender_agent_id="sender-123",
         )
 
-        assert update_inbox_notification_status(delivery.notification.id, MessageStatus.DELIVERED)
+        assert update_notification_status(notification.id, MessageStatus.DELIVERED)
 
         with live_inbox_db() as session:
-            notification = session.query(InboxNotificationModel).one()
+            row = session.query(InboxNotificationModel).one()
 
-        assert notification.body == "Original body"
-        assert notification.source_kind == "external"
-        assert notification.status == MessageStatus.DELIVERED.value
-        assert notification.delivered_at is not None
+        assert row.body == "Original body"
+        assert row.status == MessageStatus.DELIVERED.value
+        assert row.delivered_at is not None
 
     def test_semantic_notification_status_update_uses_notification_id(self, live_inbox_db):
-        """New delivery-state helper updates notification ids directly."""
-        delivery = create_inbox_delivery("sender-123", "receiver-456", "Hello")
-
-        assert update_inbox_notification_status(
-            delivery.notification.id, MessageStatus.FAILED, error_detail="send failed"
+        notification = create_inbox_notification(
+            "receiver-456",
+            "Hello",
+            sender_agent_id="sender-123",
         )
 
-        updated = get_inbox_delivery(delivery.notification.id)
-        assert updated.notification.status == MessageStatus.FAILED
-        assert updated.notification.failed_at is not None
-        assert updated.notification.error_detail == "send failed"
+        assert update_notification_status(
+            notification.id, MessageStatus.FAILED, error_detail="send failed"
+        )
 
-    def test_same_source_pending_messages_are_batched_in_created_order(self, live_inbox_db):
-        """Messages sharing an explicit source are selected together."""
-        first = create_inbox_delivery("worker-a", "supervisor", "first")
-        second = create_inbox_delivery("worker-a", "supervisor", "second")
+        updated = get_notification(notification.id)
+        assert updated.status == MessageStatus.FAILED
+        assert updated.failed_at is not None
+        assert updated.error_detail == "send failed"
 
-        oldest = db_module.get_oldest_pending_inbox_delivery("supervisor")
+    def test_same_sender_pending_messages_are_batched_in_created_order(self, live_inbox_db):
+        first = create_inbox_notification("supervisor", "first", sender_agent_id="worker-a")
+        second = create_inbox_notification("supervisor", "second", sender_agent_id="worker-a")
+
+        oldest = oldest_pending_notification("supervisor")
         assert oldest is not None
-        batch = db_module.list_pending_inbox_deliveries_for_effective_source("supervisor", oldest)
+        batch = list_pending_notifications_for_sender("supervisor", oldest)
 
-        assert [delivery.message.body for delivery in batch] == ["first", "second"]
-        assert [delivery.notification.body for delivery in batch] == ["first", "second"]
-        assert [delivery.notification.id for delivery in batch] == [
-            first.notification.id,
-            second.notification.id,
+        assert [delivery.body for delivery in batch] == ["first", "second"]
+        assert [delivery.id for delivery in batch] == [
+            first.id,
+            second.id,
         ]
 
-    def test_effective_source_batching_distinguishes_semantic_provider_sources(self, live_inbox_db):
-        """Batching separates terminal and provider-backed source refs."""
-        create_inbox_delivery(
-            "terminal-a",
-            "supervisor",
-            "terminal message",
-            source_kind="terminal",
-            source_id="terminal-a",
+    def test_sender_batching_distinguishes_sender_agents(self, live_inbox_db):
+        create_inbox_notification("supervisor", "sender a", sender_agent_id="worker-a")
+        create_inbox_notification("supervisor", "sender b first", sender_agent_id="worker-b")
+        create_inbox_notification("supervisor", "sender b second", sender_agent_id="worker-b")
+
+        deliveries = list_notifications("supervisor", limit=10)
+        first_sender_delivery = deliveries[0]
+        second_sender_delivery = deliveries[1]
+
+        first_sender_batch = list_pending_notifications_for_sender(
+            "supervisor", first_sender_delivery
         )
-        create_inbox_delivery(
-            "linear",
-            "supervisor",
-            "provider first",
-            source_kind="provider_message",
-            source_id="linear-thread-1",
-        )
-        create_inbox_delivery(
-            "linear",
-            "supervisor",
-            "provider second",
-            source_kind="provider_message",
-            source_id="linear-thread-1",
+        second_sender_batch = list_pending_notifications_for_sender(
+            "supervisor", second_sender_delivery
         )
 
-        deliveries = list_inbox_deliveries("supervisor", limit=10)
-        terminal_delivery = deliveries[0]
-        provider_delivery = deliveries[1]
-
-        terminal_batch = db_module.list_pending_inbox_deliveries_for_effective_source(
-            "supervisor", terminal_delivery
-        )
-        provider_batch = db_module.list_pending_inbox_deliveries_for_effective_source(
-            "supervisor", provider_delivery
-        )
-
-        assert [delivery.message.body for delivery in terminal_batch] == ["terminal message"]
-        assert [delivery.message.body for delivery in provider_batch] == [
-            "provider first",
-            "provider second",
+        assert [delivery.body for delivery in first_sender_batch] == ["sender a"]
+        assert [delivery.body for delivery in second_sender_batch] == [
+            "sender b first",
+            "sender b second",
         ]
 
-    def test_effective_source_batching_supports_notification_only_events(self, live_inbox_db):
-        """Notification-only events batch by notification source without a message join."""
-        first = create_inbox_notification_event(
-            "supervisor",
-            "CAO-123 assigned.",
-            source_kind="linear_issue",
-            source_id="CAO-123",
-        )
-        create_inbox_notification_event(
-            "supervisor",
-            "CAO-456 assigned.",
-            source_kind="linear_issue",
-            source_id="CAO-456",
-        )
-        create_inbox_notification_event(
-            "supervisor",
-            "CAO-123 commented.",
-            source_kind="linear_issue",
-            source_id="CAO-123",
-        )
+    def test_different_senders_are_not_batched_with_oldest_sender(self, live_inbox_db):
+        create_inbox_notification("supervisor", "oldest sender", sender_agent_id="worker-a")
+        create_inbox_notification("supervisor", "other sender", sender_agent_id="worker-b")
+        create_inbox_notification("supervisor", "same sender later", sender_agent_id="worker-a")
 
-        oldest = get_inbox_delivery(first.id)
+        oldest = oldest_pending_notification("supervisor")
         assert oldest is not None
-        batch = db_module.list_pending_inbox_deliveries_for_effective_source("supervisor", oldest)
+        batch = list_pending_notifications_for_sender("supervisor", oldest)
 
-        assert [delivery.message.body for delivery in batch] == [
-            "CAO-123 assigned.",
-            "CAO-123 commented.",
-        ]
-        assert [delivery.notification.body for delivery in batch] == [
-            "CAO-123 assigned.",
-            "CAO-123 commented.",
-        ]
-
-    def test_different_sources_are_not_batched_with_oldest_source(self, live_inbox_db):
-        """A later pending message from another source stays out of the selected batch."""
-        create_inbox_delivery("worker-a", "supervisor", "oldest source")
-        create_inbox_delivery("worker-b", "supervisor", "other source")
-        create_inbox_delivery("worker-a", "supervisor", "same source later")
-
-        oldest = db_module.get_oldest_pending_inbox_delivery("supervisor")
-        assert oldest is not None
-        batch = db_module.list_pending_inbox_deliveries_for_effective_source("supervisor", oldest)
-
-        assert [delivery.message.body for delivery in batch] == [
-            "oldest source",
-            "same source later",
+        assert [delivery.body for delivery in batch] == [
+            "oldest sender",
+            "same sender later",
         ]
 
     def test_batch_status_update_marks_only_selected_messages(self, live_inbox_db):
-        """Batch status updates leave unselected later messages pending."""
-        selected_one = create_inbox_delivery("worker-a", "supervisor", "selected one")
-        selected_two = create_inbox_delivery("worker-a", "supervisor", "selected two")
-        create_inbox_delivery("worker-b", "supervisor", "still pending")
+        selected_one = create_inbox_notification(
+            "supervisor", "selected one", sender_agent_id="worker-a"
+        )
+        selected_two = create_inbox_notification(
+            "supervisor", "selected two", sender_agent_id="worker-a"
+        )
+        create_inbox_notification("supervisor", "still pending", sender_agent_id="worker-b")
 
-        updated = db_module.update_inbox_notification_statuses(
-            [selected_one.notification.id, selected_two.notification.id],
+        updated = update_notification_statuses(
+            [selected_one.id, selected_two.id],
             MessageStatus.DELIVERED,
         )
         assert updated == 2
 
-        deliveries = list_inbox_deliveries("supervisor", limit=10)
-        assert [delivery.notification.status for delivery in deliveries] == [
+        deliveries = list_notifications("supervisor", limit=10)
+        assert [delivery.status for delivery in deliveries] == [
             MessageStatus.DELIVERED,
             MessageStatus.DELIVERED,
             MessageStatus.PENDING,
@@ -980,15 +794,19 @@ class TestInitDb:
                 INSERT INTO terminals (
                     id, tmux_session, tmux_window, provider, agent_id, workspace_context_id
                 )
-                VALUES (
-                    'terminal-1', 'cao-session', 'developer-1', 'codex',
-                    'implementation_partner', 'default'
-                )
+                VALUES
+                    (
+                        'terminal-1', 'cao-session', 'developer-1', 'codex',
+                        'implementation_partner', 'default'
+                    ),
+                    (
+                        'sender-terminal', 'cao-session', 'developer-2', 'codex',
+                        'reviewer', 'default'
+                    )
             """)
             connection.exec_driver_sql("""
                 CREATE TABLE inbox_messages (
                     id INTEGER NOT NULL,
-                    sender_id VARCHAR NOT NULL,
                     body TEXT NOT NULL,
                     source_kind VARCHAR NOT NULL,
                     source_id VARCHAR NOT NULL,
@@ -1001,10 +819,10 @@ class TestInitDb:
             """)
             connection.exec_driver_sql("""
                 INSERT INTO inbox_messages (
-                    id, sender_id, body, source_kind, source_id, created_at
+                    id, body, source_kind, source_id, created_at
                 )
                 VALUES (
-                    42, 'sender-terminal', 'Please review this',
+                    42, 'Please review this',
                     'terminal', 'sender-terminal', '2026-05-20 12:00:00'
                 )
             """)
@@ -1050,6 +868,7 @@ class TestInitDb:
 
         # When
         db_module._migrate_ensure_semantic_inbox_tables()
+        db_module._migrate_drop_linear_and_provider_conversation_tables()
 
         # Then
         with test_engine.connect() as connection:
@@ -1059,25 +878,122 @@ class TestInitDb:
                 for row in connection.exec_driver_sql("PRAGMA table_info(inbox_notifications)")
             }
             row = connection.exec_driver_sql("""
-                SELECT receiver_agent_id, body, source_kind, source_id, status
+                SELECT sender_agent_id, receiver_agent_id, body, status
                 FROM inbox_notifications
                 WHERE id = 7
             """).fetchone()
 
         assert row == (
+            "reviewer",
             "implementation_partner",
             "Please review this",
-            "terminal",
-            "sender-terminal",
             "pending",
         )
+        assert "sender_agent_id" in columns
         assert "receiver_agent_id" in columns
         assert columns["receiver_agent_id"][3] == 1
         assert "receiver_id" not in columns
+        assert "sender_kind" not in columns
+        assert "sender_id" not in columns
+        assert "metadata_json" not in columns
         assert "message_id" not in columns
         assert "inbox_messages" not in table_names
         assert "inbox_notification_targets" not in table_names
         assert "provider_conversation_inbox_notifications" not in table_names
+
+    def test_linear_cao_event_migration_drops_removed_event_rows(self, tmp_path, monkeypatch):
+        """Persisted Linear CAO events are removed so timelines do not deserialize dead classes."""
+        # Given
+        db_path = tmp_path / "legacy-linear-events.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr(db_module, "engine", test_engine)
+        Base.metadata.create_all(bind=test_engine)
+
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                INSERT INTO cao_events (
+                    event_id, event_name, kind, source_type, source_id,
+                    occurred_at, correlation_id, causation_id, event_data_json
+                )
+                VALUES
+                    (
+                        'linear-event', 'linear.agent_mentioned', 'linear.agent_mentioned',
+                        'linear', 'LIN-1', '2026-05-20 12:00:00',
+                        NULL, NULL, '{}'
+                    ),
+                    (
+                        'runtime-event', 'agent_ready', 'agent.ready',
+                        'runtime', 'agent:implementation_partner',
+                        '2026-05-20 12:01:00', NULL, NULL, '{}'
+                    )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO cao_event_agent_participants (
+                    event_id, agent_id, participant_role, occurred_at
+                )
+                VALUES
+                    ('linear-event', 'implementation_partner', 'mentioned', '2026-05-20 12:00:00'),
+                    ('runtime-event', 'implementation_partner', 'ready', '2026-05-20 12:01:00')
+            """)
+
+        # When
+        db_module._migrate_drop_removed_linear_cao_events()
+
+        # Then
+        with test_engine.connect() as connection:
+            event_ids = {
+                row[0] for row in connection.exec_driver_sql("SELECT event_id FROM cao_events")
+            }
+            participant_event_ids = {
+                row[0]
+                for row in connection.exec_driver_sql(
+                    "SELECT event_id FROM cao_event_agent_participants"
+                )
+            }
+
+        assert event_ids == {"runtime-event"}
+        assert participant_event_ids == {"runtime-event"}
+
+    def test_flow_migration_adds_runtime_columns_to_existing_table(self, tmp_path, monkeypatch):
+        """Older flow tables receive agent/provider/script columns before the daemon queries them."""
+        # Given
+        db_path = tmp_path / "legacy-flows.db"
+        test_engine = create_engine(f"sqlite:///{db_path}")
+        monkeypatch.setattr(db_module, "engine", test_engine)
+
+        with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                CREATE TABLE flows (
+                    name VARCHAR NOT NULL,
+                    file_path VARCHAR NOT NULL,
+                    schedule VARCHAR NOT NULL,
+                    last_run DATETIME,
+                    next_run DATETIME,
+                    enabled BOOLEAN,
+                    PRIMARY KEY (name)
+                )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO flows (name, file_path, schedule, enabled)
+                VALUES ('daily', '/repo/flows/daily.md', '0 9 * * *', 1)
+            """)
+
+        # When
+        database_migrations._migrate_ensure_flow_tables()
+
+        # Then
+        with test_engine.connect() as connection:
+            columns = {
+                row[1] for row in connection.exec_driver_sql("PRAGMA table_info(flows)")
+            }
+            row = connection.exec_driver_sql("""
+                SELECT agent_id, provider, script
+                FROM flows
+                WHERE name = 'daily'
+            """).fetchone()
+
+        assert {"agent_id", "provider", "script"}.issubset(columns)
+        assert row == ("code_supervisor", "kiro_cli", "")
 
     def test_terminal_agent_migration_preserves_agent_id(self, tmp_path, monkeypatch):
         """Existing agent-owned terminal rows keep required agent_id values."""
@@ -1384,21 +1300,33 @@ class TestInitDb:
 
         Base.metadata.create_all(bind=test_engine)
         with test_engine.begin() as connection:
+            connection.exec_driver_sql("""
+                INSERT INTO inbox_notifications (
+                    id, sender_agent_id, receiver_agent_id, body, status, created_at
+                )
+                VALUES (1, 'sender', 'agent-1', 'body', 'pending', '2026-05-20 12:00:00')
+            """)
             connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
             connection.exec_driver_sql("DROP TABLE agent_runtime_notifications")
             connection.exec_driver_sql("""
                 CREATE TABLE agent_runtime_notifications (
                     id INTEGER NOT NULL,
                     agent_id VARCHAR NOT NULL,
-                    source_kind VARCHAR NOT NULL,
-                    source_id VARCHAR NOT NULL,
+                    sender_kind VARCHAR NOT NULL,
+                    sender_id VARCHAR NOT NULL,
                     inbox_notification_id INTEGER NOT NULL,
                     created_at DATETIME NOT NULL,
                     PRIMARY KEY (id),
-                    UNIQUE (agent_id, source_kind, source_id),
+                    UNIQUE (agent_id, sender_kind, sender_id),
                     FOREIGN KEY(inbox_notification_id)
                         REFERENCES "inbox_notifications_old" (id) ON DELETE CASCADE
                 )
+            """)
+            connection.exec_driver_sql("""
+                INSERT INTO agent_runtime_notifications (
+                    id, agent_id, sender_kind, sender_id, inbox_notification_id, created_at
+                )
+                VALUES (1, 'agent-1', 'runtime_event', 'event-1', 1, '2026-05-20 12:00:00')
             """)
         with test_engine.connect() as connection:
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
@@ -1406,6 +1334,19 @@ class TestInitDb:
         db_module._migrate_ensure_agent_runtime_tables()
 
         with test_engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(agent_runtime_notifications)"
+                )
+            }
+            assert "idempotency_key" in columns
+            assert "sender_kind" not in columns
+            assert "sender_id" not in columns
             assert _notification_fk_targets(connection, "agent_runtime_notifications") == [
                 "inbox_notifications"
             ]
+            key = connection.exec_driver_sql(
+                "SELECT idempotency_key FROM agent_runtime_notifications WHERE id = 1"
+            ).scalar_one()
+            assert key == "runtime_event:event-1"

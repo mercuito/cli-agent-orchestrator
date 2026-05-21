@@ -98,7 +98,7 @@ def _delete(path: str) -> Optional[Any]:
 
 def _format_session_line(s: Dict[str, Any]) -> str:
     return (
-        f"{s['id']} [{s['status']}] terminal={s['terminal_id']} "
+        f"{s['id']} [{s['status']}] agent={s['agent_id']} "
         f"label={s.get('label') or '-'} started={s['started_at']}"
     )
 
@@ -109,17 +109,17 @@ def monitor() -> None:
 
 
 @monitor.command("start")
-@click.option("--terminal", "terminal_id", required=True, help="Monitored terminal id")
+@click.option("--agent", "agent_id", required=True, help="Monitored CAO agent id")
 @click.option("--label", default=None, help="Human-readable label for the session")
 @click.option(
     "--json", "json_output", is_flag=True, help="Print full session JSON instead of just the id"
 )
-def start_session(terminal_id: str, label: Optional[str], json_output: bool) -> None:
+def start_session(agent_id: str, label: Optional[str], json_output: bool) -> None:
     """Start monitoring a terminal, or echo the existing session if already
     recording. Idempotent on the active state — calling this twice is safe
     and does not create duplicate sessions."""
     body = {
-        "terminal_id": terminal_id,
+        "agent_id": agent_id,
         "label": label,
     }
     session = _required_json_object(_post_json("/monitoring/sessions", body=body))
@@ -143,7 +143,7 @@ def end_session(session_id: str, json_output: bool) -> None:
 
 
 @monitor.command("list")
-@click.option("--terminal", "terminal_id", default=None, help="Filter by monitored terminal")
+@click.option("--agent", "agent_id", default=None, help="Filter by monitored CAO agent")
 @click.option("--active", is_flag=True, help="Only active sessions")
 @click.option("--ended", is_flag=True, help="Only ended sessions")
 @click.option("--label", default=None, help="Filter by exact label match")
@@ -151,7 +151,7 @@ def end_session(session_id: str, json_output: bool) -> None:
 @click.option("--offset", type=int, default=0, show_default=True)
 @click.option("--json", "json_output", is_flag=True, help="Output structured JSON")
 def list_cmd(
-    terminal_id: Optional[str],
+    agent_id: Optional[str],
     active: bool,
     ended: bool,
     label: Optional[str],
@@ -164,8 +164,8 @@ def list_cmd(
         raise click.UsageError("--active and --ended are mutually exclusive")
 
     params: Dict[str, Any] = {"limit": limit, "offset": offset}
-    if terminal_id:
-        params["terminal_id"] = terminal_id
+    if agent_id:
+        params["agent_id"] = agent_id
     if active:
         params["status"] = "active"
     elif ended:

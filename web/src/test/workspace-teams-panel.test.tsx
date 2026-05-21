@@ -4,7 +4,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 const listWorkspaceTeams = vi.hoisted(() => vi.fn())
 const listWorkspaces = vi.hoisted(() => vi.fn())
 const listCaoToolDescriptors = vi.hoisted(() => vi.fn())
-const getWorkspaceToolProviderRoleAccessSchema = vi.hoisted(() => vi.fn())
 const listAgents = vi.hoisted(() => vi.fn())
 const createWorkspaceTeam = vi.hoisted(() => vi.fn())
 const updateWorkspaceTeamMetadata = vi.hoisted(() => vi.fn())
@@ -19,7 +18,6 @@ vi.mock('../api', () => ({
     listWorkspaceTeams,
     listWorkspaces,
     listCaoToolDescriptors,
-    getWorkspaceToolProviderRoleAccessSchema,
     listAgents,
     createWorkspaceTeam,
     updateWorkspaceTeamMetadata,
@@ -46,7 +44,7 @@ const reviewerRole = {
   display_name: 'Reviewer',
   cao_tools: ['read_inbox_message'],
   mcp_servers: { shell: { command: 'shell' } },
-  providers: { linear: { default: { tools: ['cao_linear.get_issue'] } } },
+  providers: { example: { default: { tools: ['cao_example.get_item'] } } },
   deletable: true,
 }
 
@@ -54,7 +52,7 @@ function team(overrides = {}) {
   return {
     id: 'safari_review_team',
     display_name: 'Safari Review Team',
-    workspace: 'linear_delivery',
+    workspace: 'cao_default',
     roles: {
       member: memberRole,
       reviewer: reviewerRole,
@@ -70,8 +68,8 @@ function team(overrides = {}) {
       },
     ],
     diagnostics: [
-      'Workspace team safari_review_team pruned linear app_user_id U1 for out-of-team agent discovery',
-      'Workspace team safari_review_team workspace linear_delivery requires unavailable provider linear',
+      'Workspace team safari_review_team pruned example identity for out-of-team agent discovery',
+      'Workspace team safari_review_team workspace cao_default requires unavailable provider example',
     ],
     ...overrides,
   }
@@ -114,9 +112,9 @@ function seedDashboard(initialTeams = [team()]) {
   listWorkspaceTeams.mockResolvedValue(initialTeams)
   listWorkspaces.mockResolvedValue([
     {
-      id: 'linear_delivery',
-      display_name: 'Linear Delivery',
-      providers: ['linear'],
+      id: 'cao_default',
+      display_name: 'CAO Default',
+      providers: ['example'],
     },
     {
       id: 'docs_workspace',
@@ -128,19 +126,6 @@ function seedDashboard(initialTeams = [team()]) {
     { name: 'read_inbox_message', description: 'Read inbox message' },
     { name: 'send_message', description: 'Send message' },
   ])
-  getWorkspaceToolProviderRoleAccessSchema.mockResolvedValue({
-    provider: 'linear',
-    tools: [
-      { name: 'cao_linear.get_issue', description: 'Read Linear issue' },
-      { name: 'cao_linear.create_comment', description: 'Create Linear comment' },
-    ],
-    fields: {
-      tools: { type: 'string_list' },
-      issues: { type: 'string_list' },
-      allow_top_level_create: { type: 'boolean' },
-      reason: { type: 'string' },
-    },
-  })
   listAgents.mockResolvedValue(agents)
 }
 
@@ -195,8 +180,8 @@ describe('WorkspaceTeamsPanel', () => {
     expect(screen.queryByLabelText(/team role assignments/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/allow_top_level_create/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/reason/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/pruned linear/)).not.toBeInTheDocument()
-    expect(screen.getByText(/requires unavailable provider linear/)).toBeInTheDocument()
+    expect(screen.queryByText(/pruned example/)).not.toBeInTheDocument()
+    expect(screen.getByText(/requires unavailable provider example/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('Search available agents'), {
       target: { value: 'technical' },
@@ -260,7 +245,7 @@ describe('WorkspaceTeamsPanel', () => {
             display_name: 'Automation Reviewer',
             cao_tools: ['send_message'],
             mcp_servers: { files: { command: 'files' } },
-            providers: { linear: { default: { tools: ['cao_linear.create_comment'] } } },
+            providers: {},
             deletable: true,
           },
         },
@@ -291,14 +276,13 @@ describe('WorkspaceTeamsPanel', () => {
     fireEvent.change(screen.getByLabelText('Search tools'), {
       target: { value: 'comment' },
     })
-    expect(screen.getByLabelText('Toggle cao_linear.create_comment')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Toggle cao_example.create_comment')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Toggle send_message')).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('Search tools'), { target: { value: '' } })
     expect(await screen.findByLabelText('Toggle files')).toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('Toggle send_message'))
     fireEvent.click(screen.getByLabelText('Toggle files'))
-    fireEvent.click(screen.getByLabelText('Toggle cao_linear.create_comment'))
     fireEvent.click(screen.getByRole('button', { name: 'Save role' }))
 
     await waitFor(() => expect(putWorkspaceTeamRole).toHaveBeenLastCalledWith(
@@ -308,7 +292,7 @@ describe('WorkspaceTeamsPanel', () => {
         display_name: 'Automation Reviewer',
         cao_tools: ['send_message'],
         mcp_servers: { files: { command: 'files' } },
-        providers: { linear: { default: { tools: ['cao_linear.create_comment'] } } },
+        providers: {},
         deletable: true,
       },
     ))

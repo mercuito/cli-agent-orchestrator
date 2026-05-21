@@ -1,14 +1,9 @@
-# Inbox is one agnostic concept
+# Inbox is agent-to-agent only
 
-Agent-to-agent messages and provider-routed messages (e.g., Linear) share one
-[[Inbox]] concept with a single interface — `send · read · reply` — and one
-persistence table. The Inbox is **source-agnostic**: it stores body and opaque
-metadata, dispatches replies through a source-kind registry, and never imports
-any provider-specific code. Provider integrations (e.g., `linear/`) own their
-own formatting, their own reply round-trip, and register a reply handler with
-the Inbox at startup. Considered splitting plain vs provider into two packages
-and rejected — the persistence is shared, the readiness/delivery pipeline is
-shared, and one symmetric interface makes future source kinds (baton idle nudges,
-system reminders) drop into the same shape without API growth.
+Superseded by [ADR 0005](0005-inbox-agent-to-agent-only.md).
 
-Date: 2026-05-20.
+The inbox no longer carries provider-routed messages, reply handlers, or
+source metadata. It is now a direct agent-to-agent notification channel with
+`sender_agent_id`, `receiver_agent_id`, and `body`.
+
+Date: 2026-05-21.

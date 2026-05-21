@@ -177,20 +177,41 @@ Send a plain message to another agent's inbox.
 {
   "success": true,
   "notification_id": 123,
-  "message_id": 123,
-  "sender_id": "string",
-  "receiver_id": "string",
-  "source_kind": "plain",
-  "source_id": "string",
+  "sender_agent_id": "sender",
+  "receiver_agent_id": "receiver",
+  "body": "Message content",
+  "status": "pending",
   "created_at": "timestamp"
 }
 ```
 
 **Behavior:**
 - Messages are queued and delivered when the receiver agent's live terminal is IDLE
-- `notification_id` and `message_id` both identify the persisted inbox notification for this slice
+- `notification_id` identifies the persisted inbox notification
+- The inbox records only the sender agent, receiver agent, body, status, and timestamps
 - Messages are delivered in order (oldest first)
 - Delivery is automatic via watchdog file monitoring
+
+### GET /agents/{agent_id}/inbox/messages
+List messages addressed to an agent.
+
+**Query parameters:**
+- `limit` (integer, optional): Maximum messages to return, up to 100. Defaults to 10.
+- `status` (string, optional): `pending`, `delivered`, or `failed`.
+
+**Response:**
+```json
+[
+  {
+    "notification_id": 123,
+    "sender_agent_id": "sender",
+    "receiver_agent_id": "receiver",
+    "body": "Message content",
+    "status": "delivered",
+    "created_at": "timestamp"
+  }
+]
+```
 
 ---
 
@@ -202,24 +223,24 @@ integration example. Monitoring routes are operator-facing and **not**
 exposed as MCP tools — agents cannot see or call them.
 
 ### POST /monitoring/sessions
-Start recording a terminal.
+Start recording an agent's inbox conversation window.
 
 **Request body:**
 ```json
 {
-  "terminal_id": "impl-abc123",
+  "agent_id": "implementation_partner",
   "label": "review-v2"
 }
 ```
-`label` is optional. **Idempotent on active state:** if `terminal_id` already
+`label` is optional. **Idempotent on active state:** if `agent_id` already
 has an active session, that session is returned unchanged (label argument
 ignored). Status code is `201` in both cases.
 
-**Response (201):** session object with fields `id`, `terminal_id`, `label`,
+**Response (201):** session object with fields `id`, `agent_id`, `label`,
 `started_at`, `ended_at`, `status`.
 
 ### GET /monitoring/sessions
-List sessions. Query params: `terminal_id`, `status` (`active`|`ended`),
+List sessions. Query params: `agent_id`, `status` (`active`|`ended`),
 `label`, `started_after`, `started_before`, `limit` (1–500), `offset`.
 
 ### GET /monitoring/sessions/{session_id}
@@ -230,6 +251,9 @@ End an active session. `409` if already ended; `404` if missing.
 
 ### GET /monitoring/sessions/{session_id}/messages
 Inbox messages captured by the session, ordered by creation time.
+
+Each message includes `id`, `notification_id`, `sender_agent_id`,
+`receiver_agent_id`, `body`, `status`, and `created_at`.
 
 **Query params (all optional):**
 - `peer` (repeatable): filter to messages whose sender OR receiver is one of

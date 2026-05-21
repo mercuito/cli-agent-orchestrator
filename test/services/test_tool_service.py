@@ -8,15 +8,12 @@ from cli_agent_orchestrator.agent import (
     Agent,
     AgentRegistry,
     AgentWorkspaceConfig,
-    LinearConfig,
-    LinearToolAccessConfig,
 )
 from cli_agent_orchestrator.constants import DEFAULT_RUNTIME_CAPABILITIES
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.tool_service import ToolService, tool_service_for_loaded_agent
 from cli_agent_orchestrator.workspaces import WorkspaceTeam, WorkspaceTeamRole
 from cli_agent_orchestrator.workspace_tool_providers.tool_access import (
-    ProviderConversationAccessRequirement,
     ProviderMediatedToolDefinition,
     ProviderToolAccess,
     ProviderToolAccessPolicy,
@@ -31,7 +28,6 @@ def _agent(
     mcp_servers: Mapping[str, Mapping[str, Any]] | None = None,
     runtime_capabilities: tuple[str, ...] | None = None,
     codex_config: Mapping[str, Any] | None = None,
-    linear: LinearConfig | None = None,
 ) -> Agent:
     return Agent(
         id=agent_id,
@@ -45,7 +41,6 @@ def _agent(
         mcp_servers=mcp_servers or {},
         runtime_capabilities=runtime_capabilities,
         codex_config=codex_config or {},
-        linear=linear,
     )
 
 
@@ -271,10 +266,10 @@ def test_builtin_invocation_denies_unknown_tools_without_catalog_entry():
 def test_provider_mediated_access_is_scoped_by_tool_service():
     agent = _agent()
     policy = ProviderToolAccessPolicy(
-        provider_name="linear",
+        provider_name="example",
         tools={
-            "cao_linear.get_issue": ProviderMediatedToolDefinition(
-                name="cao_linear.get_issue",
+            "example.get_issue": ProviderMediatedToolDefinition(
+                name="example.get_issue",
                 description="Read issue",
                 input_schema={},
                 handler=lambda _context, _arguments: {"ok": True},
@@ -283,24 +278,24 @@ def test_provider_mediated_access_is_scoped_by_tool_service():
         hooks={},
         access=(
             ProviderToolAccess(
-                provider_name="linear",
-                tool_name="cao_linear.get_issue",
+                provider_name="example",
+                tool_name="example.get_issue",
                 agent_id=agent.id,
                 pre_hooks=(),
                 post_hooks=(),
-                source_location="linear.tool_access.reads",
+                source_location="example.tool_access.reads",
             ),
         ),
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        provider_policy_loader=lambda _registry: {"linear": policy},
+        provider_policy_loader=lambda _registry: {"example": policy},
     )
 
     access = service.tools_for_agent(agent.id)
-    decision = service.can_invoke(agent.id, "cao_linear.get_issue", provider_name="linear")
+    decision = service.can_invoke(agent.id, "example.get_issue", provider_name="example")
 
-    assert access.provider_mediated_tools == {"linear": ("cao_linear.get_issue",)}
+    assert access.provider_mediated_tools == {"example": ("example.get_issue",)}
     assert decision.allowed is True
 
 
@@ -308,10 +303,10 @@ def test_agent_tool_view_reuses_provider_policy_metadata_for_same_inputs():
     agent = _agent()
     calls = 0
     policy = ProviderToolAccessPolicy(
-        provider_name="linear",
+        provider_name="example",
         tools={
-            "cao_linear.get_issue": ProviderMediatedToolDefinition(
-                name="cao_linear.get_issue",
+            "example.get_issue": ProviderMediatedToolDefinition(
+                name="example.get_issue",
                 description="Read issue",
                 input_schema={},
                 handler=lambda _context, _arguments: {"ok": True},
@@ -320,12 +315,12 @@ def test_agent_tool_view_reuses_provider_policy_metadata_for_same_inputs():
         hooks={},
         access=(
             ProviderToolAccess(
-                provider_name="linear",
-                tool_name="cao_linear.get_issue",
+                provider_name="example",
+                tool_name="example.get_issue",
                 agent_id=agent.id,
                 pre_hooks=(),
                 post_hooks=(),
-                source_location="linear.tool_access.reads",
+                source_location="example.tool_access.reads",
             ),
         ),
     )
@@ -333,7 +328,7 @@ def test_agent_tool_view_reuses_provider_policy_metadata_for_same_inputs():
     def provider_policy_loader(_registry):
         nonlocal calls
         calls += 1
-        return {"linear": policy}
+        return {"example": policy}
 
     service = ToolService(
         agent_manager=_manager(agent),
@@ -351,8 +346,8 @@ def test_agent_tool_view_reuses_provider_policy_metadata_for_same_inputs():
         built_in_tool_names=("send_message",),
     )
 
-    assert first.effective_access.provider_mediated_tools == {"linear": ("cao_linear.get_issue",)}
-    assert second.effective_access.provider_mediated_tools == {"linear": ("cao_linear.get_issue",)}
+    assert first.effective_access.provider_mediated_tools == {"example": ("example.get_issue",)}
+    assert second.effective_access.provider_mediated_tools == {"example": ("example.get_issue",)}
     assert calls == 1
 
 
@@ -367,11 +362,11 @@ def test_agent_tool_view_recomputes_provider_policy_when_provider_config_changes
         nonlocal calls
         calls += 1
         return {
-            "linear": ProviderToolAccessPolicy(
-                provider_name="linear",
+            "example": ProviderToolAccessPolicy(
+                provider_name="example",
                 tools={
-                    "cao_linear.get_issue": ProviderMediatedToolDefinition(
-                        name="cao_linear.get_issue",
+                    "example.get_issue": ProviderMediatedToolDefinition(
+                        name="example.get_issue",
                         description=f"Read issue {version}",
                         input_schema={},
                         handler=lambda _context, _arguments: {"ok": True},
@@ -380,12 +375,12 @@ def test_agent_tool_view_recomputes_provider_policy_when_provider_config_changes
                 hooks={},
                 access=(
                     ProviderToolAccess(
-                        provider_name="linear",
-                        tool_name="cao_linear.get_issue",
+                        provider_name="example",
+                        tool_name="example.get_issue",
                         agent_id=agent.id,
                         pre_hooks=(),
                         post_hooks=(),
-                        source_location=f"linear.tool_access.{version}",
+                        source_location=f"example.tool_access.{version}",
                     ),
                 ),
             )
@@ -507,9 +502,9 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
                 display_name="Member",
                 cao_tools=("read_inbox_message",),
                 providers={
-                    "linear": {
+                    "example": {
                         "reads": {
-                            "tools": ["cao_linear.get_issue"],
+                            "tools": ["example.get_issue"],
                         },
                     },
                 },
@@ -519,7 +514,7 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
     calls = 0
 
     class FakeRoleProvider:
-        name = "linear"
+        name = "example"
 
         def initialize(self):
             return None
@@ -528,10 +523,10 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
             nonlocal calls
             calls += 1
             return ProviderToolAccessPolicy(
-                provider_name="linear",
+                provider_name="example",
                 tools={
-                    "cao_linear.get_issue": ProviderMediatedToolDefinition(
-                        name="cao_linear.get_issue",
+                    "example.get_issue": ProviderMediatedToolDefinition(
+                        name="example.get_issue",
                         description="Read issue",
                         input_schema={},
                         handler=lambda _context, _arguments: {"ok": True},
@@ -540,8 +535,8 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
                 hooks={},
                 access=(
                     ProviderToolAccess(
-                        provider_name="linear",
-                        tool_name="cao_linear.get_issue",
+                        provider_name="example",
+                        tool_name="example.get_issue",
                         agent_id=agent.id,
                         pre_hooks=(),
                         post_hooks=(),
@@ -552,7 +547,7 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
 
     class FakeProviderRegistry:
         def create(self, provider_name, _agent_registry):
-            assert provider_name == "linear"
+            assert provider_name == "example"
             return FakeRoleProvider()
 
     monkeypatch.setattr(
@@ -561,16 +556,7 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        provider_conversation_requirement_loader=lambda _registry: {
-            "linear": (
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="read",
-                    required_identity="workspace_team_presence",
-                ),
-            )
-        },
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
+                collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
             team=team,
             agents=(agent,),
         ),
@@ -582,15 +568,15 @@ def test_agent_tool_view_reuses_team_role_provider_policy_during_surface_build(
         built_in_tool_names=("read_inbox_message",),
     )
 
-    assert view.effective_access.provider_mediated_tools == {"linear": ("cao_linear.get_issue",)}
-    assert view.mcp_surface_descriptor["tools"][0]["name"] == "cao_linear.get_issue"
+    assert view.effective_access.provider_mediated_tools == {"example": ("example.get_issue",)}
+    assert view.mcp_surface_descriptor["tools"][0]["name"] == "example.get_issue"
     assert calls == 1
 
 
 def test_provider_mediated_registration_skips_builtin_name_conflicts():
     agent = _agent()
     policy = ProviderToolAccessPolicy(
-        provider_name="linear",
+        provider_name="example",
         tools={
             "send_message": ProviderMediatedToolDefinition(
                 name="send_message",
@@ -602,12 +588,12 @@ def test_provider_mediated_registration_skips_builtin_name_conflicts():
         hooks={},
         access=(
             ProviderToolAccess(
-                provider_name="linear",
+                provider_name="example",
                 tool_name="send_message",
                 agent_id=agent.id,
                 pre_hooks=(),
                 post_hooks=(),
-                source_location="linear.tool_access.conflict",
+                source_location="example.tool_access.conflict",
             ),
         ),
     )
@@ -616,7 +602,7 @@ def test_provider_mediated_registration_skips_builtin_name_conflicts():
         terminal_metadata_resolver=lambda terminal_id: (
             {"agent_id": agent.id} if terminal_id == "terminal-1" else None
         ),
-        provider_policy_loader=lambda _registry: {"linear": policy},
+        provider_policy_loader=lambda _registry: {"example": policy},
     )
 
     access = service.tools_for_agent(agent.id, built_in_tool_names=("send_message",))
@@ -627,11 +613,11 @@ def test_provider_mediated_registration_skips_builtin_name_conflicts():
     decision = service.can_invoke(
         agent.id,
         "send_message",
-        provider_name="linear",
+        provider_name="example",
         built_in_tool_names=("send_message",),
     )
 
-    assert access.provider_mediated_tools == {"linear": ()}
+    assert access.provider_mediated_tools == {"example": ()}
     assert registration.provider_mediated_tools == ()
     assert decision.allowed is False
 
@@ -704,10 +690,10 @@ def test_provider_mediated_registration_deduplicates_names_in_tool_service():
 def test_teamed_provider_access_fails_closed_when_team_policy_is_invalid():
     agent = _agent(agent_id="agent", team="missing-team")
     policy = ProviderToolAccessPolicy(
-        provider_name="linear",
+        provider_name="example",
         tools={
-            "cao_linear.get_issue": ProviderMediatedToolDefinition(
-                name="cao_linear.get_issue",
+            "example.get_issue": ProviderMediatedToolDefinition(
+                name="example.get_issue",
                 description="Read issue",
                 input_schema={},
                 handler=lambda _context, _arguments: {"ok": True},
@@ -716,18 +702,18 @@ def test_teamed_provider_access_fails_closed_when_team_policy_is_invalid():
         hooks={},
         access=(
             ProviderToolAccess(
-                provider_name="linear",
-                tool_name="cao_linear.get_issue",
+                provider_name="example",
+                tool_name="example.get_issue",
                 agent_id=agent.id,
                 pre_hooks=(),
                 post_hooks=(),
-                source_location="linear.tool_access.reads",
+                source_location="example.tool_access.reads",
             ),
         ),
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        provider_policy_loader=lambda _registry: {"linear": policy},
+        provider_policy_loader=lambda _registry: {"example": policy},
         collaboration_manager_factory=lambda _registry: _InvalidTeamManager(),
     )
 
@@ -735,7 +721,7 @@ def test_teamed_provider_access_fails_closed_when_team_policy_is_invalid():
 
     assert access.provider_mediated_tools == {}
     assert (
-        service.can_invoke(agent.id, "cao_linear.get_issue", provider_name="linear").allowed
+        service.can_invoke(agent.id, "example.get_issue", provider_name="example").allowed
         is False
     )
 
@@ -803,10 +789,10 @@ def test_teamed_missing_role_and_non_member_assignment_diagnostics_are_actionabl
 def test_teamed_provider_local_access_is_inactive_not_effective():
     agent = _agent(agent_id="agent", team="delivery")
     policy = ProviderToolAccessPolicy(
-        provider_name="linear",
+        provider_name="example",
         tools={
-            "cao_linear.get_issue": ProviderMediatedToolDefinition(
-                name="cao_linear.get_issue",
+            "example.get_issue": ProviderMediatedToolDefinition(
+                name="example.get_issue",
                 description="Read issue",
                 input_schema={},
                 handler=lambda _context, _arguments: {"ok": True},
@@ -815,22 +801,22 @@ def test_teamed_provider_local_access_is_inactive_not_effective():
         hooks={},
         access=(
             ProviderToolAccess(
-                provider_name="linear",
-                tool_name="cao_linear.get_issue",
+                provider_name="example",
+                tool_name="example.get_issue",
                 agent_id=agent.id,
                 pre_hooks=(),
                 post_hooks=(),
-                source_location="agents.agent.linear.tool_access.reads",
+                source_location="agents.agent.example.tool_access.reads",
             ),
         ),
     )
     service = ToolService(
         agent_manager=_manager(agent),
-        provider_policy_loader=lambda _registry: {"linear": policy},
+        provider_policy_loader=lambda _registry: {"example": policy},
     )
 
     access = service.tools_for_agent(agent.id)
-    decision = service.can_invoke(agent.id, "cao_linear.get_issue", provider_name="linear")
+    decision = service.can_invoke(agent.id, "example.get_issue", provider_name="example")
 
     assert access.provider_mediated_tools == {}
     assert access.allowed_tools == ()
@@ -842,7 +828,6 @@ def test_teamed_provider_access_requires_workspace_authorized_location():
     agent = _agent(
         agent_id="agent",
         team="delivery",
-        linear=LinearConfig(app_key="agent"),
     )
     team = WorkspaceTeam(
         id="delivery",
@@ -853,9 +838,9 @@ def test_teamed_provider_access_requires_workspace_authorized_location():
                 display_name="Member",
                 cao_tools=("send_message", "handoff"),
                 providers={
-                    "linear": {
+                    "example": {
                         "reads": {
-                            "tools": ["cao_linear.list_teams"],
+                            "tools": ["example.list_teams"],
                         },
                     },
                     "github": {
@@ -877,128 +862,18 @@ def test_teamed_provider_access_requires_workspace_authorized_location():
 
     access = service.tools_for_agent(agent.id)
 
-    assert access.provider_mediated_tools == {"linear": ("cao_linear.list_teams",)}
-    assert service.can_invoke(agent.id, "cao_linear.list_teams", provider_name="linear").allowed
+    assert access.provider_mediated_tools == {}
+    assert not service.can_invoke(agent.id, "example.list_teams", provider_name="example").allowed
     assert (
-        service.can_invoke(agent.id, "cao_linear.create_issue", provider_name="linear").allowed
+        service.can_invoke(agent.id, "example.create_issue", provider_name="example").allowed
         is False
     )
     assert "role_provider_not_in_workspace" in {
         diagnostic.code for diagnostic in access.diagnostics
     }
-
-
-def test_teamed_role_provider_access_ignores_invalid_agent_local_linear_grants():
-    agent = _agent(
-        agent_id="agent",
-        team="delivery",
-        linear=LinearConfig(
-            app_key="agent",
-            tool_access=(
-                LinearToolAccessConfig(
-                    access_id="stale",
-                    tools=("cao_linear.get_issue",),
-                    issues=(),
-                ),
-            ),
-        ),
-    )
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        roles={
-            "member": WorkspaceTeamRole(
-                display_name="Member",
-                providers={
-                    "linear": {
-                        "reads": {
-                            "tools": ["cao_linear.list_teams"],
-                        },
-                    },
-                },
-            )
-        },
-    )
-    service = ToolService(
-        agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=(agent,),
-        ),
-    )
-
-    access = service.tools_for_agent(agent.id)
-
-    assert access.provider_mediated_tools == {"linear": ("cao_linear.list_teams",)}
-    assert access.inactive_local_grants == {"linear.tool_access": ["stale"]}
-    assert "provider_role_access_invalid" not in {
+    assert "provider_role_access_invalid" in {
         diagnostic.code for diagnostic in access.diagnostics
     }
-
-
-def test_loaded_agent_tool_service_keeps_full_registry_for_team_diagnostics(monkeypatch):
-    loaded = _agent(agent_id="agent", team="delivery")
-    peer = _agent(agent_id="peer", team="delivery")
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        role_assignments={"peer": "member"},
-    )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.tool_service.load_agent_registry",
-        lambda: AgentRegistry({loaded.id: loaded, peer.id: peer}),
-    )
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.services.tool_service.default_workspace_collaboration_manager",
-        lambda *, agent_registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=tuple(agent_registry.all().values()),
-        ),
-    )
-
-    access = tool_service_for_loaded_agent(
-        loaded,
-        fallback_agent_id=loaded.id,
-        cli_provider=loaded.cli_provider,
-    ).tools_for_agent(loaded.id, built_in_tool_names=("send_message", "handoff"))
-
-    assert access.built_in_cao_tools == ("send_message", "handoff")
-    assert "inactive_non_member_role_assignment" not in {
-        diagnostic.code for diagnostic in access.diagnostics
-    }
-
-
-def test_default_member_role_does_not_grant_provider_conversation_requirements():
-    agent = _agent(agent_id="agent", team="delivery")
-    service = ToolService(
-        agent_manager=_manager(agent),
-        provider_conversation_requirement_loader=lambda _registry: {
-            "linear": (
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="read",
-                    required_identity="workspace_team_presence",
-                ),
-            )
-        },
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(agents=(agent,)),
-    )
-
-    access = service.tools_for_agent(agent.id, built_in_tool_names=("read_inbox_message",))
-    decision = service.provider_conversation_decision(
-        agent.id,
-        provider="linear",
-        operation="read",
-        source="test",
-        provider_identity="agent",
-    )
-
-    assert access.built_in_cao_tools == ()
-    assert access.provider_conversation_requirements == ()
-    assert decision.allowed is False
-    assert decision.reason == "provider_conversation_operation_not_registered"
 
 
 def test_terminate_target_must_be_in_same_workspace_team():
@@ -1056,157 +931,9 @@ def test_terminate_target_must_be_in_same_workspace_team():
     assert outsider_decision.reason == "target_terminal_not_same_workspace_team"
 
 
-def test_role_inbox_grant_enables_provider_conversation_requirement():
-    agent = _agent(agent_id="agent", team="delivery")
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        roles={
-            "member": WorkspaceTeamRole(
-                display_name="Member",
-                cao_tools=("read_inbox_message",),
-            )
-        },
-    )
-    service = ToolService(
-        agent_manager=_manager(agent),
-        provider_conversation_requirement_loader=lambda _registry: {
-            "linear": (
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="read",
-                    required_identity="workspace_team_presence",
-                ),
-            )
-        },
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=(agent,),
-        ),
-    )
-
-    access = service.tools_for_agent(agent.id, built_in_tool_names=("read_inbox_message",))
-
-    assert access.built_in_cao_tools == ("read_inbox_message",)
-    assert access.provider_conversation_requirements == (
-        ProviderConversationAccessRequirement(
-            provider_name="linear",
-            operation="read",
-            required_identity="workspace_team_presence",
-        ),
-    )
-
-
-def test_role_read_inbox_grant_does_not_authorize_provider_activity():
-    agent = _agent(agent_id="agent", team="delivery")
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        roles={
-            "member": WorkspaceTeamRole(
-                display_name="Member",
-                cao_tools=("read_inbox_message",),
-            )
-        },
-    )
-    service = ToolService(
-        agent_manager=_manager(agent),
-        provider_conversation_requirement_loader=lambda _registry: {
-            "linear": (
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="read",
-                    required_identity="workspace_team_presence",
-                ),
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="activity",
-                    required_identity="workspace_team_presence",
-                ),
-            )
-        },
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=(agent,),
-        ),
-    )
-
-    access = service.tools_for_agent(agent.id, built_in_tool_names=("read_inbox_message",))
-    decision = service.provider_conversation_decision(
-        agent.id,
-        provider="linear",
-        operation="activity",
-        source="test",
-        provider_identity=None,
-    )
-
-    assert access.provider_conversation_requirements == (
-        ProviderConversationAccessRequirement(
-            provider_name="linear",
-            operation="read",
-            required_identity="workspace_team_presence",
-        ),
-    )
-    assert decision.allowed is False
-    assert decision.reason == "provider_conversation_operation_not_registered"
-
-
-def test_role_provider_activity_permission_registers_provider_activity():
-    agent = _agent(agent_id="agent", team="delivery")
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        roles={
-            "member": WorkspaceTeamRole(
-                display_name="Member",
-                cao_tools=("post_provider_activity",),
-            )
-        },
-    )
-    service = ToolService(
-        agent_manager=_manager(agent),
-        provider_conversation_requirement_loader=lambda _registry: {
-            "linear": (
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="activity",
-                    required_identity="workspace_team_presence",
-                ),
-            )
-        },
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=(agent,),
-        ),
-    )
-
-    access = service.tools_for_agent(agent.id, built_in_tool_names=("read_inbox_message",))
-    decision = service.provider_conversation_decision(
-        agent.id,
-        provider="linear",
-        operation="activity",
-        source="test",
-        provider_identity=None,
-    )
-
-    assert access.built_in_cao_tools == ()
-    assert access.provider_conversation_requirements == (
-        ProviderConversationAccessRequirement(
-            provider_name="linear",
-            operation="activity",
-            required_identity="workspace_team_presence",
-        ),
-    )
-    assert decision.allowed is False
-    assert decision.reason == "missing_provider_identity"
-
-
 def test_role_provider_access_expands_for_each_member_on_role():
-    first = _agent(agent_id="first", team="delivery", linear=LinearConfig(app_key="first"))
-    second = _agent(agent_id="second", team="delivery", linear=LinearConfig(app_key="second"))
+    first = _agent(agent_id="first", team="delivery")
+    second = _agent(agent_id="second", team="delivery")
     team = WorkspaceTeam(
         id="delivery",
         display_name="Delivery",
@@ -1216,9 +943,9 @@ def test_role_provider_access_expands_for_each_member_on_role():
                 display_name="Member",
                 cao_tools=("send_message", "handoff"),
                 providers={
-                    "linear": {
+                    "example": {
                         "reads": {
-                            "tools": ["cao_linear.list_teams"],
+                            "tools": ["example.list_teams"],
                         },
                     },
                 },
@@ -1236,10 +963,10 @@ def test_role_provider_access_expands_for_each_member_on_role():
     first_access = service.tools_for_agent(first.id)
     second_access = service.tools_for_agent(second.id)
 
-    assert first_access.provider_mediated_tools == {"linear": ("cao_linear.list_teams",)}
-    assert second_access.provider_mediated_tools == {"linear": ("cao_linear.list_teams",)}
-    assert service.can_invoke(first.id, "cao_linear.list_teams", provider_name="linear").allowed
-    assert service.can_invoke(second.id, "cao_linear.list_teams", provider_name="linear").allowed
+    assert first_access.provider_mediated_tools == {}
+    assert second_access.provider_mediated_tools == {}
+    assert not service.can_invoke(first.id, "example.list_teams", provider_name="example").allowed
+    assert not service.can_invoke(second.id, "example.list_teams", provider_name="example").allowed
 
 
 def test_role_provider_access_missing_presence_emits_diagnostic_and_no_tool():
@@ -1252,9 +979,9 @@ def test_role_provider_access_missing_presence_emits_diagnostic_and_no_tool():
             "member": WorkspaceTeamRole(
                 display_name="Member",
                 providers={
-                    "linear": {
+                    "example": {
                         "reads": {
-                            "tools": ["cao_linear.list_teams"],
+                            "tools": ["example.list_teams"],
                         },
                     },
                 },
@@ -1273,128 +1000,6 @@ def test_role_provider_access_missing_presence_emits_diagnostic_and_no_tool():
 
     assert access.provider_mediated_tools == {}
     assert "provider_role_access_invalid" in {diagnostic.code for diagnostic in access.diagnostics}
-
-
-def test_role_provider_access_rejects_non_boolean_provider_fields():
-    agent = _agent(agent_id="agent", team="delivery", linear=LinearConfig(app_key="agent"))
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        roles={
-            "member": WorkspaceTeamRole(
-                display_name="Member",
-                providers={
-                    "linear": {
-                        "creates": {
-                            "tools": ["cao_linear.create_issue"],
-                            "create_team_ids": ["team-1"],
-                            "allow_top_level_create": "false",
-                        },
-                    },
-                },
-            )
-        },
-    )
-    service = ToolService(
-        agent_manager=_manager(agent),
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=(agent,),
-        ),
-    )
-
-    access = service.tools_for_agent(agent.id)
-
-    assert access.provider_mediated_tools == {}
-    assert any(
-        "allow_top_level_create must be a boolean" in diagnostic.message
-        for diagnostic in access.diagnostics
-    )
-
-
-def test_provider_conversation_missing_identity_denies_through_tool_service():
-    agent = _agent(agent_id="agent", team="delivery")
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        roles={
-            "member": WorkspaceTeamRole(
-                display_name="Member",
-                cao_tools=("read_inbox_message",),
-            )
-        },
-    )
-    service = ToolService(
-        agent_manager=_manager(agent),
-        provider_conversation_requirement_loader=lambda _registry: {
-            "linear": (
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="read",
-                    required_identity="workspace_team_presence",
-                ),
-            )
-        },
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=(agent,),
-        ),
-    )
-
-    decision = service.provider_conversation_decision(
-        agent.id,
-        provider="linear",
-        operation="read",
-        source="test",
-        provider_identity=None,
-    )
-
-    assert decision.allowed is False
-    assert decision.reason == "missing_provider_identity"
-
-
-def test_provider_conversation_denies_operations_missing_provider_descriptor():
-    agent = _agent(agent_id="agent", team="delivery")
-    team = WorkspaceTeam(
-        id="delivery",
-        display_name="Delivery",
-        workspace="workspace",
-        roles={
-            "member": WorkspaceTeamRole(
-                display_name="Member",
-                cao_tools=("read_inbox_message",),
-            )
-        },
-    )
-    service = ToolService(
-        agent_manager=_manager(agent),
-        provider_conversation_requirement_loader=lambda _registry: {
-            "linear": (
-                ProviderConversationAccessRequirement(
-                    provider_name="linear",
-                    operation="read",
-                    required_identity="workspace_team_presence",
-                ),
-            )
-        },
-        collaboration_manager_factory=lambda _registry: _ProviderWorkspaceManager(
-            team=team,
-            agents=(agent,),
-        ),
-    )
-
-    decision = service.provider_conversation_decision(
-        agent.id,
-        provider="linear",
-        operation="read_reply",
-        source="test",
-        provider_identity="agent",
-    )
-
-    assert decision.allowed is False
-    assert decision.reason == "provider_conversation_operation_not_registered"
 
 
 class _InvalidTeamManager:
@@ -1458,4 +1063,4 @@ class _ProviderWorkspaceManager:
 
 class _ProviderWorkspace:
     id = "workspace"
-    providers = ("linear",)
+    providers = ("example",)
