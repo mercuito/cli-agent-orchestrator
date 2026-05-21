@@ -106,74 +106,6 @@ class AgentWorkspaceConfig:
 
 
 @dataclass(frozen=True)
-class LinearToolAccessConfig:
-    """One Linear tool access policy owned by an agent."""
-
-    access_id: str
-    tools: tuple[str, ...]
-    issues: tuple[str, ...]
-    create_team_ids: tuple[str, ...] = ()
-    create_project_ids: tuple[str, ...] = ()
-    create_parent_issues: tuple[str, ...] = ()
-    allow_top_level_create: bool = False
-    update_fields: tuple[str, ...] = ()
-    reason: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        _safe_path_segment(self.access_id, label="linear.tool_access id")
-        _require_non_empty_str_tuple(self.tools, "linear.tool_access.tools")
-        _require_str_tuple(self.issues, "linear.tool_access.issues")
-        _require_str_tuple(self.create_team_ids, "linear.tool_access.create_team_ids")
-        _require_str_tuple(self.create_project_ids, "linear.tool_access.create_project_ids")
-        _require_str_tuple(self.create_parent_issues, "linear.tool_access.create_parent_issues")
-        _require_str_tuple(self.update_fields, "linear.tool_access.update_fields")
-        if not isinstance(self.allow_top_level_create, bool):
-            raise AgentConfigError("linear.tool_access.allow_top_level_create must be a boolean")
-        if self.reason is not None:
-            _required_str(self.reason, "linear.tool_access.reason")
-
-
-@dataclass(frozen=True)
-class LinearConfig:
-    """Linear OAuth presence and tool policies owned by an agent."""
-
-    app_key: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
-    webhook_secret: Optional[str] = None
-    oauth_redirect_uri: Optional[str] = None
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-    token_expires_at: Optional[str] = None
-    app_user_id: Optional[str] = None
-    app_user_name: Optional[str] = None
-    oauth_state: Optional[str] = None
-    tool_access: tuple[LinearToolAccessConfig, ...] = ()
-
-    def __post_init__(self) -> None:
-        for field_name in (
-            "app_key",
-            "client_id",
-            "client_secret",
-            "webhook_secret",
-            "oauth_redirect_uri",
-            "access_token",
-            "refresh_token",
-            "token_expires_at",
-            "app_user_id",
-            "app_user_name",
-            "oauth_state",
-        ):
-            value = getattr(self, field_name)
-            if value is not None:
-                _required_str(value, f"linear.{field_name}")
-        if not isinstance(self.tool_access, tuple) or not all(
-            isinstance(access, LinearToolAccessConfig) for access in self.tool_access
-        ):
-            raise AgentConfigError("linear.tool_access must contain LinearToolAccessConfig values")
-
-
-@dataclass(frozen=True)
 class Agent:
     """Durable CAO agent config and prompt."""
 
@@ -199,7 +131,6 @@ class Agent:
     runtime_capabilities: Optional[tuple[str, ...]] = None
     codex_config: Mapping[str, Any] = field(default_factory=dict)
     workspace: AgentWorkspaceConfig = AgentWorkspaceConfig()
-    linear: Optional[LinearConfig] = None
     current_workspace_context_id: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -261,8 +192,6 @@ class Agent:
         )
         if not isinstance(self.workspace, AgentWorkspaceConfig):
             raise AgentConfigError(f"agents.{self.id}.workspace must be AgentWorkspaceConfig")
-        if self.linear is not None and not isinstance(self.linear, LinearConfig):
-            raise AgentConfigError(f"agents.{self.id}.linear must be LinearConfig")
         if self.current_workspace_context_id is not None:
             _safe_path_segment(
                 self.current_workspace_context_id,
@@ -513,13 +442,6 @@ def patch_agent_config(
         workspace = {"team": agent.workspace.team} if agent.workspace.team is not None else None
         table_replacements.append(("workspace", workspace))
         table_replacements.append(("workspace_context", None))
-    if "linear" in changed_fields:
-        table_replacements.append(
-            (
-                "linear",
-                _linear_to_toml_mapping(agent.linear) if agent.linear is not None else None,
-            )
-        )
 
     for table_name, values in table_replacements:
         text = _replace_toml_table_tree(text, table_name, values)
@@ -559,7 +481,6 @@ def validate_agents_root(*, agents_root: Optional[Path] = None) -> None:
         raise AgentValidationError([f"agents root not found: {root}"])
     for agent_dir in sorted(path for path in root.iterdir() if path.is_dir()):
         errors.extend(validate_agent_dir(agent_dir))
-    _validate_linear_uniqueness(root, errors)
     if errors:
         raise AgentValidationError(errors)
 
@@ -581,7 +502,6 @@ def validate_agent_dir(agent_dir: Path) -> list[str]:
         errors.append(f"{agent.id}: {prompt_path}: prompt.md must be non-empty")
     errors.extend(_mode_errors(agent.id, config_path, AGENT_CONFIG_MODE))
     errors.extend(_mode_errors(agent.id, prompt_path, AGENT_PROMPT_MODE))
-    errors.extend(_linear_tool_access_errors(agent, config_path))
     return errors
 
 
@@ -627,7 +547,6 @@ def _agent_from_config(
         ),
         codex_config=_mapping(data.get("codex_config"), "codex_config", config_path),
         workspace=_workspace_config(data, agent_id=agent_id, path=config_path),
-        linear=_linear_config(data.get("linear"), path=config_path),
     )
 
 
@@ -688,130 +607,6 @@ def _validate_legacy_workspace_context(raw: object, *, agent_id: str, path: Path
         )
 
 
-def _linear_config(raw: object, *, path: Path) -> Optional[LinearConfig]:
-    if raw is None:
-        return None
-    if not isinstance(raw, Mapping):
-        raise AgentConfigError(f"{path}: linear must be a table")
-    tool_access_raw = raw.get("tool_access")
-    access_entries: list[LinearToolAccessConfig] = []
-    if tool_access_raw is not None:
-        if not isinstance(tool_access_raw, Mapping):
-            raise AgentConfigError(f"{path}: linear.tool_access must be a table")
-        for access_id, access in tool_access_raw.items():
-            if not isinstance(access, Mapping):
-                raise AgentConfigError(f"{path}: linear.tool_access.{access_id} must be a table")
-            allow_top_level_create = access.get("allow_top_level_create", False)
-            if not isinstance(allow_top_level_create, bool):
-                raise AgentConfigError(
-                    f"{path}: linear.tool_access.{access_id}.allow_top_level_create "
-                    "must be a boolean"
-                )
-            tools = _require_mapping_value(
-                access,
-                "tools",
-                f"linear.tool_access.{access_id}.tools",
-                path,
-            )
-            access_entries.append(
-                LinearToolAccessConfig(
-                    access_id=str(access_id),
-                    tools=_tuple_of_strs(tools, "linear.tool_access.tools", path),
-                    issues=_tuple_of_strs(
-                        access.get("issues", ()),
-                        "linear.tool_access.issues",
-                        path,
-                    ),
-                    create_team_ids=_tuple_of_strs(
-                        access.get("create_team_ids", ()),
-                        "linear.tool_access.create_team_ids",
-                        path,
-                    ),
-                    create_project_ids=_tuple_of_strs(
-                        access.get("create_project_ids", ()),
-                        "linear.tool_access.create_project_ids",
-                        path,
-                    ),
-                    create_parent_issues=_tuple_of_strs(
-                        access.get("create_parent_issues", ()),
-                        "linear.tool_access.create_parent_issues",
-                        path,
-                    ),
-                    allow_top_level_create=allow_top_level_create,
-                    update_fields=_tuple_of_strs(
-                        access.get("update_fields", ()),
-                        "linear.tool_access.update_fields",
-                        path,
-                    ),
-                    reason=_optional_mapping_str(access, "reason", path),
-                )
-            )
-    return LinearConfig(
-        app_key=_optional_mapping_str(raw, "app_key", path),
-        client_id=_optional_mapping_str(raw, "client_id", path),
-        client_secret=_optional_mapping_str(raw, "client_secret", path),
-        webhook_secret=_optional_mapping_str(raw, "webhook_secret", path),
-        oauth_redirect_uri=_optional_mapping_str(raw, "oauth_redirect_uri", path),
-        access_token=_optional_mapping_str(raw, "access_token", path),
-        refresh_token=_optional_mapping_str(raw, "refresh_token", path),
-        token_expires_at=_optional_mapping_str(raw, "token_expires_at", path),
-        app_user_id=_optional_mapping_str(raw, "app_user_id", path),
-        app_user_name=_optional_mapping_str(raw, "app_user_name", path),
-        oauth_state=_optional_mapping_str(raw, "oauth_state", path),
-        tool_access=tuple(sorted(access_entries, key=lambda item: item.access_id)),
-    )
-
-
-def _linear_tool_access_errors(agent: Agent, config_path: Path) -> list[str]:
-    errors: list[str] = []
-    if agent.linear is None:
-        return errors
-    from cli_agent_orchestrator.linear.provider_tools import (
-        LINEAR_PROVIDER_TOOLS,
-        UPDATE_ISSUE_FIELDS,
-    )
-
-    for access in agent.linear.tool_access:
-        for tool in access.tools:
-            if tool not in LINEAR_PROVIDER_TOOLS:
-                errors.append(
-                    f"{agent.id}: {config_path}: unknown Linear tool in "
-                    f"linear.tool_access.{access.access_id}: {tool}"
-                )
-        for field_name in access.update_fields:
-            if field_name not in UPDATE_ISSUE_FIELDS:
-                errors.append(
-                    f"{agent.id}: {config_path}: unknown Linear update field in "
-                    f"linear.tool_access.{access.access_id}: {field_name}"
-                )
-    return errors
-
-
-def _validate_linear_uniqueness(root: Path, errors: list[str]) -> None:
-    seen: dict[tuple[str, str], str] = {}
-    agents: Iterable[Agent]
-    try:
-        agents = load_all_agents(agents_root=root).all().values()
-    except AgentConfigError:
-        agents = (
-            load_agent(agent_dir.name, agents_root=root)
-            for agent_dir in sorted(path for path in root.iterdir() if path.is_dir())
-            if not validate_agent_dir(agent_dir)
-        )
-    for agent in agents:
-        if agent.linear is None:
-            continue
-        for field_name in ("app_user_id", "app_user_name", "oauth_state"):
-            value = getattr(agent.linear, field_name)
-            if value is None:
-                continue
-            key = (field_name, value)
-            if key in seen:
-                errors.append(f"{agent.id}: linear.{field_name} duplicates {seen[key]}: {value}")
-            else:
-                seen[key] = agent.id
-
-
 def _mode_errors(agent_id: str, path: Path, expected_mode: int) -> list[str]:
     actual = path.stat().st_mode & 0o777
     if actual == expected_mode:
@@ -861,39 +656,6 @@ def _agent_to_toml(agent: Agent) -> str:
         data["mcp_servers"] = dict(agent.mcp_servers)
     if agent.codex_config:
         data["codex_config"] = dict(agent.codex_config)
-    if agent.linear is not None:
-        linear: dict[str, Any] = {
-            key: value
-            for key, value in {
-                "app_key": agent.linear.app_key,
-                "client_id": agent.linear.client_id,
-                "client_secret": agent.linear.client_secret,
-                "webhook_secret": agent.linear.webhook_secret,
-                "oauth_redirect_uri": agent.linear.oauth_redirect_uri,
-                "access_token": agent.linear.access_token,
-                "refresh_token": agent.linear.refresh_token,
-                "token_expires_at": agent.linear.token_expires_at,
-                "app_user_id": agent.linear.app_user_id,
-                "app_user_name": agent.linear.app_user_name,
-                "oauth_state": agent.linear.oauth_state,
-            }.items()
-            if value is not None
-        }
-        if agent.linear.tool_access:
-            linear["tool_access"] = {
-                access.access_id: {
-                    "tools": list(access.tools),
-                    "issues": list(access.issues),
-                    "create_team_ids": list(access.create_team_ids),
-                    "create_project_ids": list(access.create_project_ids),
-                    "create_parent_issues": list(access.create_parent_issues),
-                    "allow_top_level_create": access.allow_top_level_create,
-                    "update_fields": list(access.update_fields),
-                    **({"reason": access.reason} if access.reason is not None else {}),
-                }
-                for access in agent.linear.tool_access
-            }
-        data["linear"] = linear
     return _dump_toml(data)
 
 
@@ -997,41 +759,6 @@ def _replace_toml_table_tree(
     if rendered:
         result = f"{result}\n\n{rendered}" if result else rendered
     return result.rstrip() + "\n"
-
-
-def _linear_to_toml_mapping(linear: LinearConfig) -> Mapping[str, Any]:
-    data: dict[str, Any] = {
-        key: value
-        for key, value in {
-            "app_key": linear.app_key,
-            "client_id": linear.client_id,
-            "client_secret": linear.client_secret,
-            "webhook_secret": linear.webhook_secret,
-            "oauth_redirect_uri": linear.oauth_redirect_uri,
-            "access_token": linear.access_token,
-            "refresh_token": linear.refresh_token,
-            "token_expires_at": linear.token_expires_at,
-            "app_user_id": linear.app_user_id,
-            "app_user_name": linear.app_user_name,
-            "oauth_state": linear.oauth_state,
-        }.items()
-        if value is not None
-    }
-    if linear.tool_access:
-        data["tool_access"] = {
-            access.access_id: {
-                "tools": list(access.tools),
-                "issues": list(access.issues),
-                "create_team_ids": list(access.create_team_ids),
-                "create_project_ids": list(access.create_project_ids),
-                "create_parent_issues": list(access.create_parent_issues),
-                "allow_top_level_create": access.allow_top_level_create,
-                "update_fields": list(access.update_fields),
-                **({"reason": access.reason} if access.reason is not None else {}),
-            }
-            for access in linear.tool_access
-        }
-    return data
 
 
 def _dump_toml(data: Mapping[str, Any]) -> str:

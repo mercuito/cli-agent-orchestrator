@@ -1,4 +1,0 @@
-interface:
-  display_name: "Agent Dispatch"
-  short_description: "Dispatch agents without forking context by default."
-  default_prompt: "Use $agent-dispatch when dispatching agents for repository work."

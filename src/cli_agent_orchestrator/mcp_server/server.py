@@ -24,12 +24,9 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.constants import API_BASE_URL, CAO_AGENT_ID_ENV
 from cli_agent_orchestrator.inbox import (
     InboxReadError,
-    InboxReplyError,
-    NotReplyable,
     ReadResult,
 )
 from cli_agent_orchestrator.inbox import read as read_inbox_notification
-from cli_agent_orchestrator.inbox import reply as reply_inbox_notification
 from cli_agent_orchestrator.mcp_server.freshness import (
     build_agent_mcp_runtime_generation_descriptor,
     build_agent_mcp_surface_descriptor,
@@ -42,13 +39,6 @@ from cli_agent_orchestrator.mcp_server.provider_tools import (
 )
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.linear.inbox_bridge import (
-    PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
-)
-from cli_agent_orchestrator.linear.inbox_read_context import get_message_context
-from cli_agent_orchestrator.linear.reply_handler import (
-    ProviderConversationReplyError,
-)
 from cli_agent_orchestrator.services import baton_service
 from cli_agent_orchestrator.services.agent_manager import AgentManager
 from cli_agent_orchestrator.services.baton_feature import BATON_MCP_TOOL_NAMES, is_baton_enabled
@@ -990,13 +980,7 @@ def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:
     """Implementation of read_inbox_message logic."""
     try:
         caller_agent_id = _require_cao_agent_id()
-        caller_terminal_id = _terminal_id_for_agent(caller_agent_id)
         read_result = read_inbox_notification(notification_id, caller_agent_id=caller_agent_id)
-        if read_result.notification.source_kind == PROVIDER_CONVERSATION_INBOX_SOURCE_KIND:
-            return _provider_read_result_to_dict(
-                read_result,
-                caller_terminal_id=caller_terminal_id,
-            )
         return _inbox_read_result_to_dict(read_result)
     except InboxReadError as exc:
         return {"success": False, "error": str(exc), "error_type": type(exc).__name__}
@@ -1005,54 +989,14 @@ def _read_inbox_message_impl(notification_id: int) -> Dict[str, Any]:
         return {"success": False, "error": str(exc), "error_type": "InboxReadUnexpectedError"}
 
 
-def _provider_read_result_to_dict(
-    result: ReadResult,
-    *,
-    caller_terminal_id: str,
-) -> Dict[str, Any]:
-    context = get_message_context(
-        result.notification.source_id,
-        notification_id=result.notification.id,
-        caller_terminal_id=caller_terminal_id,
-    )
-    payload: Dict[str, Any] = {
-        "success": True,
-        "notification_id": result.notification.id,
-        "message_id": result.notification.id,
-        "from": context.from_label,
-        "body": context.body,
-        "replyable": context.can_reply,
-    }
-    if context.breadcrumb is not None:
-        payload["breadcrumb"] = context.breadcrumb
-    if context.reply_error:
-        payload["reply_error"] = context.reply_error
-    return payload
-
-
 def _inbox_read_result_to_dict(result: ReadResult) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
+    return {
         "success": True,
         "notification_id": result.notification.id,
         "message_id": result.notification.id,
-        "from": _inbox_source_label(result.notification.source_kind, result.notification.source_id),
+        "from": _display_from_token(result.notification.source_id),
         "body": result.body,
-        "replyable": result.can_reply,
     }
-    if not result.can_reply:
-        payload["reply_error"] = "no provider reply route"
-    return payload
-
-
-def _inbox_source_label(source_kind: str, source_id: str) -> str:
-    if source_kind == "plain":
-        return _display_from_token(source_id)
-    if source_kind == "terminal":
-        metadata = db_module.get_terminal_metadata(source_id)
-        if metadata is not None and metadata.get("agent_id"):
-            return _display_from_token(str(metadata["agent_id"]))
-        return "Terminal sender"
-    return _display_from_token(source_kind)
 
 
 def _display_from_token(value: str) -> str:
@@ -1072,67 +1016,8 @@ def _bounded_label(value: str, max_chars: int = 120) -> str:
 async def read_inbox_message(
     notification_id: int = Field(description="CAO inbox notification ID"),
 ) -> Dict[str, Any]:
-    """Read a slim message-first payload for a CAO inbox notification.
-
-    Use this after receiving a compact CAO inbox notification. The terminal
-    notification may only be a pointer; this tool returns the backing message
-    body and replyability without exposing provider internals by default.
-    """
+    """Read the full message body of a CAO inbox notification."""
     return _read_inbox_message_impl(notification_id)
-
-
-def _reply_to_inbox_message_impl(notification_id: int, body: str) -> Dict[str, Any]:
-    """Implementation of reply_to_inbox_message logic."""
-    try:
-        caller_agent_id = _require_cao_agent_id()
-        result = reply_inbox_notification(
-            notification_id,
-            body,
-            caller_agent_id=caller_agent_id,
-        )
-        if not hasattr(result, "thread"):
-            return {
-                "success": True,
-                "notification_id": notification_id,
-                "reply_notification_id": result.id,
-                "source_kind": result.source_kind,
-            }
-        return {
-            "success": True,
-            "notification_id": result.delivery.notification.id,
-            "provider": result.thread.provider,
-            "thread_id": result.thread.external_id,
-            "outbound_message": {
-                "id": result.outbound_message.id,
-                "external_id": result.outbound_message.external_id,
-                "state": result.outbound_message.state,
-                "kind": result.outbound_message.kind,
-                "body": result.outbound_message.body,
-            },
-        }
-    except (InboxReadError, InboxReplyError, NotReplyable, ProviderConversationReplyError) as exc:
-        payload: Dict[str, Any] = {
-            "success": False,
-            "error": str(exc),
-            "error_type": type(exc).__name__,
-        }
-        failed_message = getattr(exc, "failed_message", None)
-        if failed_message is not None:
-            payload["failed_message_id"] = failed_message.id
-            payload["failed_message_state"] = failed_message.state
-        return payload
-    except Exception as exc:
-        logger.exception("Failed to reply to inbox notification %s", notification_id)
-        return {"success": False, "error": str(exc), "error_type": "InboxReplyUnexpectedError"}
-
-
-@_deferred_tool()
-async def reply_to_inbox_message(
-    notification_id: int = Field(description="CAO inbox notification ID to reply to"),
-    body: str = Field(description="Reply body to send through the owning provider"),
-) -> Dict[str, Any]:
-    """Reply to a provider-backed inbox notification through CAO's inbox path."""
-    return _reply_to_inbox_message_impl(notification_id, body)
 
 
 def _baton_to_dict(baton: Baton) -> Dict[str, Any]:

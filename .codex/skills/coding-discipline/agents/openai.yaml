@@ -1,4 +1,0 @@
-interface:
-  display_name: "Coding Discipline"
-  short_description: "Apply project criteria while coding"
-  default_prompt: "Use $coding-discipline while making a CAO code or test change."

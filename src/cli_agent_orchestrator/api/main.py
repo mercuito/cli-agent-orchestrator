@@ -40,8 +40,6 @@ from cli_agent_orchestrator.agent import (
     AgentConfigError,
     AgentPathError,
     AgentWorkspaceConfig,
-    LinearConfig,
-    LinearToolAccessConfig,
     configure_agents_root,
     load_agent,
     load_agent_registry,
@@ -67,7 +65,6 @@ from cli_agent_orchestrator.constants import (
     SERVER_VERSION,
     TERMINAL_LOG_DIR,
 )
-from cli_agent_orchestrator.linear.routes import router as linear_router
 from cli_agent_orchestrator.inbox import PlainSource, send as send_inbox_message
 from cli_agent_orchestrator.inbox.readiness import LogFileHandler
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
@@ -272,33 +269,6 @@ class AgentWorkspaceResponse(BaseModel):
     diagnostics: List[str] = []
 
 
-class LinearToolAccessResponse(BaseModel):
-    access_id: str
-    tools: List[str]
-    issues: List[str]
-    create_team_ids: List[str]
-    create_project_ids: List[str]
-    create_parent_issues: List[str]
-    allow_top_level_create: bool
-    update_fields: List[str]
-    reason: Optional[str] = None
-
-
-class LinearConfigResponse(BaseModel):
-    app_key: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret_configured: bool
-    webhook_secret_configured: bool
-    oauth_redirect_uri: Optional[str] = None
-    access_token_configured: bool
-    refresh_token_configured: bool
-    token_expires_at: Optional[str] = None
-    app_user_id: Optional[str] = None
-    app_user_name: Optional[str] = None
-    oauth_state_configured: bool
-    tool_access: List[LinearToolAccessResponse]
-
-
 class AgentConfigResponse(BaseModel):
     """Full durable CAO agent configuration exposed by the read API."""
 
@@ -324,39 +294,9 @@ class AgentConfigResponse(BaseModel):
     runtime_capabilities: Optional[List[str]] = None
     codex_config: Dict[str, Any]
     workspace: AgentWorkspaceResponse
-    linear: Optional[LinearConfigResponse] = None
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentConfigResponse":
-        linear = None
-        if agent.linear is not None:
-            linear = LinearConfigResponse(
-                app_key=agent.linear.app_key,
-                client_id=agent.linear.client_id,
-                client_secret_configured=agent.linear.client_secret is not None,
-                webhook_secret_configured=agent.linear.webhook_secret is not None,
-                oauth_redirect_uri=agent.linear.oauth_redirect_uri,
-                access_token_configured=agent.linear.access_token is not None,
-                refresh_token_configured=agent.linear.refresh_token is not None,
-                token_expires_at=agent.linear.token_expires_at,
-                app_user_id=agent.linear.app_user_id,
-                app_user_name=agent.linear.app_user_name,
-                oauth_state_configured=agent.linear.oauth_state is not None,
-                tool_access=[
-                    LinearToolAccessResponse(
-                        access_id=access.access_id,
-                        tools=list(access.tools),
-                        issues=list(access.issues),
-                        create_team_ids=list(access.create_team_ids),
-                        create_project_ids=list(access.create_project_ids),
-                        create_parent_issues=list(access.create_parent_issues),
-                        allow_top_level_create=access.allow_top_level_create,
-                        update_fields=list(access.update_fields),
-                        reason=access.reason,
-                    )
-                    for access in agent.linear.tool_access
-                ],
-            )
         return cls(
             id=agent.id,
             display_name=agent.display_name,
@@ -386,7 +326,6 @@ class AgentConfigResponse(BaseModel):
                 derived_workspace=_derived_workspace_for_agent(agent),
                 diagnostics=list(agent.workspace.diagnostics),
             ),
-            linear=linear,
         )
 
 
@@ -745,145 +684,6 @@ class AgentWorkspaceWriteRequest(BaseModel):
         return base
 
 
-class LinearToolAccessWriteRequest(BaseModel):
-    access_id: str
-    tools: Optional[List[str]] = None
-    issues: Optional[List[str]] = None
-    create_team_ids: Optional[List[str]] = None
-    create_project_ids: Optional[List[str]] = None
-    create_parent_issues: Optional[List[str]] = None
-    allow_top_level_create: Optional[bool] = None
-    update_fields: Optional[List[str]] = None
-    reason: Optional[str] = None
-
-    def to_config(
-        self,
-        existing: LinearToolAccessConfig | None = None,
-    ) -> LinearToolAccessConfig:
-        return LinearToolAccessConfig(
-            access_id=self.access_id,
-            tools=tuple(
-                self.tools if self.tools is not None else (existing.tools if existing else ())
-            ),
-            issues=tuple(
-                self.issues if self.issues is not None else (existing.issues if existing else ())
-            ),
-            create_team_ids=tuple(
-                self.create_team_ids
-                if self.create_team_ids is not None
-                else (existing.create_team_ids if existing else ())
-            ),
-            create_project_ids=tuple(
-                self.create_project_ids
-                if self.create_project_ids is not None
-                else (existing.create_project_ids if existing else ())
-            ),
-            create_parent_issues=tuple(
-                self.create_parent_issues
-                if self.create_parent_issues is not None
-                else (existing.create_parent_issues if existing else ())
-            ),
-            allow_top_level_create=(
-                self.allow_top_level_create
-                if self.allow_top_level_create is not None
-                else (existing.allow_top_level_create if existing else False)
-            ),
-            update_fields=tuple(
-                self.update_fields
-                if self.update_fields is not None
-                else (existing.update_fields if existing else ())
-            ),
-            reason=(
-                self.reason if self.reason is not None else (existing.reason if existing else None)
-            ),
-        )
-
-
-class LinearWriteRequest(BaseModel):
-    app_key: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
-    webhook_secret: Optional[str] = None
-    oauth_redirect_uri: Optional[str] = None
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-    token_expires_at: Optional[str] = None
-    app_user_id: Optional[str] = None
-    app_user_name: Optional[str] = None
-    oauth_state: Optional[str] = None
-    tool_access: Optional[List[LinearToolAccessWriteRequest]] = None
-
-    def to_config(self, existing: LinearConfig | None = None) -> LinearConfig:
-        existing_access = (
-            {access.access_id: access for access in existing.tool_access} if existing else {}
-        )
-        if self.tool_access is None:
-            tool_access = tuple(existing.tool_access) if existing else ()
-        else:
-            tool_access = tuple(
-                access.to_config(existing_access.get(access.access_id))
-                for access in self.tool_access
-            )
-        return LinearConfig(
-            app_key=(
-                self.app_key
-                if self.app_key is not None
-                else (existing.app_key if existing else None)
-            ),
-            client_id=(
-                self.client_id
-                if self.client_id is not None
-                else (existing.client_id if existing else None)
-            ),
-            client_secret=(
-                self.client_secret
-                if self.client_secret is not None
-                else (existing.client_secret if existing else None)
-            ),
-            webhook_secret=(
-                self.webhook_secret
-                if self.webhook_secret is not None
-                else (existing.webhook_secret if existing else None)
-            ),
-            oauth_redirect_uri=(
-                self.oauth_redirect_uri
-                if self.oauth_redirect_uri is not None
-                else (existing.oauth_redirect_uri if existing else None)
-            ),
-            access_token=(
-                self.access_token
-                if self.access_token is not None
-                else (existing.access_token if existing else None)
-            ),
-            refresh_token=(
-                self.refresh_token
-                if self.refresh_token is not None
-                else (existing.refresh_token if existing else None)
-            ),
-            token_expires_at=(
-                self.token_expires_at
-                if self.token_expires_at is not None
-                else (existing.token_expires_at if existing else None)
-            ),
-            app_user_id=(
-                self.app_user_id
-                if self.app_user_id is not None
-                else (existing.app_user_id if existing else None)
-            ),
-            app_user_name=(
-                self.app_user_name
-                if self.app_user_name is not None
-                else (existing.app_user_name if existing else None)
-            ),
-            oauth_state=(
-                self.oauth_state
-                if self.oauth_state is not None
-                else (existing.oauth_state if existing else None)
-            ),
-            tool_access=tool_access,
-        )
-
-
 class AgentWriteRequest(BaseModel):
     id: Optional[str] = None
     display_name: Optional[str] = None
@@ -907,7 +707,6 @@ class AgentWriteRequest(BaseModel):
     runtime_capabilities: Optional[List[str]] = None
     codex_config: Optional[Dict[str, Any]] = None
     workspace: Optional[AgentWorkspaceWriteRequest] = None
-    linear: Optional[LinearWriteRequest] = None
 
     def to_agent(self, agent_id: str, existing: Optional[Agent] = None) -> Agent:
         base = existing
@@ -942,12 +741,6 @@ class AgentWriteRequest(BaseModel):
         else:
             workspace_config = base.workspace if base else AgentWorkspaceConfig()
 
-        if "linear" in fields_set and self.linear is None:
-            linear = None
-        elif self.linear is not None:
-            linear = self.linear.to_config(base.linear if base else None)
-        else:
-            linear = base.linear if base else None
         return Agent(
             id=agent_id,
             display_name=field_value(
@@ -987,7 +780,6 @@ class AgentWriteRequest(BaseModel):
             ),
             codex_config=mapping_value("codex_config", dict(base.codex_config) if base else {}),
             workspace=workspace_config,
-            linear=linear,
         )
 
 
@@ -1305,9 +1097,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(linear_router)
-
-
 def _is_agent_write_validation(request: Request) -> bool:
     if request.method == "POST" and request.url.path == "/agents":
         return True
@@ -1446,33 +1235,6 @@ async def list_cao_tool_descriptors_endpoint() -> List[ToolDescriptorResponse]:
         )
         for descriptor in built_in_cao_tool_descriptors()
     ]
-
-
-@app.get(
-    "/workspace-tool-providers/{provider}/role-access-schema",
-    response_model=ProviderRoleAccessSchemaResponse,
-)
-async def workspace_tool_provider_role_access_schema_endpoint(
-    provider: str,
-) -> ProviderRoleAccessSchemaResponse:
-    """Return provider-owned role access descriptors for dashboard editing."""
-    normalized = provider.strip().lower()
-    if normalized != "linear":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"unknown workspace tool provider role access schema: {normalized}",
-        )
-    from cli_agent_orchestrator.linear.provider_tools import linear_role_access_schema
-
-    schema = linear_role_access_schema()
-    return ProviderRoleAccessSchemaResponse(
-        provider=normalized,
-        tools=[
-            ToolDescriptorResponse(name=str(tool["name"]), description=str(tool["description"]))
-            for tool in schema["tools"]
-        ],
-        fields=dict(schema["fields"]),
-    )
 
 
 @app.get("/workspace-teams", response_model=List[WorkspaceTeamResponse])

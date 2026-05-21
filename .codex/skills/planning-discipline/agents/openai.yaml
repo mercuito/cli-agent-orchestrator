@@ -1,4 +1,0 @@
-interface:
-  display_name: "Planning Discipline"
-  short_description: "Apply project criteria while planning"
-  default_prompt: "Use $planning-discipline to draft a plan that considers the project criteria catalog."

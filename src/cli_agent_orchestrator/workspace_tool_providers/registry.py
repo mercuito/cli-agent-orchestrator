@@ -210,18 +210,12 @@ def _migrate_default_workspace_tool_providers_config_path() -> Path:
 
 
 def default_workspace_tool_provider_registry() -> WorkspaceToolProviderRegistry:
-    """Return CAO's built-in v1 workspace-tool-provider registry."""
-    from cli_agent_orchestrator.linear.workspace_tool_provider import LinearWorkspaceToolProvider
+    """Return CAO's built-in workspace-tool-provider registry.
 
-    registry = WorkspaceToolProviderRegistry()
-    registry.register(
-        "linear",
-        lambda agents: LinearWorkspaceToolProvider(
-            agent_registry=agents,
-            preflight_credentials=False,
-        ),
-    )
-    return registry
+    No providers are registered by default; callers add providers via
+    :meth:`WorkspaceToolProviderRegistry.register` as they land.
+    """
+    return WorkspaceToolProviderRegistry()
 
 
 def initialize_enabled_workspace_tool_providers(
@@ -240,14 +234,6 @@ def initialize_enabled_workspace_tool_providers(
         provider = provider_registry.create(name, agent_registry)
         provider.initialize()
         _register_provider_events(provider)
-        if name == "linear":
-            from cli_agent_orchestrator.linear.workspace_tool_provider import (
-                LinearWorkspaceToolProvider,
-                set_default_linear_workspace_tool_provider,
-            )
-
-            if isinstance(provider, LinearWorkspaceToolProvider):
-                set_default_linear_workspace_tool_provider(provider)
         providers.append(provider)
     return providers
 

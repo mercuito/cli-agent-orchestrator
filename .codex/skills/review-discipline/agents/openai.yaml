@@ -1,4 +1,0 @@
-interface:
-  display_name: "Review Discipline"
-  short_description: "Use at least one review loop to ensure code quality and adherence to criteria when finishing up CAO code or test changes, including quick edits without a concrete written plan. If the plan or process you are following has a review loop, you may use that instead. If not, you must create at least one review loop by sharing the pending diff with a reviewer and incorporating feedback before finalizing."
-  default_prompt: "Use $review-discipline when finishing up CAO code or test changes, including quick edits without a concrete written plan. If the plan or process you are following has a review loop, you may use that instead. If not, you must create at least one review loop by sharing the pending diff with a reviewer and incorporating feedback before finalizing."
