@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues live in GitHub at `mercuito/cli-agent-orchestrator`, accessed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live on disk as markdown files under `docs/issues/`. See `docs/issues/README.md` for the convention (frontmatter schema, status flow, how to pick the next issue). Older work may still be referenced under `mercuito/cli-agent-orchestrator` GitHub issues (closed, redirected to `docs/issues/`) or in `yards-framework / CAO` Linear — read those for context only; new work lands in `docs/issues/`.
 
 ### Triage labels
 
