@@ -10,7 +10,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.provider_conversations.models import (
+from cli_agent_orchestrator.linear.models import (
     ConversationMessageRecord,
     ConversationThreadRecord,
     PersistedProviderEventRecords,

@@ -20,6 +20,8 @@ from cli_agent_orchestrator.clients.inbox_store import (
 )
 from cli_agent_orchestrator.clients.provider_conversation_store import (
     AgentRuntimeNotificationModel,
+)
+from cli_agent_orchestrator.linear.conversation_store import (
     ProcessedProviderEventModel,
     ProviderConversationMessageModel,
     ProviderConversationThreadModel,

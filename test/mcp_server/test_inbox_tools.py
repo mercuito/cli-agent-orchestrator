@@ -29,14 +29,14 @@ from cli_agent_orchestrator.mcp_server.server import (
     read_inbox_message,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+from cli_agent_orchestrator.linear.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
+from cli_agent_orchestrator.linear.inbox_read_presentation import (
     inbox_read_presentation_metadata,
 )
-from cli_agent_orchestrator.provider_conversations.persistence import (
+from cli_agent_orchestrator.linear.persistence import (
     get_thread,
     list_messages,
     upsert_message,
@@ -81,7 +81,7 @@ def test_session(monkeypatch):
     Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_workspace_collaboration_manager",
+        "cli_agent_orchestrator.linear.inbox_authorization.default_workspace_collaboration_manager",
         _provider_inbox_collaboration_manager,
     )
     monkeypatch.setenv("CAO_TERMINAL_ID", "terminal-a")
@@ -410,7 +410,7 @@ def test_read_inbox_message_allows_agent_context_receiver(test_session):
 
 def test_provider_backed_read_is_not_replyable_when_reply_tool_is_hidden(test_session, monkeypatch):
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_workspace_collaboration_manager",
+        "cli_agent_orchestrator.linear.inbox_authorization.default_workspace_collaboration_manager",
         lambda: _provider_inbox_collaboration_manager(("read_inbox_message",)),
     )
     notification_id = _provider_conversation_notification()

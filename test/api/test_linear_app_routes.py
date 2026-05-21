@@ -29,15 +29,15 @@ from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearWorkspaceToolProvider,
     LinearWorkspaceToolProviderConfigError,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+from cli_agent_orchestrator.linear.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
 )
-from cli_agent_orchestrator.provider_conversations.persistence import (
+from cli_agent_orchestrator.linear.persistence import (
     get_processed_event,
     get_thread,
     list_messages,
 )
-from cli_agent_orchestrator.provider_conversations.reply_service import (
+from cli_agent_orchestrator.linear.reply_handler import (
     ProviderConversationReplyDeliveryError,
 )
 from cli_agent_orchestrator.runtime.agent import (
@@ -65,11 +65,11 @@ def _test_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
     tool_service = _ProviderConversationToolService()
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_bridge.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_authorization.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(
@@ -121,11 +121,11 @@ def _test_file_session(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(constants, "DATABASE_FILE", db_path)
     tool_service = _ProviderConversationToolService()
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_bridge.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_authorization.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(

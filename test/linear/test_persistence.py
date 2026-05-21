@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
-from cli_agent_orchestrator.provider_conversations.persistence import (
+from cli_agent_orchestrator.linear.persistence import (
     get_message,
     get_processed_event,
     get_thread,

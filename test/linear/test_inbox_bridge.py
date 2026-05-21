@@ -12,13 +12,13 @@ from sqlalchemy.pool import StaticPool
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+from cli_agent_orchestrator.linear.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
     create_notification_for_message,
     create_notification_for_persisted_event,
 )
-from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
-from cli_agent_orchestrator.provider_conversations.persistence import (
+from cli_agent_orchestrator.linear.models import PersistedProviderEventRecords
+from cli_agent_orchestrator.linear.persistence import (
     upsert_message,
     upsert_thread,
     upsert_work_item,
@@ -34,7 +34,7 @@ AUTHORIZED_RECEIVER_ID = f"agent:{AUTHORIZED_AGENT_ID}:context:default"
 def preview_tool_service(monkeypatch):
     service = _PreviewToolService()
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_bridge.default_tool_service",
         lambda: service,
     )
     return service

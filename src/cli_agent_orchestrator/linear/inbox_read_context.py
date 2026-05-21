@@ -8,11 +8,11 @@ from typing import Any, Dict, Mapping, Optional, cast
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.inbox import InboxReadError, InboxReadNotFoundError
-from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+from cli_agent_orchestrator.linear.inbox_authorization import (
     provider_inbox_authorization_decision,
     require_provider_inbox_authorization,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
+from cli_agent_orchestrator.linear.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
 

@@ -41,7 +41,7 @@ from cli_agent_orchestrator.clients.database import (
     update_last_active,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+from cli_agent_orchestrator.linear.inbox_bridge import (
     create_notification_for_message,
 )
 

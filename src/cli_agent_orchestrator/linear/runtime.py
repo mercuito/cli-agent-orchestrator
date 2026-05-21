@@ -29,14 +29,14 @@ from cli_agent_orchestrator.linear.workspace_tool_provider import (
     normalize_app_key,
     should_enable_linear_agent_policies,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+from cli_agent_orchestrator.linear.inbox_bridge import (
     create_notification_for_persisted_event,
 )
-from cli_agent_orchestrator.provider_conversations.models import (
+from cli_agent_orchestrator.linear.models import (
     PersistedProviderEventRecords,
     ProcessedProviderEventRecord,
 )
-from cli_agent_orchestrator.provider_conversations.persistence import (
+from cli_agent_orchestrator.linear.persistence import (
     get_message,
     get_processed_event,
     get_thread,

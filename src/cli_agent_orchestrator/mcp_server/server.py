@@ -42,11 +42,11 @@ from cli_agent_orchestrator.mcp_server.provider_tools import (
 )
 from cli_agent_orchestrator.models.baton import Baton, BatonEvent, BatonStatus
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+from cli_agent_orchestrator.linear.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
 )
-from cli_agent_orchestrator.provider_conversations.linear import get_message_context
-from cli_agent_orchestrator.provider_conversations.reply_service import (
+from cli_agent_orchestrator.linear.inbox_read_context import get_message_context
+from cli_agent_orchestrator.linear.reply_handler import (
     ProviderConversationReplyError,
 )
 from cli_agent_orchestrator.services import baton_service

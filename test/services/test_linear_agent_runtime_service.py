@@ -30,12 +30,12 @@ from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearWorkspaceToolProvider,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.provider_conversations.models import (
+from cli_agent_orchestrator.linear.models import (
     ConversationMessageRecord,
     ConversationThreadRecord,
     PersistedProviderEventRecords,
 )
-from cli_agent_orchestrator.provider_conversations.persistence import get_thread, upsert_thread
+from cli_agent_orchestrator.linear.persistence import get_thread, upsert_thread
 from cli_agent_orchestrator.providers.base import ProviderRuntimePreparation
 from cli_agent_orchestrator.runtime import agent as runtime_agent
 from cli_agent_orchestrator.runtime.agent import (
@@ -784,7 +784,7 @@ def test_linear_agent_session_vertical_path_reaches_terminal_send_boundary(
         runtime, "get_linear_workspace_tool_provider", lambda: workspace_tool_provider
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_bridge.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(

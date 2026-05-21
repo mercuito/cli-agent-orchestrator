@@ -141,3 +141,24 @@ A task is complete only after **two** successive clean review passes are recorde
 
 - Pass 1: 2026-05-21, fresh review found no actionable issues after the partial-batch delivery fix; residual process note was limited to the draft PR/orientation-comment item not being verifiable from the working tree.
 - Pass 2: 2026-05-21, independent review found no actionable issues; verified default registration, persistent dispatch, runtime/inbox boundary, terminal-scoped delivery, partial-batch delivery, generated event payload types, and review ledger state.
+
+## 0009 — move Linear files
+
+### Review round 1 — 2026-05-21
+
+- **Finding:** Importing a moved Linear submodule such as `cli_agent_orchestrator.linear.inbox_bridge` no longer registered the `provider_conversation` reply handler; registration only happened after directly importing `linear.reply_handler`.
+- **Accepted as valid because:** The previous provider-conversations package registered its reply source at package import time, and the issue requires the source-kind registration to move with Linear without behavior changes.
+- **Fix:** Added package-level lazy registration in `src/cli_agent_orchestrator/linear/__init__.py` and regression coverage in `test/linear/test_reply_registration.py`, avoiding the earlier database import cycle while preserving replyability.
+- **Evidence:** `uv run pytest test/linear/test_reply_registration.py test/linear/test_inbox_bridge.py test/linear/test_reply_handler.py test/linear/test_persistence.py test/mcp_server/test_inbox_tools.py::test_reply_to_inbox_message_routes_through_linear_provider -q` passed with 35 tests; an import probe confirmed `can_reply("provider_conversation")` after importing `cli_agent_orchestrator.linear.inbox_bridge`.
+
+### Review round 2 — 2026-05-21
+
+- **Finding:** `mypy.ini` still applied SQLAlchemy suppressions to the deleted `cli_agent_orchestrator.provider_conversations.persistence` module instead of the moved `cli_agent_orchestrator.linear.persistence` module.
+- **Accepted as valid because:** Migration discipline includes moving tooling configuration to the new authoritative module; leaving the override on a deleted module made the moved persistence helper fail its existing type-check configuration.
+- **Fix:** Updated `mypy.ini` to target `cli_agent_orchestrator.linear.persistence`.
+- **Evidence:** `uv run mypy src/cli_agent_orchestrator/linear/persistence.py --config-file mypy.ini` passed.
+
+### Clean passes
+
+- Pass 1: 2026-05-21, fresh review found no actionable issues; verification included old-import searches, deleted-package checks, Linear reply registration smoke tests, `test/linear/test_reply_registration.py`, and the criteria catalog.
+- Pass 2: 2026-05-21, independent review found no actionable issues; verification included the MCP reply tracer, the moved persistence mypy probe, `git diff --check`, old-import searches, deleted-package checks, and Linear reply registration import probes.

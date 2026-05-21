@@ -74,6 +74,8 @@ from cli_agent_orchestrator.clients.inbox_store import (  # noqa: E402
 from cli_agent_orchestrator.clients.provider_conversation_store import (  # noqa: E402
     AgentRuntimeNotificationModel,
     MonitoringSessionModel,
+)
+from cli_agent_orchestrator.linear.conversation_store import (  # noqa: E402
     ProcessedProviderEventModel,
     ProviderConversationMessageModel,
     ProviderConversationThreadModel,

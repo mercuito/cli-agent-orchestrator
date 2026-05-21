@@ -10,14 +10,14 @@ from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.models.inbox import InboxDelivery
-from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+from cli_agent_orchestrator.linear.inbox_authorization import (
     provider_identity_from_metadata,
     provider_conversation_tool_service,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_read_presentation import (
+from cli_agent_orchestrator.linear.inbox_read_presentation import (
     INBOX_READ_PRESENTATION_METADATA_KEY,
 )
-from cli_agent_orchestrator.provider_conversations.models import PersistedProviderEventRecords
+from cli_agent_orchestrator.linear.models import PersistedProviderEventRecords
 from cli_agent_orchestrator.workspaces import WorkspaceConfigError
 
 PROVIDER_CONVERSATION_INBOX_SOURCE_KIND = "provider_conversation"

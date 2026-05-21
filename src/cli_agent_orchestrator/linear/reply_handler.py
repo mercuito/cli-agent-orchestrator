@@ -11,20 +11,20 @@ from cli_agent_orchestrator.clients import database as db_module
 from cli_agent_orchestrator.inbox.models import Notification
 from cli_agent_orchestrator.inbox.source_registry import register_reply_handler
 from cli_agent_orchestrator.models.inbox import InboxDelivery
-from cli_agent_orchestrator.provider_conversations.inbox_authorization import (
+from cli_agent_orchestrator.linear.inbox_authorization import (
     require_inbox_notification_receiver,
     require_provider_inbox_authorization,
 )
-from cli_agent_orchestrator.provider_conversations.inbox_bridge import (
+from cli_agent_orchestrator.linear.inbox_bridge import (
     PROVIDER_CONVERSATION_INBOX_SOURCE_KIND,
 )
-from cli_agent_orchestrator.provider_conversations.models import (
+from cli_agent_orchestrator.linear.models import (
     ConversationMessage,
     ConversationMessageRecord,
     ConversationThreadRecord,
     ExternalRef,
 )
-from cli_agent_orchestrator.provider_conversations.persistence import (
+from cli_agent_orchestrator.linear.persistence import (
     get_thread_by_id,
     upsert_message,
 )

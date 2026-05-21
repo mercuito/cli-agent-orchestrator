@@ -435,11 +435,11 @@ def _install_linear_workspace_tool_provider(
     )
     tool_service = _ProviderConversationToolService()
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_bridge.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_authorization.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(

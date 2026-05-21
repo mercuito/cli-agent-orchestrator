@@ -26,7 +26,7 @@ from cli_agent_orchestrator.linear.workspace_events import (
 from cli_agent_orchestrator.linear.workspace_tool_provider import (
     LinearWorkspaceToolProvider,
 )
-from cli_agent_orchestrator.provider_conversations.persistence import (
+from cli_agent_orchestrator.linear.persistence import (
     get_message,
     get_processed_event,
     get_thread,
@@ -147,11 +147,11 @@ def linear_monitor_world(
     )
     tool_service = _ProviderConversationToolService()
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_bridge.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_bridge.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(
-        "cli_agent_orchestrator.provider_conversations.inbox_authorization.default_tool_service",
+        "cli_agent_orchestrator.linear.inbox_authorization.default_tool_service",
         lambda: tool_service,
     )
     monkeypatch.setattr(runtime, "default_tool_service", lambda: tool_service)
