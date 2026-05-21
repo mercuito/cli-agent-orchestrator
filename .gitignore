@@ -55,3 +55,5 @@ context/
 
 # Runtime artifacts written by agents (e.g. supervisor task files)
 .cao/
+
+.understand-anything/
