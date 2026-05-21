@@ -123,7 +123,7 @@ Implementation criteria applied:
 - `no-unnecessary-duplication` and `properly-designed-shared-code`: shared role/tool helpers live in `teamUtils.ts` and mutation behavior in `useTeamMutations.ts`.
 - `parallel-safe-execution`: tests use local mocks; browser-created temporary team was cleaned up.
 - `prefer-public-surfaces`: frontend uses exported API wrappers and public backend endpoints.
-- `readable-and-explicit`, `simple-systems`, `system-code-locality`, `system-definitions-are-localized`: Teams-specific code is localized under `web/src/components/teams/`, with explicit role/tool transformation helpers.
+- `readable-and-explicit`, `deep-systems`, `system-code-locality`, `system-definitions-are-localized`: Teams-specific code is localized under `web/src/components/teams/`, with explicit role/tool transformation helpers.
 - `authoritative-sources-are-referenced-not-copied`: endpoint and payload shapes follow the plan and existing backend route contracts.
 
 Test criteria applied:

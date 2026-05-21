@@ -138,7 +138,7 @@ Criteria likely to shape this work:
   step inside `discover_catalog()`, not implicit env-var snooping at
   module import. Routed-auth detection reads env vars at the call
   site, not eagerly.
-- **`simple-systems`** — no caching layer. Every GET hits the live
+- **`deep-systems`** — no caching layer. Every GET hits the live
   API. Add caching only with evidence it's needed.
 - **`do-not-assume-backwards-compatibility`** — when Phase 3 lands and
   the static `supported_reasoning_efforts` / `suggested_models` are

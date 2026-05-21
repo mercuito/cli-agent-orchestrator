@@ -362,7 +362,7 @@ Implementation:
 - `prefer-public-surfaces`
 - `properly-designed-shared-code`
 - `readable-and-explicit`
-- `simple-systems`
+- `deep-systems`
 - `system-code-locality`
 - `authoritative-sources-are-referenced-not-copied`
 

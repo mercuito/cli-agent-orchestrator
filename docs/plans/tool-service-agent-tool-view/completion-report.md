@@ -136,7 +136,7 @@ Served target: `http://127.0.0.1:9891/#/agents`
 | `prefer-public-surfaces` | Satisfied. API routes consume `ToolService.agent_tool_view`; MCP server helpers delegate to ToolService when a provider-policy override is not explicitly supplied. |
 | `properly-designed-shared-code` | Satisfied. Shared tool view construction lives in the tool service, not inside API route internals. |
 | `readable-and-explicit` | Satisfied. Cache tokens and invalidation inputs are explicit helper functions. |
-| `simple-systems` | Satisfied. The implementation uses deterministic input fingerprints instead of lifecycle hooks. |
+| `deep-systems` | Satisfied. The implementation uses deterministic input fingerprints instead of lifecycle hooks. |
 | `system-code-locality` | Satisfied. Tool authority and reuse stay in `services/tool_service.py`; MCP server remains a thin adapter for MCP-owned built-ins. |
 | `system-definitions-are-localized` | Satisfied. `AgentToolView` and service APIs are localized in ToolService. |
 | `all-system-interactions-are-verified-by-tests` | Satisfied for the touched behavior: service reuse/staleness, API route ownership, and source helper freshness are covered. |

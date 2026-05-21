@@ -118,7 +118,7 @@ Likely implementation criteria that shape this plan:
 - `prefer-public-surfaces`
 - `properly-designed-shared-code`
 - `readable-and-explicit`
-- `simple-systems`
+- `deep-systems`
 - `system-code-locality`
 
 Likely test criteria that shape this plan:

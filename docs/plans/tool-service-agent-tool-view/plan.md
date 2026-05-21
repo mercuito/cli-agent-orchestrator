@@ -195,7 +195,7 @@ Likely implementation criteria to consult during implementation:
 - `prefer-public-surfaces`
 - `properly-designed-shared-code`
 - `readable-and-explicit`
-- `simple-systems`
+- `deep-systems`
 - `system-code-locality`
 - `system-definitions-are-localized`
 

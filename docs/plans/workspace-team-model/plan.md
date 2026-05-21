@@ -1227,7 +1227,7 @@ Likely implementation criteria for this work:
 - `prefer-public-surfaces`
 - `properly-designed-shared-code`
 - `readable-and-explicit`
-- `simple-systems`
+- `deep-systems`
 - `system-code-locality`
 - `system-definitions-are-localized`
 
